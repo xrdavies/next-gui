@@ -1,0 +1,193 @@
+//! Windowing, input, and frame present abstraction for next-gui.
+//!
+//! P0 ships a Linux backend (`winit` + `softbuffer`) behind [`linux`]. That is an OS
+//! API thin layer, not a third-party UI runtime.
+
+#![deny(missing_docs)]
+
+use std::fmt;
+
+/// Opaque window handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WindowId(pub u64);
+
+/// Attributes for window creation.
+#[derive(Debug, Clone)]
+pub struct WindowAttrs {
+    /// Title string.
+    pub title: String,
+    /// Client width in physical pixels (P0: treat as buffer pixels).
+    pub width: u32,
+    /// Client height in physical pixels.
+    pub height: u32,
+}
+
+impl WindowAttrs {
+    /// Convenience constructor.
+    pub fn new(title: impl Into<String>, width: u32, height: u32) -> Self {
+        Self {
+            title: title.into(),
+            width,
+            height,
+        }
+    }
+}
+
+/// Mouse button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerButton {
+    /// Primary.
+    Left,
+    /// Secondary.
+    Right,
+    /// Middle.
+    Middle,
+    /// Other.
+    Other(u16),
+}
+
+/// Keyboard key (P0 minimal set).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyCode {
+    /// Escape.
+    Escape,
+    /// Space.
+    Space,
+    /// Catch-all.
+    Other(u32),
+}
+
+/// Platform / window events delivered to the app.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Event {
+    /// User requested close.
+    CloseRequested {
+        /// Window.
+        window: WindowId,
+    },
+    /// Window resized (physical pixels).
+    Resized {
+        /// Window.
+        window: WindowId,
+        /// New width.
+        width: u32,
+        /// New height.
+        height: u32,
+    },
+    /// Redraw requested by the OS or by [`WindowCtx::request_redraw`].
+    RedrawRequested {
+        /// Window.
+        window: WindowId,
+    },
+    /// Pointer moved.
+    PointerMoved {
+        /// Window.
+        window: WindowId,
+        /// X in physical pixels.
+        x: f64,
+        /// Y in physical pixels.
+        y: f64,
+    },
+    /// Pointer button.
+    PointerButton {
+        /// Window.
+        window: WindowId,
+        /// Button.
+        button: PointerButton,
+        /// Pressed or released.
+        pressed: bool,
+        /// X.
+        x: f64,
+        /// Y.
+        y: f64,
+    },
+    /// Key event.
+    Key {
+        /// Window.
+        window: WindowId,
+        /// Key.
+        key: KeyCode,
+        /// Pressed or released.
+        pressed: bool,
+    },
+}
+
+/// Platform error.
+#[derive(Debug)]
+pub struct PlatformError {
+    message: String,
+}
+
+impl PlatformError {
+    /// Create from message.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for PlatformError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for PlatformError {}
+
+/// Mutable access to the live window during callbacks.
+pub struct WindowCtx<'a> {
+    pub(crate) inner: &'a mut dyn WindowHost,
+}
+
+impl WindowCtx<'_> {
+    /// Logical next-gui window id (single-window P0: always 1).
+    pub fn window_id(&self) -> WindowId {
+        self.inner.window_id()
+    }
+
+    /// Current buffer / client size.
+    pub fn size(&self) -> (u32, u32) {
+        self.inner.size()
+    }
+
+    /// Update title.
+    pub fn set_title(&mut self, title: &str) {
+        self.inner.set_title(title);
+    }
+
+    /// Ask the OS for a redraw.
+    pub fn request_redraw(&mut self) {
+        self.inner.request_redraw();
+    }
+
+    /// Present packed XRGB8888 pixels (`width * height` length).
+    pub fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError> {
+        self.inner.present(width, height, pixels)
+    }
+}
+
+pub(crate) trait WindowHost {
+    fn window_id(&self) -> WindowId;
+    fn size(&self) -> (u32, u32);
+    fn set_title(&mut self, title: &str);
+    fn request_redraw(&mut self);
+    fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError>;
+}
+
+/// Application callbacks driven by the platform event loop.
+pub trait AppCallbacks {
+    /// Called once after the window exists.
+    fn on_start(&mut self, ctx: &mut WindowCtx<'_>);
+    /// Input / lifecycle event.
+    fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event);
+    /// Redraw: app should render and [`WindowCtx::present`].
+    fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>);
+}
+
+#[cfg(feature = "linux")]
+pub mod linux;
+
+#[cfg(feature = "linux")]
+pub use linux::run;

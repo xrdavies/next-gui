@@ -6,6 +6,8 @@
 
 ## P0 — 骨架
 
+> **编码已开始**（见 [p0-design.md](p0-design.md)、`examples/p0_soft_window`）。
+
 - 窗口创建与基础生命周期（`platform`）；**先做 Linux 后端**
 - 输入：**指针 + 键盘**（触控接口预留，实现后补）
 - retained 矩形树（最小 `scene` 节点模型）
@@ -13,6 +15,8 @@
 - **脏区**重绘（非每帧全屏无脑刷）
 
 验收：空窗 + 若干矩形控件可交互，弱机可跑，变更区域可观测。
+
+运行：`cargo run -p p0_soft_window`（需 Linux 图形 DISPLAY）。
 
 ## P1 — 声明式
 

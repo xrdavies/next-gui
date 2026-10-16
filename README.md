@@ -41,10 +41,21 @@
 | [docs/roadmap.md](docs/roadmap.md) | P0–P6 落地阶段 |
 | [docs/rationale.md](docs/rationale.md) | 为何自研、为何不以 Immediate / Web 壳为主路线 |
 | [docs/glossary.md](docs/glossary.md) | Immediate / retained / 声明式等术语 |
+| [docs/p0-design.md](docs/p0-design.md) | P0 模块接口、crate 布局与可运行验收 |
 
 ## 状态
 
-**需求与架构已确认** — 运行时实现尚未开始。落地顺序：先软渲染 + 脏区，再声明式与文本，再 GPU 与双档，最后 Immediate 与工业打磨。
+**需求与架构已确认；P0 编码已开始。** 当前有 Linux 软渲染开窗示例（retained 矩形 + 脏区）。落地顺序：先软渲染 + 脏区，再声明式与文本，再 GPU 与双档，最后 Immediate 与工业打磨。
+
+### 试跑 P0（Linux，需要 DISPLAY）
+
+```bash
+cargo run -p p0_soft_window
+```
+
+操作：左键点击色块换色；`Space` 轮换全部色块；`Esc` 退出。stderr 会打印每帧脏区面积。
+
+系统依赖（Debian/Ubuntu）：`libxkbcommon-x11-0`（以及可用的 X11/Wayland DISPLAY）。Rust **1.86+**（见 `rust-toolchain.toml`）。
 
 ## 仓库
 
