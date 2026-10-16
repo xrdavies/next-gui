@@ -1,11 +1,13 @@
 # 路线图（P0–P6）
 
-**实现语言已定为 Rust。** 声明式层为自研 DSL + Rust 宏/API（见 [architecture.md](architecture.md)）。各阶段目标仍不绑死具体第三方 crate 名；模块按 `platform` / `scene` / `layout` / `render*` / `text` / `ui` / `immediate` / `profile` 推进。
+**实现语言已定为 Rust。** 声明式层为自研**紧凑 DSL** + Rust 宏/API（起步组件标记，后续再丰富表达力；见 [architecture.md](architecture.md)、[requirements.md](requirements.md)）。各阶段目标仍不绑死具体第三方 crate 名；模块按 `platform` / `scene` / `layout` / `render*` / `text` / `ui` / `immediate` / `profile` 推进。
+
+平台实现顺序：**Linux → Windows → macOS（仅 Office）**。
 
 ## P0 — 骨架
 
-- 窗口创建与基础生命周期（`platform`）
-- 输入（指针、键盘；为触控预留）
+- 窗口创建与基础生命周期（`platform`）；**先做 Linux 后端**
+- 输入：**指针 + 键盘**（触控接口预留，实现后补）
 - retained 矩形树（最小 `scene` 节点模型）
 - CPU **软渲染**路径（`render` + `render-soft`）
 - **脏区**重绘（非每帧全屏无脑刷）
@@ -14,11 +16,11 @@
 
 ## P1 — 声明式
 
-- 最小 DSL 或等价 Rust API（`ui`）
-- 状态绑定
+- **紧凑 DSL** 或等价 Rust API（`ui`）；结构短，复杂逻辑在 Rust
+- 基础属性与事件挂钩（完整绑定/状态机后续再丰富，非第一天满血 QML）
 - 基础控件：按钮、列表、文本输入等
 
-验收：用声明式描述即可搭出简单表单，无需手写每帧绘制指令。
+验收：用紧凑声明式描述即可搭出简单表单，无需手写每帧绘制指令。
 
 ## P2 — 文本
 
@@ -34,17 +36,18 @@
 
 - 与软渲染**共用场景图**（`render-gpu`）
 - 合批 / 命令录制对接系统图形 API
+- GPU **服务观感与动态内容**（流畅重绘、动画、图表），非炫技
 - Office 可默认走 GPU；Field 可关或自动降级
 
-验收：同一 UI 树可在软渲染与 GPU 间切换，视觉一致（允许抗锯齿等实现差）。
+验收：同一 UI 树可在软渲染与 GPU 间切换，视觉大体一致（允许抗锯齿等实现差）；无 GPU 亦可启动。
 
 ## P4 — 双档 Profile
 
 - Field / Office 特性开关与性能预算（`profile`）
-- 最低机型清单与降级策略（停帧、降 fps、关特效）
+- 最低机型清单与降级策略（停帧、降 fps、关特效、强制 soft、关 GPU）
 - 打包与依赖裁剪差异
 
-验收：同一应用源可打出两档配置，Field 档在弱机上稳定。
+验收：同一应用源可打出两档配置，Field 档在约定弱机上稳定。
 
 ## P5 — Immediate 视口
 
@@ -56,13 +59,14 @@
 
 ## P6 — 工业打磨
 
-- 触控与工控按键映射
+- **触控**与工控按键映射（P0 未做，本阶段补齐）
 - 无障碍基线
 - 7×24 稳定性（泄漏、长时间运行）
 - 多分辨率 / DPI
+- **Windows** 平台后端；随后 **macOS（仅 Office 桌面）**
 
-验收：面向现场与办公室的真实场景试点可长期运行。
+验收：面向现场与办公室的真实场景试点可长期运行；OS 按序补齐。
 
 ## 建议顺序
 
-先打通 **P0 软渲染 + 脏区**，再声明式与文本，再 GPU 与双档，最后 Immediate 与工业打磨。不要先做满血 GPU demo 再回头补弱机路径。
+先打通 **P0 软渲染 + 脏区（Linux，指针+键盘）**，再紧凑声明式与文本，再 GPU 与双档，最后 Immediate、触控与多 OS。不要先做满血 GPU demo 再回头补弱机路径；也不要第一天做满血 QML 式语言。
