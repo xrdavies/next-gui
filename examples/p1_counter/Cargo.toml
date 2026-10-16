@@ -1,0 +1,18 @@
+[package]
+name = "p1_counter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "P1 demo: compact Column/Text/Button with state bindings + soft render"
+
+[[bin]]
+name = "p1_counter"
+path = "src/main.rs"
+
+[dependencies]
+next-gui-platform = { workspace = true }
+next-gui-scene = { workspace = true }
+next-gui-render = { workspace = true }
+next-gui-render-soft = { workspace = true }
+next-gui-ui = { workspace = true }
