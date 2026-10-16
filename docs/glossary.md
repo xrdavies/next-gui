@@ -22,7 +22,7 @@ Dear ImGui、egui 等属于此类思路。本项目中仅作**可选视口**（�
 
 ## GPU 加速
 
-用 GPU 执行合批、纹理、合成等绘制。优化的是绘制成本，不自动等于更少逻辑重绘。与 Immediate / retained 正交：两种模型都可以接 GPU。
+用 GPU 执行合批、纹理、合成等绘制，服务**观感与动态内容**（流畅重绘、动画、图表），非炫技。优化的是绘制成本，不自动等于更少逻辑重绘。与 Immediate / retained 正交：两种模型都可以接 GPU；Field 档可关。
 
 ## 软渲染（Software rasterization）
 
@@ -39,3 +39,11 @@ CPU 完成栅格化，不依赖独显。Field 档的重要兜底，与 GPU 后�
 ## 场景图（Scene graph）
 
 retained 侧持有的节点/绘制结构；GPU 与软渲染都从这里取可绘制表示。
+
+## 紧凑 DSL
+
+声明式 UI 的起步风格：组件标记短、结构清晰，复杂逻辑与扩展主要落在 Rust API。后续可按需增加绑定、状态、动画等，向更强表达力演进；不以第一天满血 QML 为目标。
+
+## Platform 抽象
+
+`platform` 模块只暴露统一接口（窗口 / 输入 / 时钟等），Linux、Windows、macOS 各做后端。实现顺序：Linux → Windows → macOS（仅 Office）。
