@@ -4,7 +4,7 @@
 
 平台实现顺序：**Linux → Windows → macOS（仅 Office）**。
 
-**macOS 占位（并行）：** stub 模块 `next-gui-platform::macos` + [platform-macos.md](platform-macos.md)。另一 agent 可按该清单实现 Office 桌面窗口/输入，不阻塞 Linux P0/P1。校验：`cargo check -p next-gui-platform --features macos`。
+**macOS Office 首版已实现：** `next-gui-platform::macos` 复用 Linux 的窗口、输入与软渲染契约；实现细节与已知缺口见 [platform-macos.md](platform-macos.md)。校验：`cargo check -p next-gui-platform --features macos`。
 
 ## P0 — 骨架
 
@@ -18,7 +18,7 @@
 
 验收：空窗 + 若干矩形控件可交互，弱机可跑，变更区域可观测。
 
-运行：`cargo run -p p0_soft_window`（需 Linux 图形 DISPLAY）。
+运行：`cargo run -p p0_soft_window`（需 Linux/macOS 图形桌面会话）。
 
 ## P1 — 声明式
 
@@ -32,7 +32,7 @@
 
 验收：用紧凑声明式描述即可搭出简单表单（如计数器），无需手写每帧绘制指令。
 
-运行：`cargo run -p p1_counter`（需 Linux 图形 DISPLAY）。
+运行：`cargo run -p p1_counter`（需 Linux/macOS 图形桌面会话）。
 
 ## P2 — 文本
 
@@ -75,7 +75,7 @@
 - 无障碍基线
 - 7×24 稳定性（泄漏、长时间运行）
 - 多分辨率 / DPI
-- **Windows** 平台后端；随后 **macOS（仅 Office 桌面）** — 占位与清单见 [platform-macos.md](platform-macos.md)，可与 Linux 主线并行
+- **Windows** 平台后端；macOS Office 首版已完成，后续补齐 DPI、IME、触控等工业打磨
 
 验收：面向现场与办公室的真实场景试点可长期运行；OS 按序补齐。
 

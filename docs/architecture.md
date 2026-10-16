@@ -116,14 +116,14 @@ profile ──横切配置──→ 各层（开关与预算，不形成第二�
 |------|------|------|
 | 1 | **Linux** | Field + Office（第一实现） |
 | 2 | **Windows** | Field + Office |
-| 3 | **macOS** | **仅 Office 桌面**；Field 不要求；占位与并行清单见 [platform-macos.md](platform-macos.md) |
+| 3 | **macOS** | **仅 Office 桌面**；Field 不要求；首版实现与缺口见 [platform-macos.md](platform-macos.md) |
 
 P0 输入范围：**指针 + 键盘**。触控、工控按键映射在接口上预留，实现后补（见需求 P6 / 工业打磨）。
 
 ```text
           ┌─ linux_backend   （先做）
 platform ─┼─ win_backend     （其次）
-  trait   └─ macos_backend   （后补；Office only）
+  trait   └─ macos_backend   （Office only；首版已实现）
 ```
 
 ---
@@ -141,7 +141,7 @@ platform ─┼─ win_backend     （其次）
 | 特效 | 少动画、少模糊/重阴影 | 更丰富动效、图表、多窗口 |
 | Immediate | **默认关**（或仅调试） | **局部**工具面板可选 |
 | 视觉 | 高对比、清晰、稳 | 同一设计系统上更好的观感与动态表现 |
-| OS | Linux → Windows | Linux → Windows → **macOS（后补）** |
+| OS | Linux → Windows | Linux → Windows → **macOS（仅 Office）** |
 | 打包 | 少依赖、可裁剪 | 可带更完整资源与后端 |
 
 `profile` 模块负责：特性开关、性能预算、最低机型与降级策略（关特效、降帧、强制 soft、关 GPU）。应用源码与 DSL **不**按场景分叉成两套产品。
