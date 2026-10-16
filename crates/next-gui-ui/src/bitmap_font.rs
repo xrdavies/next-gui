@@ -15,7 +15,7 @@ pub fn measure(text: &str, scale: f32) -> (f32, f32) {
 }
 
 fn glyph_bits(ch: char) -> Option<[u8; GLYPH_H]> {
-    // Each row: lower 5 bits, bit0 = leftmost.
+    // Each row: lower 5 bits, bit4 = leftmost.
     Some(match ch {
         ' ' => [0, 0, 0, 0, 0, 0, 0],
         ':' => [0, 0b00100, 0, 0b00100, 0, 0b00100, 0],
@@ -76,7 +76,7 @@ pub fn sync_text(
         let bits = glyph_bits(ch).unwrap_or([0; GLYPH_H]);
         for (row, row_bits) in bits.iter().enumerate() {
             for col in 0..GLYPH_W {
-                if (row_bits >> col) & 1 == 1 {
+                if (row_bits >> (GLYPH_W - 1 - col)) & 1 == 1 {
                     let r = Rect::new(
                         cx + col as f32 * px,
                         cy + row as f32 * px,
@@ -90,5 +90,43 @@ pub fn sync_text(
             }
         }
         cx += CELL_W * px;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_text_keeps_glyph_columns_in_reading_order() {
+        let mut scene = Scene::new();
+        let parent = scene
+            .insert(
+                scene.root(),
+                Rect::new(0.0, 0.0, 5.0, 7.0),
+                Color::rgb(0, 0, 0),
+            )
+            .expect("parent");
+        let mut glyphs = Vec::new();
+
+        sync_text(
+            &mut scene,
+            parent,
+            "L",
+            Rect::new(0.0, 0.0, 5.0, 7.0),
+            Color::rgb(255, 255, 255),
+            1.0,
+            &mut glyphs,
+        );
+
+        let bounds: Vec<_> = scene
+            .iter_paint_order()
+            .into_iter()
+            .skip(1)
+            .map(|node| node.bounds)
+            .collect();
+        assert!(bounds.contains(&Rect::new(0.0, 0.0, 1.0, 1.0)));
+        assert!(!bounds.contains(&Rect::new(4.0, 0.0, 1.0, 1.0)));
+        assert!(bounds.contains(&Rect::new(4.0, 6.0, 1.0, 1.0)));
     }
 }
