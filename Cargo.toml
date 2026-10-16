@@ -7,9 +7,11 @@ members = [
     "crates/next-gui-render-soft",
     "crates/next-gui-layout",
     "crates/next-gui-ui",
+    "crates/next-gui-text",
     "examples/p0_soft_window",
     "examples/p1_counter",
     "examples/p1_ngui_counter",
+    "examples/p2_cjk_text",
 ]
 
 [workspace.package]
@@ -26,5 +28,6 @@ next-gui-render = { path = "crates/next-gui-render" }
 next-gui-render-soft = { path = "crates/next-gui-render-soft" }
 next-gui-layout = { path = "crates/next-gui-layout" }
 next-gui-ui = { path = "crates/next-gui-ui" }
+next-gui-text = { path = "crates/next-gui-text" }
 winit = { version = "0.30", default-features = true }
 softbuffer = "0.4"

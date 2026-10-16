@@ -1,0 +1,9 @@
+[package]
+name = "next-gui-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Font loading, metrics, and CJK-capable text layout for next-gui"
+
+[dependencies]
+fontdue = "0.8"
