@@ -10,6 +10,15 @@
 - **弱机兼容优先**（现场），办公室在同一底座上开更高视觉与交互预算
 - Immediate 仅作**显式可选**能力（整窗或局部），不是默认整应用模型
 
+## 语言
+
+| 层 | 选择 |
+|----|------|
+| **实现语言** | **Rust**（C++ 仅在对接既有工控生态时作可选 FFI，非默认实现语言） |
+| **声明式 UI** | **自研 DSL**（类似 Slint / QML）为主写屏；**Rust 宏 / API** 为代码侧等价物；二者映射到同一 retained 运行时。不以 JS/TS 为默认声明层 |
+
+模块划分与依赖边界见 [docs/architecture.md](docs/architecture.md)。
+
 ## 双场景
 
 | 档位 | 对象 | 渲染与刷新 | Immediate |
@@ -23,16 +32,14 @@
 
 | 文档 | 内容 |
 |------|------|
-| [docs/architecture.md](docs/architecture.md) | 分层、声明式 / retained / GPU / Immediate 关系、Field vs Office |
+| [docs/architecture.md](docs/architecture.md) | 语言选型、模块边界、分层、Field vs Office |
 | [docs/roadmap.md](docs/roadmap.md) | P0–P6 落地阶段 |
 | [docs/rationale.md](docs/rationale.md) | 为何自研、为何不以 Immediate / Web 壳为主路线 |
 | [docs/glossary.md](docs/glossary.md) | Immediate / retained / 声明式等术语 |
 
 ## 状态
 
-**设计阶段** — 方案与路线已落文档，运行时实现尚未开始。
-
-实现语言候选：**Rust** 或 **C++**（未最终选定）。
+**设计阶段** — 语言与模块边界已敲定，运行时实现尚未开始。
 
 ## 仓库
 

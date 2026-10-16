@@ -1,20 +1,20 @@
 # 路线图（P0–P6）
 
-实现语言候选为 Rust 或 C++，选定前各阶段目标不绑死具体 crate/库名。
+**实现语言已定为 Rust。** 声明式层为自研 DSL + Rust 宏/API（见 [architecture.md](architecture.md)）。各阶段目标仍不绑死具体第三方 crate 名；模块按 `platform` / `scene` / `layout` / `render*` / `text` / `ui` / `immediate` / `profile` 推进。
 
 ## P0 — 骨架
 
-- 窗口创建与基础生命周期
+- 窗口创建与基础生命周期（`platform`）
 - 输入（指针、键盘；为触控预留）
-- retained 矩形树（最小节点模型）
-- CPU **软渲染**路径
+- retained 矩形树（最小 `scene` 节点模型）
+- CPU **软渲染**路径（`render` + `render-soft`）
 - **脏区**重绘（非每帧全屏无脑刷）
 
 验收：空窗 + 若干矩形控件可交互，弱机可跑，变更区域可观测。
 
 ## P1 — 声明式
 
-- 最小 DSL 或等价 API
+- 最小 DSL 或等价 Rust API（`ui`）
 - 状态绑定
 - 基础控件：按钮、列表、文本输入等
 
@@ -22,7 +22,7 @@
 
 ## P2 — 文本
 
-- 字体加载与度量
+- 字体加载与度量（`text`）
 - 换行 / 布局
 - **CJK**（工业界面刚需）
 
@@ -32,7 +32,7 @@
 
 ## P3 — GPU 后端
 
-- 与软渲染**共用场景图**
+- 与软渲染**共用场景图**（`render-gpu`）
 - 合批 / 命令录制对接系统图形 API
 - Office 可默认走 GPU；Field 可关或自动降级
 
@@ -40,7 +40,7 @@
 
 ## P4 — 双档 Profile
 
-- Field / Office 特性开关与性能预算
+- Field / Office 特性开关与性能预算（`profile`）
 - 最低机型清单与降级策略（停帧、降 fps、关特效）
 - 打包与依赖裁剪差异
 
@@ -48,7 +48,7 @@
 
 ## P5 — Immediate 视口
 
-- 显式 `immediate { }`（或等价 API）区域
+- 显式 `immediate { }`（或等价 API）区域（`immediate`）
 - 支持局部嵌入；保留整窗 Immediate 能力但不作 Field 默认
 - 输入焦点、裁剪、刷新边界清晰
 
