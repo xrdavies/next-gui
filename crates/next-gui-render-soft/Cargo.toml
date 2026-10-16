@@ -1,0 +1,10 @@
+[package]
+name = "next-gui-render-soft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CPU software rasterizer backend for next-gui"
+
+[dependencies]
+next-gui-render = { workspace = true }
+next-gui-scene = { workspace = true }

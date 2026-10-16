@@ -1,0 +1,9 @@
+[package]
+name = "next-gui-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Backend-agnostic draw commands and Renderer trait for next-gui"
+
+[dependencies]
+next-gui-scene = { workspace = true }

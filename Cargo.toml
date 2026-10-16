@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/next-gui-platform",
+    "crates/next-gui-scene",
+    "crates/next-gui-render",
+    "crates/next-gui-render-soft",
+    "examples/p0_soft_window",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xrdavies/next-gui"
+
+[workspace.dependencies]
+next-gui-platform = { path = "crates/next-gui-platform" }
+next-gui-scene = { path = "crates/next-gui-scene" }
+next-gui-render = { path = "crates/next-gui-render" }
+next-gui-render-soft = { path = "crates/next-gui-render-soft" }
+winit = { version = "0.30", default-features = true }
+softbuffer = "0.4"
