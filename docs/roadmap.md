@@ -4,6 +4,8 @@
 
 平台实现顺序：**Linux → Windows → macOS（仅 Office）**。
 
+**macOS 占位（并行）：** stub 模块 `next-gui-platform::macos` + [platform-macos.md](platform-macos.md)。另一 agent 可按该清单实现 Office 桌面窗口/输入，不阻塞 Linux P0/P1。校验：`cargo check -p next-gui-platform --features macos`。
+
 ## P0 — 骨架
 
 > **已完成骨架**（见 [p0-design.md](p0-design.md)、`examples/p0_soft_window`）。
@@ -73,7 +75,7 @@
 - 无障碍基线
 - 7×24 稳定性（泄漏、长时间运行）
 - 多分辨率 / DPI
-- **Windows** 平台后端；随后 **macOS（仅 Office 桌面）**
+- **Windows** 平台后端；随后 **macOS（仅 Office 桌面）** — 占位与清单见 [platform-macos.md](platform-macos.md)，可与 Linux 主线并行
 
 验收：面向现场与办公室的真实场景试点可长期运行；OS 按序补齐。
 

@@ -32,6 +32,8 @@
 
 `platform` 尽早抽象多 OS 接口；实现顺序：**Linux → Windows → macOS（仅 Office）**。P0 输入为指针 + 键盘；触控后续补充。
 
+**macOS 占位已就绪**（可并行）：`crates/next-gui-platform/src/macos.rs` + [docs/platform-macos.md](docs/platform-macos.md)。不挡 Linux P0/P1；完整窗口实现由另一路推进。本地可 `cargo check -p next-gui-platform --features macos` 校验 stub。
+
 ## 文档
 
 | 文档 | 内容 |
@@ -43,10 +45,11 @@
 | [docs/glossary.md](docs/glossary.md) | Immediate / retained / 声明式等术语 |
 | [docs/p0-design.md](docs/p0-design.md) | P0 模块接口、crate 布局与可运行验收 |
 | [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
+| [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端占位与并行实现清单 |
 
 ## 状态
 
-**需求与架构已确认；P0 已通；P1 编码已开始。** Linux 上可跑软渲染 retained 示例，以及紧凑声明式 Column/Text/Button 计数器示例。落地顺序：声明式与布局 → 文本（CJK）→ GPU 与双档 → Immediate 与工业打磨。
+**需求与架构已确认；P0 已通；P1 编码已开始；macOS Office 平台占位已就绪（可并行）。** Linux 上可跑软渲染 retained 示例，以及紧凑声明式 Column/Text/Button 计数器示例。落地顺序：声明式与布局 → 文本（CJK）→ GPU 与双档 → Immediate 与工业打磨；macOS 窗口后端不挡 Linux 主线。
 
 ### 试跑 P1（Linux，需要 DISPLAY）
 
