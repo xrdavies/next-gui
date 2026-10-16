@@ -58,12 +58,17 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 ## P3 — GPU 后端
 
-- 与软渲染**共用场景图**（`render-gpu`）
-- 合批 / 命令录制对接系统图形 API
+> **已完成骨架**（见 [p3-design.md](p3-design.md)、`examples/p3_backend_toggle`）。
+
+- 与软渲染**共用场景图 / `DrawCommand`**（`next-gui-render-gpu`）
+- Linux 上经 **wgpu** 离屏栅格 + CPU readback，再走现有 `platform.present`（softbuffer）；真 Surface present 后补
 - GPU **服务观感与动态内容**（流畅重绘、动画、图表），非炫技
-- Office 可默认走 GPU；Field 可关或自动降级
+- 无适配器时 `GpuRenderer::try_new` 失败，应用回退 Soft
+- Office 默认可走 GPU、Field 可关：配置层见 **P4**
 
 验收：同一 UI 树可在软渲染与 GPU 间切换，视觉大体一致（允许抗锯齿等实现差）；无 GPU 亦可启动。
+
+运行：`cargo run -p p3_backend_toggle`（需图形会话；有 GPU 时 Space 切换 Soft/GPU）。
 
 ## P4 — 双档 Profile
 

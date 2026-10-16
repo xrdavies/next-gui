@@ -46,11 +46,20 @@
 | [docs/p0-design.md](docs/p0-design.md) | P0 模块接口、crate 布局与可运行验收 |
 | [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
 | [docs/p2-design.md](docs/p2-design.md) | P2 文本引擎 / CJK / 软渲染字形 |
+| [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 
 ## 状态
 
-**需求与架构已确认；P0–P2 已通；P1 含 Rust API + `.ngui`；P2 含 `next-gui-text`（CJK）与软渲染字形；macOS Office 平台首版已通。** Linux/macOS 可跑软渲染 retained、计数器、`.ngui` 与中英混排示例。下一步：GPU 与双档 → Immediate 与工业打磨；macOS 仍只覆盖 Office 桌面。
+**需求与架构已确认；P0–P3 已通；P1 含 Rust API + `.ngui`；P2 含 `next-gui-text`（CJK）；P3 含 `next-gui-render-gpu`（wgpu）与 Soft 切换；macOS Office 平台首版已通。** 下一步：双档 Profile（P4）→ Immediate 与工业打磨；macOS 仍只覆盖 Office 桌面。
+
+### 试跑 P3（Linux/macOS，需要图形桌面会话；GPU 可选）
+
+```bash
+cargo run -p p3_backend_toggle
+```
+
+操作：点击 **Increment** / **Reset**；有 GPU 时按 **Space** 在 Soft ↔ GPU 间切换（标题与 stderr 显示当前后端）。无 GPU 时自动 Soft。需 CJK 字体（同 P2）。
 
 ### 试跑 P2（Linux/macOS，需要图形桌面会话 + CJK 字体）
 

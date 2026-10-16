@@ -5,6 +5,7 @@ members = [
     "crates/next-gui-scene",
     "crates/next-gui-render",
     "crates/next-gui-render-soft",
+    "crates/next-gui-render-gpu",
     "crates/next-gui-layout",
     "crates/next-gui-ui",
     "crates/next-gui-text",
@@ -12,6 +13,7 @@ members = [
     "examples/p1_counter",
     "examples/p1_ngui_counter",
     "examples/p2_cjk_text",
+    "examples/p3_backend_toggle",
 ]
 
 [workspace.package]
@@ -26,6 +28,7 @@ next-gui-platform = { path = "crates/next-gui-platform" }
 next-gui-scene = { path = "crates/next-gui-scene" }
 next-gui-render = { path = "crates/next-gui-render" }
 next-gui-render-soft = { path = "crates/next-gui-render-soft" }
+next-gui-render-gpu = { path = "crates/next-gui-render-gpu" }
 next-gui-layout = { path = "crates/next-gui-layout" }
 next-gui-ui = { path = "crates/next-gui-ui" }
 next-gui-text = { path = "crates/next-gui-text" }
