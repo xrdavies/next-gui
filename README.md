@@ -49,15 +49,16 @@
 
 ## 状态
 
-**需求与架构已确认；P0 已通；P1 编码已开始；macOS Office 平台首版已通。** Linux 与 macOS 上可运行软渲染 retained 示例，以及紧凑声明式 Column/Text/Button 计数器示例。落地顺序：声明式与布局 → 文本（CJK）→ GPU 与双档 → Immediate 与工业打磨；macOS 仍只覆盖 Office 桌面。
+**需求与架构已确认；P0 已通；P1 已完成（Rust API + `.ngui` DSL）；macOS Office 平台首版已通。** Linux 与 macOS 上可跑软渲染 retained 示例、Rust API 计数器，以及从 `.ngui` 文件加载的同一界面。落地顺序：文本（CJK）→ GPU 与双档 → Immediate 与工业打磨；macOS 仍只覆盖 Office 桌面。
 
 ### 试跑 P1（Linux/macOS，需要图形桌面会话）
 
 ```bash
-cargo run -p p1_counter
+cargo run -p p1_counter          # Rust builder API
+cargo run -p p1_ngui_counter     # load examples/p1_ngui_counter/ui/counter.ngui
 ```
 
-操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。
+操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。`.ngui` 语法见 [docs/p1-design.md](docs/p1-design.md)。
 
 ### 试跑 P0（Linux/macOS，需要图形桌面会话）
 

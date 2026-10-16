@@ -22,17 +22,25 @@
 
 ## P1 — 声明式
 
-> **编码已开始**（见 [p1-design.md](p1-design.md)、`examples/p1_counter`）。
+> **已完成**（见 [p1-design.md](p1-design.md)、`examples/p1_counter`、`examples/p1_ngui_counter`）。
 
-- **紧凑 Rust API / builder**（`ui`）；结构短，复杂逻辑在 Rust；独立 `.ngui` 文件语法后补
+- **紧凑 Rust API / builder**（`ui`）；结构短，复杂逻辑在 Rust
+- **独立 `.ngui` 文件 DSL**：`Column` / `Text` / `Button`，`@name` 取 `WidgetId`；`load_ngui` / `load_ngui_path` 映射到同一套 `ui`
 - **简单 layout**（`layout`）：Column / Row flex 放置
 - 基础控件：**Text**、**Button**（列表 / TextInput 后补）
 - 点击 → 更新状态 → `set_text` / `sync`；仍软渲染 + 脏区
 - P1 Text 用内置点阵字占位；真正 shaping / CJK 见 P2
 
-验收：用紧凑声明式描述即可搭出简单表单（如计数器），无需手写每帧绘制指令。
+验收：用紧凑声明式（Rust API 或 `.ngui`）描述即可搭出简单表单（如计数器），无需手写每帧绘制指令。
 
-运行：`cargo run -p p1_counter`（需 Linux/macOS 图形桌面会话）。
+运行：
+
+```bash
+cargo run -p p1_counter          # Rust API
+cargo run -p p1_ngui_counter     # .ngui 文件
+```
+
+（需 Linux/macOS 图形桌面会话）。
 
 ## P2 — 文本
 

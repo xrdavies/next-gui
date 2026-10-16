@@ -1,11 +1,15 @@
 //! Compact declarative UI API for next-gui.
 //!
-//! P1: retained widget tree (Column / Text / Button) built with a short builder,
-//! synced into [`next_gui_scene::Scene`]. Not a third-party UI kernel; no GPU path.
+//! P1: retained widget tree (Column / Text / Button) built with a short builder
+//! or loaded from a compact `.ngui` file, synced into [`next_gui_scene::Scene`].
+//! Not a third-party UI kernel; no GPU path.
 
 #![deny(missing_docs)]
 
 mod bitmap_font;
+mod dsl;
+
+pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 
 use std::collections::HashMap;
 
@@ -486,6 +490,34 @@ impl ColumnBuilder<'_> {
             },
         );
         self.push_child(id);
+        id
+    }
+
+    /// Nest another column inside this column (used by `.ngui` and Rust API).
+    pub fn column<F>(&mut self, style: ColumnStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut ColumnBuilder<'_>),
+    {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Column {
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                glyphs: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        {
+            let mut builder = ColumnBuilder {
+                ui: self.ui,
+                column: id,
+            };
+            build(&mut builder);
+        }
         id
     }
 

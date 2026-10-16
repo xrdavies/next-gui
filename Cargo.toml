@@ -9,6 +9,7 @@ members = [
     "crates/next-gui-ui",
     "examples/p0_soft_window",
     "examples/p1_counter",
+    "examples/p1_ngui_counter",
 ]
 
 [workspace.package]
