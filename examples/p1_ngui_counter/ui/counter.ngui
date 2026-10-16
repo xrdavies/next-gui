@@ -1,0 +1,17 @@
+// P1 compact DSL — counter form (maps to Column / Text / Button)
+Column {
+  x: 40
+  y: 40
+  width: 360
+  height: 520
+  padding: 20
+  gap: 14
+  background: #2a2a2e
+
+  Text("Count: 0") @label
+  Button("Increment") @inc
+  Button("Reset") @reset {
+    bg: #6b7280
+    fg: #ffffff
+  }
+}
