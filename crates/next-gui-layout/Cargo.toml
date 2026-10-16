@@ -1,0 +1,9 @@
+[package]
+name = "next-gui-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Simple box/flex layout for next-gui (no GPU)"
+
+[dependencies]
+next-gui-scene = { workspace = true }

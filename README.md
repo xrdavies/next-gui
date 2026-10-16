@@ -42,10 +42,19 @@
 | [docs/rationale.md](docs/rationale.md) | 为何自研、为何不以 Immediate / Web 壳为主路线 |
 | [docs/glossary.md](docs/glossary.md) | Immediate / retained / 声明式等术语 |
 | [docs/p0-design.md](docs/p0-design.md) | P0 模块接口、crate 布局与可运行验收 |
+| [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
 
 ## 状态
 
-**需求与架构已确认；P0 编码已开始。** 当前有 Linux 软渲染开窗示例（retained 矩形 + 脏区）。落地顺序：先软渲染 + 脏区，再声明式与文本，再 GPU 与双档，最后 Immediate 与工业打磨。
+**需求与架构已确认；P0 已通；P1 编码已开始。** Linux 上可跑软渲染 retained 示例，以及紧凑声明式 Column/Text/Button 计数器示例。落地顺序：声明式与布局 → 文本（CJK）→ GPU 与双档 → Immediate 与工业打磨。
+
+### 试跑 P1（Linux，需要 DISPLAY）
+
+```bash
+cargo run -p p1_counter
+```
+
+操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。
 
 ### 试跑 P0（Linux，需要 DISPLAY）
 

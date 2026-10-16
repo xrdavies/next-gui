@@ -1,0 +1,10 @@
+[package]
+name = "next-gui-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Compact declarative UI API for next-gui (retained sync to scene)"
+
+[dependencies]
+next-gui-scene = { workspace = true }
+next-gui-layout = { workspace = true }

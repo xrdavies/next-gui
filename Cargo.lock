@@ -657,6 +657,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "next-gui-layout"
+version = "0.1.0"
+dependencies = [
+ "next-gui-scene",
+]
+
+[[package]]
 name = "next-gui-platform"
 version = "0.1.0"
 dependencies = [
@@ -682,6 +689,14 @@ dependencies = [
 [[package]]
 name = "next-gui-scene"
 version = "0.1.0"
+
+[[package]]
+name = "next-gui-ui"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-scene",
+]
 
 [[package]]
 name = "num_enum"
@@ -1008,6 +1023,17 @@ dependencies = [
  "next-gui-render",
  "next-gui-render-soft",
  "next-gui-scene",
+]
+
+[[package]]
+name = "p1_counter"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-ui",
 ]
 
 [[package]]
