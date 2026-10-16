@@ -8,6 +8,8 @@ description = "Windowing, input, and frame present abstraction for next-gui"
 [features]
 default = ["linux"]
 linux = ["dep:winit", "dep:softbuffer"]
+# Enables the macOS stub module on any host for compile-check; real windowing is target_os = "macos".
+macos = []
 
 [dependencies]
 winit = { workspace = true, optional = true }

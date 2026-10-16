@@ -116,7 +116,7 @@ profile ──横切配置──→ 各层（开关与预算，不形成第二�
 |------|------|------|
 | 1 | **Linux** | Field + Office（第一实现） |
 | 2 | **Windows** | Field + Office |
-| 3 | **macOS** | **仅 Office 桌面**；Field 不要求 |
+| 3 | **macOS** | **仅 Office 桌面**；Field 不要求；占位与并行清单见 [platform-macos.md](platform-macos.md) |
 
 P0 输入范围：**指针 + 键盘**。触控、工控按键映射在接口上预留，实现后补（见需求 P6 / 工业打磨）。
 

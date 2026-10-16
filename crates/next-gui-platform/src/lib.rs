@@ -191,3 +191,10 @@ pub mod linux;
 
 #[cfg(feature = "linux")]
 pub use linux::run;
+
+/// macOS Office-desktop backend.
+///
+/// Compiled on `target_os = "macos"` or with `--features macos` (stub typecheck on Linux).
+/// See `docs/platform-macos.md`. Not a Field target.
+#[cfg(any(target_os = "macos", feature = "macos"))]
+pub mod macos;
