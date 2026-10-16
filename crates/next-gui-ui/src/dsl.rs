@@ -1,7 +1,7 @@
 //! Compact `.ngui` file DSL (P1).
 //!
 //! Parses a small Column / Text / Button markup and builds a retained [`Ui`]
-//! via the same builders as the Rust API. No bindings, no GPU, no CJK.
+//! via the same builders as the Rust API. No bindings, no GPU; text uses next-gui-text (CJK via system font).
 
 use std::collections::HashMap;
 use std::path::Path;

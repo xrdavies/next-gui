@@ -44,13 +44,17 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 ## P2 — 文本
 
-- 字体加载与度量（`text`）
-- 换行 / 布局
-- **CJK**（工业界面刚需）
+> **已完成骨架**（见 [p2-design.md](p2-design.md)、`examples/p2_cjk_text`）。
 
-说明：字体 shaping 可阶段性接入成熟算法实现，对外仍是自研文本引擎接口。
+- 字体加载与度量（`next-gui-text`）
+- 简单换行 / 行布局；栅格化为 alpha mask
+- **CJK**（系统 Noto/PingFang/雅黑等；工业界面刚需）
+- `ui` Text/Button 去掉 P1 点阵占位；软渲染 `BlitAlpha`
+- 说明：栅格阶段性用 `fontdue`；复杂 shaping / IME 编辑后补
 
-验收：中英混排可读、可编辑基线可用。
+验收：中英混排可读；度量/布局 API 可用（完整可编辑控件后补）。
+
+运行：`cargo run -p p2_cjk_text`（需图形会话 + CJK 字体，如 `fonts-noto-cjk`）。
 
 ## P3 — GPU 后端
 

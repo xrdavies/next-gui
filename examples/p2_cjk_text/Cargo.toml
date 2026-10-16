@@ -1,0 +1,18 @@
+[package]
+name = "p2_cjk_text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "p2_cjk_text"
+path = "src/main.rs"
+
+[dependencies]
+next-gui-platform = { workspace = true }
+next-gui-scene = { workspace = true }
+next-gui-render = { workspace = true }
+next-gui-render-soft = { workspace = true }
+next-gui-ui = { workspace = true }
+next-gui-text = { workspace = true }

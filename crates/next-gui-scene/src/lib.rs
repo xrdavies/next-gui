@@ -5,6 +5,7 @@
 #![deny(missing_docs)]
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Stable node identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -154,6 +155,43 @@ impl Color {
     }
 }
 
+
+/// 8-bit coverage mask tinted by [`Node::fill`] when encoded.
+#[derive(Debug, Clone)]
+pub struct AlphaMask {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Row-major coverage 0–255.
+    pub pixels: Arc<[u8]>,
+}
+
+impl AlphaMask {
+    /// Create from owned pixel buffer.
+    pub fn new(width: u32, height: u32, pixels: impl Into<Arc<[u8]>>) -> Self {
+        Self {
+            width,
+            height,
+            pixels: pixels.into(),
+        }
+    }
+
+    /// Empty mask.
+    pub fn empty() -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            pixels: Arc::from([]),
+        }
+    }
+
+    /// No drawable pixels.
+    pub fn is_empty(&self) -> bool {
+        self.width == 0 || self.height == 0 || self.pixels.is_empty()
+    }
+}
+
 /// A retained rectangle node.
 #[derive(Debug, Clone)]
 pub struct Node {
@@ -169,6 +207,9 @@ pub struct Node {
     pub fill: Color,
     /// Visibility.
     pub visible: bool,
+    /// Optional alpha mask drawn at `bounds` origin, tinted by `fill`.
+    /// When set, the solid `fill` rect is skipped in encode (mask-only paint).
+    pub mask: Option<AlphaMask>,
 }
 
 /// Accumulated dirty rectangles.
@@ -248,6 +289,7 @@ impl Scene {
                 bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
                 fill: Color::rgba(0, 0, 0, 0),
                 visible: false,
+                mask: None,
             },
         );
         Self {
@@ -282,6 +324,7 @@ impl Scene {
             bounds,
             fill,
             visible: true,
+            mask: None,
         };
         self.nodes.insert(id, node);
         if let Some(p) = self.nodes.get_mut(&parent) {
@@ -331,6 +374,29 @@ impl Scene {
         let bounds = node.bounds;
         node.visible = visible;
         self.dirty.add(bounds);
+        true
+    }
+
+
+    /// Set or clear an alpha mask; marks dirty using current bounds ∪ mask size.
+    pub fn set_mask(&mut self, id: NodeId, mask: Option<AlphaMask>) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        let old = node.bounds;
+        node.mask = mask;
+        let mut dirty_bounds = old;
+        if let Some(m) = node.mask.as_ref() {
+            if !m.is_empty() {
+                dirty_bounds = dirty_bounds.union(&Rect::new(
+                    old.x,
+                    old.y,
+                    m.width as f32,
+                    m.height as f32,
+                ));
+            }
+        }
+        self.dirty.add(dirty_bounds);
         true
     }
 

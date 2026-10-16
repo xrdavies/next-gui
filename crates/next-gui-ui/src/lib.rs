@@ -1,20 +1,21 @@
 //! Compact declarative UI API for next-gui.
 //!
-//! P1: retained widget tree (Column / Text / Button) built with a short builder
+//! P1/P2: retained widget tree (Column / Text / Button) built with a short builder
 //! or loaded from a compact `.ngui` file, synced into [`next_gui_scene::Scene`].
-//! Not a third-party UI kernel; no GPU path.
+//! Text uses [`next_gui_text`] (font metrics + CJK-capable masks), not bitmap placeholders.
 
 #![deny(missing_docs)]
 
-mod bitmap_font;
 mod dsl;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use next_gui_layout::{layout_flex, Axis, ChildMeasure, FlexParams};
-use next_gui_scene::{Color, NodeId, Rect, Scene};
+use next_gui_scene::{AlphaMask, Color, NodeId, Rect, Scene};
+use next_gui_text::{load_default_cjk_font, Font};
 
 /// Stable widget identifier within a [`Ui`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,13 +70,14 @@ enum Kind {
     Text {
         content: String,
         color: Color,
-        scale: f32,
+        /// Font size in pixels (replaces P1 integer bitmap scale).
+        size: f32,
     },
     Button {
         label: String,
         bg: Color,
         fg: Color,
-        scale: f32,
+        size: f32,
         min_width: f32,
         height: f32,
     },
@@ -84,14 +86,14 @@ enum Kind {
 #[derive(Debug)]
 struct Widget {
     kind: Kind,
-    /// Primary scene node (container / hit target).
+    /// Primary scene node (container / hit target / text mask host).
     node: Option<NodeId>,
-    /// Glyph pixel nodes for text/button labels.
-    glyphs: Vec<NodeId>,
+    /// Label mask node for buttons (child of button bg).
+    label_node: Option<NodeId>,
 }
 
 /// Retained UI tree that mounts into a [`Scene`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Ui {
     next_id: u64,
     widgets: HashMap<WidgetId, Widget>,
@@ -99,17 +101,41 @@ pub struct Ui {
     roots: Vec<WidgetId>,
     /// scene node → widget (buttons primarily).
     node_to_widget: HashMap<NodeId, WidgetId>,
+    font: Arc<Font>,
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Ui {
-    /// Empty UI.
+    /// Empty UI using the default system CJK-capable font.
+    ///
+    /// Panics if no system font can be loaded — use [`Ui::with_font`] in tests
+    /// that supply bytes, or ensure Noto/PingFang/YaHei is installed.
     pub fn new() -> Self {
+        let font = load_default_cjk_font().unwrap_or_else(|e| {
+            panic!("next-gui-ui: failed to load default CJK font: {e}");
+        });
+        Self::with_font(font)
+    }
+
+    /// UI with an explicit font face.
+    pub fn with_font(font: Font) -> Self {
         Self {
             next_id: 1,
             widgets: HashMap::new(),
             roots: Vec::new(),
             node_to_widget: HashMap::new(),
+            font: Arc::new(font),
         }
+    }
+
+    /// Borrow the active font.
+    pub fn font(&self) -> &Font {
+        &self.font
     }
 
     fn alloc(&mut self) -> WidgetId {
@@ -132,7 +158,7 @@ impl Ui {
                     children: Vec::new(),
                 },
                 node: None,
-                glyphs: Vec::new(),
+                label_node: None,
             },
         );
         self.roots.push(id);
@@ -173,7 +199,7 @@ impl Ui {
         self.node_to_widget.get(&node).copied()
     }
 
-    /// Hit-test widgets using the scene graph (glyph hits walk up to the button).
+    /// Hit-test widgets using the scene graph (label hits walk up to the button).
     pub fn hit_widget(&self, scene: &Scene, x: f32, y: f32) -> Option<WidgetId> {
         let node = scene.hit_test(x, y)?;
         if let Some(wid) = self.widget_from_node(node) {
@@ -207,7 +233,7 @@ impl Ui {
                     style.background.unwrap_or(Color::rgba(0, 0, 0, 0)),
                     style.background.is_some(),
                 ),
-                Some(Kind::Text { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Text { color, .. }) => (*color, true),
                 Some(Kind::Button { bg, .. }) => (*bg, true),
                 None => return,
             };
@@ -226,6 +252,14 @@ impl Ui {
                 Some(Kind::Button { .. })
             ) {
                 self.node_to_widget.insert(node, id);
+                // Label child for mask
+                let label = scene
+                    .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                    .expect("insert label node");
+                // Labels are not hit targets themselves when mask-only; keep visible for paint.
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    w.label_node = Some(label);
+                }
             }
         }
 
@@ -245,20 +279,18 @@ impl Ui {
 
     fn measure_widget(&self, id: WidgetId) -> ChildMeasure {
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Text {
-                content, scale, ..
-            }) => {
-                let (w, h) = bitmap_font::measure(content, *scale);
+            Some(Kind::Text { content, size, .. }) => {
+                let (w, h) = self.font.measure_line(content, *size);
                 ChildMeasure::new(w, h + 4.0)
             }
             Some(Kind::Button {
                 label,
-                scale,
+                size,
                 min_width,
                 height,
                 ..
             }) => {
-                let (tw, _) = bitmap_font::measure(label, *scale);
+                let (tw, _) = self.font.measure_line(label, *size);
                 let pad_x = 16.0;
                 ChildMeasure::new((*min_width).max(tw + pad_x * 2.0), *height)
             }
@@ -329,15 +361,7 @@ impl Ui {
             if let Some(w) = self.widgets.get(&child_id) {
                 if let Some(node) = w.node {
                     scene.set_bounds(node, rect);
-                    match &w.kind {
-                        Kind::Button { .. } => {
-                            scene.set_visible(node, true);
-                        }
-                        Kind::Text { .. } => {
-                            scene.set_visible(node, false);
-                        }
-                        Kind::Column { .. } => {}
-                    }
+                    scene.set_visible(node, true);
                 }
             }
             if matches!(
@@ -358,12 +382,13 @@ impl Ui {
             return;
         }
 
-        let Some(w) = self.widgets.get_mut(&id) else {
+        let Some(w) = self.widgets.get(&id) else {
             return;
         };
         let Some(node) = w.node else {
             return;
         };
+        let label_node = w.label_node;
         let bounds = scene
             .get(node)
             .map(|n| n.bounds)
@@ -373,48 +398,50 @@ impl Ui {
             Kind::Text {
                 content,
                 color,
-                scale,
+                size,
             } => {
                 let content = content.clone();
                 let color = *color;
-                let scale = *scale;
-                bitmap_font::sync_text(
-                    scene,
+                let size = *size;
+                let (_, mask) = self.font.rasterize_text(&content, size, None);
+                scene.set_fill(node, color);
+                scene.set_mask(
                     node,
-                    &content,
-                    Rect::new(bounds.x, bounds.y + 2.0, bounds.width, bounds.height),
-                    color,
-                    scale,
-                    &mut w.glyphs,
+                    Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
                 );
+                // Ensure bounds tall/wide enough for mask hit/dirty
+                let bw = bounds.width.max(mask.width as f32);
+                let bh = bounds.height.max(mask.height as f32);
+                scene.set_bounds(node, Rect::new(bounds.x, bounds.y, bw, bh));
             }
             Kind::Button {
                 label,
                 fg,
-                scale,
+                size,
                 bg,
                 ..
             } => {
                 let label = label.clone();
                 let fg = *fg;
-                let scale = *scale;
+                let size = *size;
                 let bg = *bg;
                 scene.set_fill(node, bg);
-                let text_origin = Rect::new(
-                    bounds.x + 16.0,
-                    bounds.y + (bounds.height - 7.0 * scale) * 0.5,
-                    bounds.width,
-                    bounds.height,
-                );
-                bitmap_font::sync_text(
-                    scene,
-                    node,
-                    &label,
-                    text_origin,
-                    fg,
-                    scale,
-                    &mut w.glyphs,
-                );
+                scene.set_mask(node, None);
+                let (_, mask) = self.font.rasterize_text(&label, size, None);
+                if let Some(lid) = label_node {
+                    let lx = bounds.x + 16.0;
+                    let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+                    scene.set_bounds(
+                        lid,
+                        Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+                    );
+                    scene.set_fill(lid, fg);
+                    scene.set_mask(
+                        lid,
+                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                    );
+                    scene.set_visible(lid, true);
+                }
             }
             Kind::Column { .. } => {}
         }
@@ -430,15 +457,15 @@ pub struct ColumnBuilder<'a> {
 impl ColumnBuilder<'_> {
     /// Add a text label; returns its [`WidgetId`].
     pub fn text(&mut self, content: impl Into<String>) -> WidgetId {
-        self.text_styled(content, Color::rgb(0xe5, 0xe5, 0xe5), 2.0)
+        self.text_styled(content, Color::rgb(0xe5, 0xe5, 0xe5), 22.0)
     }
 
-    /// Add a text label with explicit color/scale.
+    /// Add a text label with explicit color/size (px).
     pub fn text_styled(
         &mut self,
         content: impl Into<String>,
         color: Color,
-        scale: f32,
+        size: f32,
     ) -> WidgetId {
         let id = self.ui.alloc();
         self.ui.widgets.insert(
@@ -447,10 +474,10 @@ impl ColumnBuilder<'_> {
                 kind: Kind::Text {
                     content: content.into(),
                     color,
-                    scale,
+                    size,
                 },
                 node: None,
-                glyphs: Vec::new(),
+                label_node: None,
             },
         );
         self.push_child(id);
@@ -481,12 +508,12 @@ impl ColumnBuilder<'_> {
                     label: label.into(),
                     bg,
                     fg,
-                    scale: 2.0,
+                    size: 20.0,
                     min_width: 160.0,
-                    height: 40.0,
+                    height: 44.0,
                 },
                 node: None,
-                glyphs: Vec::new(),
+                label_node: None,
             },
         );
         self.push_child(id);
@@ -507,7 +534,7 @@ impl ColumnBuilder<'_> {
                     children: Vec::new(),
                 },
                 node: None,
-                glyphs: Vec::new(),
+                label_node: None,
             },
         );
         self.push_child(id);
@@ -555,5 +582,19 @@ mod tests {
         ui.set_text(label, "Count: 1");
         ui.sync(&mut scene);
         assert_eq!(ui.text_content(label), Some("Count: 1"));
+    }
+
+    #[test]
+    fn cjk_text_gets_mask() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut label = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            label = col.text("你好工业 Hello");
+        });
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&label).unwrap().node.unwrap();
+        let n = scene.get(node).unwrap();
+        assert!(n.mask.as_ref().is_some_and(|m| !m.is_empty()));
     }
 }

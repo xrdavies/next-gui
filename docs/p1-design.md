@@ -33,7 +33,7 @@
 
 - 满血 QML 式绑定语言 / 状态机 DSL（绑定能力后续演进）
 - 列表虚拟化、TextInput 完整编辑（可后补）
-- `text` crate / CJK shaping（P2）；P1 Text 用 **内置点阵字**（ASCII 子集）
+- `text` crate / CJK shaping（P2）；P1 曾用点阵占位；**P2 已由 `text` 替换**
 - GPU、Windows/macOS、Immediate、触控
 
 ---
@@ -155,7 +155,7 @@ Rust API 与 `.ngui` **语义对齐**：后者只是前者的文件前端，不�
 
 ### 4.4 点阵字（P1 占位）
 
-内置 5×7 ASCII 子集；**P2 由 `text` 替换**，`set_text` API 保持。
+P2 起由 `next-gui-text` 提供 TrueType/CJK；`set_text` API 保持。点阵模块已移除。
 
 ---
 

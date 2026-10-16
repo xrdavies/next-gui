@@ -51,6 +51,60 @@ impl SoftRenderer {
         }
     }
 
+    fn blit_alpha_clipped(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        mask: &[u8],
+        color: Color,
+        clip: &Rect,
+    ) {
+        if width == 0 || height == 0 || mask.len() < (width as usize) * (height as usize) {
+            return;
+        }
+        let src_rect = Rect::new(x as f32, y as f32, width as f32, height as f32);
+        let area = src_rect.intersect(clip);
+        let Some((cx0, cy0, cw, ch)) = area.clip_to_buffer(self.width, self.height) else {
+            return;
+        };
+        let cr = color.r as u32;
+        let cg = color.g as u32;
+        let cb = color.b as u32;
+        let ca = color.a as u32;
+
+        for py in cy0..cy0 + ch {
+            for px in cx0..cx0 + cw {
+                let mx = px as i32 - x;
+                let my = py as i32 - y;
+                if mx < 0 || my < 0 || mx >= width as i32 || my >= height as i32 {
+                    continue;
+                }
+                let coverage = mask[(my as u32 * width + mx as u32) as usize] as u32;
+                if coverage == 0 {
+                    continue;
+                }
+                // coverage * color.a / 255
+                let a = (coverage * ca) / 255;
+                if a == 0 {
+                    continue;
+                }
+                let dest_i = (py * self.width + px) as usize;
+                let dst = self.pixels[dest_i];
+                let dr = (dst >> 16) & 0xff;
+                let dg = (dst >> 8) & 0xff;
+                let db = dst & 0xff;
+                // src over
+                let inv = 255 - a;
+                let or_ = (cr * a + dr * inv) / 255;
+                let og = (cg * a + dg * inv) / 255;
+                let ob = (cb * a + db * inv) / 255;
+                self.pixels[dest_i] = (or_ << 16) | (og << 8) | ob;
+            }
+        }
+    }
+
     /// Pixel at (x,y) for tests; None if OOB.
     pub fn pixel(&self, x: u32, y: u32) -> Option<u32> {
         if x >= self.width || y >= self.height {
@@ -87,6 +141,19 @@ impl Renderer for SoftRenderer {
                             self.fill_rect_clipped(rect, *color, d);
                         }
                     }
+                    DrawCommand::BlitAlpha {
+                        x,
+                        y,
+                        width,
+                        height,
+                        pixels,
+                        color,
+                    } => {
+                        let bounds = Rect::new(*x as f32, *y as f32, *width as f32, *height as f32);
+                        if bounds.intersects(d) {
+                            self.blit_alpha_clipped(*x, *y, *width, *height, pixels, *color, d);
+                        }
+                    }
                 }
             }
         }
@@ -101,6 +168,7 @@ impl Renderer for SoftRenderer {
 mod tests {
     use super::*;
     use next_gui_render::DrawCommand;
+    use std::sync::Arc;
 
     #[test]
     fn dirty_fill_writes_pixels() {
@@ -113,6 +181,25 @@ mod tests {
         dirty.add(Rect::new(10.0, 10.0, 5.0, 5.0));
         soft.render(&cmds, &dirty);
         assert_eq!(soft.pixel(12, 12), Some(Color::rgb(255, 0, 0).to_xrgb8888()));
+        assert_eq!(soft.pixel(0, 0), Some(Color::rgb(0, 0, 0).to_xrgb8888()));
+    }
+
+    #[test]
+    fn blit_alpha_tints() {
+        let mut soft = SoftRenderer::new(16, 16, Color::rgb(0, 0, 0));
+        let mask: Arc<[u8]> = Arc::from([255u8]);
+        let cmds = [DrawCommand::BlitAlpha {
+            x: 3,
+            y: 4,
+            width: 1,
+            height: 1,
+            pixels: mask,
+            color: Color::rgb(0, 0, 255),
+        }];
+        let mut dirty = DirtyRegion::new();
+        dirty.add(Rect::new(0.0, 0.0, 16.0, 16.0));
+        soft.render(&cmds, &dirty);
+        assert_eq!(soft.pixel(3, 4), Some(Color::rgb(0, 0, 255).to_xrgb8888()));
         assert_eq!(soft.pixel(0, 0), Some(Color::rgb(0, 0, 0).to_xrgb8888()));
     }
 }
