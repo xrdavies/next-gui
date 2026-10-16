@@ -1,0 +1,17 @@
+[package]
+name = "next-gui-render-gpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "wgpu GPU backend for next-gui (shared DrawCommand path; softbuffer present via readback)"
+
+[dependencies]
+next-gui-render = { workspace = true }
+next-gui-scene = { workspace = true }
+wgpu = { version = "24.0", default-features = true }
+pollster = "0.4"
+bytemuck = { version = "1.21", features = ["derive"] }
+
+[dev-dependencies]
