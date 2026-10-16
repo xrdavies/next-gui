@@ -1,4 +1,4 @@
-//! P0 demo: retained rect scene + dirty-region soft render on Linux.
+//! P0 demo: retained rect scene + dirty-region soft render on Linux and macOS.
 //!
 //! Controls:
 //! - Left click a colored block to cycle its color (dirty region updates).
@@ -7,9 +7,7 @@
 //!
 //! Stderr logs dirty rect area each redraw that actually paints.
 
-use next_gui_platform::{
-    AppCallbacks, Event, KeyCode, PointerButton, WindowAttrs, WindowCtx,
-};
+use next_gui_platform::{AppCallbacks, Event, KeyCode, PointerButton, WindowAttrs, WindowCtx};
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, NodeId, Rect, Scene};
@@ -209,9 +207,13 @@ impl AppCallbacks for Demo {
 fn main() {
     let attrs = WindowAttrs::new("next-gui P0 soft", 800, 600);
     let demo = Demo::new(attrs.width, attrs.height);
-    if let Err(e) = next_gui_platform::run(attrs, demo) {
+    #[cfg(target_os = "macos")]
+    let result = next_gui_platform::macos::run(attrs, demo);
+    #[cfg(not(target_os = "macos"))]
+    let result = next_gui_platform::run(attrs, demo);
+    if let Err(e) = result {
         eprintln!("failed to run P0 window: {e}");
-        eprintln!("hint: need a graphical DISPLAY (X11/Wayland) on Linux");
+        eprintln!("hint: need an active graphical desktop session");
         std::process::exit(1);
     }
 }

@@ -24,7 +24,7 @@
 | 档位 | 对象 | 渲染与刷新 | Immediate | OS |
 |------|------|------------|-----------|-----|
 | **Field（现场）** | 嵌入式 / 工控弱机 | retained 脏区；软渲染必达；GPU 可关；少特效、可停帧/降帧 | 默认关闭 | Linux → Windows（不做 macOS） |
-| **Office（办公）** | 规划 / 设计人员桌面 | 同一场景图；GPU 优先（观感/动态内容）；保留软渲染降级 | 局部视口可选 | Linux → Windows → macOS（后补，仅 Office） |
+| **Office（办公）** | 规划 / 设计人员桌面 | 同一场景图；GPU 优先（观感/动态内容）；保留软渲染降级 | 局部视口可选 | Linux → Windows → macOS（仅 Office） |
 
 共享：紧凑 DSL / Rust API、组件与设计 token、retained 语义。分叉：`profile` 后端档位与特性开关，而非两套 UI 重写。
 
@@ -32,7 +32,7 @@
 
 `platform` 尽早抽象多 OS 接口；实现顺序：**Linux → Windows → macOS（仅 Office）**。P0 输入为指针 + 键盘；触控后续补充。
 
-**macOS 占位已就绪**（可并行）：`crates/next-gui-platform/src/macos.rs` + [docs/platform-macos.md](docs/platform-macos.md)。不挡 Linux P0/P1；完整窗口实现由另一路推进。本地可 `cargo check -p next-gui-platform --features macos` 校验 stub。
+**macOS Office 后端首版已实现**：`crates/next-gui-platform/src/macos.rs` + [docs/platform-macos.md](docs/platform-macos.md)。它复用 Linux 的统一事件契约与 `winit`/`softbuffer` 软渲染路径；Field 仍不以 macOS 为交付目标。
 
 ## 文档
 
@@ -45,13 +45,13 @@
 | [docs/glossary.md](docs/glossary.md) | Immediate / retained / 声明式等术语 |
 | [docs/p0-design.md](docs/p0-design.md) | P0 模块接口、crate 布局与可运行验收 |
 | [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
-| [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端占位与并行实现清单 |
+| [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 
 ## 状态
 
-**需求与架构已确认；P0 已通；P1 编码已开始；macOS Office 平台占位已就绪（可并行）。** Linux 上可跑软渲染 retained 示例，以及紧凑声明式 Column/Text/Button 计数器示例。落地顺序：声明式与布局 → 文本（CJK）→ GPU 与双档 → Immediate 与工业打磨；macOS 窗口后端不挡 Linux 主线。
+**需求与架构已确认；P0 已通；P1 编码已开始；macOS Office 平台首版已通。** Linux 与 macOS 上可运行软渲染 retained 示例，以及紧凑声明式 Column/Text/Button 计数器示例。落地顺序：声明式与布局 → 文本（CJK）→ GPU 与双档 → Immediate 与工业打磨；macOS 仍只覆盖 Office 桌面。
 
-### 试跑 P1（Linux，需要 DISPLAY）
+### 试跑 P1（Linux/macOS，需要图形桌面会话）
 
 ```bash
 cargo run -p p1_counter
@@ -59,7 +59,7 @@ cargo run -p p1_counter
 
 操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。
 
-### 试跑 P0（Linux，需要 DISPLAY）
+### 试跑 P0（Linux/macOS，需要图形桌面会话）
 
 ```bash
 cargo run -p p0_soft_window

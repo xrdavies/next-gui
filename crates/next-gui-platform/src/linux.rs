@@ -139,7 +139,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     },
                 );
                 event_loop.exit();
-                return;
             }
             WindowEvent::Resized(size) => {
                 host.width = size.width.max(1);
@@ -154,7 +153,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     },
                 );
                 ctx.request_redraw();
-                return;
             }
             WindowEvent::RedrawRequested => {
                 if !self.started {
@@ -170,7 +168,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     },
                 );
                 self.app.on_redraw(&mut ctx);
-                return;
             }
             WindowEvent::CursorMoved { position, .. } => {
                 host.cursor = (position.x, position.y);
@@ -184,7 +181,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         y,
                     },
                 );
-                return;
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = *state == ElementState::Pressed;
@@ -208,9 +204,10 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         y,
                     },
                 );
-                return;
             }
-            WindowEvent::KeyboardInput { event: key_event, .. } => {
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
                 let pressed = key_event.state == ElementState::Pressed;
                 let key = match &key_event.logical_key {
                     Key::Named(NamedKey::Escape) => KeyCode::Escape,
@@ -235,7 +232,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         event_loop.exit();
                     }
                 }
-                return;
             }
             _ => {}
         }
@@ -246,7 +242,8 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
 ///
 /// Requires a working `DISPLAY` (or Wayland) on the host.
 pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
-    let event_loop = EventLoop::new().map_err(|e| PlatformError::new(format!("event loop: {e}")))?;
+    let event_loop =
+        EventLoop::new().map_err(|e| PlatformError::new(format!("event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut runner = Runner {
         attrs,
