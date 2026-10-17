@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**Shell 切片**（Icon / Toolbar / Panel / StatusBar / Splitter）与 **Input 切片**（ScrollArea / TextInput / Checkbox / Radio / Switch）以及 **Data 切片**（List / Tree / Table）与 **Nav 切片**（Menu / ContextMenu / Tabs / Select / Slider）已在 `next-gui-ui` + `examples/office_shell` / `office_inputs` / `office_data` / `office_nav` 落地。
+> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**Shell / Input / Data / Nav / Feedback 切片**均已落地：`next-gui-ui` + `examples/office_shell` / `office_inputs` / `office_data` / `office_nav` / `office_feedback`（Tag / Badge / Tooltip / Modal / Progress / Alert）。**P0 目录控件（Rust API）已齐。**
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -270,8 +270,8 @@
 
 | 状态 | 控件 |
 |------|------|
-| 已实现（Office 线/P1） | `text`，`button`，`column`，`row`，`spacer`，`separator` |
-| 锁定下一步实现（P0 缺口） | `icon`，`toolbar`，`menu`/`dropdown`，`context_menu`，`tabs`，`splitter`，`panel`，`scroll_area`，`text_input`，`checkbox`，`radio`，`switch`，`select`，`slider`，`list`，`table`，`tree`，`tag`，`badge`，`tooltip`，`modal`，`progress`，`alert`，`status_bar` |
+| 已实现（Office 线 / P0 Rust API） | `text`，`button`，`column`，`row`，`spacer`，`separator`，`icon`，`toolbar`，`menu`/`dropdown`，`context_menu`，`tabs`，`splitter`，`panel`，`scroll_area`，`text_input`，`checkbox`，`radio`，`switch`，`select`，`slider`，`list`，`table`，`tree`，`tag`，`badge`，`tooltip`，`modal`，`progress`，`alert`，`status_bar` |
+| P0 缺口 | **无**（目录 §4 名单已覆盖；IME/虚拟化/列宽拖拽等为增强，见各切片备注） |
 | 未实现且非本文范围 | 动画系统、完整 IME、Immediate 视口、Profile crate（P4） |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
@@ -299,3 +299,4 @@
 | 2026-10-17 | 初稿：对照 Ant Design / Element Plus / MUI 官方总览，整理 Office 优先级与工业扩展；待确认。 |
 | 2026-10-17 | **拍板锁定：** P0 含 TextInput+基础 Table/Tree；Toolbar/StatusBar/Panel 一等公民；P1 层级选择仅 TreeSelect；AlarmList/Gauge/Trend 仍 P1；Form 校验 P1。 |
 | 2026-10-17 | **Shell 切片落地：** `icon` / `toolbar` / `panel` / `status_bar` / `splitter`（Rust API + `office_shell` 示例）；录入/表/树仍待办。 |
+| 2026-10-17 | **Feedback 切片落地：** `tag` / `badge` / `tooltip` / `modal` / `progress` / `alert`（Rust API + `office_feedback`）；**P0 目录控件齐。** |

@@ -18,7 +18,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 - Field/Office **Profile 配置 crate**（P4，已推迟）
 - Immediate 视口（P5）
-- 完整 IME/CJK 输入、Modal / Tag / Badge / Tooltip / Progress / Alert（后续切片）；List/Tree/Table 与 Menu/ContextMenu/Tabs/Select/Slider 已落地
+- 完整 IME/CJK 输入（TextInput 仍 ASCII 优先）；P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地
 - 动画系统、图表控件
 
 ---
@@ -96,6 +96,12 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 | `Tabs` | `ui` | 标签条 + 内容页；点击 / ←→ |
 | `Select` | `ui` | 单选下拉（combobox-lite） |
 | `Slider` | `ui` | 水平滑块；拖拽 / 点击轨道 / ←→ |
+| `Tag` | `ui` | 状态片；可选关闭 |
+| `Badge` | `ui` | 计数/圆点；可宿主叠加 |
+| `Tooltip` | `ui` | 悬停提示（即时显示 MVP） |
+| `Modal` | `ui` | 居中对话框 + 遮罩；Esc/×/按钮 |
+| `Progress` | `ui` | 确定进度条 0..=1；不确定为 stub |
+| `Alert` | `ui` | 页内横幅；可关闭 |
 
 示例：
 
@@ -104,8 +110,9 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 - `examples/office_inputs` — **P0 input**：ScrollArea + TextInput + Checkbox + Radio + Switch
 - `examples/office_data` — **P0 data**：List + Tree + Table
 - `examples/office_nav` — **P0 nav**：Menu + ContextMenu + Tabs + Select + Slider
+- `examples/office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
 
-Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Tag` / `Badge` / `Tooltip` / `Modal` / `Progress` / `Alert`…
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 目录控件已齐**；下一步多为 P1（Form 校验、TreeSelect、Drawer、虚表等）或增强（IME、虚拟化）。
 
 ---
 
@@ -113,7 +120,7 @@ Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Tag` / `Badge`
 
 完整对照表与优先级见 **[office-widget-catalog.md](office-widget-catalog.md)**（Ant Design / Element Plus / MUI + 工业扩展；**2026-10-17 已拍板**）。
 
-本文仍只交付 GPU present / 布局壳；**P0 控件实现**按该目录 §4 / §10 推进（必含 `text_input` + 基础 `table`/`tree`；`toolbar` / `status_bar` / `panel` 一等公民；Form 校验与 `alarm_list`/`gauge`/`trend` 仍 P1；层级选择 P1 仅 `tree_select`）。
+**P0 目录控件（Rust API）已按 §4 / §10 落地。** Form 校验与 `alarm_list`/`gauge`/`trend` 仍 P1；层级选择 P1 仅 `tree_select`。
 
 ---
 

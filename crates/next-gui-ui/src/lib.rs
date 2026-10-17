@@ -3,9 +3,10 @@
 //! Retained widget tree built with a short builder or loaded from a compact `.ngui` file,
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
-//! Office P0 shell + input + data + nav widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
+//! Office P0 shell + input + data + nav + feedback widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
 //! ScrollArea, TextInput, Checkbox, Radio, Switch, List, Tree, Table,
-//! Menu, ContextMenu, Tabs, Select, Slider.
+//! Menu, ContextMenu, Tabs, Select, Slider,
+//! Tag, Badge, Tooltip, Modal, Progress, Alert.
 
 #![deny(missing_docs)]
 
@@ -936,6 +937,258 @@ impl Default for SliderStyle {
     }
 }
 
+/// Style for a compact Tag chip.
+#[derive(Debug, Clone, Copy)]
+pub struct TagStyle {
+    /// Chip height.
+    pub height: f32,
+    /// Horizontal padding.
+    pub padding_x: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Label color.
+    pub fg: Color,
+    /// Chip background.
+    pub bg: Color,
+    /// Close affordance color (when closable).
+    pub close_fg: Color,
+}
+
+impl Default for TagStyle {
+    fn default() -> Self {
+        Self {
+            height: 24.0,
+            padding_x: 8.0,
+            size: 12.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            bg: Color::rgb(0x3a, 0x3a, 0x48),
+            close_fg: Color::rgb(0xa0, 0xa8, 0xb4),
+        }
+    }
+}
+
+/// Badge presentation: dot or numeric count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadgeKind {
+    /// Small status dot.
+    Dot,
+    /// Numeric count (0 hides the badge chrome when wrapping a host).
+    Count(u32),
+}
+
+/// Style for Badge (standalone or host overlay).
+#[derive(Debug, Clone, Copy)]
+pub struct BadgeStyle {
+    /// Dot diameter.
+    pub dot_size: f32,
+    /// Count pill min height.
+    pub height: f32,
+    /// Horizontal padding for count pill.
+    pub padding_x: f32,
+    /// Font size for count.
+    pub size: f32,
+    /// Count text.
+    pub fg: Color,
+    /// Pill / dot fill.
+    pub bg: Color,
+    /// Offset from host top-right when wrapping.
+    pub offset: f32,
+}
+
+impl Default for BadgeStyle {
+    fn default() -> Self {
+        Self {
+            dot_size: 8.0,
+            height: 18.0,
+            padding_x: 6.0,
+            size: 11.0,
+            fg: Color::rgb(0xff, 0xff, 0xff),
+            bg: Color::rgb(0xe0, 0x4f, 0x5f),
+            offset: 4.0,
+        }
+    }
+}
+
+/// Style for Tooltip popup text.
+#[derive(Debug, Clone, Copy)]
+pub struct TooltipStyle {
+    /// Font size (px).
+    pub size: f32,
+    /// Padding inside tip.
+    pub padding: f32,
+    /// Max tip width (text not wrapped in MVP; used as measure bias).
+    pub max_width: f32,
+    /// Tip text color.
+    pub fg: Color,
+    /// Tip background.
+    pub bg: Color,
+    /// Gap between host bottom and tip.
+    pub gap: f32,
+}
+
+impl Default for TooltipStyle {
+    fn default() -> Self {
+        Self {
+            size: 12.0,
+            padding: 6.0,
+            max_width: 280.0,
+            fg: Color::rgb(0xf0, 0xf2, 0xf6),
+            bg: Color::rgb(0x2a, 0x2a, 0x34),
+            gap: 6.0,
+        }
+    }
+}
+
+/// Style for a Modal dialog.
+#[derive(Debug, Clone, Copy)]
+pub struct ModalStyle {
+    /// Dialog panel width.
+    pub width: f32,
+    /// Dialog panel min height.
+    pub height: f32,
+    /// Title bar height.
+    pub title_height: f32,
+    /// Content padding.
+    pub padding: f32,
+    /// Title / body font sizes.
+    pub title_size: f32,
+    /// Body font size.
+    pub body_size: f32,
+    /// Action button height.
+    pub action_height: f32,
+    /// Title text.
+    pub title_fg: Color,
+    /// Body text.
+    pub body_fg: Color,
+    /// Panel background.
+    pub panel_bg: Color,
+    /// Title bar background.
+    pub title_bg: Color,
+    /// Dim / scrim fill (opaque dark for Soft MVP).
+    pub scrim: Color,
+    /// Primary action button background.
+    pub primary_bg: Color,
+    /// Secondary action button background.
+    pub secondary_bg: Color,
+    /// Action label color.
+    pub action_fg: Color,
+    /// Close on backdrop click.
+    pub close_on_backdrop: bool,
+}
+
+impl Default for ModalStyle {
+    fn default() -> Self {
+        Self {
+            width: 420.0,
+            height: 200.0,
+            title_height: 36.0,
+            padding: 16.0,
+            title_size: 15.0,
+            body_size: 13.0,
+            action_height: 32.0,
+            title_fg: Color::rgb(0xf0, 0xf2, 0xf6),
+            body_fg: Color::rgb(0xc0, 0xc8, 0xd0),
+            panel_bg: Color::rgb(0x2a, 0x2a, 0x32),
+            title_bg: Color::rgb(0x32, 0x32, 0x3c),
+            scrim: Color::rgb(0x0c, 0x0c, 0x10),
+            primary_bg: Color::rgb(0x3b, 0x82, 0xf6),
+            secondary_bg: Color::rgb(0x3a, 0x3a, 0x48),
+            action_fg: Color::rgb(0xff, 0xff, 0xff),
+            close_on_backdrop: true,
+        }
+    }
+}
+
+/// Result of a Modal dismiss / action; drained by [`Ui::take_modal_action`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModalAction {
+    /// Primary button (e.g. OK / Delete).
+    Primary,
+    /// Secondary button (e.g. Cancel).
+    Secondary,
+    /// Escape, title close, or backdrop.
+    Dismiss,
+}
+
+/// Style for a determinate Progress bar.
+#[derive(Debug, Clone, Copy)]
+pub struct ProgressStyle {
+    /// Track width.
+    pub width: f32,
+    /// Track height.
+    pub height: f32,
+    /// Track background.
+    pub track: Color,
+    /// Filled portion.
+    pub fill: Color,
+}
+
+impl Default for ProgressStyle {
+    fn default() -> Self {
+        Self {
+            width: 240.0,
+            height: 10.0,
+            track: Color::rgb(0x3a, 0x3a, 0x44),
+            fill: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+/// Alert severity / tone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertTone {
+    /// Informational.
+    Info,
+    /// Success / OK.
+    Success,
+    /// Warning.
+    Warning,
+    /// Error / fault.
+    Error,
+}
+
+/// Style for an inline Alert banner.
+#[derive(Debug, Clone, Copy)]
+pub struct AlertStyle {
+    /// Banner width.
+    pub width: f32,
+    /// Min height.
+    pub height: f32,
+    /// Padding.
+    pub padding: f32,
+    /// Font size.
+    pub size: f32,
+    /// Message color.
+    pub fg: Color,
+    /// Info background.
+    pub info_bg: Color,
+    /// Success background.
+    pub success_bg: Color,
+    /// Warning background.
+    pub warning_bg: Color,
+    /// Error background.
+    pub error_bg: Color,
+    /// Dismiss affordance color.
+    pub close_fg: Color,
+}
+
+impl Default for AlertStyle {
+    fn default() -> Self {
+        Self {
+            width: 480.0,
+            height: 36.0,
+            padding: 10.0,
+            size: 13.0,
+            fg: Color::rgb(0xf0, 0xf2, 0xf6),
+            info_bg: Color::rgb(0x2a, 0x3a, 0x55),
+            success_bg: Color::rgb(0x1e, 0x3d, 0x2a),
+            warning_bg: Color::rgb(0x4a, 0x3a, 0x18),
+            error_bg: Color::rgb(0x4a, 0x22, 0x28),
+            close_fg: Color::rgb(0xc0, 0xc8, 0xd0),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Kind {
     Column {
@@ -1076,6 +1329,43 @@ enum Kind {
         value: f32,
         style: SliderStyle,
     },
+    Tag {
+        label: String,
+        closable: bool,
+        style: TagStyle,
+    },
+    Badge {
+        kind: BadgeKind,
+        style: BadgeStyle,
+        children: Vec<WidgetId>,
+    },
+    Tooltip {
+        text: String,
+        style: TooltipStyle,
+        children: Vec<WidgetId>,
+    },
+    Modal {
+        title: String,
+        body: String,
+        primary: Option<String>,
+        secondary: Option<String>,
+        open: bool,
+        style: ModalStyle,
+    },
+    Progress {
+        /// 0.0..=1.0 when determinate.
+        value: f32,
+        /// Reserved; painted as muted track only in MVP.
+        indeterminate: bool,
+        style: ProgressStyle,
+    },
+    Alert {
+        tone: AlertTone,
+        message: String,
+        dismissible: bool,
+        dismissed: bool,
+        style: AlertStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -1193,6 +1483,18 @@ pub struct Ui {
     pending_menu_action: Option<(WidgetId, u64)>,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
+    /// Hovered Tooltip host (pointer enter); tip painted in sync.
+    tooltip_hover: Option<WidgetId>,
+    /// Last Modal action; drained by [`Ui::take_modal_action`].
+    pending_modal_action: Option<(WidgetId, ModalAction)>,
+    /// Last Tag close; drained by [`Ui::take_tag_close`].
+    pending_tag_close: Option<WidgetId>,
+    /// Last Alert dismiss; drained by [`Ui::take_alert_dismiss`].
+    pending_alert_dismiss: Option<WidgetId>,
+    /// Window viewport for Modal scrim (set via [`Ui::set_viewport`]).
+    viewport: (f32, f32),
+    /// Last pointer position for Tooltip hover resolution in [`Ui::sync`].
+    last_pointer: Option<(f32, f32)>,
 }
 
 impl Default for Ui {
@@ -1256,12 +1558,23 @@ impl Ui {
             open_popup: None,
             pending_menu_action: None,
             overlay_host: None,
+            tooltip_hover: None,
+            pending_modal_action: None,
+            pending_tag_close: None,
+            pending_alert_dismiss: None,
+            viewport: (800.0, 600.0),
+            last_pointer: None,
         }
     }
 
     /// Borrow the active font.
     pub fn font(&self) -> &Font {
         &self.font
+    }
+
+    /// Set window size used for Modal scrim centering (call on resize).
+    pub fn set_viewport(&mut self, width: f32, height: f32) {
+        self.viewport = (width.max(1.0), height.max(1.0));
     }
 
     fn alloc(&mut self) -> WidgetId {
@@ -1656,6 +1969,18 @@ impl Ui {
                 self.focus = Some(id);
                 return self.pointer_slider(scene, id, x, y);
             }
+            Some(Kind::Tag { closable: true, .. }) => {
+                self.focus = None;
+                return self.pointer_tag_close(scene, id, x, y);
+            }
+            Some(Kind::Alert {
+                dismissible: true,
+                dismissed: false,
+                ..
+            }) => {
+                self.focus = None;
+                return self.pointer_alert_dismiss(scene, id, x, y);
+            }
             Some(Kind::Button { .. }) => {
                 self.focus = None;
                 return false; // let app handle button clicks via hit_widget
@@ -1667,10 +1992,10 @@ impl Ui {
         }
     }
 
-        /// Continue an active drag (splitter or scroll); returns true if state changed.
+    /// Continue an active drag, or update Tooltip hover when idle.
     pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
         let Some(drag) = self.drag.clone() else {
-            return false;
+            return self.update_tooltip_hover_xy(x, y);
         };
         match drag {
             DragState::Splitter {
@@ -1779,7 +2104,9 @@ impl Ui {
                     | Kind::Splitter { children, .. }
                     | Kind::ScrollArea { children, .. }
                     | Kind::ContextMenu { children, .. }
-                    | Kind::Tabs { children, .. } => children.as_slice(),
+                    | Kind::Tabs { children, .. }
+                    | Kind::Badge { children, .. }
+                    | Kind::Tooltip { children, .. } => children.as_slice(),
                     _ => &[],
                 };
                 if self.subtree_contains(*c, kids, target) {
@@ -2113,6 +2440,14 @@ impl Ui {
     /// Deliver a key to the focused widget. Returns true if handled.
     pub fn key_input(&mut self, key: UiKey) -> bool {
         if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
+            if let Some(id) = self.open_popup {
+                if matches!(
+                    self.widgets.get(&id).map(|w| &w.kind),
+                    Some(Kind::Modal { .. })
+                ) {
+                    self.pending_modal_action = Some((id, ModalAction::Dismiss));
+                }
+            }
             return self.close_popup_internal();
         }
         let Some(id) = self.focus else {
@@ -2756,7 +3091,8 @@ impl Ui {
             match &mut w.kind {
                 Kind::Menu { open, .. }
                 | Kind::ContextMenu { open, .. }
-                | Kind::Select { open, .. } => {
+                | Kind::Select { open, .. }
+                | Kind::Modal { open, .. } => {
                     *open = false;
                 }
                 _ => {}
@@ -2899,6 +3235,217 @@ impl Ui {
         )
     }
 
+    /// Whether id is a Tag.
+    pub fn is_tag(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Tag { .. }))
+    }
+
+    /// Whether id is a Badge.
+    pub fn is_badge(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Badge { .. })
+        )
+    }
+
+    /// Whether id is a Tooltip host.
+    pub fn is_tooltip(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Tooltip { .. })
+        )
+    }
+
+    /// Whether id is a Modal.
+    pub fn is_modal(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Modal { .. })
+        )
+    }
+
+    /// Whether id is a Progress bar.
+    pub fn is_progress(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Progress { .. })
+        )
+    }
+
+    /// Whether id is an Alert.
+    pub fn is_alert(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Alert { .. })
+        )
+    }
+
+    /// Open or close a Modal (also sets / clears [`Ui`] popup ownership).
+    pub fn set_modal_open(&mut self, id: WidgetId, open: bool) -> bool {
+        let is_modal = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Modal { .. })
+        );
+        if !is_modal {
+            return false;
+        }
+        if open {
+            if let Some(pid) = self.open_popup {
+                if pid != id {
+                    self.close_popup_internal();
+                }
+            }
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Modal { open: o, .. } = &mut w.kind {
+                    *o = true;
+                }
+            }
+            self.open_popup = Some(id);
+            self.focus = Some(id);
+        } else {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Modal { open: o, .. } = &mut w.kind {
+                    *o = false;
+                }
+            }
+            if self.open_popup == Some(id) {
+                self.open_popup = None;
+            }
+        }
+        true
+    }
+
+    /// Whether the Modal is open.
+    pub fn modal_open(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Modal { open, .. }) => Some(*open),
+            _ => None,
+        }
+    }
+
+    /// Drain last Modal action `(owner, action)`.
+    pub fn take_modal_action(&mut self) -> Option<(WidgetId, ModalAction)> {
+        self.pending_modal_action.take()
+    }
+
+    /// Drain last Tag close click.
+    pub fn take_tag_close(&mut self) -> Option<WidgetId> {
+        self.pending_tag_close.take()
+    }
+
+    /// Drain last Alert dismiss.
+    pub fn take_alert_dismiss(&mut self) -> Option<WidgetId> {
+        self.pending_alert_dismiss.take()
+    }
+
+    /// Progress value in 0..=1.
+    pub fn progress_value(&self, id: WidgetId) -> Option<f32> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Progress { value, .. }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Set Progress value (clamped to 0..=1). Clears indeterminate.
+    pub fn set_progress_value(&mut self, id: WidgetId, value: f32) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Progress {
+                value: v,
+                indeterminate,
+                ..
+            } = &mut w.kind
+            {
+                let nv = value.clamp(0.0, 1.0);
+                *indeterminate = false;
+                if (*v - nv).abs() < 1e-6 {
+                    return false;
+                }
+                *v = nv;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set Alert dismissed visibility (true = hidden).
+    pub fn set_alert_dismissed(&mut self, id: WidgetId, dismissed: bool) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Alert {
+                dismissed: d,
+                ..
+            } = &mut w.kind
+            {
+                if *d == dismissed {
+                    return false;
+                }
+                *d = dismissed;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether Alert is currently dismissed (hidden).
+    pub fn alert_dismissed(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Alert { dismissed, .. }) => Some(*dismissed),
+            _ => None,
+        }
+    }
+
+    /// Set Badge count / dot kind.
+    pub fn set_badge_kind(&mut self, id: WidgetId, kind: BadgeKind) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Badge { kind: k, .. } = &mut w.kind {
+                *k = kind;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set Tag label.
+    pub fn set_tag_label(&mut self, id: WidgetId, label: impl Into<String>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Tag { label: l, .. } = &mut w.kind {
+                *l = label.into();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Declare a top-level Modal (not part of flex layout; open via [`Ui::set_modal_open`]).
+    pub fn modal(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        primary: impl Into<String>,
+        secondary: Option<String>,
+        style: ModalStyle,
+    ) -> WidgetId {
+        let id = self.alloc();
+        self.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Modal {
+                    title: title.into(),
+                    body: body.into(),
+                    primary: Some(primary.into()),
+                    secondary,
+                    open: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.roots.push(id);
+        id
+    }
+
     fn find_context_menu_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -2917,7 +3464,9 @@ impl Ui {
                 | Kind::Splitter { children, .. }
                 | Kind::ScrollArea { children, .. }
                 | Kind::ContextMenu { children, .. }
-                | Kind::Tabs { children, .. } => children.as_slice(),
+                | Kind::Tabs { children, .. }
+                | Kind::Badge { children, .. }
+                | Kind::Tooltip { children, .. } => children.as_slice(),
                 _ => continue,
             };
             if kids.contains(&id) {
@@ -2998,6 +3547,11 @@ impl Ui {
         let Some(w) = self.widgets.get(&id) else {
             return false;
         };
+        if matches!(w.kind, Kind::Modal { open: true, .. }) {
+            // Modal owns the whole viewport while open.
+            let (vw, vh) = self.viewport;
+            return x >= 0.0 && y >= 0.0 && x < vw && y < vh;
+        }
         // First aux node is the popup panel background when open.
         if let Some(&panel) = w.aux.first() {
             if let Some(n) = scene.get(panel) {
@@ -3018,6 +3572,12 @@ impl Ui {
     }
 
     fn pointer_popup_item(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Modal { .. })
+        ) {
+            return self.pointer_modal(scene, id, x, y);
+        }
         // Click on title/host while open → toggle close (Menu/Select).
         if let Some(w) = self.widgets.get(&id) {
             if let Some(node) = w.node {
@@ -3186,6 +3746,148 @@ impl Ui {
         self.set_slider_value(id, value)
     }
 
+    fn update_tooltip_hover_xy(&mut self, x: f32, y: f32) -> bool {
+        self.last_pointer = Some((x, y));
+        // Redraw when any Tooltip exists so sync can resolve hover with scene.
+        self.widgets
+            .values()
+            .any(|w| matches!(w.kind, Kind::Tooltip { .. }))
+    }
+
+    fn find_tooltip_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Tooltip { .. })
+        ) {
+            return Some(id);
+        }
+        for (wid, w) in &self.widgets {
+            let kids = match &w.kind {
+                Kind::Column { children, .. }
+                | Kind::Row { children, .. }
+                | Kind::Toolbar { children, .. }
+                | Kind::Panel { children, .. }
+                | Kind::StatusBar { children, .. }
+                | Kind::Splitter { children, .. }
+                | Kind::ScrollArea { children, .. }
+                | Kind::ContextMenu { children, .. }
+                | Kind::Tabs { children, .. }
+                | Kind::Badge { children, .. }
+                | Kind::Tooltip { children, .. } => children.as_slice(),
+                _ => continue,
+            };
+            if kids.contains(&id) {
+                if matches!(w.kind, Kind::Tooltip { .. }) {
+                    return Some(*wid);
+                }
+                if let Some(found) = self.find_tooltip_ancestor(*wid) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// Update tooltip hover using scene hit-test.
+    pub fn pointer_hover(&mut self, scene: &Scene, x: f32, y: f32) -> bool {
+        let tip = self
+            .hit_widget(scene, x, y)
+            .and_then(|id| self.find_tooltip_ancestor(id));
+        if tip != self.tooltip_hover {
+            self.tooltip_hover = tip;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn pointer_tag_close(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let Some(w) = self.widgets.get(&id) else {
+            return false;
+        };
+        let Some(chrome) = w.chrome_node else {
+            return false;
+        };
+        let Some(n) = scene.get(chrome) else {
+            return false;
+        };
+        if n.visible && n.bounds.contains(x, y) {
+            self.pending_tag_close = Some(id);
+            return true;
+        }
+        false
+    }
+
+    fn pointer_alert_dismiss(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let Some(w) = self.widgets.get(&id) else {
+            return false;
+        };
+        let Some(chrome) = w.chrome_node else {
+            return false;
+        };
+        let Some(n) = scene.get(chrome) else {
+            return false;
+        };
+        if n.visible && n.bounds.contains(x, y) {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Alert { dismissed, .. } = &mut w.kind {
+                    *dismissed = true;
+                }
+            }
+            self.pending_alert_dismiss = Some(id);
+            return true;
+        }
+        false
+    }
+
+    fn pointer_modal(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (style, aux) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Modal { style, open: true, .. },
+                aux,
+                ..
+            }) => (*style, aux.clone()),
+            _ => return false,
+        };
+        // aux layout: 0=scrim, 1=panel, 2=title_bg, 3=title_label, 4=close,
+        // 5=body, 6=primary btn, 7=primary label, 8=secondary btn, 9=secondary label
+        let hit = |idx: usize| -> bool {
+            aux.get(idx)
+                .and_then(|n| scene.get(*n))
+                .map(|n| n.visible && n.bounds.contains(x, y))
+                .unwrap_or(false)
+        };
+        if hit(4) {
+            self.pending_modal_action = Some((id, ModalAction::Dismiss));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(6) {
+            self.pending_modal_action = Some((id, ModalAction::Primary));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(8) {
+            self.pending_modal_action = Some((id, ModalAction::Secondary));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(1) || hit(2) || hit(3) || hit(5) {
+            // Click inside panel: consume, keep open.
+            return true;
+        }
+        // Backdrop
+        if style.close_on_backdrop {
+            self.pending_modal_action = Some((id, ModalAction::Dismiss));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+        }
+        true
+    }
+
     fn ensure_overlay_host(&mut self, scene: &mut Scene) -> NodeId {
         if let Some(h) = self.overlay_host {
             if scene.get(h).is_some() {
@@ -3251,7 +3953,14 @@ impl Ui {
             self.layout_widget(scene, root);
             self.paint_widget(scene, root);
         }
+        if let Some((x, y)) = self.last_pointer {
+            let tip = self
+                .hit_widget(scene, x, y)
+                .and_then(|id| self.find_tooltip_ancestor(id));
+            self.tooltip_hover = tip;
+        }
         self.paint_open_popups(scene);
+        self.paint_tooltip_overlay(scene);
     }
 
     fn ensure_mounted(&mut self, scene: &mut Scene, parent: NodeId, id: WidgetId) {
@@ -3303,6 +4012,20 @@ impl Ui {
                 Some(Kind::Tabs { style, .. }) => (style.content_bg, true),
                 Some(Kind::Select { style, .. }) => (style.bg, true),
                 Some(Kind::Slider { style, .. }) => (style.track, true),
+                Some(Kind::Tag { style, .. }) => (style.bg, true),
+                Some(Kind::Badge { style, .. }) => (style.bg, true),
+                Some(Kind::Tooltip { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Modal { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Progress { style, .. }) => (style.track, true),
+                Some(Kind::Alert { style, tone, .. }) => {
+                    let bg = match tone {
+                        AlertTone::Info => style.info_bg,
+                        AlertTone::Success => style.success_bg,
+                        AlertTone::Warning => style.warning_bg,
+                        AlertTone::Error => style.error_bg,
+                    };
+                    (bg, true)
+                }
                 None => return,
             };
 
@@ -3429,6 +4152,50 @@ impl Ui {
                         w.label_node = Some(thumb);
                     }
                 }
+                Some(Kind::Tag { .. }) | Some(Kind::Alert { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert tag/alert label");
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert tag/alert close");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::Badge { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    scene.set_mask(node, Some(AlphaMask::empty()));
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert badge label");
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0xe0, 0x4f, 0x5f))
+                        .expect("insert badge chrome");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::Tooltip { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    scene.set_mask(node, Some(AlphaMask::empty()));
+                }
+                Some(Kind::Modal { .. }) => {
+                    // Overlay-only when open; host stays invisible.
+                    scene.set_visible(node, false);
+                }
+                Some(Kind::Progress { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
+                        .expect("insert progress fill");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                    }
+                }
                 _ => {}
             }
         }
@@ -3444,7 +4211,9 @@ impl Ui {
                     | Kind::Splitter { children, .. }
                     | Kind::ScrollArea { children, .. }
                     | Kind::ContextMenu { children, .. }
-                    | Kind::Tabs { children, .. },
+                    | Kind::Tabs { children, .. }
+                    | Kind::Badge { children, .. }
+                    | Kind::Tooltip { children, .. },
                 node,
                 ..
             }) => (node.unwrap_or(parent), children.clone()),
@@ -3586,6 +4355,64 @@ impl Ui {
             Some(Kind::Tabs { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Select { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Slider { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Tag { label, closable, style }) => {
+                let (tw, _) = self.font.measure_line(label, style.size);
+                let close_w = if *closable { style.height * 0.7 } else { 0.0 };
+                ChildMeasure::new(
+                    tw + style.padding_x * 2.0 + close_w,
+                    style.height,
+                )
+            }
+            Some(Kind::Badge { kind, style, children }) => {
+                if children.is_empty() {
+                    match kind {
+                        BadgeKind::Dot => ChildMeasure::new(style.dot_size, style.dot_size),
+                        BadgeKind::Count(c) => {
+                            let text = if *c > 99 {
+                                "99+".to_string()
+                            } else {
+                                c.to_string()
+                            };
+                            let (tw, _) = self.font.measure_line(&text, style.size);
+                            let w = (tw + style.padding_x * 2.0).max(style.height);
+                            ChildMeasure::new(w, style.height)
+                        }
+                    }
+                } else {
+                    let m = self.measure_widget(children[0]);
+                    ChildMeasure::new(
+                        m.width + style.offset,
+                        m.height + style.offset,
+                    )
+                }
+            }
+            Some(Kind::Tooltip { children, .. }) => {
+                if let Some(c) = children.first() {
+                    self.measure_widget(*c)
+                } else {
+                    ChildMeasure::new(0.0, 0.0)
+                }
+            }
+            Some(Kind::Modal { .. }) => ChildMeasure::new(0.0, 0.0),
+            Some(Kind::Progress { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Alert {
+                dismissed,
+                message,
+                dismissible,
+                style,
+                ..
+            }) => {
+                if *dismissed {
+                    ChildMeasure::new(0.0, 0.0)
+                } else {
+                    let (tw, th) = self.font.measure_line(message, style.size);
+                    let close = if *dismissible { 24.0 } else { 0.0 };
+                    ChildMeasure::new(
+                        style.width.max(tw + style.padding * 2.0 + close),
+                        style.height.max(th + style.padding),
+                    )
+                }
+            }
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -3648,6 +4475,13 @@ impl Ui {
             Some(Kind::ContextMenu { .. })
         ) {
             self.layout_context_menu_host(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Badge { .. }) | Some(Kind::Tooltip { .. })
+        ) {
+            self.layout_host_child(scene, id);
             return;
         }
 
@@ -3848,6 +4682,8 @@ impl Ui {
                     | Kind::ScrollArea { .. }
                     | Kind::ContextMenu { .. }
                     | Kind::Tabs { .. }
+                    | Kind::Badge { .. }
+                    | Kind::Tooltip { .. }
             )
         )
     }
@@ -4054,7 +4890,34 @@ impl Ui {
         }
     }
 
-        fn layout_splitter(&mut self, scene: &mut Scene, id: WidgetId) {
+    fn layout_host_child(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (children, pad) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Badge { children, style, .. }) => (children.clone(), style.offset),
+            Some(Kind::Tooltip { children, .. }) => (children.clone(), 0.0),
+            _ => return,
+        };
+        let host = self.widgets.get(&id).and_then(|w| w.node);
+        let (ox, oy, w, h) = if let Some(node) = host {
+            scene
+                .get(node)
+                .map(|n| (n.bounds.x, n.bounds.y, n.bounds.width, n.bounds.height))
+                .unwrap_or((0.0, 0.0, 0.0, 0.0))
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        };
+        if let Some(node) = host {
+            // Transparent host hit target.
+            scene.set_mask(node, Some(AlphaMask::empty()));
+            scene.set_visible(node, true);
+        }
+        if let Some(child) = children.first().copied() {
+            let cw = (w - pad).max(1.0);
+            let ch = (h - pad).max(1.0);
+            self.place_child(scene, child, Rect::new(ox, oy, cw, ch));
+        }
+    }
+
+    fn layout_splitter(&mut self, scene: &mut Scene, id: WidgetId) {
         let Some(Widget {
             kind: Kind::Splitter { style, children },
             node,
@@ -4356,7 +5219,9 @@ impl Ui {
                 | Kind::Splitter { children, .. }
                 | Kind::ScrollArea { children, .. }
                 | Kind::ContextMenu { children, .. }
-                | Kind::Tabs { children, .. },
+                | Kind::Tabs { children, .. }
+                | Kind::Badge { children, .. }
+                | Kind::Tooltip { children, .. },
             ) => Some(children.clone()),
             _ => None,
         };
@@ -4390,6 +5255,12 @@ impl Ui {
                     }
                 }
                 self.paint_widget(scene, child);
+            }
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Badge { .. })
+            ) {
+                self.paint_badge_overlay(scene, id);
             }
             return;
         }
@@ -4434,6 +5305,35 @@ impl Ui {
             Some(Kind::Slider { .. })
         ) {
             self.paint_slider(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Tag { .. })
+        ) {
+            self.paint_tag(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Progress { .. })
+        ) {
+            self.paint_progress(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Alert { .. })
+        ) {
+            self.paint_alert(scene, id);
+            return;
+        }
+        // Standalone Badge (no children) painted here.
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Badge { children, .. }) if children.is_empty()
+        ) {
+            self.paint_badge_overlay(scene, id);
             return;
         }
 
@@ -4756,7 +5656,13 @@ impl Ui {
             | Kind::ContextMenu { .. }
             | Kind::Tabs { .. }
             | Kind::Select { .. }
-            | Kind::Slider { .. } => {}
+            | Kind::Slider { .. }
+            | Kind::Tag { .. }
+            | Kind::Badge { .. }
+            | Kind::Tooltip { .. }
+            | Kind::Modal { .. }
+            | Kind::Progress { .. }
+            | Kind::Alert { .. } => {}
         }
     }
 
@@ -5366,13 +6272,14 @@ impl Ui {
 
     fn paint_open_popups(&mut self, scene: &mut Scene) {
         let Some(id) = self.open_popup else {
-            // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx
+            // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx/modal
             for wid in self.widgets.keys().copied().collect::<Vec<_>>() {
                 if matches!(
                     self.widgets.get(&wid).map(|w| &w.kind),
                     Some(Kind::Menu { open: false, .. })
                         | Some(Kind::ContextMenu { open: false, .. })
                         | Some(Kind::Select { open: false, .. })
+                        | Some(Kind::Modal { open: false, .. })
                 ) {
                     if let Some(w) = self.widgets.get(&wid) {
                         for &n in &w.aux {
@@ -5387,6 +6294,7 @@ impl Ui {
             Some(Kind::Menu { .. }) => self.paint_menu_popup(scene, id),
             Some(Kind::ContextMenu { .. }) => self.paint_context_popup(scene, id),
             Some(Kind::Select { .. }) => self.paint_select_popup(scene, id),
+            Some(Kind::Modal { .. }) => self.paint_modal_popup(scene, id),
             _ => {}
         }
     }
@@ -5491,6 +6399,505 @@ impl Ui {
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
                 scene.set_visible(lab, true);
             }
+        }
+    }
+
+    fn paint_tag(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Tag {
+                label,
+                closable,
+                style,
+            },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let label = label.clone();
+        let closable = *closable;
+        let style = *style;
+        let Some(node) = *node else {
+            return;
+        };
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(node, style.bg);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        let close_w = if closable { style.height * 0.65 } else { 0.0 };
+        let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+        if let Some(lid) = *label_node {
+            let lx = bounds.x + style.padding_x;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, style.fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+        if let Some(cid) = *chrome_node {
+            if closable {
+                let (_, cm) = self.font.rasterize_text("×", style.size, None);
+                let cx = bounds.x + bounds.width - close_w;
+                let cy = bounds.y + ((bounds.height - cm.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(cid, Rect::new(cx, cy, close_w.max(cm.width as f32), bounds.height));
+                // Use label-sized glyph centered in close hit area.
+                let gx = cx + ((close_w - cm.width as f32) * 0.5).max(0.0);
+                scene.set_bounds(cid, Rect::new(gx, cy, cm.width as f32, cm.height as f32));
+                scene.set_fill(cid, style.close_fg);
+                scene.set_mask(cid, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+                scene.set_visible(cid, true);
+            } else {
+                scene.set_visible(cid, false);
+            }
+        }
+    }
+
+    fn paint_badge_overlay(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Badge { kind, style, children },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let kind = *kind;
+        let style = *style;
+        let has_host = !children.is_empty();
+        let Some(node) = *node else {
+            return;
+        };
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+
+        let (text, show) = match kind {
+            BadgeKind::Dot => (String::new(), true),
+            BadgeKind::Count(0) if has_host => (String::new(), false),
+            BadgeKind::Count(c) => {
+                let t = if c > 99 { "99+".into() } else { c.to_string() };
+                (t, true)
+            }
+        };
+
+        if !show {
+            if let Some(cid) = *chrome_node {
+                scene.set_visible(cid, false);
+            }
+            if let Some(lid) = *label_node {
+                scene.set_visible(lid, false);
+            }
+            if !has_host {
+                scene.set_visible(node, false);
+            }
+            return;
+        }
+
+        let (bw, bh) = if matches!(kind, BadgeKind::Dot) {
+            (style.dot_size, style.dot_size)
+        } else {
+            let (tw, _) = self.font.measure_line(&text, style.size);
+            ((tw + style.padding_x * 2.0).max(style.height), style.height)
+        };
+
+        let (bx, by) = if has_host {
+            (
+                bounds.x + bounds.width - bw * 0.55,
+                bounds.y - bh * 0.35 + style.offset * 0.25,
+            )
+        } else {
+            (bounds.x, bounds.y + ((bounds.height - bh) * 0.5).max(0.0))
+        };
+
+        if has_host {
+            scene.set_mask(node, Some(AlphaMask::empty()));
+            scene.set_visible(node, true);
+            if let Some(cid) = *chrome_node {
+                scene.set_bounds(cid, Rect::new(bx, by, bw, bh));
+                scene.set_fill(cid, style.bg);
+                scene.set_mask(cid, None);
+                scene.set_visible(cid, true);
+            }
+        } else {
+            scene.set_bounds(node, Rect::new(bx, by, bw, bh));
+            scene.set_fill(node, style.bg);
+            scene.set_mask(node, None);
+            scene.set_visible(node, true);
+            if let Some(cid) = *chrome_node {
+                scene.set_visible(cid, false);
+            }
+        }
+
+        if let Some(lid) = *label_node {
+            if text.is_empty() {
+                scene.set_visible(lid, false);
+            } else {
+                let (_, mask) = self.font.rasterize_text(&text, style.size, None);
+                let lx = bx + ((bw - mask.width as f32) * 0.5).max(0.0);
+                let ly = by + ((bh - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_fill(lid, style.fg);
+                scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lid, true);
+            }
+        }
+    }
+
+    fn paint_progress(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Progress {
+                value,
+                indeterminate,
+                style,
+            },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let value = *value;
+        let indeterminate = *indeterminate;
+        let style = *style;
+        let Some(node) = *node else {
+            return;
+        };
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        let track = Rect::new(
+            bounds.x,
+            bounds.y + ((bounds.height - style.height) * 0.5).max(0.0),
+            bounds.width.max(style.width * 0.5),
+            style.height,
+        );
+        scene.set_bounds(node, track);
+        scene.set_fill(node, style.track);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        if let Some(cid) = *chrome_node {
+            let fill_w = if indeterminate {
+                (track.width * 0.35).max(8.0)
+            } else {
+                track.width * value.clamp(0.0, 1.0)
+            };
+            scene.set_bounds(cid, Rect::new(track.x, track.y, fill_w, track.height));
+            scene.set_fill(cid, style.fill);
+            scene.set_mask(cid, None);
+            scene.set_visible(cid, fill_w > 0.5);
+        }
+    }
+
+    fn paint_alert(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Alert {
+                    tone,
+                    message,
+                    dismissible,
+                    dismissed,
+                    style,
+                },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let tone = *tone;
+        let message = message.clone();
+        let dismissible = *dismissible;
+        let dismissed = *dismissed;
+        let style = *style;
+        let Some(node) = *node else {
+            return;
+        };
+        if dismissed {
+            scene.set_visible(node, false);
+            if let Some(lid) = *label_node {
+                scene.set_visible(lid, false);
+            }
+            if let Some(cid) = *chrome_node {
+                scene.set_visible(cid, false);
+            }
+            return;
+        }
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        let bg = match tone {
+            AlertTone::Info => style.info_bg,
+            AlertTone::Success => style.success_bg,
+            AlertTone::Warning => style.warning_bg,
+            AlertTone::Error => style.error_bg,
+        };
+        scene.set_fill(node, bg);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        let (_, mask) = self.font.rasterize_text(&message, style.size, None);
+        if let Some(lid) = *label_node {
+            let lx = bounds.x + style.padding;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, style.fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+        if let Some(cid) = *chrome_node {
+            if dismissible {
+                let (_, cm) = self.font.rasterize_text("×", style.size, None);
+                let cx = bounds.x + bounds.width - style.padding - cm.width as f32;
+                let cy = bounds.y + ((bounds.height - cm.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(cid, Rect::new(cx, cy, cm.width as f32 + 4.0, cm.height as f32 + 4.0));
+                scene.set_fill(cid, style.close_fg);
+                scene.set_mask(cid, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+                scene.set_visible(cid, true);
+            } else {
+                scene.set_visible(cid, false);
+            }
+        }
+    }
+
+    fn paint_tooltip_overlay(&mut self, scene: &mut Scene) {
+        let Some(id) = self.tooltip_hover else {
+            // Hide tooltip aux on all tooltip widgets.
+            for wid in self.widgets.keys().copied().collect::<Vec<_>>() {
+                if matches!(
+                    self.widgets.get(&wid).map(|w| &w.kind),
+                    Some(Kind::Tooltip { .. })
+                ) {
+                    self.hide_popup_aux_mut(scene, wid);
+                }
+            }
+            return;
+        };
+        let (text, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Tooltip { text, style, .. },
+                node,
+                ..
+            }) => {
+                let b = node
+                    .and_then(|n| scene.get(n).map(|n| n.bounds))
+                    .unwrap_or_else(Rect::empty);
+                (text.clone(), *style, b)
+            }
+            _ => return,
+        };
+        if text.is_empty() || host_bounds.is_empty() {
+            return;
+        }
+        let (tw, th) = self.font.measure_line(&text, style.size);
+        let tip_w = (tw + style.padding * 2.0).min(style.max_width.max(tw + style.padding * 2.0));
+        let tip_h = th + style.padding * 2.0;
+        let mut tip_x = host_bounds.x;
+        let tip_y = host_bounds.y + host_bounds.height + style.gap;
+        let (vw, _) = self.viewport;
+        if tip_x + tip_w > vw {
+            tip_x = (vw - tip_w).max(0.0);
+        }
+        let tip = Rect::new(tip_x, tip_y, tip_w, tip_h);
+        self.ensure_overlay_aux(scene, id, 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() < 2 {
+            return;
+        }
+        let bg = aux[0];
+        let label = aux[1];
+        scene.set_bounds(bg, tip);
+        scene.set_fill(bg, style.bg);
+        scene.set_mask(bg, None);
+        scene.set_visible(bg, true);
+        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
+        scene.set_bounds(
+            label,
+            Rect::new(
+                tip.x + style.padding,
+                tip.y + style.padding,
+                mask.width as f32,
+                mask.height as f32,
+            ),
+        );
+        scene.set_fill(label, style.fg);
+        scene.set_mask(label, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+        scene.set_visible(label, true);
+        // Raise overlay host above content.
+        if let Some(h) = self.overlay_host {
+            scene.raise(h);
+        }
+    }
+
+    fn paint_modal_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (title, body, primary, secondary, style) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Modal {
+                        title,
+                        body,
+                        primary,
+                        secondary,
+                        open: true,
+                        style,
+                    },
+                ..
+            }) => (
+                title.clone(),
+                body.clone(),
+                primary.clone(),
+                secondary.clone(),
+                *style,
+            ),
+            _ => return,
+        };
+        let (vw, vh) = self.viewport;
+        let panel_w = style.width.min(vw - 40.0).max(200.0);
+        let action_h = if primary.is_some() || secondary.is_some() {
+            style.action_height + style.padding
+        } else {
+            0.0
+        };
+        let (_, body_th) = self.font.measure_line(&body, style.body_size);
+        let panel_h = (style.title_height
+            + style.padding * 2.0
+            + body_th.max(40.0)
+            + action_h)
+            .max(style.height)
+            .min(vh - 40.0);
+        let px = ((vw - panel_w) * 0.5).max(0.0);
+        let py = ((vh - panel_h) * 0.5).max(0.0);
+        let panel = Rect::new(px, py, panel_w, panel_h);
+
+        // 10 aux slots
+        self.ensure_overlay_aux(scene, id, 10);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() < 10 {
+            return;
+        }
+        let scrim = aux[0];
+        let panel_n = aux[1];
+        let title_bg = aux[2];
+        let title_l = aux[3];
+        let close_n = aux[4];
+        let body_n = aux[5];
+        let primary_btn = aux[6];
+        let primary_l = aux[7];
+        let secondary_btn = aux[8];
+        let secondary_l = aux[9];
+
+        scene.set_bounds(scrim, Rect::new(0.0, 0.0, vw, vh));
+        scene.set_fill(scrim, style.scrim);
+        scene.set_mask(scrim, None);
+        scene.set_visible(scrim, true);
+
+        scene.set_bounds(panel_n, panel);
+        scene.set_fill(panel_n, style.panel_bg);
+        scene.set_mask(panel_n, None);
+        scene.set_visible(panel_n, true);
+
+        let title_rect = Rect::new(panel.x, panel.y, panel.width, style.title_height);
+        scene.set_bounds(title_bg, title_rect);
+        scene.set_fill(title_bg, style.title_bg);
+        scene.set_mask(title_bg, None);
+        scene.set_visible(title_bg, true);
+
+        let (_, tm) = self.font.rasterize_text(&title, style.title_size, None);
+        scene.set_bounds(
+            title_l,
+            Rect::new(
+                panel.x + style.padding,
+                panel.y + ((style.title_height - tm.height as f32) * 0.5).max(0.0),
+                tm.width as f32,
+                tm.height as f32,
+            ),
+        );
+        scene.set_fill(title_l, style.title_fg);
+        scene.set_mask(title_l, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+        scene.set_visible(title_l, true);
+
+        let (_, cm) = self.font.rasterize_text("×", style.title_size, None);
+        let close_x = panel.x + panel.width - style.padding - cm.width as f32;
+        let close_y = panel.y + ((style.title_height - cm.height as f32) * 0.5).max(0.0);
+        scene.set_bounds(
+            close_n,
+            Rect::new(close_x - 4.0, close_y - 4.0, cm.width as f32 + 8.0, cm.height as f32 + 8.0),
+        );
+        scene.set_fill(close_n, style.title_fg);
+        scene.set_mask(close_n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+        scene.set_visible(close_n, true);
+
+        let (_, bm) = self.font.rasterize_text(&body, style.body_size, None);
+        scene.set_bounds(
+            body_n,
+            Rect::new(
+                panel.x + style.padding,
+                panel.y + style.title_height + style.padding,
+                bm.width as f32,
+                bm.height as f32,
+            ),
+        );
+        scene.set_fill(body_n, style.body_fg);
+        scene.set_mask(body_n, Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
+        scene.set_visible(body_n, true);
+
+        let btn_y = panel.y + panel.height - style.padding - style.action_height;
+        let mut cursor_x = panel.x + panel.width - style.padding;
+
+        if let Some(ref p) = primary {
+            let (tw, _) = self.font.measure_line(p, style.body_size);
+            let bw = (tw + 24.0).max(72.0);
+            let bx = cursor_x - bw;
+            scene.set_bounds(primary_btn, Rect::new(bx, btn_y, bw, style.action_height));
+            scene.set_fill(primary_btn, style.primary_bg);
+            scene.set_mask(primary_btn, None);
+            scene.set_visible(primary_btn, true);
+            let (_, lm) = self.font.rasterize_text(p, style.body_size, None);
+            scene.set_bounds(
+                primary_l,
+                Rect::new(
+                    bx + ((bw - lm.width as f32) * 0.5).max(0.0),
+                    btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
+                    lm.width as f32,
+                    lm.height as f32,
+                ),
+            );
+            scene.set_fill(primary_l, style.action_fg);
+            scene.set_mask(primary_l, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+            scene.set_visible(primary_l, true);
+            cursor_x = bx - 8.0;
+        } else {
+            scene.set_visible(primary_btn, false);
+            scene.set_visible(primary_l, false);
+        }
+        if let Some(ref s) = secondary {
+            let (tw, _) = self.font.measure_line(s, style.body_size);
+            let bw = (tw + 24.0).max(72.0);
+            let bx = cursor_x - bw;
+            scene.set_bounds(secondary_btn, Rect::new(bx, btn_y, bw, style.action_height));
+            scene.set_fill(secondary_btn, style.secondary_bg);
+            scene.set_mask(secondary_btn, None);
+            scene.set_visible(secondary_btn, true);
+            let (_, lm) = self.font.rasterize_text(s, style.body_size, None);
+            scene.set_bounds(
+                secondary_l,
+                Rect::new(
+                    bx + ((bw - lm.width as f32) * 0.5).max(0.0),
+                    btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
+                    lm.width as f32,
+                    lm.height as f32,
+                ),
+            );
+            scene.set_fill(secondary_l, style.action_fg);
+            scene.set_mask(secondary_l, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+            scene.set_visible(secondary_l, true);
+        } else {
+            scene.set_visible(secondary_btn, false);
+            scene.set_visible(secondary_l, false);
+        }
+
+        if let Some(h) = self.overlay_host {
+            scene.raise(h);
         }
     }
 
@@ -6237,6 +7644,208 @@ impl FlexBuilder<'_> {
         id
     }
 
+    /// Compact status Tag chip.
+    pub fn tag(&mut self, label: impl Into<String>) -> WidgetId {
+        self.tag_styled(label, false, TagStyle::default())
+    }
+
+    /// Tag with optional close affordance and style.
+    pub fn tag_styled(
+        &mut self,
+        label: impl Into<String>,
+        closable: bool,
+        style: TagStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Tag {
+                    label: label.into(),
+                    closable,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Standalone count Badge pill.
+    pub fn badge_count(&mut self, count: u32) -> WidgetId {
+        self.badge_styled(BadgeKind::Count(count), BadgeStyle::default())
+    }
+
+    /// Standalone Badge dot.
+    pub fn badge_dot(&mut self) -> WidgetId {
+        self.badge_styled(BadgeKind::Dot, BadgeStyle::default())
+    }
+
+    /// Badge with style (standalone).
+    pub fn badge_styled(&mut self, kind: BadgeKind, style: BadgeStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Badge {
+                    kind,
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Badge overlay on a single child (count `0` hides overlay).
+    pub fn badge_host<F>(&mut self, kind: BadgeKind, style: BadgeStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Badge {
+                    kind,
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        {
+            let mut b = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut b);
+        }
+        id
+    }
+
+    /// Tooltip host: hover child to show `text` (immediate MVP).
+    pub fn tooltip<F>(&mut self, text: impl Into<String>, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        self.tooltip_styled(text, TooltipStyle::default(), build)
+    }
+
+    /// Tooltip with style.
+    pub fn tooltip_styled<F>(
+        &mut self,
+        text: impl Into<String>,
+        style: TooltipStyle,
+        build: F,
+    ) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Tooltip {
+                    text: text.into(),
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        {
+            let mut b = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut b);
+        }
+        id
+    }
+
+    /// Determinate Progress bar (`value` in 0..=1).
+    pub fn progress(&mut self, value: f32) -> WidgetId {
+        self.progress_styled(value, false, ProgressStyle::default())
+    }
+
+    /// Progress with style; `indeterminate` paints a stub partial fill.
+    pub fn progress_styled(
+        &mut self,
+        value: f32,
+        indeterminate: bool,
+        style: ProgressStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Progress {
+                    value: value.clamp(0.0, 1.0),
+                    indeterminate,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Inline Alert banner.
+    pub fn alert(&mut self, tone: AlertTone, message: impl Into<String>) -> WidgetId {
+        self.alert_styled(tone, message, true, AlertStyle::default())
+    }
+
+    /// Alert with dismissibility and style.
+    pub fn alert_styled(
+        &mut self,
+        tone: AlertTone,
+        message: impl Into<String>,
+        dismissible: bool,
+        style: AlertStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Alert {
+                    tone,
+                    message: message.into(),
+                    dismissible,
+                    dismissed: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     fn push_child(&mut self, child: WidgetId) {
         if let Some(w) = self.ui.widgets.get_mut(&self.parent) {
             match &mut w.kind {
@@ -6248,7 +7857,9 @@ impl FlexBuilder<'_> {
                 | Kind::Splitter { children, .. }
                 | Kind::ScrollArea { children, .. }
                 | Kind::ContextMenu { children, .. }
-                | Kind::Tabs { children, .. } => {
+                | Kind::Tabs { children, .. }
+                | Kind::Badge { children, .. }
+                | Kind::Tooltip { children, .. } => {
                     children.push(child);
                 }
                 _ => {}
@@ -6808,5 +8419,106 @@ mod tests {
         ui.set_focus(Some(slider));
         assert!(ui.key_input(UiKey::Right));
         assert!(ui.slider_value(slider).unwrap() > v);
+    }
+
+    #[test]
+    fn office_feedback_tag_badge_tooltip_modal_progress_alert() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(640.0, 480.0);
+        let mut tag = WidgetId(0);
+        let mut badge = WidgetId(0);
+        let mut tip = WidgetId(0);
+        let mut progress = WidgetId(0);
+        let mut alert = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 600.0,
+                height: 400.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.row(
+                    RowStyle {
+                        width: 560.0,
+                        height: 32.0,
+                        gap: 8.0,
+                        ..RowStyle::default()
+                    },
+                    |r| {
+                        tag = r.tag_styled(
+                            "Running",
+                            true,
+                            TagStyle {
+                                bg: Color::rgb(0x1e, 0x3d, 0x2a),
+                                ..TagStyle::default()
+                            },
+                        );
+                        badge = r.badge_count(3);
+                        tip = r.tooltip("Save document", |t| {
+                            t.icon(IconName::Save);
+                        });
+                    },
+                );
+                progress = col.progress(0.4);
+                alert = col.alert(AlertTone::Warning, "Threshold near limit");
+            },
+        );
+        let modal = ui.modal(
+            "Confirm",
+            "Delete this tag from the list?",
+            "Delete",
+            Some("Cancel".into()),
+            ModalStyle::default(),
+        );
+        ui.sync(&mut scene);
+        assert!(ui.is_tag(tag));
+        assert!(ui.is_badge(badge));
+        assert!(ui.is_tooltip(tip));
+        assert!(ui.is_progress(progress));
+        assert!(ui.is_alert(alert));
+        assert!(ui.is_modal(modal));
+        assert!((ui.progress_value(progress).unwrap() - 0.4).abs() < 0.01);
+        assert!(ui.set_progress_value(progress, 0.75));
+        assert!((ui.progress_value(progress).unwrap() - 0.75).abs() < 0.01);
+
+        // Tooltip hover
+        let tnode = ui.widgets.get(&tip).unwrap().node.unwrap();
+        let tb = scene.get(tnode).unwrap().bounds;
+        assert!(ui.pointer_hover(&scene, tb.x + 4.0, tb.y + 4.0));
+        ui.sync(&mut scene);
+        assert!(ui.widgets.get(&tip).unwrap().aux.iter().any(|&n| {
+            scene.get(n).map(|n| n.visible).unwrap_or(false)
+        }));
+
+        // Alert dismiss
+        let anode = ui.widgets.get(&alert).unwrap().chrome_node.unwrap();
+        let ab = scene.get(anode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, ab.x + 1.0, ab.y + 1.0));
+        assert_eq!(ui.take_alert_dismiss(), Some(alert));
+        assert_eq!(ui.alert_dismissed(alert), Some(true));
+
+        // Modal open / primary
+        assert!(ui.set_modal_open(modal, true));
+        assert_eq!(ui.modal_open(modal), Some(true));
+        ui.sync(&mut scene);
+        let aux = &ui.widgets.get(&modal).unwrap().aux;
+        assert!(scene.get(aux[0]).unwrap().visible); // scrim
+        let primary = scene.get(aux[6]).unwrap().bounds;
+        assert!(ui.pointer_press(
+            &mut scene,
+            primary.x + primary.width * 0.5,
+            primary.y + primary.height * 0.5,
+            false
+        ));
+        assert_eq!(ui.take_modal_action(), Some((modal, ModalAction::Primary)));
+        assert_eq!(ui.modal_open(modal), Some(false));
+
+        // Tag close
+        ui.sync(&mut scene);
+        let cnode = ui.widgets.get(&tag).unwrap().chrome_node.unwrap();
+        let cb = scene.get(cnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, cb.x + 1.0, cb.y + 1.0));
+        assert_eq!(ui.take_tag_close(), Some(tag));
     }
 }
