@@ -4,7 +4,7 @@
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
 //! Office P0 + P1 widgets: shell/input/data/nav/feedback, plus TreeSelect, Form validation,
-//! AlarmList, Gauge, and Trend.
+//! AlarmList, Gauge, and Trend. TextInput supports IME preedit/commit (CJK).
 
 #![deny(missing_docs)]
 
@@ -1637,6 +1637,10 @@ enum Kind {
         placeholder: String,
         caret: usize,
         select_all: bool,
+        /// IME preedit / composition string (not yet committed into `value`).
+        preedit: String,
+        /// Byte-range caret inside `preedit` from the IME (`None` = hide caret in preedit).
+        preedit_cursor: Option<(usize, usize)>,
         style: TextInputStyle,
     },
     Checkbox {
@@ -1919,7 +1923,8 @@ impl Default for Ui {
 /// Keyboard key for [`Ui::key_input`] (apps map platform keys into this).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiKey {
-    /// Printable character (ASCII / Latin). IME/CJK composition is not handled yet.
+    /// Printable character from the keyboard path (typically Latin/ASCII).
+    /// CJK composition uses [`Ui::ime_preedit`] / [`Ui::ime_commit`], not this variant.
     Char(char),
     /// Backspace.
     Backspace,
@@ -2594,12 +2599,138 @@ impl Ui {
                 value: v,
                 caret,
                 select_all,
+                preedit,
+                preedit_cursor,
                 ..
             } = &mut w.kind
             {
                 *v = value.into();
                 *caret = v.chars().count();
                 *select_all = false;
+                preedit.clear();
+                *preedit_cursor = None;
+            }
+        }
+    }
+
+    /// True when focus is on a [`Kind::TextInput`] (app should enable OS IME).
+    pub fn text_input_wants_ime(&self) -> bool {
+        self.focus
+            .map(|id| self.is_text_input(id))
+            .unwrap_or(false)
+    }
+
+    /// Caret rectangle for the focused TextInput (physical px), for IME candidate placement.
+    pub fn ime_cursor_area(&self, scene: &Scene) -> Option<(f32, f32, f32, f32)> {
+        let id = self.focus.filter(|&id| self.is_text_input(id))?;
+        let w = self.widgets.get(&id)?;
+        let Kind::TextInput {
+            value,
+            caret,
+            preedit,
+            style,
+            ..
+        } = &w.kind
+        else {
+            return None;
+        };
+        let bounds = w.node.and_then(|n| scene.get(n).map(|n| n.bounds))?;
+        let before: String = value.chars().take(*caret).collect();
+        let (bw, _) = self.font.measure_line(&before, style.size);
+        let (pw, _) = if preedit.is_empty() {
+            (0.0, 0.0)
+        } else {
+            self.font.measure_line(preedit, style.size)
+        };
+        let cx = bounds.x + style.padding_x + bw + pw;
+        let cy = bounds.y + 4.0;
+        let ch = (bounds.height - 8.0).max(8.0);
+        Some((cx, cy, 2.0_f32.max(1.0), ch))
+    }
+
+    /// Update IME preedit on the focused TextInput. Empty `text` clears composition.
+    pub fn ime_preedit(&mut self, text: impl Into<String>, cursor: Option<(usize, usize)>) -> bool {
+        let Some(id) = self.focus else {
+            return false;
+        };
+        let Some(w) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let Kind::TextInput {
+            preedit,
+            preedit_cursor,
+            ..
+        } = &mut w.kind
+        else {
+            return false;
+        };
+        *preedit = text.into();
+        *preedit_cursor = if preedit.is_empty() { None } else { cursor };
+        true
+    }
+
+    /// Commit IME text into the focused TextInput at the caret (clears preedit).
+    pub fn ime_commit(&mut self, text: impl AsRef<str>) -> bool {
+        let Some(id) = self.focus else {
+            return false;
+        };
+        let text = text.as_ref();
+        if text.is_empty() {
+            // Still clear preedit.
+            return self.ime_preedit("", None);
+        }
+        let Some(w) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let Kind::TextInput {
+            value,
+            caret,
+            select_all,
+            preedit,
+            preedit_cursor,
+            ..
+        } = &mut w.kind
+        else {
+            return false;
+        };
+        preedit.clear();
+        *preedit_cursor = None;
+        let mut chars: Vec<char> = value.chars().collect();
+        *caret = (*caret).min(chars.len());
+        if *select_all {
+            chars.clear();
+            *caret = 0;
+            *select_all = false;
+        }
+        for c in text.chars() {
+            chars.insert(*caret, c);
+            *caret += 1;
+        }
+        *value = chars.into_iter().collect();
+        true
+    }
+
+    /// Clear preedit on the focused TextInput (IME disabled / cancelled).
+    pub fn ime_clear_preedit(&mut self) -> bool {
+        self.ime_preedit("", None)
+    }
+
+    fn scrub_unfocused_ime(&mut self) {
+        let focus = self.focus;
+        for (id, w) in self.widgets.iter_mut() {
+            if Some(*id) == focus {
+                continue;
+            }
+            if let Kind::TextInput {
+                preedit,
+                preedit_cursor,
+                ..
+            } = &mut w.kind
+            {
+                if !preedit.is_empty() || preedit_cursor.is_some() {
+                    preedit.clear();
+                    *preedit_cursor = None;
+                }
             }
         }
     }
@@ -3034,11 +3165,30 @@ impl Ui {
             value,
             caret,
             select_all,
+            preedit,
+            preedit_cursor,
             ..
         } = &mut w.kind
         else {
             return false;
         };
+        // Composing: let the IME own Backspace/etc.; ignore direct Char inserts.
+        if !preedit.is_empty() {
+            match key {
+                UiKey::Char(_) => return false,
+                UiKey::Escape => {
+                    preedit.clear();
+                    *preedit_cursor = None;
+                    return true;
+                }
+                _ => {
+                    // Drop preedit on navigation / delete so state stays coherent if
+                    // the OS still delivered the key.
+                    preedit.clear();
+                    *preedit_cursor = None;
+                }
+            }
+        }
         let mut chars: Vec<char> = value.chars().collect();
         let len = chars.len();
         *caret = (*caret).min(len);
@@ -4394,6 +4544,7 @@ impl Ui {
 
     /// Ensure scene nodes exist, run layout, paint labels into the scene.
     pub fn sync(&mut self, scene: &mut Scene) {
+        self.scrub_unfocused_ime();
         let parent = scene.root();
         for root in self.roots.clone() {
             self.ensure_mounted(scene, parent, root);
@@ -4537,9 +4688,14 @@ impl Ui {
                     let caret = scene
                         .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
                         .expect("insert caret");
+                    let underline = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
+                        .expect("insert preedit underline");
+                    scene.set_visible(underline, false);
                     if let Some(w) = self.widgets.get_mut(&id) {
                         w.label_node = Some(label);
                         w.chrome_node = Some(caret);
+                        w.aux = vec![underline];
                     }
                 }
                 Some(Kind::Checkbox { .. }) | Some(Kind::Radio { .. }) | Some(Kind::Switch { .. }) => {
@@ -6010,12 +6166,16 @@ impl Ui {
                 placeholder,
                 caret,
                 select_all,
+                preedit,
+                preedit_cursor,
                 style,
             } => {
                 let value = value.clone();
                 let placeholder = placeholder.clone();
                 let caret = *caret;
                 let select_all = *select_all;
+                let preedit = preedit.clone();
+                let preedit_cursor = *preedit_cursor;
                 let style = *style;
                 let focused = self.focus == Some(id);
                 let border = if focused {
@@ -6025,27 +6185,31 @@ impl Ui {
                 };
                 scene.set_fill(node, style.bg);
                 scene.set_mask(node, None);
-                // Focus ring: chrome caret node also reused; draw border as slightly larger? keep bg only.
                 let _ = border;
-                if focused {
-                    scene.set_fill(node, style.bg);
-                }
-                let show = if value.is_empty() {
-                    (placeholder.as_str(), style.placeholder_fg)
+                let before: String = value.chars().take(caret).collect();
+                let after: String = value.chars().skip(caret).collect();
+                let composing = focused && !preedit.is_empty();
+                let (display, fg) = if !value.is_empty() || composing {
+                    let mut s = String::with_capacity(value.len() + preedit.len());
+                    s.push_str(&before);
+                    if composing {
+                        s.push_str(&preedit);
+                    }
+                    s.push_str(&after);
+                    (s, style.fg)
                 } else {
-                    (value.as_str(), style.fg)
+                    (placeholder.clone(), style.placeholder_fg)
                 };
-                let (_, mask) = self.font.rasterize_text(show.0, style.size, None);
+                let (_, mask) = self.font.rasterize_text(&display, style.size, None);
+                let lx = bounds.x + style.padding_x;
+                let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
                 if let Some(lid) = label_node {
-                    let lx = bounds.x + style.padding_x;
-                    let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
                     scene.set_bounds(
                         lid,
                         Rect::new(lx, ly, mask.width as f32, mask.height as f32),
                     );
-                    scene.set_fill(lid, show.1);
-                    if select_all && !value.is_empty() {
-                        // Selection: tint label bg via host already; use brighter fg.
+                    scene.set_fill(lid, fg);
+                    if select_all && !value.is_empty() && !composing {
                         scene.set_fill(lid, Color::rgb(0xff, 0xff, 0xff));
                     }
                     scene.set_mask(
@@ -6054,17 +6218,50 @@ impl Ui {
                     );
                     scene.set_visible(lid, true);
                 }
+                // Preedit underline (MVP): bar under the composition span.
+                let underline = self.widgets.get(&id).and_then(|w| w.aux.first().copied());
+                if let Some(uid) = underline {
+                    if composing {
+                        let (bw, _) = self.font.measure_line(&before, style.size);
+                        let (pw, _) = self.font.measure_line(&preedit, style.size);
+                        let uy = (ly + mask.height as f32 + 1.0).min(bounds.y + bounds.height - 2.0);
+                        scene.set_bounds(uid, Rect::new(lx + bw, uy, pw.max(1.0), 2.0));
+                        scene.set_fill(uid, style.focus_border);
+                        scene.set_mask(uid, None);
+                        scene.set_visible(uid, true);
+                    } else {
+                        scene.set_visible(uid, false);
+                    }
+                }
                 if let Some(cid) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if focused {
-                        let prefix: String = value.chars().take(caret).collect();
+                        let caret_chars = if composing {
+                            let pre_chars = preedit.chars().count();
+                            let at = match preedit_cursor {
+                                Some((b, _)) => {
+                                    // byte index → char index inside preedit
+                                    preedit
+                                        .get(..b.min(preedit.len()))
+                                        .map(|s| s.chars().count())
+                                        .unwrap_or(pre_chars)
+                                }
+                                None => pre_chars,
+                            };
+                            before.chars().count() + at
+                        } else {
+                            caret
+                        };
+                        let prefix: String = display.chars().take(caret_chars).collect();
                         let (cw, _) = self.font.measure_line(&prefix, style.size);
                         let cx = bounds.x + style.padding_x + cw;
                         let cy = bounds.y + 4.0;
                         let ch = (bounds.height - 8.0).max(8.0);
+                        // Hide caret when IME says so (cursor = None) during preedit.
+                        let show_caret = !(composing && preedit_cursor.is_none());
                         scene.set_bounds(cid, Rect::new(cx, cy, 2.0, ch));
                         scene.set_fill(cid, style.focus_border);
                         scene.set_mask(cid, None);
-                        scene.set_visible(cid, true);
+                        scene.set_visible(cid, show_caret);
                     } else {
                         scene.set_visible(cid, false);
                     }
@@ -8722,6 +8919,8 @@ impl FlexBuilder<'_> {
                     placeholder: placeholder.into(),
                     caret,
                     select_all: false,
+                    preedit: String::new(),
+                    preedit_cursor: None,
                     style,
                 },
                 node: None,
@@ -9791,6 +9990,17 @@ mod tests {
         assert!(ui.key_input(UiKey::Backspace));
         assert_eq!(ui.text_input_value(input), Some(""));
 
+        // IME: preedit does not mutate value; commit inserts CJK at caret.
+        assert!(ui.ime_preedit("ni", Some((2, 2))));
+        assert_eq!(ui.text_input_value(input), Some(""));
+        assert!(ui.ime_commit("你"));
+        assert_eq!(ui.text_input_value(input), Some("你"));
+        assert!(ui.ime_preedit("hao", Some((3, 3))));
+        assert!(ui.ime_commit("好"));
+        assert_eq!(ui.text_input_value(input), Some("你好"));
+        assert!(ui.text_input_wants_ime());
+        assert!(ui.ime_clear_preedit());
+
         let cnode = ui.widgets.get(&check).unwrap().node.unwrap();
         let cb = scene.get(cnode).unwrap().bounds;
         assert!(ui.pointer_pressed(&mut scene, cb.x + 2.0, cb.y + 2.0));
@@ -9815,6 +10025,45 @@ mod tests {
         ui.sync(&mut scene);
 
         assert!(scene.get(sarea).unwrap().clip.is_some());
+    }
+
+    #[test]
+    fn text_input_ime_preedit_paints_cjk_and_underline() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut input = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 400.0,
+                height: 120.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                input = col.text_input("type");
+            },
+        );
+        ui.sync(&mut scene);
+        let inode = ui.widgets.get(&input).unwrap().node.unwrap();
+        let b = scene.get(inode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, b.x + 4.0, b.y + 4.0));
+        assert!(ui.ime_commit("你好"));
+        assert!(ui.ime_preedit("世界", Some((0, 6))));
+        ui.sync(&mut scene);
+        assert_eq!(ui.text_input_value(input), Some("你好"));
+        let label = ui.widgets.get(&input).unwrap().label_node.unwrap();
+        let ln = scene.get(label).unwrap();
+        assert!(ln.visible);
+        let mask = ln.mask.as_ref().expect("label mask");
+        assert!(mask.width > 8 && mask.height > 8, "CJK+preedit mask too small");
+        // Underline aux should be visible while composing.
+        let ul = ui.widgets.get(&input).unwrap().aux[0];
+        let un = scene.get(ul).unwrap();
+        assert!(un.visible, "expected preedit underline visible");
+        assert!(un.bounds.width > 1.0);
+        // Clear preedit hides underline.
+        assert!(ui.ime_clear_preedit());
+        ui.sync(&mut scene);
+        assert!(!scene.get(ul).unwrap().visible);
     }
 
     #[test]

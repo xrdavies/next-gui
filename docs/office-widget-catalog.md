@@ -71,7 +71,7 @@
 | `splitter` | 分隔面板 | 左树右表经典布局 |
 | `panel` | 面板 | **一等公民（已拍板）**；带标题的内容容器（Dock 轻量） |
 | `scroll_area` | 滚动区域 | 长列表/属性页 |
-| `text_input` | 单行输入 | **P0 必含（已拍板）**；配置项；IME 可分期 |
+| `text_input` | 单行输入 | **P0 必含（已拍板）**；IME preedit/commit 已接 |
 | `checkbox` | 复选框 | |
 | `radio` | 单选框 | |
 | `switch` | 开关 | 使能类设置 |
@@ -146,7 +146,7 @@
 
 | id | 中文 | Ant | EP | MUI | 优先级 | fit |
 |----|------|-----|----|-----|--------|-----|
-| `text_input` | 单行输入 | Y | Y | Y | **P0** | **必含（已拍板）**；焦点环+键盘；IME 可分期 |
+| `text_input` | 单行输入 | Y | Y | Y | **P0** | **必含（已拍板）**；焦点环+键盘；**IME 已接** |
 | `text_area` | 多行输入 | Y | Y | ~ | P1 | 备注/脚本片段 |
 | `checkbox` | 复选 | Y | Y | Y | **P0** | |
 | `radio` | 单选 | Y | Y | Y | **P0** | |
@@ -274,7 +274,7 @@
 | 已实现（P1 核心切片） | `tree_select`，`form`（校验引擎），`alarm_list`，`gauge`，`trend`（`examples/20_office_industrial`） |
 | P0 缺口 | **无**（目录 §4 名单已覆盖；IME/虚拟化/列宽拖拽等为增强，见各切片备注） |
 | P1 仍待办（本切片未含） | `card`，`breadcrumb`，`pagination`，`text_area`，`input_number`，`datetime`，`transfer`，`segmented`，`empty`，`collapse`，`descriptions`，`drawer`，`notification`，`spin`，`backdrop`，`property_grid`，`tree_table`，`virtual_list` |
-| 未实现且非本文范围 | 动画系统、完整 IME、Immediate 视口、Profile crate（P4） |
+| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗、Immediate 视口、Profile crate（P4） |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
 
@@ -305,4 +305,5 @@
 | 2026-10-17 | **Shell 切片落地：** `icon` / `toolbar` / `panel` / `status_bar` / `splitter`（Rust API + `e11_office_shell` 示例）；录入/表/树仍待办。 |
 | 2026-10-17 | **Feedback 切片落地：** `tag` / `badge` / `tooltip` / `modal` / `progress` / `alert`（Rust API + `e15_office_feedback`）；**P0 目录控件齐。** |
 | 2026-10-17 | 补充过程要求：UI/example 合入前视觉自测（指向 AGENTS.md Git Workflow / QA）。 |
+| 2026-10-17 | **IME/CJK：** TextInput preedit + commit（Linux/macOS winit IME）；系统候选窗；无自绘候选列表。 |
 | 2026-10-17 | **P1 核心切片落地：** `tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend` + `e20_office_industrial`；Cascader 仍不进 P1；IME 仍后置。 |

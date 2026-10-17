@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use next_gui_layout::CrossAlign;
 use next_gui_platform::{
-    AppCallbacks, Event, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
+    AppCallbacks, Event, ImeEvent, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
 };
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
@@ -421,6 +421,16 @@ impl Demo {
         }
     }
 
+    fn sync_ime(&mut self, ctx: &mut WindowCtx<'_>) {
+        let want = self.ui.text_input_wants_ime();
+        ctx.set_ime_allowed(want);
+        if want {
+            if let Some((x, y, w, h)) = self.ui.ime_cursor_area(&self.scene) {
+                ctx.set_ime_cursor_area(x as f64, y as f64, w as f64, h as f64);
+            }
+        }
+    }
+
     fn refresh_status(&mut self) {
         let bay = self
             .ui
@@ -576,6 +586,7 @@ impl AppCallbacks for Demo {
             self.backend.detail()
         );
         ctx.set_title(&format!("next-gui Office P1 — {}", self.backend.name()));
+        self.sync_ime(ctx);
         ctx.request_redraw();
     }
 
@@ -619,6 +630,7 @@ impl AppCallbacks for Demo {
                     }
                 }
                 if handled {
+                    self.sync_ime(ctx);
                     self.refresh_status();
                     ctx.request_redraw();
                 }
@@ -668,6 +680,7 @@ impl AppCallbacks for Demo {
             } => {
                 if let Some(ui_key) = map_key(key, modifiers) {
                     if self.ui.key_input(ui_key) {
+                        self.sync_ime(ctx);
                         self.refresh_status();
                         ctx.request_redraw();
                         return;
@@ -681,6 +694,19 @@ impl AppCallbacks for Demo {
                         ));
                         ctx.request_redraw();
                     }
+                }
+            }
+            Event::Ime { ime, .. } => {
+                let handled = match ime {
+                    ImeEvent::Enabled => false,
+                    ImeEvent::Preedit { text, cursor } => self.ui.ime_preedit(text, cursor),
+                    ImeEvent::Commit { text } => self.ui.ime_commit(text),
+                    ImeEvent::Disabled => self.ui.ime_clear_preedit(),
+                };
+                self.sync_ime(ctx);
+                if handled {
+                    self.refresh_status();
+                    ctx.request_redraw();
                 }
             }
             Event::RedrawRequested { .. } => {
