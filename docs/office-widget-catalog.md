@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**P0 切片**已落地（shell/inputs/data/nav/feedback）。**P1 核心** + **P1 rest** 已落地（含 Drawer、虚表、录入/反馈/结构控件；见 §9）。`datetime` / `transfer` / `property_grid` / `tree_table` 仍待办。
+> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**P0 切片**已落地（shell/inputs/data/nav/feedback）。**P1 核心** + **P1 rest** 已落地（含 Drawer、虚表、录入/反馈/结构控件；见 §9）。**P1 deferred 四项已落地**（`datetime` / `transfer` / `property_grid` / `tree_table`；见 §9）。Cascader 仍不进 P1。
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -274,7 +274,8 @@
 | 已实现（P1 核心切片） | `tree_select`，`form`（校验引擎），`alarm_list`，`gauge`，`trend`（`examples/20_office_industrial`） |
 | 已实现（P1 rest 切片） | `drawer`，`backdrop`（Modal/Drawer scrim），`virtual_list` / `virtual_table`，`text_area`，`input_number`，`notification`，`spin`，`empty`，`collapse`，`descriptions`，`card`，`segmented`，`breadcrumb`，`pagination`（`examples/21_office_p1_rest`） |
 | P0 缺口 | **无**（目录 §4 名单已覆盖；IME/列宽拖拽等为增强，见各切片备注） |
-| P1 仍待办 | `datetime`，`transfer`，`property_grid`，`tree_table`（Cascader 仍不进 P1） |
+| 已实现（P1 deferred 切片） | `datetime`，`transfer`，`property_grid`，`tree_table`（`examples/22_office_p1_deferred`） |
+| P1 仍待办 | Cascader（仍不进 P1；层级选择仅 TreeSelect） |
 | 未实现且非本文范围 | 动画系统、自绘 IME 候选窗、Immediate 视口、Profile crate（P4） |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
@@ -309,3 +310,4 @@
 | 2026-10-17 | **IME/CJK：** TextInput preedit + commit（Linux/macOS winit IME）；系统候选窗；无自绘候选列表。 |
 | 2026-10-17 | **P1 核心切片落地：** `tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend` + `e20_office_industrial`；Cascader 仍不进 P1；IME 仍后置。 |
 | 2026-10-18 | **P1 rest 切片落地：** Drawer（+Backdrop）、VirtualList/Table、TextArea、InputNumber、Notification、Spin、Empty、Collapse、Descriptions、Card、Segmented、Breadcrumb、Pagination + `e21_office_p1_rest`；Datetime/Transfer/PropertyGrid/TreeTable 仍后置。 |
+| 2026-10-18 | **P1 deferred 切片落地：** DateTime / Transfer / PropertyGrid / TreeTable + `e22_office_p1_deferred`；Cascader 仍不进 P1。 |

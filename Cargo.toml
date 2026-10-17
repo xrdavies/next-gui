@@ -22,6 +22,7 @@ members = [
     "examples/15_office_feedback",
     "examples/20_office_industrial",
     "examples/21_office_p1_rest",
+    "examples/22_office_p1_deferred",
 ]
 
 [workspace.package]
