@@ -18,7 +18,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 - Field/Office **Profile 配置 crate**（P4，已推迟）
 - Immediate 视口（P5）
-- 完整表单控件（TextInput / List / Tree）与 IME（下一切片）
+- 完整 IME/CJK 输入、List / Table / Tree / Select / Slider / Menu（后续切片）
 - 动画系统、图表控件
 
 ---
@@ -85,13 +85,17 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 | `Splitter` | `ui` | 左右/上下拖拽分隔（指针拖 sash） |
 | Soft 回退 | 示例 | GPU 失败或切换时仍可 Soft |
 | Native Surface | `render-gpu` + `platform` | Office 默认（有适配器时） |
+| `ScrollArea` | `ui` | 视口裁剪 + 滚轮/拖拽滚动 |
+| `TextInput` | `ui` | 单行录入（ASCII）；IME/CJK 组合输入仍 stub |
+| `Checkbox` / `Radio` / `Switch` | `ui` | 点击/Space 切换；Radio 分组互斥 |
 
 示例：
 
 - `examples/office_panel` — 早期 Row 工具条 + Soft/GPU 切换
 - `examples/office_shell` — **P0 shell**：Toolbar + Icon + Panel + Splitter + StatusBar
+- `examples/office_inputs` — **P0 input**：ScrollArea + TextInput + Checkbox + Radio + Switch
 
-Rust API 优先；复杂壳控件（Splitter 等）暂未进 `.ngui`（避免半成品 DSL）。下一切片：`ScrollArea` / `TextInput` / `Table` / `Tree`。
+Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Table` / `Tree` / `List` / `Select` / `Slider` / `Menu`。
 
 ---
 

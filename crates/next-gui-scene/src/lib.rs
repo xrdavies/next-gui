@@ -210,6 +210,9 @@ pub struct Node {
     /// Optional alpha mask drawn at `bounds` origin, tinted by `fill`.
     /// When set, the solid `fill` rect is skipped in encode (mask-only paint).
     pub mask: Option<AlphaMask>,
+    /// Optional clip rectangle in window coordinates (e.g. ScrollArea viewport).
+    /// Descendants inherit via encode/hit-test clip stacks.
+    pub clip: Option<Rect>,
 }
 
 /// Accumulated dirty rectangles.
@@ -290,6 +293,7 @@ impl Scene {
                 fill: Color::rgba(0, 0, 0, 0),
                 visible: false,
                 mask: None,
+                clip: None,
             },
         );
         Self {
@@ -325,6 +329,7 @@ impl Scene {
             fill,
             visible: true,
             mask: None,
+            clip: None,
         };
         self.nodes.insert(id, node);
         if let Some(p) = self.nodes.get_mut(&parent) {
@@ -400,6 +405,23 @@ impl Scene {
         true
     }
 
+    /// Set or clear a clip rect for this node (absolute window coords).
+    pub fn set_clip(&mut self, id: NodeId, clip: Option<Rect>) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if node.clip == clip {
+            return true;
+        }
+        let bounds = node.bounds;
+        node.clip = clip;
+        self.dirty.add(bounds);
+        if let Some(c) = clip {
+            self.dirty.add(c);
+        }
+        true
+    }
+
     /// Remove node and descendants; marks dirty.
     pub fn remove(&mut self, id: NodeId) -> bool {
         if id == self.root {
@@ -441,15 +463,39 @@ impl Scene {
     }
 
     /// Hit-test: top-most visible node under (x,y), excluding invisible root fill.
+    /// Honors ancestor [`Node::clip`] rectangles (ScrollArea viewports).
     pub fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
-        self.hit_test_node(self.root, x, y)
+        self.hit_test_node(self.root, x, y, None)
     }
 
-    fn hit_test_node(&self, id: NodeId, x: f32, y: f32) -> Option<NodeId> {
+    fn hit_test_node(
+        &self,
+        id: NodeId,
+        x: f32,
+        y: f32,
+        parent_clip: Option<Rect>,
+    ) -> Option<NodeId> {
         let node = self.nodes.get(&id)?;
+        let clip = match (parent_clip, node.clip) {
+            (Some(a), Some(b)) => {
+                let i = a.intersect(&b);
+                if i.is_empty() {
+                    return None;
+                }
+                Some(i)
+            }
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        if let Some(c) = clip {
+            if !c.contains(x, y) {
+                return None;
+            }
+        }
         // Children front-to-back (reverse paint order)
         for child_id in node.children.iter().rev() {
-            if let Some(hit) = self.hit_test_node(*child_id, x, y) {
+            if let Some(hit) = self.hit_test_node(*child_id, x, y, clip) {
                 return Some(hit);
             }
         }

@@ -3,7 +3,8 @@
 //! Retained widget tree built with a short builder or loaded from a compact `.ngui` file,
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
-//! Office P0 shell widgets: [`IconName`], Toolbar, Panel, StatusBar, Splitter.
+//! Office P0 shell + input widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
+//! ScrollArea, TextInput, Checkbox, Radio, Switch.
 
 #![deny(missing_docs)]
 
@@ -294,6 +295,181 @@ impl Default for SplitterStyle {
     }
 }
 
+
+/// Style for a ScrollArea viewport.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollAreaStyle {
+    /// Outer x (top-level only).
+    pub x: f32,
+    /// Outer y (top-level only).
+    pub y: f32,
+    /// Viewport width.
+    pub width: f32,
+    /// Viewport height.
+    pub height: f32,
+    /// Content padding.
+    pub padding: f32,
+    /// Gap between content children (vertical column).
+    pub gap: f32,
+    /// Content cross-align.
+    pub cross_align: CrossAlign,
+    /// Viewport fill.
+    pub background: Option<Color>,
+}
+
+impl Default for ScrollAreaStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 280.0,
+            height: 200.0,
+            padding: 8.0,
+            gap: 6.0,
+            cross_align: CrossAlign::Start,
+            background: Some(Color::rgb(0x24, 0x24, 0x28)),
+        }
+    }
+}
+
+/// Style for a single-line TextInput.
+#[derive(Debug, Clone, Copy)]
+pub struct TextInputStyle {
+    /// Width of the field.
+    pub width: f32,
+    /// Height of the field.
+    pub height: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Text / caret color.
+    pub fg: Color,
+    /// Placeholder color.
+    pub placeholder_fg: Color,
+    /// Field background.
+    pub bg: Color,
+    /// Border / focus ring color.
+    pub border: Color,
+    /// Focused border color.
+    pub focus_border: Color,
+    /// Horizontal text padding.
+    pub padding_x: f32,
+}
+
+impl Default for TextInputStyle {
+    fn default() -> Self {
+        Self {
+            width: 220.0,
+            height: 32.0,
+            size: 14.0,
+            fg: Color::rgb(0xe8, 0xec, 0xf0),
+            placeholder_fg: Color::rgb(0x78, 0x80, 0x8c),
+            bg: Color::rgb(0x1e, 0x1e, 0x22),
+            border: Color::rgb(0x4a, 0x4a, 0x54),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+            padding_x: 8.0,
+        }
+    }
+}
+
+/// Style for Checkbox.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckboxStyle {
+    /// Box size (px).
+    pub box_size: f32,
+    /// Label font size.
+    pub size: f32,
+    /// Label color.
+    pub fg: Color,
+    /// Box border / fill when unchecked.
+    pub box_bg: Color,
+    /// Box fill when checked.
+    pub checked_bg: Color,
+    /// Checkmark color.
+    pub check_fg: Color,
+    /// Gap between box and label.
+    pub gap: f32,
+}
+
+impl Default for CheckboxStyle {
+    fn default() -> Self {
+        Self {
+            box_size: 18.0,
+            size: 14.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            box_bg: Color::rgb(0x2a, 0x2a, 0x30),
+            checked_bg: Color::rgb(0x3b, 0x82, 0xf6),
+            check_fg: Color::rgb(0xff, 0xff, 0xff),
+            gap: 8.0,
+        }
+    }
+}
+
+/// Style for Radio.
+#[derive(Debug, Clone, Copy)]
+pub struct RadioStyle {
+    /// Outer circle diameter.
+    pub diameter: f32,
+    /// Label font size.
+    pub size: f32,
+    /// Label color.
+    pub fg: Color,
+    /// Outer ring color.
+    pub ring: Color,
+    /// Selected dot color.
+    pub dot: Color,
+    /// Gap between control and label.
+    pub gap: f32,
+}
+
+impl Default for RadioStyle {
+    fn default() -> Self {
+        Self {
+            diameter: 18.0,
+            size: 14.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            ring: Color::rgb(0x6a, 0x70, 0x7c),
+            dot: Color::rgb(0x3b, 0x82, 0xf6),
+            gap: 8.0,
+        }
+    }
+}
+
+/// Style for Switch (on/off toggle).
+#[derive(Debug, Clone, Copy)]
+pub struct SwitchStyle {
+    /// Track width.
+    pub width: f32,
+    /// Track height.
+    pub height: f32,
+    /// Label font size.
+    pub size: f32,
+    /// Label color.
+    pub fg: Color,
+    /// Track when off.
+    pub track_off: Color,
+    /// Track when on.
+    pub track_on: Color,
+    /// Thumb color.
+    pub thumb: Color,
+    /// Gap between switch and label.
+    pub gap: f32,
+}
+
+impl Default for SwitchStyle {
+    fn default() -> Self {
+        Self {
+            width: 40.0,
+            height: 22.0,
+            size: 14.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            track_off: Color::rgb(0x3a, 0x3a, 0x42),
+            track_on: Color::rgb(0x22, 0xc5, 0x5e),
+            thumb: Color::rgb(0xf0, 0xf0, 0xf4),
+            gap: 8.0,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Kind {
     Column {
@@ -349,6 +525,37 @@ enum Kind {
         horizontal: bool,
         color: Color,
     },
+    ScrollArea {
+        style: ScrollAreaStyle,
+        children: Vec<WidgetId>,
+        scroll_x: f32,
+        scroll_y: f32,
+        content_w: f32,
+        content_h: f32,
+    },
+    TextInput {
+        value: String,
+        placeholder: String,
+        caret: usize,
+        select_all: bool,
+        style: TextInputStyle,
+    },
+    Checkbox {
+        label: String,
+        checked: bool,
+        style: CheckboxStyle,
+    },
+    Radio {
+        group: u64,
+        label: String,
+        selected: bool,
+        style: RadioStyle,
+    },
+    Switch {
+        label: String,
+        on: bool,
+        style: SwitchStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -363,15 +570,22 @@ struct Widget {
 }
 
 #[derive(Debug, Clone)]
-struct DragState {
-    splitter: WidgetId,
-    /// Pointer position along the split axis at press.
-    start_pos: f32,
-    start_ratio: f32,
-    axis: Axis,
-    /// Splitter outer bounds at press.
-    bounds: Rect,
-    sash_size: f32,
+enum DragState {
+    Splitter {
+        splitter: WidgetId,
+        start_pos: f32,
+        start_ratio: f32,
+        axis: Axis,
+        bounds: Rect,
+        sash_size: f32,
+    },
+    Scroll {
+        area: WidgetId,
+        start_x: f32,
+        start_y: f32,
+        start_scroll_x: f32,
+        start_scroll_y: f32,
+    },
 }
 
 /// Retained UI tree that mounts into a [`Scene`].
@@ -381,16 +595,45 @@ pub struct Ui {
     widgets: HashMap<WidgetId, Widget>,
     /// Top-level columns/rows/shell widgets (mount roots).
     roots: Vec<WidgetId>,
-    /// scene node → widget (buttons, splitter sashes).
+    /// scene node → widget (buttons, splitter sashes, inputs).
     node_to_widget: HashMap<NodeId, WidgetId>,
     font: Arc<Font>,
     drag: Option<DragState>,
+    /// Focused widget (TextInput / Checkbox / Radio / Switch).
+    focus: Option<WidgetId>,
 }
 
 impl Default for Ui {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Keyboard key for [`Ui::key_input`] (apps map platform keys into this).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiKey {
+    /// Printable character (ASCII / Latin). IME/CJK composition is not handled yet.
+    Char(char),
+    /// Backspace.
+    Backspace,
+    /// Forward delete.
+    Delete,
+    /// Left arrow.
+    Left,
+    /// Right arrow.
+    Right,
+    /// Home.
+    Home,
+    /// End.
+    End,
+    /// Enter.
+    Enter,
+    /// Tab.
+    Tab,
+    /// Space (toggle focused checkbox/switch/radio).
+    Space,
+    /// Select-all in focused text input (Ctrl/Cmd+A).
+    SelectAll,
 }
 
 impl Ui {
@@ -411,6 +654,7 @@ impl Ui {
             node_to_widget: HashMap::new(),
             font: Arc::new(font),
             drag: None,
+            focus: None,
         }
     }
 
@@ -533,6 +777,28 @@ impl Ui {
         id
     }
 
+
+    /// Declare a top-level ScrollArea.
+    pub fn scroll_area<F>(&mut self, style: ScrollAreaStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.alloc_container(Kind::ScrollArea {
+            style,
+            children: Vec::new(),
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            content_w: style.width,
+            content_h: style.height,
+        });
+        self.roots.push(id);
+        {
+            let mut builder = FlexBuilder { ui: self, parent: id };
+            build(&mut builder);
+        }
+        id
+    }
+
     fn alloc_container(&mut self, kind: Kind) -> WidgetId {
         let id = self.alloc();
         self.widgets.insert(
@@ -627,74 +893,505 @@ impl Ui {
         None
     }
 
-    /// Begin a pointer press; returns true if a splitter sash started dragging.
+    /// Begin a pointer press.
+    ///
+    /// Handles splitter sash drag, scroll-area drag, focus for inputs, and
+    /// toggle for Checkbox / Radio / Switch. Returns true if the UI mutated
+    /// (caller should [`Ui::sync`] + redraw).
     pub fn pointer_pressed(&mut self, scene: &Scene, x: f32, y: f32) -> bool {
         let Some(id) = self.hit_widget(scene, x, y) else {
-            return false;
+            self.focus = None;
+            return true;
         };
-        if !self.is_splitter(id) {
-            return false;
+
+        // Splitter sash
+        if self.is_splitter(id) {
+            let Some(w) = self.widgets.get(&id) else {
+                return false;
+            };
+            let Kind::Splitter { style, .. } = &w.kind else {
+                return false;
+            };
+            let bounds = w
+                .node
+                .and_then(|n| scene.get(n).map(|n| n.bounds))
+                .unwrap_or_else(Rect::empty);
+            let start_pos = match style.axis {
+                Axis::Vertical => x,
+                Axis::Horizontal => y,
+            };
+            self.drag = Some(DragState::Splitter {
+                splitter: id,
+                start_pos,
+                start_ratio: style.ratio,
+                axis: style.axis,
+                bounds,
+                sash_size: style.sash_size,
+            });
+            return true;
         }
-        let Some(w) = self.widgets.get(&id) else {
-            return false;
-        };
-        let Kind::Splitter { style, .. } = &w.kind else {
-            return false;
-        };
-        let bounds = w
-            .node
-            .and_then(|n| scene.get(n).map(|n| n.bounds))
-            .unwrap_or_else(Rect::empty);
-        let start_pos = match style.axis {
-            Axis::Vertical => x,
-            Axis::Horizontal => y,
-        };
-        self.drag = Some(DragState {
-            splitter: id,
-            start_pos,
-            start_ratio: style.ratio,
-            axis: style.axis,
-            bounds,
-            sash_size: style.sash_size,
-        });
-        true
+
+        // ScrollArea: start drag-scroll; also focus clears to none unless child hit first
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ScrollArea { .. })
+        ) {
+            let (sx, sy) = match self.widgets.get(&id).map(|w| &w.kind) {
+                Some(Kind::ScrollArea {
+                    scroll_x, scroll_y, ..
+                }) => (*scroll_x, *scroll_y),
+                _ => (0.0, 0.0),
+            };
+            self.drag = Some(DragState::Scroll {
+                area: id,
+                start_x: x,
+                start_y: y,
+                start_scroll_x: sx,
+                start_scroll_y: sy,
+            });
+            self.focus = None;
+            return true;
+        }
+
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextInput { .. }) => {
+                self.focus = Some(id);
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::TextInput {
+                        value,
+                        caret,
+                        select_all,
+                        ..
+                    } = &mut w.kind
+                    {
+                        *select_all = false;
+                        *caret = value.chars().count();
+                    }
+                }
+                return true;
+            }
+            Some(Kind::Checkbox { .. }) => {
+                self.focus = Some(id);
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Checkbox { checked, .. } = &mut w.kind {
+                        *checked = !*checked;
+                    }
+                }
+                return true;
+            }
+            Some(Kind::Radio { .. }) => {
+                self.focus = Some(id);
+                self.select_radio(id);
+                return true;
+            }
+            Some(Kind::Switch { .. }) => {
+                self.focus = Some(id);
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Switch { on, .. } = &mut w.kind {
+                        *on = !*on;
+                    }
+                }
+                return true;
+            }
+            Some(Kind::Button { .. }) => {
+                self.focus = None;
+                return false; // let app handle button clicks via hit_widget
+            }
+            _ => {
+                self.focus = None;
+                return false;
+            }
+        }
     }
 
-    /// Continue a splitter drag; returns true if ratio changed (caller should sync).
+    /// Continue an active drag (splitter or scroll); returns true if state changed.
     pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
         let Some(drag) = self.drag.clone() else {
             return false;
         };
-        let span = match drag.axis {
-            Axis::Vertical => (drag.bounds.width - drag.sash_size).max(1.0),
-            Axis::Horizontal => (drag.bounds.height - drag.sash_size).max(1.0),
-        };
-        let cur = match drag.axis {
-            Axis::Vertical => x,
-            Axis::Horizontal => y,
-        };
-        let delta = cur - drag.start_pos;
-        let new_ratio = (drag.start_ratio + delta / span).clamp(0.1, 0.9);
-        if let Some(w) = self.widgets.get_mut(&drag.splitter) {
-            if let Kind::Splitter { style, .. } = &mut w.kind {
-                if (style.ratio - new_ratio).abs() < 0.0005 {
-                    return false;
+        match drag {
+            DragState::Splitter {
+                splitter,
+                start_pos,
+                start_ratio,
+                axis,
+                bounds,
+                sash_size,
+            } => {
+                let span = match axis {
+                    Axis::Vertical => (bounds.width - sash_size).max(1.0),
+                    Axis::Horizontal => (bounds.height - sash_size).max(1.0),
+                };
+                let cur = match axis {
+                    Axis::Vertical => x,
+                    Axis::Horizontal => y,
+                };
+                let delta = cur - start_pos;
+                let new_ratio = (start_ratio + delta / span).clamp(0.1, 0.9);
+                if let Some(w) = self.widgets.get_mut(&splitter) {
+                    if let Kind::Splitter { style, .. } = &mut w.kind {
+                        if (style.ratio - new_ratio).abs() < 0.0005 {
+                            return false;
+                        }
+                        style.ratio = new_ratio;
+                        return true;
+                    }
                 }
-                style.ratio = new_ratio;
+                false
+            }
+            DragState::Scroll {
+                area,
+                start_x,
+                start_y,
+                start_scroll_x,
+                start_scroll_y,
+            } => {
+                let dx = start_x - x;
+                let dy = start_y - y;
+                self.set_scroll_offset(area, start_scroll_x + dx, start_scroll_y + dy)
+            }
+        }
+    }
+
+    /// End an active drag.
+    pub fn pointer_released(&mut self) {
+        self.drag = None;
+    }
+
+    /// Whether a drag is active.
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Apply mouse-wheel scroll at (x,y); returns true if a ScrollArea scrolled.
+    pub fn pointer_scroll(&mut self, scene: &Scene, x: f32, y: f32, dx: f32, dy: f32) -> bool {
+        let Some(id) = self.hit_widget(scene, x, y) else {
+            return false;
+        };
+        let area = self.find_scroll_ancestor(id);
+        let Some(area) = area else {
+            return false;
+        };
+        let (sx, sy) = match self.widgets.get(&area).map(|w| &w.kind) {
+            Some(Kind::ScrollArea {
+                scroll_x, scroll_y, ..
+            }) => (*scroll_x, *scroll_y),
+            _ => return false,
+        };
+        self.set_scroll_offset(area, sx + dx, sy + dy)
+    }
+
+    fn find_scroll_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
+        // If id is scroll, return; else search scroll areas for membership.
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ScrollArea { .. })
+        ) {
+            return Some(id);
+        }
+        for (sid, w) in &self.widgets {
+            if let Kind::ScrollArea { children, .. } = &w.kind {
+                if self.subtree_contains(*sid, children, id) {
+                    return Some(*sid);
+                }
+            }
+        }
+        None
+    }
+
+    fn subtree_contains(&self, _root: WidgetId, children: &[WidgetId], target: WidgetId) -> bool {
+        for c in children {
+            if *c == target {
                 return true;
+            }
+            if let Some(w) = self.widgets.get(c) {
+                let kids = match &w.kind {
+                    Kind::Column { children, .. }
+                    | Kind::Row { children, .. }
+                    | Kind::Toolbar { children, .. }
+                    | Kind::Panel { children, .. }
+                    | Kind::StatusBar { children, .. }
+                    | Kind::Splitter { children, .. }
+                    | Kind::ScrollArea { children, .. } => children.as_slice(),
+                    _ => &[],
+                };
+                if self.subtree_contains(*c, kids, target) {
+                    return true;
+                }
             }
         }
         false
     }
 
-    /// End an active splitter drag.
-    pub fn pointer_released(&mut self) {
-        self.drag = None;
+    fn set_scroll_offset(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
+        let Some(w) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let Kind::ScrollArea {
+            style,
+            scroll_x,
+            scroll_y,
+            content_w,
+            content_h,
+            ..
+        } = &mut w.kind
+        else {
+            return false;
+        };
+        let max_x = (*content_w - style.width).max(0.0);
+        let max_y = (*content_h - style.height).max(0.0);
+        let nx = sx.clamp(0.0, max_x);
+        let ny = sy.clamp(0.0, max_y);
+        if (nx - *scroll_x).abs() < 0.1 && (ny - *scroll_y).abs() < 0.1 {
+            return false;
+        }
+        *scroll_x = nx;
+        *scroll_y = ny;
+        true
     }
 
-    /// Whether a splitter sash drag is active.
-    pub fn is_dragging(&self) -> bool {
-        self.drag.is_some()
+    /// Focused widget, if any.
+    pub fn focused(&self) -> Option<WidgetId> {
+        self.focus
+    }
+
+    /// Set focus explicitly.
+    pub fn set_focus(&mut self, id: Option<WidgetId>) {
+        self.focus = id;
+    }
+
+
+
+
+    /// Read TextInput value.
+    pub fn text_input_value(&self, id: WidgetId) -> Option<&str> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextInput { value, .. }) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Set TextInput value; resets caret to end.
+    pub fn set_text_input(&mut self, id: WidgetId, value: impl Into<String>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::TextInput {
+                value: v,
+                caret,
+                select_all,
+                ..
+            } = &mut w.kind
+            {
+                *v = value.into();
+                *caret = v.chars().count();
+                *select_all = false;
+            }
+        }
+    }
+
+    /// Checkbox / Switch / Radio selected state.
+    pub fn is_checked(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Checkbox { checked, .. }) => Some(*checked),
+            Some(Kind::Switch { on, .. }) => Some(*on),
+            Some(Kind::Radio { selected, .. }) => Some(*selected),
+            _ => None,
+        }
+    }
+
+    /// Set Checkbox or Switch checked/on state.
+    pub fn set_checked(&mut self, id: WidgetId, checked: bool) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            match &mut w.kind {
+                Kind::Checkbox { checked: c, .. } => *c = checked,
+                Kind::Switch { on, .. } => *on = checked,
+                _ => {}
+            }
+        }
+    }
+
+    /// Select a radio (clears others in the same group).
+    pub fn select_radio(&mut self, id: WidgetId) {
+        let group = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Radio { group, .. }) => *group,
+            _ => return,
+        };
+        let ids: Vec<WidgetId> = self.widgets.keys().copied().collect();
+        for wid in ids {
+            if let Some(w) = self.widgets.get_mut(&wid) {
+                if let Kind::Radio {
+                    group: g,
+                    selected,
+                    ..
+                } = &mut w.kind
+                {
+                    *selected = *g == group && wid == id;
+                }
+            }
+        }
+    }
+
+    /// Scroll offsets for a ScrollArea.
+    pub fn scroll_offset(&self, id: WidgetId) -> Option<(f32, f32)> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ScrollArea {
+                scroll_x, scroll_y, ..
+            }) => Some((*scroll_x, *scroll_y)),
+            _ => None,
+        }
+    }
+
+    /// Deliver a key to the focused widget. Returns true if handled.
+    pub fn key_input(&mut self, key: UiKey) -> bool {
+        let Some(id) = self.focus else {
+            return false;
+        };
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextInput { .. }) => self.key_text_input(id, key),
+            Some(Kind::Checkbox { .. }) if matches!(key, UiKey::Space) => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Checkbox { checked, .. } = &mut w.kind {
+                        *checked = !*checked;
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(Kind::Switch { .. }) if matches!(key, UiKey::Space) => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Switch { on, .. } = &mut w.kind {
+                        *on = !*on;
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(Kind::Radio { .. }) if matches!(key, UiKey::Space) => {
+                self.select_radio(id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn key_text_input(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let Some(w) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let Kind::TextInput {
+            value,
+            caret,
+            select_all,
+            ..
+        } = &mut w.kind
+        else {
+            return false;
+        };
+        let mut chars: Vec<char> = value.chars().collect();
+        let len = chars.len();
+        *caret = (*caret).min(len);
+        match key {
+            UiKey::SelectAll => {
+                *select_all = !chars.is_empty();
+                true
+            }
+            UiKey::Char(c) => {
+                if *select_all {
+                    chars.clear();
+                    *caret = 0;
+                    *select_all = false;
+                }
+                chars.insert(*caret, c);
+                *caret += 1;
+                *value = chars.into_iter().collect();
+                true
+            }
+            UiKey::Backspace => {
+                if *select_all {
+                    chars.clear();
+                    *caret = 0;
+                    *select_all = false;
+                    *value = String::new();
+                    return true;
+                }
+                if *caret > 0 {
+                    chars.remove(*caret - 1);
+                    *caret -= 1;
+                    *value = chars.into_iter().collect();
+                    true
+                } else {
+                    false
+                }
+            }
+            UiKey::Delete => {
+                if *select_all {
+                    chars.clear();
+                    *caret = 0;
+                    *select_all = false;
+                    *value = String::new();
+                    return true;
+                }
+                if *caret < chars.len() {
+                    chars.remove(*caret);
+                    *value = chars.into_iter().collect();
+                    true
+                } else {
+                    false
+                }
+            }
+            UiKey::Left => {
+                *select_all = false;
+                if *caret > 0 {
+                    *caret -= 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            UiKey::Right => {
+                *select_all = false;
+                if *caret < len {
+                    *caret += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            UiKey::Home => {
+                *select_all = false;
+                if *caret != 0 {
+                    *caret = 0;
+                    true
+                } else {
+                    false
+                }
+            }
+            UiKey::End => {
+                *select_all = false;
+                if *caret != len {
+                    *caret = len;
+                    true
+                } else {
+                    false
+                }
+            }
+            UiKey::Enter | UiKey::Tab | UiKey::Space => false,
+        }
+    }
+
+    /// Whether id is a TextInput.
+    pub fn is_text_input(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TextInput { .. })
+        )
+    }
+
+    /// Whether id is a ScrollArea.
+    pub fn is_scroll_area(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ScrollArea { .. })
+        )
     }
 
     /// Ensure scene nodes exist, run layout, paint labels into the scene.
@@ -740,6 +1437,14 @@ impl Ui {
                 Some(Kind::Icon { color, .. }) => (*color, true),
                 Some(Kind::Spacer { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::Separator { color, .. }) => (*color, true),
+                Some(Kind::ScrollArea { style, .. }) => (
+                    style.background.unwrap_or(Color::rgba(0, 0, 0, 0)),
+                    style.background.is_some(),
+                ),
+                Some(Kind::TextInput { style, .. }) => (style.bg, true),
+                Some(Kind::Checkbox { style, .. }) => (style.box_bg, true),
+                Some(Kind::Radio { style, .. }) => (style.ring, true),
+                Some(Kind::Switch { style, .. }) => (style.track_off, true),
                 None => return,
             };
 
@@ -785,6 +1490,37 @@ impl Ui {
                         w.chrome_node = Some(sash);
                     }
                 }
+                Some(Kind::ScrollArea { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                }
+                Some(Kind::TextInput { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert textinput label");
+                    let caret = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
+                        .expect("insert caret");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(caret);
+                    }
+                }
+                Some(Kind::Checkbox { .. }) | Some(Kind::Radio { .. }) | Some(Kind::Switch { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    // Empty mask: host is hit-target only (no solid fill).
+                    scene.set_mask(node, Some(AlphaMask::empty()));
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert control label");
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert control chrome");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(chrome);
+                    }
+                }
                 _ => {}
             }
         }
@@ -797,7 +1533,8 @@ impl Ui {
                     | Kind::Toolbar { children, .. }
                     | Kind::Panel { children, .. }
                     | Kind::StatusBar { children, .. }
-                    | Kind::Splitter { children, .. },
+                    | Kind::Splitter { children, .. }
+                    | Kind::ScrollArea { children, .. },
                 node,
                 ..
             }) => (node.unwrap_or(parent), children.clone()),
@@ -908,6 +1645,26 @@ impl Ui {
                 )
             }
             Some(Kind::Splitter { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::ScrollArea { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::TextInput { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Checkbox { label, style, .. }) => {
+                let (tw, th) = self.font.measure_line(label, style.size);
+                let h = style.box_size.max(th + 4.0);
+                let w = style.box_size + style.gap + tw;
+                ChildMeasure::new(w, h)
+            }
+            Some(Kind::Radio { label, style, .. }) => {
+                let (tw, th) = self.font.measure_line(label, style.size);
+                let h = style.diameter.max(th + 4.0);
+                let w = style.diameter + style.gap + tw;
+                ChildMeasure::new(w, h)
+            }
+            Some(Kind::Switch { label, style, .. }) => {
+                let (tw, th) = self.font.measure_line(label, style.size);
+                let h = style.height.max(th + 4.0);
+                let w = style.width + style.gap + tw;
+                ChildMeasure::new(w, h)
+            }
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -942,6 +1699,13 @@ impl Ui {
             Some(Kind::Splitter { .. })
         ) {
             self.layout_splitter(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ScrollArea { .. })
+        ) {
+            self.layout_scroll_area(scene, id);
             return;
         }
         if matches!(
@@ -1118,6 +1882,7 @@ impl Ui {
                     | Kind::Panel { .. }
                     | Kind::StatusBar { .. }
                     | Kind::Splitter { .. }
+                    | Kind::ScrollArea { .. }
             )
         )
     }
@@ -1303,6 +2068,115 @@ impl Ui {
         }
     }
 
+
+    fn layout_scroll_area(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::ScrollArea {
+                    style,
+                    children,
+                    scroll_x,
+                    scroll_y,
+                    ..
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let style = *style;
+        let children = children.clone();
+        let scroll_x = *scroll_x;
+        let scroll_y = *scroll_y;
+        let col_node = *node;
+
+        let (ox, oy) = if let Some(node) = col_node {
+            if self.roots.contains(&id) {
+                (style.x, style.y)
+            } else {
+                scene
+                    .get(node)
+                    .map(|n| (n.bounds.x, n.bounds.y))
+                    .unwrap_or((style.x, style.y))
+            }
+        } else {
+            (style.x, style.y)
+        };
+        let (w, h) = if let Some(node) = col_node {
+            if self.roots.contains(&id) {
+                (style.width, style.height)
+            } else {
+                scene
+                    .get(node)
+                    .map(|n| {
+                        (
+                            if n.bounds.width > 1.0 {
+                                n.bounds.width
+                            } else {
+                                style.width
+                            },
+                            if n.bounds.height > 1.0 {
+                                n.bounds.height
+                            } else {
+                                style.height
+                            },
+                        )
+                    })
+                    .unwrap_or((style.width, style.height))
+            }
+        } else {
+            (style.width, style.height)
+        };
+
+        if let Some(node) = col_node {
+            scene.set_bounds(node, Rect::new(ox, oy, w, h));
+            scene.set_clip(node, Some(Rect::new(ox, oy, w, h)));
+            if style.background.is_some() {
+                scene.set_visible(node, true);
+            } else {
+                scene.set_visible(node, false);
+            }
+        }
+
+        let params = FlexParams {
+            axis: Axis::Vertical,
+            x: ox - scroll_x,
+            y: oy - scroll_y,
+            max_width: (w - style.padding * 2.0).max(0.0),
+            max_height: 1_000_000.0,
+            padding: style.padding,
+            gap: style.gap,
+            cross_align: style.cross_align,
+        };
+        let measures: Vec<_> = children.iter().map(|c| self.measure_widget(*c)).collect();
+        let total = next_gui_layout::measure_flex(&params, &measures);
+        let rects = layout_flex(&params, &measures);
+        for (child_id, rect) in children.iter().copied().zip(rects) {
+            self.place_child(scene, child_id, rect);
+        }
+
+        let content_w = total.width.max(w);
+        let content_h = total.height.max(h);
+        let max_x = (content_w - w).max(0.0);
+        let max_y = (content_h - h).max(0.0);
+        if let Some(wdig) = self.widgets.get_mut(&id) {
+            if let Kind::ScrollArea {
+                scroll_x: sx,
+                scroll_y: sy,
+                content_w: cw,
+                content_h: ch,
+                ..
+            } = &mut wdig.kind
+            {
+                *cw = content_w;
+                *ch = content_h;
+                *sx = sx.clamp(0.0, max_x);
+                *sy = sy.clamp(0.0, max_y);
+            }
+        }
+    }
+
     fn rebase_container_origin(&mut self, id: WidgetId, x: f32, y: f32) {
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
@@ -1327,6 +2201,10 @@ impl Ui {
                     style.y = y;
                 }
                 Kind::Splitter { style, .. } => {
+                    style.x = x;
+                    style.y = y;
+                }
+                Kind::ScrollArea { style, .. } => {
                     style.x = x;
                     style.y = y;
                 }
@@ -1362,6 +2240,10 @@ impl Ui {
                     style.width = width;
                     style.height = height;
                 }
+                Kind::ScrollArea { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
                 _ => {}
             }
         }
@@ -1375,7 +2257,8 @@ impl Ui {
                 | Kind::Toolbar { children, .. }
                 | Kind::Panel { children, .. }
                 | Kind::StatusBar { children, .. }
-                | Kind::Splitter { children, .. },
+                | Kind::Splitter { children, .. }
+                | Kind::ScrollArea { children, .. },
             ) => Some(children.clone()),
             _ => None,
         };
@@ -1470,13 +2353,240 @@ impl Ui {
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
             }
+            Kind::TextInput {
+                value,
+                placeholder,
+                caret,
+                select_all,
+                style,
+            } => {
+                let value = value.clone();
+                let placeholder = placeholder.clone();
+                let caret = *caret;
+                let select_all = *select_all;
+                let style = *style;
+                let focused = self.focus == Some(id);
+                let border = if focused {
+                    style.focus_border
+                } else {
+                    style.border
+                };
+                scene.set_fill(node, style.bg);
+                scene.set_mask(node, None);
+                // Focus ring: chrome caret node also reused; draw border as slightly larger? keep bg only.
+                let _ = border;
+                if focused {
+                    scene.set_fill(node, style.bg);
+                }
+                let show = if value.is_empty() {
+                    (placeholder.as_str(), style.placeholder_fg)
+                } else {
+                    (value.as_str(), style.fg)
+                };
+                let (_, mask) = self.font.rasterize_text(show.0, style.size, None);
+                if let Some(lid) = label_node {
+                    let lx = bounds.x + style.padding_x;
+                    let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+                    scene.set_bounds(
+                        lid,
+                        Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+                    );
+                    scene.set_fill(lid, show.1);
+                    if select_all && !value.is_empty() {
+                        // Selection: tint label bg via host already; use brighter fg.
+                        scene.set_fill(lid, Color::rgb(0xff, 0xff, 0xff));
+                    }
+                    scene.set_mask(
+                        lid,
+                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                    );
+                    scene.set_visible(lid, true);
+                }
+                if let Some(cid) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
+                    if focused {
+                        let prefix: String = value.chars().take(caret).collect();
+                        let (cw, _) = self.font.measure_line(&prefix, style.size);
+                        let cx = bounds.x + style.padding_x + cw;
+                        let cy = bounds.y + 4.0;
+                        let ch = (bounds.height - 8.0).max(8.0);
+                        scene.set_bounds(cid, Rect::new(cx, cy, 2.0, ch));
+                        scene.set_fill(cid, style.focus_border);
+                        scene.set_mask(cid, None);
+                        scene.set_visible(cid, true);
+                    } else {
+                        scene.set_visible(cid, false);
+                    }
+                }
+                scene.set_visible(node, true);
+            }
+            Kind::Checkbox {
+                label,
+                checked,
+                style,
+            } => {
+                let label = label.clone();
+                let checked = *checked;
+                let style = *style;
+                let box_rect = Rect::new(
+                    bounds.x,
+                    bounds.y + ((bounds.height - style.box_size) * 0.5).max(0.0),
+                    style.box_size,
+                    style.box_size,
+                );
+                scene.set_bounds(node, box_rect);
+                scene.set_fill(
+                    node,
+                    if checked {
+                        style.checked_bg
+                    } else {
+                        style.box_bg
+                    },
+                );
+                scene.set_mask(node, None);
+                scene.set_visible(node, true);
+                if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
+                    if checked {
+                        let (_, cm) = self.font.rasterize_text("✓", style.box_size * 0.7, None);
+                        let cx =
+                            box_rect.x + ((box_rect.width - cm.width as f32) * 0.5).max(0.0);
+                        let cy =
+                            box_rect.y + ((box_rect.height - cm.height as f32) * 0.5).max(0.0);
+                        scene.set_bounds(
+                            chrome,
+                            Rect::new(cx, cy, cm.width as f32, cm.height as f32),
+                        );
+                        scene.set_fill(chrome, style.check_fg);
+                        scene.set_mask(
+                            chrome,
+                            Some(AlphaMask::new(cm.width, cm.height, cm.pixels)),
+                        );
+                        scene.set_visible(chrome, true);
+                    } else {
+                        scene.set_visible(chrome, false);
+                    }
+                }
+                let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+                if let Some(lid) = label_node {
+                    let lx = bounds.x + style.box_size + style.gap;
+                    let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+                    scene.set_bounds(
+                        lid,
+                        Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+                    );
+                    scene.set_fill(lid, style.fg);
+                    scene.set_mask(
+                        lid,
+                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                    );
+                    scene.set_visible(lid, true);
+                }
+            }
+            Kind::Radio {
+                label,
+                selected,
+                style,
+                ..
+            } => {
+                let label = label.clone();
+                let selected = *selected;
+                let style = *style;
+                let d = style.diameter;
+                let ring = Rect::new(
+                    bounds.x,
+                    bounds.y + ((bounds.height - d) * 0.5).max(0.0),
+                    d,
+                    d,
+                );
+                scene.set_bounds(node, ring);
+                scene.set_fill(node, style.ring);
+                scene.set_mask(node, None);
+                scene.set_visible(node, true);
+                if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
+                    if selected {
+                        let inset = d * 0.28;
+                        scene.set_bounds(
+                            chrome,
+                            Rect::new(
+                                ring.x + inset,
+                                ring.y + inset,
+                                d - inset * 2.0,
+                                d - inset * 2.0,
+                            ),
+                        );
+                        scene.set_fill(chrome, style.dot);
+                        scene.set_mask(chrome, None);
+                        scene.set_visible(chrome, true);
+                    } else {
+                        scene.set_visible(chrome, false);
+                    }
+                }
+                let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+                if let Some(lid) = label_node {
+                    let lx = bounds.x + d + style.gap;
+                    let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+                    scene.set_bounds(
+                        lid,
+                        Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+                    );
+                    scene.set_fill(lid, style.fg);
+                    scene.set_mask(
+                        lid,
+                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                    );
+                    scene.set_visible(lid, true);
+                }
+            }
+            Kind::Switch { label, on, style } => {
+                let label = label.clone();
+                let on = *on;
+                let style = *style;
+                let track = Rect::new(
+                    bounds.x,
+                    bounds.y + ((bounds.height - style.height) * 0.5).max(0.0),
+                    style.width,
+                    style.height,
+                );
+                scene.set_bounds(node, track);
+                scene.set_fill(node, if on { style.track_on } else { style.track_off });
+                scene.set_mask(node, None);
+                scene.set_visible(node, true);
+                if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
+                    let thumb_d = style.height - 4.0;
+                    let tx = if on {
+                        track.x + track.width - thumb_d - 2.0
+                    } else {
+                        track.x + 2.0
+                    };
+                    let ty = track.y + 2.0;
+                    scene.set_bounds(chrome, Rect::new(tx, ty, thumb_d, thumb_d));
+                    scene.set_fill(chrome, style.thumb);
+                    scene.set_mask(chrome, None);
+                    scene.set_visible(chrome, true);
+                }
+                let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+                if let Some(lid) = label_node {
+                    let lx = bounds.x + style.width + style.gap;
+                    let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+                    scene.set_bounds(
+                        lid,
+                        Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+                    );
+                    scene.set_fill(lid, style.fg);
+                    scene.set_mask(
+                        lid,
+                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                    );
+                    scene.set_visible(lid, true);
+                }
+            }
             Kind::Spacer { .. }
             | Kind::Column { .. }
             | Kind::Row { .. }
             | Kind::Toolbar { .. }
             | Kind::Panel { .. }
             | Kind::StatusBar { .. }
-            | Kind::Splitter { .. } => {}
+            | Kind::Splitter { .. }
+            | Kind::ScrollArea { .. } => {}
         }
     }
 
@@ -1821,6 +2931,157 @@ impl FlexBuilder<'_> {
         id
     }
 
+
+    /// Nest a ScrollArea (clipped viewport; wheel / drag to scroll).
+    pub fn scroll_area<F>(&mut self, style: ScrollAreaStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc_container(Kind::ScrollArea {
+            style,
+            children: Vec::new(),
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            content_w: style.width,
+            content_h: style.height,
+        });
+        self.push_child(id);
+        {
+            let mut builder = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut builder);
+        }
+        id
+    }
+
+    /// Single-line text field with optional placeholder.
+    pub fn text_input(&mut self, placeholder: impl Into<String>) -> WidgetId {
+        self.text_input_styled("", placeholder, TextInputStyle::default())
+    }
+
+    /// TextInput with initial value and style.
+    pub fn text_input_styled(
+        &mut self,
+        value: impl Into<String>,
+        placeholder: impl Into<String>,
+        style: TextInputStyle,
+    ) -> WidgetId {
+        let value = value.into();
+        let caret = value.chars().count();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::TextInput {
+                    value,
+                    placeholder: placeholder.into(),
+                    caret,
+                    select_all: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Checkbox with label.
+    pub fn checkbox(&mut self, label: impl Into<String>, checked: bool) -> WidgetId {
+        self.checkbox_styled(label, checked, CheckboxStyle::default())
+    }
+
+    /// Checkbox with style.
+    pub fn checkbox_styled(
+        &mut self,
+        label: impl Into<String>,
+        checked: bool,
+        style: CheckboxStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Checkbox {
+                    label: label.into(),
+                    checked,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Radio button in `group` (mutually exclusive within the group).
+    pub fn radio(&mut self, group: u64, label: impl Into<String>, selected: bool) -> WidgetId {
+        self.radio_styled(group, label, selected, RadioStyle::default())
+    }
+
+    /// Radio with style.
+    pub fn radio_styled(
+        &mut self,
+        group: u64,
+        label: impl Into<String>,
+        selected: bool,
+        style: RadioStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Radio {
+                    group,
+                    label: label.into(),
+                    selected,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// On/off switch with label.
+    pub fn switch(&mut self, label: impl Into<String>, on: bool) -> WidgetId {
+        self.switch_styled(label, on, SwitchStyle::default())
+    }
+
+    /// Switch with style.
+    pub fn switch_styled(
+        &mut self,
+        label: impl Into<String>,
+        on: bool,
+        style: SwitchStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Switch {
+                    label: label.into(),
+                    on,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     fn push_child(&mut self, child: WidgetId) {
         if let Some(w) = self.ui.widgets.get_mut(&self.parent) {
             match &mut w.kind {
@@ -1829,7 +3090,8 @@ impl FlexBuilder<'_> {
                 | Kind::Toolbar { children, .. }
                 | Kind::Panel { children, .. }
                 | Kind::StatusBar { children, .. }
-                | Kind::Splitter { children, .. } => {
+                | Kind::Splitter { children, .. }
+                | Kind::ScrollArea { children, .. } => {
                     children.push(child);
                 }
                 _ => {}
@@ -2027,5 +3289,87 @@ mod tests {
             ratio > 0.28,
             "drag right should grow first pane, got {ratio}"
         );
+    }
+
+    #[test]
+    fn office_inputs_scroll_text_toggles() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut scroll = WidgetId(0);
+        let mut input = WidgetId(0);
+        let mut check = WidgetId(0);
+        let mut radio_a = WidgetId(0);
+        let mut radio_b = WidgetId(0);
+        let mut sw = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 400.0,
+                height: 500.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                scroll = col.scroll_area(
+                    ScrollAreaStyle {
+                        width: 360.0,
+                        height: 120.0,
+                        ..ScrollAreaStyle::default()
+                    },
+                    |sa| {
+                        for i in 0..12 {
+                            sa.text_styled(
+                                format!("row {i}"),
+                                Color::rgb(0xc0, 0xc4, 0xcc),
+                                13.0,
+                            );
+                        }
+                    },
+                );
+                input = col.text_input("Type here");
+                check = col.checkbox("Enable", false);
+                radio_a = col.radio(1, "Opt A", true);
+                radio_b = col.radio(1, "Opt B", false);
+                sw = col.switch("Power", false);
+            },
+        );
+        ui.sync(&mut scene);
+        assert!(ui.is_scroll_area(scroll));
+        assert!(ui.is_text_input(input));
+        assert_eq!(ui.is_checked(check), Some(false));
+        assert_eq!(ui.is_checked(radio_a), Some(true));
+
+        let inode = ui.widgets.get(&input).unwrap().node.unwrap();
+        let b = scene.get(inode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&scene, b.x + 4.0, b.y + 4.0));
+        assert_eq!(ui.focused(), Some(input));
+        assert!(ui.key_input(UiKey::Char('H')));
+        assert!(ui.key_input(UiKey::Char('i')));
+        assert_eq!(ui.text_input_value(input), Some("Hi"));
+        assert!(ui.key_input(UiKey::SelectAll));
+        assert!(ui.key_input(UiKey::Backspace));
+        assert_eq!(ui.text_input_value(input), Some(""));
+
+        let cnode = ui.widgets.get(&check).unwrap().node.unwrap();
+        let cb = scene.get(cnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&scene, cb.x + 2.0, cb.y + 2.0));
+        assert_eq!(ui.is_checked(check), Some(true));
+
+        let rnode = ui.widgets.get(&radio_b).unwrap().node.unwrap();
+        let rb = scene.get(rnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&scene, rb.x + 2.0, rb.y + 2.0));
+        assert_eq!(ui.is_checked(radio_a), Some(false));
+        assert_eq!(ui.is_checked(radio_b), Some(true));
+
+        let snode = ui.widgets.get(&sw).unwrap().node.unwrap();
+        let sb = scene.get(snode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&scene, sb.x + 2.0, sb.y + 2.0));
+        assert_eq!(ui.is_checked(sw), Some(true));
+
+        let sarea = ui.widgets.get(&scroll).unwrap().node.unwrap();
+        let sa = scene.get(sarea).unwrap().bounds;
+        assert!(ui.pointer_scroll(&scene, sa.x + 10.0, sa.y + 10.0, 0.0, 40.0));
+        let (_, sy) = ui.scroll_offset(scroll).unwrap();
+        assert!(sy > 0.0, "expected scroll_y > 0, got {sy}");
+        ui.sync(&mut scene);
+        assert!(scene.get(sarea).unwrap().clip.is_some());
     }
 }

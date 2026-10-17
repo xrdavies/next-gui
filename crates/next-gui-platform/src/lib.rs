@@ -78,14 +78,53 @@ pub enum PointerButton {
     Other(u16),
 }
 
-/// Keyboard key (P0 minimal set).
+/// Keyboard modifiers (bit flags for text editing shortcuts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modifiers {
+    /// Ctrl / Control.
+    pub ctrl: bool,
+    /// Shift.
+    pub shift: bool,
+    /// Alt / Option.
+    pub alt: bool,
+    /// Meta / Command / Super.
+    pub meta: bool,
+}
+
+impl Modifiers {
+    /// True when Ctrl or Meta is held (Select-All / shortcuts).
+    pub fn commandish(self) -> bool {
+        self.ctrl || self.meta
+    }
+}
+
+/// Keyboard key (Office input slice expands beyond Escape/Space).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCode {
     /// Escape.
     Escape,
     /// Space.
     Space,
-    /// Catch-all.
+    /// Backspace.
+    Backspace,
+    /// Delete (forward).
+    Delete,
+    /// Enter / Return.
+    Enter,
+    /// Tab.
+    Tab,
+    /// Left arrow.
+    Left,
+    /// Right arrow.
+    Right,
+    /// Home.
+    Home,
+    /// End.
+    End,
+    /// Printable character (ASCII / Latin from the active keyboard path).
+    /// IME/CJK composition is not delivered here yet (stub).
+    Char(char),
+    /// Catch-all scancode/other.
     Other(u32),
 }
 
@@ -142,6 +181,21 @@ pub enum Event {
         key: KeyCode,
         /// Pressed or released.
         pressed: bool,
+        /// Modifiers at event time.
+        modifiers: Modifiers,
+    },
+    /// Mouse wheel / trackpad scroll.
+    PointerScroll {
+        /// Window.
+        window: WindowId,
+        /// Cursor X (physical px).
+        x: f64,
+        /// Cursor Y (physical px).
+        y: f64,
+        /// Horizontal delta (positive = right).
+        delta_x: f64,
+        /// Vertical delta (positive = scroll content down / finger up).
+        delta_y: f64,
     },
 }
 
