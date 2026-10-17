@@ -79,7 +79,8 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 - Soft 始终可回退；示例 `cargo run -p office_panel`
 - **不**引入 `profile` crate（留给 P4）
 - 控件目录已确认：[office-widget-catalog.md](office-widget-catalog.md)（P0 含 TextInput/Table/Tree；Toolbar/StatusBar/Panel 一等公民）
-- 下一步：按锁定 P0 名单扩充实现
+- **P0 目录控件（Rust API）已齐**（shell/inputs/data/nav/feedback 五切片 + 对应 `office_*` 示例）
+- 下一步：P1（Form 校验、TreeSelect、Drawer、虚表、告警表/图表等）或 IME/虚拟化增强
 
 ## P4 — 双档 Profile
 

@@ -62,7 +62,8 @@
 cargo run -p office_shell     # P0 shell: Toolbar/Icon/Panel/Splitter/StatusBar
 cargo run -p office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Switch
 cargo run -p office_data      # P0 data: List/Tree/Table
-cargo run -p office_nav       # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
+cargo run -p office_nav                        # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
+cargo run -p office_feedback                   # P0 feedback: Tag/Badge/Tooltip/Modal/Progress/Alert
 cargo run -p office_panel     # 早期 Row 工具条 demo
 ```
 
@@ -73,6 +74,8 @@ cargo run -p office_panel     # 早期 Row 工具条 demo
 `office_data`：左 Tree（厂站层级）+ 右 List/Table；点击选中，**↑↓** 导航（Tree 另支持 **←→** 展开/折叠）；滚轮/拖拽滚动；无焦点 **Space** 切 Soft↔GPU。无虚拟化、无单元格编辑、列宽拖拽为 stub。
 
 `office_nav`：菜单栏下拉、右键 ContextMenu、Tabs、Select、Slider；**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。无嵌套子菜单、无多选 Select、无垂直 Slider。
+
+`office_feedback`：Tag/Badge/Tooltip/Modal/Progress/Alert；悬停工具条图标出提示；Alert × 关闭；Open Modal；**Esc**/×/按钮关对话框。
 
 默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 
