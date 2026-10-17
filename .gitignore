@@ -17,3 +17,6 @@
 .env
 .env.*
 !.env.example
+
+# Local QA artifacts
+/tmp/

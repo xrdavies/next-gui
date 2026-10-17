@@ -1003,6 +1003,8 @@ name = "next-gui-ui"
 version = "0.1.0"
 dependencies = [
  "next-gui-layout",
+ "next-gui-render",
+ "next-gui-render-soft",
  "next-gui-scene",
  "next-gui-text",
 ]
