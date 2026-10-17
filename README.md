@@ -49,6 +49,7 @@
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
 | [docs/office-line.md](docs/office-line.md) | Office 线（跳过 P4）：布局/控件加厚与 Surface 缺口 |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
+| [docs/agent-workflow.md](docs/agent-workflow.md) | Grok/Codex 跨机器交接、review 协议与 macOS 定时任务 |
 
 ## 状态
 
