@@ -422,6 +422,28 @@ impl Scene {
         true
     }
 
+    /// Move `id` to the end of its parent's child list (paint/hit on top).
+    pub fn raise(&mut self, id: NodeId) -> bool {
+        let Some(parent) = self.nodes.get(&id).and_then(|n| n.parent) else {
+            return false;
+        };
+        let Some(p) = self.nodes.get_mut(&parent) else {
+            return false;
+        };
+        let Some(pos) = p.children.iter().position(|c| *c == id) else {
+            return false;
+        };
+        if pos + 1 == p.children.len() {
+            return true;
+        }
+        let child = p.children.remove(pos);
+        p.children.push(child);
+        if let Some(n) = self.nodes.get(&id) {
+            self.dirty.add(n.bounds);
+        }
+        true
+    }
+
     /// Remove node and descendants; marks dirty.
     pub fn remove(&mut self, id: NodeId) -> bool {
         if id == self.root {

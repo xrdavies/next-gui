@@ -18,7 +18,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 - Field/Office **Profile 配置 crate**（P4，已推迟）
 - Immediate 视口（P5）
-- 完整 IME/CJK 输入、Select / Slider / Menu / Tabs / Modal（后续切片）；List/Tree/Table 已落地
+- 完整 IME/CJK 输入、Modal / Tag / Badge / Tooltip / Progress / Alert（后续切片）；List/Tree/Table 与 Menu/ContextMenu/Tabs/Select/Slider 已落地
 - 动画系统、图表控件
 
 ---
@@ -91,6 +91,11 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 | `List` | `ui` | 垂直项 + 单选 + ↑↓；内建滚动 |
 | `Tree` | `ui` | 层级展开/折叠 + 单选；厂站/设备树 MVP |
 | `Table` | `ui` | 表头 + 文本单元格 + 行选；列宽拖拽 stub；无编辑 |
+| `Menu` | `ui` | 标题按钮 + 下拉项；`take_menu_action` |
+| `ContextMenu` | `ui` | 宿主区域右键弹层；同 MenuItem 模型 |
+| `Tabs` | `ui` | 标签条 + 内容页；点击 / ←→ |
+| `Select` | `ui` | 单选下拉（combobox-lite） |
+| `Slider` | `ui` | 水平滑块；拖拽 / 点击轨道 / ←→ |
 
 示例：
 
@@ -98,8 +103,9 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 - `examples/office_shell` — **P0 shell**：Toolbar + Icon + Panel + Splitter + StatusBar
 - `examples/office_inputs` — **P0 input**：ScrollArea + TextInput + Checkbox + Radio + Switch
 - `examples/office_data` — **P0 data**：List + Tree + Table
+- `examples/office_nav` — **P0 nav**：Menu + ContextMenu + Tabs + Select + Slider
 
-Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Select` / `Slider` / `Menu` / `Tabs` / `Modal` / `Tag`…
+Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Tag` / `Badge` / `Tooltip` / `Modal` / `Progress` / `Alert`…
 
 ---
 

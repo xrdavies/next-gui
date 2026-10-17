@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**Shell 切片**（Icon / Toolbar / Panel / StatusBar / Splitter）与 **Input 切片**（ScrollArea / TextInput / Checkbox / Radio / Switch）以及 **Data 切片**（List / Tree / Table）已在 `next-gui-ui` + `examples/office_shell` / `office_inputs` / `office_data` 落地。
+> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**Shell 切片**（Icon / Toolbar / Panel / StatusBar / Splitter）与 **Input 切片**（ScrollArea / TextInput / Checkbox / Radio / Switch）以及 **Data 切片**（List / Tree / Table）与 **Nav 切片**（Menu / ContextMenu / Tabs / Select / Slider）已在 `next-gui-ui` + `examples/office_shell` / `office_inputs` / `office_data` / `office_nav` 落地。
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 

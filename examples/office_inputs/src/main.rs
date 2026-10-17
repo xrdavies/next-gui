@@ -85,13 +85,16 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
         KeyCode::Delete => UiKey::Delete,
         KeyCode::Left => UiKey::Left,
         KeyCode::Right => UiKey::Right,
+        KeyCode::Up => UiKey::Up,
+        KeyCode::Down => UiKey::Down,
         KeyCode::Home => UiKey::Home,
         KeyCode::End => UiKey::End,
         KeyCode::Enter => UiKey::Enter,
         KeyCode::Tab => UiKey::Tab,
         KeyCode::Space => UiKey::Space,
+        KeyCode::Escape => UiKey::Escape,
         KeyCode::Char(c) => UiKey::Char(c),
-        KeyCode::Escape | KeyCode::Other(_) => return None,
+        KeyCode::Other(_) => return None,
     })
 }
 
@@ -471,7 +474,7 @@ impl AppCallbacks for Demo {
                 y,
                 ..
             } => {
-                if self.ui.pointer_pressed(&self.scene, x as f32, y as f32) {
+                if self.ui.pointer_pressed(&mut self.scene, x as f32, y as f32) {
                     self.refresh_status();
                     ctx.request_redraw();
                 }
