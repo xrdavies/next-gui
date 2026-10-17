@@ -276,6 +276,8 @@
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
 
+**过程要求：** 每落地一切片控件或新增 example，须按 [AGENTS.md](../AGENTS.md) **Git Workflow / QA** 做视觉自测（跑 example、核对照面、尽量截图）；不可仅凭编译/单测宣称 UI 完成。
+
 ---
 
 ## 10. 拍板结论（2026-10-17）
@@ -300,3 +302,4 @@
 | 2026-10-17 | **拍板锁定：** P0 含 TextInput+基础 Table/Tree；Toolbar/StatusBar/Panel 一等公民；P1 层级选择仅 TreeSelect；AlarmList/Gauge/Trend 仍 P1；Form 校验 P1。 |
 | 2026-10-17 | **Shell 切片落地：** `icon` / `toolbar` / `panel` / `status_bar` / `splitter`（Rust API + `office_shell` 示例）；录入/表/树仍待办。 |
 | 2026-10-17 | **Feedback 切片落地：** `tag` / `badge` / `tooltip` / `modal` / `progress` / `alert`（Rust API + `office_feedback`）；**P0 目录控件齐。** |
+| 2026-10-17 | 补充过程要求：UI/example 合入前视觉自测（指向 AGENTS.md Git Workflow / QA）。 |
