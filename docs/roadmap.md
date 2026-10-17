@@ -80,7 +80,8 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 - **不**引入 `profile` crate（留给 P4）
 - 控件目录已确认：[office-widget-catalog.md](office-widget-catalog.md)（P0 含 TextInput/Table/Tree；Toolbar/StatusBar/Panel 一等公民）
 - **P0 目录控件（Rust API）已齐**（shell/inputs/data/nav/feedback 五切片 + 对应 `office_*` 示例）
-- 下一步：P1（Form 校验、TreeSelect、Drawer、虚表、告警表/图表等）或 IME/虚拟化增强
+- **P1 核心 + rest 已落地**（含 Drawer、虚表、录入/反馈/结构；见 `e20`/`e21`）。仍待：Datetime / Transfer / PropertyGrid / TreeTable
+- 下一步：剩余 P1 四件套，或 P4 Profile / 图表增强
 
 ## P4 — 双档 Profile
 

@@ -65,6 +65,7 @@ cargo run -p e13_office_data      # P0 data: List/Tree/Table
 cargo run -p e14_office_nav                        # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
 cargo run -p e15_office_feedback                   # P0 feedback: Tag/Badge/Tooltip/Modal/Progress/Alert
 cargo run -p e20_office_industrial                         # P1: TreeSelect/Form/AlarmList/Gauge/Trend
+cargo run -p e21_office_p1_rest                            # P1 rest: Drawer/Virtual/Entry/Feedback/Structure
 cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 ```
 
@@ -78,7 +79,9 @@ cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 
 `e15_office_feedback`：Tag/Badge/Tooltip/Modal/Progress/Alert；悬停工具条图标出提示；Alert × 关闭；Open Modal；**Esc**/×/按钮关对话框。
 
-`e20_office_industrial`：TreeSelect 选厂站/间隔；Form 校验（Required/Digits/MinLength）；AlarmList 分级闪烁与 Enter/Space 确认；Gauge/Trend 实时刷新。**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。IME 仍后置。
+`e20_office_industrial`：TreeSelect 选厂站/间隔；Form 校验（Required/Digits/MinLength）；AlarmList 分级闪烁与 Enter/Space 确认；Gauge/Trend 实时刷新。**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。
+
+`e21_office_p1_rest`：Drawer（D/按钮）、VirtualList/Table、TextArea/InputNumber、Notification（N）、Spin/Empty/Collapse/Descriptions/Card/Segmented/Breadcrumb/Pagination。**Esc** 关抽屉。`NEXT_GUI_P1_REST_QA=1` 可种子态并导出 PPM。
 
 默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 
