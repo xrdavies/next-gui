@@ -85,11 +85,11 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 
 ---
 
-## 3.1 控件目录（待确认）
+## 3.1 控件目录（已确认）
 
-完整对照表与优先级见 **[office-widget-catalog.md](office-widget-catalog.md)**（Ant Design / Element Plus / MUI + 工业扩展）。
+完整对照表与优先级见 **[office-widget-catalog.md](office-widget-catalog.md)**（Ant Design / Element Plus / MUI + 工业扩展；**2026-10-17 已拍板**）。
 
-本阶段**只确认清单**，不在本文实现表单/树/表等控件。推荐 MVP（P0）以该文档 §4 为准。
+本文仍只交付 GPU present / 布局壳；**P0 控件实现**按该目录 §4 / §10 推进（必含 `text_input` + 基础 `table`/`tree`；`toolbar` / `status_bar` / `panel` 一等公民；Form 校验与 `alarm_list`/`gauge`/`trend` 仍 P1；层级选择 P1 仅 `tree_select`）。
 
 ---
 
@@ -101,8 +101,8 @@ P0–P3 完成
 【当前】Office 线加厚（本文）  ←── P4 推迟
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
-    · 控件目录（待确认）：[office-widget-catalog.md](office-widget-catalog.md)
-    · 下一步：按目录确认后扩充实现
+    · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
+    · 下一步：按锁定 P0 名单实现控件（先壳层再录入/表树，见目录 §10）
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓

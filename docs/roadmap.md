@@ -78,7 +78,8 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 - GPU：**原生 `wgpu::Surface` present 已落地**（`PresentBackend::GpuSurface` + `GpuRenderer::try_new_native`）；Softbuffer/readback 仍保留
 - Soft 始终可回退；示例 `cargo run -p office_panel`
 - **不**引入 `profile` crate（留给 P4）
-- 下一步：确认并扩充 Office 控件列表
+- 控件目录已确认：[office-widget-catalog.md](office-widget-catalog.md)（P0 含 TextInput/Table/Tree；Toolbar/StatusBar/Panel 一等公民）
+- 下一步：按锁定 P0 名单扩充实现
 
 ## P4 — 双档 Profile
 

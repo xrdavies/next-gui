@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：待确认。** 供 Office 线加厚前锁定「支持哪些控件、优先级如何」。**本文只做目录与优先级，不实现控件。**
+> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。**本文只做目录与优先级，不实现控件。**
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -13,7 +13,7 @@
 3. 按 **P0 / P1 / P2 / 范围外** 分层，方便一次确认 MVP，再分期实现。
 4. 明确裁掉偏 Web 营销/滚动页的控件；补上工业 Office（SCADA/HMI 侧配置、监控、规划桌面）常用但三库偏弱的能力。
 
-**确认方式：** 先认可 §4「推荐 MVP（P0）」名单；再扫 §5–§6 与 §8 判断项。改优先级直接在本文改表即可。
+**用法：** §4「锁定 MVP（P0）」为已拍板名单；§5–§7 为全量对照与工业扩展；§10 记录拍板结论。改优先级直接在本文改表并更新修订记录。
 
 ---
 
@@ -42,20 +42,20 @@
 
 **已有（实现侧，非本文目标）：** `Text`、`Button`、`Column`、`Row`、`Spacer`、`Separator`（见 office-line / P1）。目录里仍列出，标「已有」。
 
-**假设（未再问用户，可在 §8 推翻）：**
+**仍成立的假设：**
 
 1. 分类沿用 Ant 式六类 +「工业扩展」，便于对照，不绑定 Web 实现。
 2. Office 与 Field **共享控件语义**；观感/预算差在 profile，不在两套控件树。
-3. P0 输入仍是**指针 + 键盘**；`TextInput` 先可编辑拉丁/ASCII，**完整 IME/CJK 输入**可跟进但不阻塞控件壳落地。
+3. P0 输入仍是**指针 + 键盘**；`TextInput` 先可编辑拉丁/ASCII，**完整 IME/CJK 输入**可跟进但不阻塞录入控件落地。
 4. 声明式 + retained；控件是长期节点，不是每帧 Immediate 重建（Immediate 视口见 P5，不在本目录）。
 5. Dock 多窗格先做 **Splitter + Panel**，不做完整 IDE 级停靠协议。
-6. 图表类（Gauge / Trend）走 retained 节点 + 可选 GPU 画动态内容，不引入 Web 图表壳。
+6. 图表类（Gauge / Trend）走 retained 节点 + 可选 GPU 画动态内容，不引入 Web 图表壳；**仍属 P1，不抬到 P0**。
 
 ---
 
-## 4. 推荐 MVP（P0）一览
+## 4. 锁定 MVP（P0）一览
 
-确认时优先看本表（仅名称）。细节见 §5。
+**已拍板。** 实现必须覆盖本表（含 `text_input` + 基础 `table`/`tree`，以及一等公民 `toolbar` / `status_bar` / `panel`）；不是「先只做壳」。细节见 §5；拍板结论见 §10。
 
 | id | 中文 | 备注 |
 |----|------|------|
@@ -64,32 +64,32 @@
 | `column` / `row` | 纵向/横向布局 | **已有** |
 | `spacer` / `separator` | 占位 / 分割线 | **已有** |
 | `icon` | 图标 | 工具条/状态必需 |
-| `toolbar` | 工具条 | 可先由 Row 组合，建议一等公民语义 |
+| `toolbar` | 工具条 | **一等公民（已拍板）**；非仅 Row 组合约定 |
 | `menu` | 菜单 | 应用菜单 / 下拉 |
 | `context_menu` | 右键菜单 | 工业桌面高频 |
 | `tabs` | 标签页 | 多页配置/监视 |
 | `splitter` | 分隔面板 | 左树右表经典布局 |
-| `panel` | 面板 | 带标题的内容容器（Dock 轻量） |
+| `panel` | 面板 | **一等公民（已拍板）**；带标题的内容容器（Dock 轻量） |
 | `scroll_area` | 滚动区域 | 长列表/属性页 |
-| `text_input` | 单行输入 | 配置项；IME 可分期 |
+| `text_input` | 单行输入 | **P0 必含（已拍板）**；配置项；IME 可分期 |
 | `checkbox` | 复选框 | |
 | `radio` | 单选框 | |
 | `switch` | 开关 | 使能类设置 |
 | `select` | 选择器 | 下拉枚举 |
 | `slider` | 滑块 | 阈值/阈值类 |
 | `list` | 列表 | 简单选择列表；虚拟化见 P1 |
-| `table` | 表格 | 基础行列；虚拟化/树表见 P1 |
-| `tree` | 树 | 设备/厂站层级 |
+| `table` | 表格 | **P0 必含（已拍板）**；基础行列；虚拟化/树表见 P1 |
+| `tree` | 树 | **P0 必含（已拍板）**；设备/厂站层级 |
 | `tag` | 标签/状态片 | 运行/故障/旁路等 |
 | `badge` | 徽标 | 未读告警数等 |
 | `tooltip` | 提示 | 工具条图标说明 |
 | `modal` | 对话框 | 配置确认/详情 |
 | `progress` | 进度条 | 下发/加载 |
 | `alert` | 警告条 | 页内状态条 |
-| `status_bar` | 状态栏 | 窗底连接/时钟/模式 |
+| `status_bar` | 状态栏 | **一等公民（已拍板）**；窗底连接/时钟/模式 |
 | `status_bar` 旁：`label` | 标签 | 与 `text` 可合并；表单左侧说明 |
 
-**P0 合计（去重后约）：** 布局已有 5 + 交互壳约 20 项。不含 Form 校验引擎、DateTime、告警专用表、图表（那些进 P1）。
+**P0 合计（去重后约）：** 布局已有 5 + 交互/录入/展示约 20+ 项（含输入与基础表/树）。**不含** Form 校验引擎、DateTime、告警专用表、图表（`alarm_list` / `gauge` / `trend` 仍 P1）。层级选择器 P1 只落 `tree_select`（见 §10）。
 
 ---
 
@@ -119,7 +119,7 @@
 | `space` | 间距容器 | Y | Y | Y(Stack) | P2 | 可用 spacer/padding 表达 |
 | `grid` | 栅格 | Y | Y | Y | P2 | 办公桌面优先 flex+splitter |
 | `splitter` | 分隔面板 | Y | Y | ~ | **P0** | 左导航/右内容；retained 拖拽分割 |
-| `panel` | 面板 | ~ | ~ | Y(Paper/Card) | **P0** | 标题+内容；Dock 轻量 chrome |
+| `panel` | 面板 | ~ | ~ | Y(Paper/Card) | **P0** | **一等公民（已拍板）**；标题+内容；Dock 轻量 chrome |
 | `scroll_area` | 滚动区域 | ~ | Y | ~ | **P0** | 指针滚轮+拖条；虚拟化另列 |
 | `card` | 卡片 | Y | Y | Y | P1 | 与 panel 可合并或作为样式变体 |
 | `layout_shell` | 页框架 | Y | Y(Container) | Y(AppBar…) | P1 | 顶栏+侧栏+内容约定，非必须独立控件 |
@@ -130,7 +130,7 @@
 
 | id | 中文 | Ant | EP | MUI | 优先级 | fit |
 |----|------|-----|----|-----|--------|-----|
-| `toolbar` | 工具条 | ~ | ~ | ~ | **P0** | Office 线已示范 Row；建议正式语义 |
+| `toolbar` | 工具条 | ~ | ~ | ~ | **P0** | **一等公民（已拍板）**；Office 线已有 Row 示范 |
 | `menu` | 菜单 | Y | Y | Y | **P0** | 键盘导航预留 |
 | `dropdown` | 下拉菜单 | Y | Y | Y | **P0** | 可与 menu 同一套弹出层 |
 | `context_menu` | 右键菜单 | ~ | ~ | ~ | **P0** | 三库弱、桌面强；指针右键 P0 |
@@ -146,7 +146,7 @@
 
 | id | 中文 | Ant | EP | MUI | 优先级 | fit |
 |----|------|-----|----|-----|--------|-----|
-| `text_input` | 单行输入 | Y | Y | Y | **P0** | 焦点环+键盘；IME 可分期 |
+| `text_input` | 单行输入 | Y | Y | Y | **P0** | **必含（已拍板）**；焦点环+键盘；IME 可分期 |
 | `text_area` | 多行输入 | Y | Y | ~ | P1 | 备注/脚本片段 |
 | `checkbox` | 复选 | Y | Y | Y | **P0** | |
 | `radio` | 单选 | Y | Y | Y | **P0** | |
@@ -154,10 +154,10 @@
 | `select` | 选择器 | Y | Y | Y | **P0** | |
 | `slider` | 滑块 | Y | Y | Y | **P0** | 与 Field 设定值场景共享 |
 | `input_number` | 数字输入 | Y | Y | ~ | P1 | 工程量；步进/范围校验 |
-| `form` | 表单+校验 | Y | Y | ~ | P1 | 声明式校验规则；非 Web schema 照搬 |
+| `form` | 表单+校验 | Y | Y | ~ | P1 | **校验引擎 P1（已拍板）**；P0 仅独立录入控件，校验由应用代码处理 |
 | `datetime` | 日期时间 | Y | Y | ~(X) | P1 | 日志检索/计划；Office 更刚需 |
-| `cascader` | 级联选择 | Y | Y | - | P1 | 厂站/区域层级；可与 tree_select 合并策略 |
-| `tree_select` | 树选择 | Y | Y | ~(X) | P1 | |
+| `cascader` | 级联选择 | Y | Y | - | P2 / 可选 | **P1 不单独落**；厂站层级用 `tree_select`；必要时作别名或后补 |
+| `tree_select` | 树选择 | Y | Y | ~(X) | **P1（已拍板唯一）** | 厂站/设备树选点；优于多级 Cascader |
 | `transfer` | 穿梭框 | Y | Y | Y | P1 | 权限/点表批量选择 |
 | `upload` | 上传/文件 | Y | Y | - | P2 | 配置导入；走系统文件对话框 |
 | `color_picker` | 颜色 | Y | Y | - | P2 | 趋势笔色等 |
@@ -172,8 +172,8 @@
 | id | 中文 | Ant | EP | MUI | 优先级 | fit |
 |----|------|-----|----|-----|--------|-----|
 | `list` | 列表 | Y* | Y | Y | **P0** | *Ant List 已弃用倾向虚拟列表；我们要稳定 List |
-| `table` | 表格 | Y | Y | Y | **P0** | 排序/选择列 P1 增强 |
-| `tree` | 树 | Y | Y | ~(X) | **P0** | |
+| `table` | 表格 | Y | Y | Y | **P0** | **必含（已拍板）**；排序/选择列 P1 增强 |
+| `tree` | 树 | Y | Y | ~(X) | **P0** | **必含（已拍板）**；设备/厂站层级 |
 | `tag` | 标签 | Y | Y | Y(Chip) | **P0** | 状态色语义（运行/停机/告警） |
 | `badge` | 徽标 | Y | Y | Y | **P0** | |
 | `tooltip` | 文字提示 | Y | Y | Y | **P0** | |
@@ -210,7 +210,7 @@
 
 | id | 中文 | Ant | EP | MUI | 优先级 | fit |
 |----|------|-----|----|-----|--------|-----|
-| `status_bar` | 状态栏 | - | - | - | **P0** | 三库皆弱；桌面 Office 刚需 |
+| `status_bar` | 状态栏 | - | - | - | **P0** | **一等公民（已拍板）**；三库皆弱；桌面 Office 刚需 |
 | `affix` | 固钉 | Y | Y | - | **范围外** | 滚动页 |
 | `backtop` | 回到顶部 | - | Y | - | **范围外** | |
 | `config_provider` | 全局配置 | Y | Y | ~ | P2 | 主题/locale；对标设计 token，非 Web Context 照搬 |
@@ -222,11 +222,13 @@
 
 ### 6.1 P1（soon）
 
-`card`，`breadcrumb`，`pagination`，`text_area`，`input_number`，`form`，`datetime`，`cascader` / `tree_select`，`transfer`，`segmented`，`empty`，`collapse`，`descriptions`，`drawer`，`notification`，`spin`，`backdrop`，以及 §7 工业扩展中的：`property_grid`，`tree_table`，`virtual_list`，`alarm_list`，`gauge`，`trend`。
+`card`，`breadcrumb`，`pagination`，`text_area`，`input_number`，`form`（含校验引擎），`datetime`，**`tree_select`（P1 唯一层级选择器）**，`transfer`，`segmented`，`empty`，`collapse`，`descriptions`，`drawer`，`notification`，`spin`，`backdrop`，以及 §7 工业扩展中的：`property_grid`，`tree_table`，`virtual_list`，`alarm_list`，`gauge`，`trend`。
+
+> `cascader`：**不进 P1 实现清单**；需要时后补或作 `tree_select` 别名（见 §10）。
 
 ### 6.2 P2（later）
 
-`button_group`，`link`，`space`，`grid`，`steps`，`upload`，`color_picker`，`autocomplete`，`statistic`，`timeline`，`calendar`，`image`，`popover`，`popconfirm`，`result`，`config_provider`。
+`button_group`，`link`，`space`，`grid`，`steps`，`upload`，`color_picker`，`autocomplete`，`statistic`，`timeline`，`calendar`，`image`，`popover`，`popconfirm`，`result`，`config_provider`，以及可选的 `cascader`（若未作为 `tree_select` 别名吸收）。
 
 ---
 
@@ -236,17 +238,17 @@
 
 | id | 中文 | 建议优先级 | 说明 |
 |----|------|------------|------|
-| `status_bar` | 状态栏 | **P0** | 连接态、服务器时间、当前用户/模式 |
-| `toolbar` | 工具条 | **P0** | 图标按钮+分组+溢出菜单 |
+| `status_bar` | 状态栏 | **P0** | **一等公民（已拍板）**；连接态、服务器时间、当前用户/模式 |
+| `toolbar` | 工具条 | **P0** | **一等公民（已拍板）**；图标按钮+分组+溢出菜单 |
 | `context_menu` | 右键菜单 | **P0** | 树节点/表行操作 |
-| `panel` + dock 约定 | 停靠面板 | **P0→P1** | P0 先 Panel+Splitter；多面板拖拽停靠 P1+ |
+| `panel` + dock 约定 | 停靠面板 | **P0→P1** | **Panel 一等公民（已拍板）**；P0 = Panel+Splitter；多面板拖拽停靠 P1+ |
 | `property_grid` | 属性网格 | P1 | 选中对象键值编辑；近 Descriptions+Form |
 | `tree_table` | 树表 | P1 | 层级+列；设备点表常见 |
 | `virtual_list` / `virtual_table` | 虚拟化列表/表 | P1 | 万级点名/日志；EP 有 TableV2/TreeV2 可对标语义 |
-| `alarm_list` | 告警列表 | P1 | 确认/分级/闪烁语义；非普通 Table 皮肤 |
+| `alarm_list` | 告警列表 | **P1（不抬 P0）** | 确认/分级/闪烁语义；非普通 Table 皮肤 |
 | `tag`（状态语义） | 状态片 | **P0** | 与设计 token 绑定色（运行/故障/旁路） |
-| `gauge` | 仪表盘 | P1 | 实时量；GPU 可选画动态 |
-| `trend` / `sparkline` | 趋势/迷你图 | P1 | 历史曲线；Office 监视核心 |
+| `gauge` | 仪表盘 | **P1（不抬 P0）** | 实时量；GPU 可选画动态 |
+| `trend` / `sparkline` | 趋势/迷你图 | **P1（不抬 P0）** | 历史曲线；Office 监视核心 |
 | `splitter` | 分隔面板 | **P0** | 见布局表 |
 
 ---
@@ -269,20 +271,24 @@
 | 状态 | 控件 |
 |------|------|
 | 已实现（Office 线/P1） | `text`，`button`，`column`，`row`，`spacer`，`separator` |
-| 本文提议下一步实现（P0 缺口） | `icon`，`toolbar`，`menu`/`dropdown`，`context_menu`，`tabs`，`splitter`，`panel`，`scroll_area`，`text_input`，`checkbox`，`radio`，`switch`，`select`，`slider`，`list`，`table`，`tree`，`tag`，`badge`，`tooltip`，`modal`，`progress`，`alert`，`status_bar` |
+| 锁定下一步实现（P0 缺口） | `icon`，`toolbar`，`menu`/`dropdown`，`context_menu`，`tabs`，`splitter`，`panel`，`scroll_area`，`text_input`，`checkbox`，`radio`，`switch`，`select`，`slider`，`list`，`table`，`tree`，`tag`，`badge`，`tooltip`，`modal`，`progress`，`alert`，`status_bar` |
 | 未实现且非本文范围 | 动画系统、完整 IME、Immediate 视口、Profile crate（P4） |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
 
 ---
 
-## 10. 待用户确认的判断（最多 5 条）
+## 10. 拍板结论（2026-10-17）
 
-1. **P0 是否包含 `text_input` + 基础 `table`/`tree`：** 本文默认包含；若希望先只做「壳」（工具条/面板/菜单）再做数据控件，可将后二者挪到 P1。  
-2. **`toolbar` / `status_bar` / `panel`：** 默认升为一等公民（非仅文档约定组合）；若坚持极简 API，可保留为模式 + 示例。  
-3. **`cascader` vs `tree_select`：** 默认 P1 只落地一种厂站层级选择（倾向 `tree_select`），另一种后补。  
-4. **告警与趋势：** `alarm_list` / `gauge` / `trend` 放在 **P1**；若监视屏是 Office 首要场景，可把其中 1–2 个抬到 P0。  
-5. **Form 校验：** 默认 P1 才做规则引擎；P0 仅独立录入控件，校验由应用代码处理。
+| # | 议题 | 结论 |
+|---|------|------|
+| 1 | P0 是否含 `text_input` + 基础 `table`/`tree` | **必须包含。** 输入很重要；不是先只做壳再补数据控件。 |
+| 2 | `toolbar` / `status_bar` / `panel` | **升为一等公民**，列入 P0（非仅 Row/组合约定）。 |
+| 3 | `cascader` vs `tree_select` | **P1 只落 `tree_select`**（更贴厂站/设备树数据）。`cascader` 后补或作别名/可选（P2）。 |
+| 4 | `alarm_list` / `gauge` / `trend` | **不抬到 P0**，保持 **P1**。 |
+| 5 | Form 校验 | **延后到 P1**；P0 只做独立录入控件，校验由应用代码处理。 |
+
+其余原 §4 P0 MVP 名单保持不变（已有布局 5 件 + Icon / Menu / ContextMenu / Tabs / Splitter / ScrollArea / Checkbox / Radio / Switch / Select / Slider / List / Tag / Badge / Tooltip / Modal / Progress / Alert 等）。
 
 ---
 
@@ -291,3 +297,4 @@
 | 日期 | 说明 |
 |------|------|
 | 2026-10-17 | 初稿：对照 Ant Design / Element Plus / MUI 官方总览，整理 Office 优先级与工业扩展；待确认。 |
+| 2026-10-17 | **拍板锁定：** P0 含 TextInput+基础 Table/Tree；Toolbar/StatusBar/Panel 一等公民；P1 层级选择仅 TreeSelect；AlarmList/Gauge/Trend 仍 P1；Form 校验 P1。 |
