@@ -3,15 +3,14 @@
 //! Retained widget tree built with a short builder or loaded from a compact `.ngui` file,
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
-//! Office P0 shell + input + data + nav + feedback widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
-//! ScrollArea, TextInput, Checkbox, Radio, Switch, List, Tree, Table,
-//! Menu, ContextMenu, Tabs, Select, Slider,
-//! Tag, Badge, Tooltip, Modal, Progress, Alert.
+//! Office P0 + P1 widgets: shell/input/data/nav/feedback, plus TreeSelect, Form validation,
+//! AlarmList, Gauge, and Trend.
 
 #![deny(missing_docs)]
 
 mod dsl;
 mod icon;
+mod p1_raster;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
@@ -1189,6 +1188,387 @@ impl Default for AlertStyle {
     }
 }
 
+/// Validation rule for a Form field (TextInput values).
+#[derive(Debug, Clone)]
+pub enum FormRule {
+    /// Value must be non-empty after trim.
+    Required {
+        /// Error message when violated.
+        message: String,
+    },
+    /// Minimum character count (Unicode scalars).
+    MinLength {
+        /// Minimum length.
+        min: usize,
+        /// Error message when violated.
+        message: String,
+    },
+    /// Maximum character count (Unicode scalars).
+    MaxLength {
+        /// Maximum length.
+        max: usize,
+        /// Error message when violated.
+        message: String,
+    },
+    /// Every character must be an ASCII digit.
+    Digits {
+        /// Error message when violated.
+        message: String,
+    },
+}
+
+impl FormRule {
+    /// Required field.
+    pub fn required(message: impl Into<String>) -> Self {
+        Self::Required {
+            message: message.into(),
+        }
+    }
+
+    /// Minimum length.
+    pub fn min_length(min: usize, message: impl Into<String>) -> Self {
+        Self::MinLength {
+            min,
+            message: message.into(),
+        }
+    }
+
+    /// Maximum length.
+    pub fn max_length(max: usize, message: impl Into<String>) -> Self {
+        Self::MaxLength {
+            max,
+            message: message.into(),
+        }
+    }
+
+    /// ASCII digits only.
+    pub fn digits(message: impl Into<String>) -> Self {
+        Self::Digits {
+            message: message.into(),
+        }
+    }
+
+    fn check(&self, value: &str) -> Option<&str> {
+        let trimmed = value.trim();
+        match self {
+            FormRule::Required { message } => {
+                if trimmed.is_empty() {
+                    Some(message.as_str())
+                } else {
+                    None
+                }
+            }
+            FormRule::MinLength { min, message } => {
+                if trimmed.chars().count() < *min {
+                    Some(message.as_str())
+                } else {
+                    None
+                }
+            }
+            FormRule::MaxLength { max, message } => {
+                if trimmed.chars().count() > *max {
+                    Some(message.as_str())
+                } else {
+                    None
+                }
+            }
+            FormRule::Digits { message } => {
+                if trimmed.is_empty() || trimmed.bytes().all(|b| b.is_ascii_digit()) {
+                    None
+                } else {
+                    Some(message.as_str())
+                }
+            }
+        }
+    }
+}
+
+/// One field binding inside a Form (control is typically a TextInput).
+#[derive(Debug, Clone)]
+pub struct FormFieldState {
+    /// Stable key for [`Ui::form_field_error`].
+    pub key: String,
+    /// Bound control widget (usually TextInput).
+    pub control: WidgetId,
+    /// Error label Text widget under the control.
+    pub error_label: WidgetId,
+    /// Rules evaluated by [`Ui::validate_form`].
+    pub rules: Vec<FormRule>,
+}
+
+/// Style for a Form container (vertical field stack).
+#[derive(Debug, Clone, Copy)]
+pub struct FormStyle {
+    /// Outer x (top-level only).
+    pub x: f32,
+    /// Outer y (top-level only).
+    pub y: f32,
+    /// Width budget.
+    pub width: f32,
+    /// Height budget.
+    pub height: f32,
+    /// Padding.
+    pub padding: f32,
+    /// Gap between field rows.
+    pub gap: f32,
+    /// Cross-axis alignment.
+    pub cross_align: CrossAlign,
+    /// Optional background.
+    pub background: Option<Color>,
+    /// Label text size.
+    pub label_size: f32,
+    /// Label color.
+    pub label_fg: Color,
+    /// Error text size.
+    pub error_size: f32,
+    /// Error text color.
+    pub error_fg: Color,
+}
+
+impl Default for FormStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 320.0,
+            height: 280.0,
+            padding: 8.0,
+            gap: 6.0,
+            cross_align: CrossAlign::Start,
+            background: Some(Color::rgb(0x28, 0x28, 0x30)),
+            label_size: 12.0,
+            label_fg: Color::rgb(0xb0, 0xb8, 0xc4),
+            error_size: 11.0,
+            error_fg: Color::rgb(0xf0, 0x70, 0x70),
+        }
+    }
+}
+
+/// Style for a TreeSelect (closed field + tree popup).
+#[derive(Debug, Clone, Copy)]
+pub struct TreeSelectStyle {
+    /// Closed field width.
+    pub width: f32,
+    /// Closed field height.
+    pub height: f32,
+    /// Popup max height.
+    pub popup_max_height: f32,
+    /// Row height inside popup tree.
+    pub row_height: f32,
+    /// Indent per depth.
+    pub indent: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size.
+    pub size: f32,
+    /// Value text.
+    pub fg: Color,
+    /// Placeholder.
+    pub placeholder_fg: Color,
+    /// Closed field background.
+    pub bg: Color,
+    /// Popup background.
+    pub popup_bg: Color,
+    /// Selected row background.
+    pub selected_bg: Color,
+    /// Focus border hint.
+    pub focus_border: Color,
+}
+
+impl Default for TreeSelectStyle {
+    fn default() -> Self {
+        Self {
+            width: 220.0,
+            height: 30.0,
+            popup_max_height: 200.0,
+            row_height: 26.0,
+            indent: 14.0,
+            padding: 8.0,
+            size: 13.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            placeholder_fg: Color::rgb(0x70, 0x74, 0x80),
+            bg: Color::rgb(0x2a, 0x2a, 0x32),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+/// Alarm severity for [`AlarmEntry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlarmSeverity {
+    /// Highest — flash when unacked.
+    Critical,
+    /// High — flash when unacked.
+    Major,
+    /// Medium.
+    Minor,
+    /// Low warning.
+    Warning,
+    /// Informational.
+    Info,
+}
+
+impl AlarmSeverity {
+    fn label(self) -> &'static str {
+        match self {
+            AlarmSeverity::Critical => "CRIT",
+            AlarmSeverity::Major => "MAJ",
+            AlarmSeverity::Minor => "MIN",
+            AlarmSeverity::Warning => "WARN",
+            AlarmSeverity::Info => "INFO",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            AlarmSeverity::Critical => Color::rgb(0xe0, 0x3a, 0x4a),
+            AlarmSeverity::Major => Color::rgb(0xf0, 0x8a, 0x2a),
+            AlarmSeverity::Minor => Color::rgb(0xe0, 0xc0, 0x40),
+            AlarmSeverity::Warning => Color::rgb(0x80, 0xb0, 0xe0),
+            AlarmSeverity::Info => Color::rgb(0x90, 0x98, 0xa8),
+        }
+    }
+
+    fn flashes(self) -> bool {
+        matches!(self, AlarmSeverity::Critical | AlarmSeverity::Major)
+    }
+}
+
+/// One alarm row.
+#[derive(Debug, Clone)]
+pub struct AlarmEntry {
+    /// Stable id.
+    pub id: u64,
+    /// Severity.
+    pub severity: AlarmSeverity,
+    /// Message text.
+    pub message: String,
+    /// Source / point name.
+    pub source: String,
+    /// Timestamp display string.
+    pub time: String,
+    /// Acknowledged.
+    pub acked: bool,
+}
+
+impl AlarmEntry {
+    /// Build an alarm entry.
+    pub fn new(
+        id: u64,
+        severity: AlarmSeverity,
+        message: impl Into<String>,
+        source: impl Into<String>,
+        time: impl Into<String>,
+    ) -> Self {
+        Self {
+            id,
+            severity,
+            message: message.into(),
+            source: source.into(),
+            time: time.into(),
+            acked: false,
+        }
+    }
+}
+
+/// Style for an AlarmList.
+#[derive(Debug, Clone, Copy)]
+pub struct AlarmListStyle {
+    /// Viewport width.
+    pub width: f32,
+    /// Viewport height.
+    pub height: f32,
+    /// Row height.
+    pub row_height: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size.
+    pub size: f32,
+    /// Body text.
+    pub fg: Color,
+    /// Viewport background.
+    pub bg: Color,
+    /// Selected row background.
+    pub selected_bg: Color,
+    /// Unacked flash background (even phase).
+    pub flash_bg: Color,
+    /// Focus border hint.
+    pub focus_border: Color,
+}
+
+impl Default for AlarmListStyle {
+    fn default() -> Self {
+        Self {
+            width: 420.0,
+            height: 200.0,
+            row_height: 28.0,
+            padding: 4.0,
+            size: 12.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            bg: Color::rgb(0x1e, 0x1e, 0x24),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            flash_bg: Color::rgb(0x5a, 0x22, 0x28),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+/// Style for a Gauge dial.
+#[derive(Debug, Clone, Copy)]
+pub struct GaugeStyle {
+    /// Dial size (square).
+    pub size: f32,
+    /// Track / fill tint (mask tint).
+    pub dial_fg: Color,
+    /// Value / unit text color.
+    pub text_fg: Color,
+    /// Value font size.
+    pub value_size: f32,
+    /// Label font size.
+    pub label_size: f32,
+}
+
+impl Default for GaugeStyle {
+    fn default() -> Self {
+        Self {
+            size: 120.0,
+            dial_fg: Color::rgb(0x3b, 0xc4, 0x8c),
+            text_fg: Color::rgb(0xe8, 0xec, 0xf4),
+            value_size: 16.0,
+            label_size: 11.0,
+        }
+    }
+}
+
+/// Style for a Trend / sparkline.
+#[derive(Debug, Clone, Copy)]
+pub struct TrendStyle {
+    /// Width.
+    pub width: f32,
+    /// Height.
+    pub height: f32,
+    /// Line tint.
+    pub line: Color,
+    /// Soft under-fill tint.
+    pub fill: Color,
+    /// Background.
+    pub bg: Color,
+}
+
+impl Default for TrendStyle {
+    fn default() -> Self {
+        Self {
+            width: 220.0,
+            height: 64.0,
+            line: Color::rgb(0x4a, 0xc0, 0xf0),
+            fill: Color::rgb(0x1a, 0x40, 0x55),
+            bg: Color::rgb(0x22, 0x22, 0x28),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Kind {
     Column {
@@ -1365,6 +1745,39 @@ enum Kind {
         dismissible: bool,
         dismissed: bool,
         style: AlertStyle,
+    },
+    Form {
+        style: FormStyle,
+        fields: Vec<FormFieldState>,
+        children: Vec<WidgetId>,
+    },
+    TreeSelect {
+        roots: Vec<TreeNode>,
+        selected: Option<u64>,
+        open: bool,
+        scroll_y: f32,
+        placeholder: String,
+        style: TreeSelectStyle,
+    },
+    AlarmList {
+        entries: Vec<AlarmEntry>,
+        selected: Option<usize>,
+        scroll_y: f32,
+        /// App-driven flash phase for unacked Critical/Major rows.
+        flash_on: bool,
+        style: AlarmListStyle,
+    },
+    Gauge {
+        value: f32,
+        min: f32,
+        max: f32,
+        unit: String,
+        label: String,
+        style: GaugeStyle,
+    },
+    Trend {
+        points: Vec<f32>,
+        style: TrendStyle,
     },
 }
 
@@ -1965,6 +2378,14 @@ impl Ui {
                 self.focus = Some(id);
                 return self.pointer_select_toggle(scene, id);
             }
+            Some(Kind::TreeSelect { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_tree_select_toggle(scene, id);
+            }
+            Some(Kind::AlarmList { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_alarm_list(scene, id, x, y);
+            }
             Some(Kind::Slider { .. }) => {
                 self.focus = Some(id);
                 return self.pointer_slider(scene, id, x, y);
@@ -2106,7 +2527,8 @@ impl Ui {
                     | Kind::ContextMenu { children, .. }
                     | Kind::Tabs { children, .. }
                     | Kind::Badge { children, .. }
-                    | Kind::Tooltip { children, .. } => children.as_slice(),
+                    | Kind::Tooltip { children, .. }
+                    | Kind::Form { children, .. } => children.as_slice(),
                     _ => &[],
                 };
                 if self.subtree_contains(*c, kids, target) {
@@ -2238,7 +2660,7 @@ impl Ui {
     fn is_data_scrollable(&self, id: WidgetId) -> bool {
         matches!(
             self.widgets.get(&id).map(|w| &w.kind),
-            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::ScrollArea { .. })
+            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. })
         )
     }
 
@@ -2250,6 +2672,8 @@ impl Ui {
             Some(Kind::List { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Tree { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Table { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::AlarmList { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::TreeSelect { scroll_y, open: true, .. }) => Some((0.0, *scroll_y)),
             _ => None,
         }
     }
@@ -2267,7 +2691,9 @@ impl Ui {
             match &mut w.kind {
                 Kind::List { scroll_y, .. }
                 | Kind::Tree { scroll_y, .. }
-                | Kind::Table { scroll_y, .. } => {
+                | Kind::Table { scroll_y, .. }
+                | Kind::AlarmList { scroll_y, .. }
+                | Kind::TreeSelect { scroll_y, .. } => {
                     if (ny - *scroll_y).abs() < 0.1 {
                         return false;
                     }
@@ -2298,6 +2724,15 @@ impl Ui {
                 let body_h = style.height - style.header_height;
                 let content = rows.len() as f32 * style.row_height + style.padding;
                 (content - body_h).max(0.0)
+            }
+            Some(Kind::AlarmList { entries, style, .. }) => {
+                let content = style.padding * 2.0 + entries.len() as f32 * style.row_height;
+                (content - style.height).max(0.0)
+            }
+            Some(Kind::TreeSelect { roots, style, .. }) => {
+                let n = flatten_tree(roots).len();
+                let content = n as f32 * style.row_height;
+                (content - style.popup_max_height).max(0.0)
             }
             _ => 0.0,
         }
@@ -2482,6 +2917,8 @@ impl Ui {
             Some(Kind::Table { .. }) => self.key_table(id, key),
             Some(Kind::Tabs { .. }) => self.key_tabs(id, key),
             Some(Kind::Select { .. }) => self.key_select(id, key),
+            Some(Kind::TreeSelect { .. }) => self.key_tree_select(id, key),
+            Some(Kind::AlarmList { .. }) => self.key_alarm_list(id, key),
             Some(Kind::Slider { .. }) => self.key_slider(id, key),
             _ => false,
         }
@@ -3092,6 +3529,7 @@ impl Ui {
                 Kind::Menu { open, .. }
                 | Kind::ContextMenu { open, .. }
                 | Kind::Select { open, .. }
+                | Kind::TreeSelect { open, .. }
                 | Kind::Modal { open, .. } => {
                     *open = false;
                 }
@@ -3466,7 +3904,8 @@ impl Ui {
                 | Kind::ContextMenu { children, .. }
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
-                | Kind::Tooltip { children, .. } => children.as_slice(),
+                | Kind::Tooltip { children, .. }
+                    | Kind::Form { children, .. } => children.as_slice(),
                 _ => continue,
             };
             if kids.contains(&id) {
@@ -3578,6 +4017,12 @@ impl Ui {
         ) {
             return self.pointer_modal(scene, id, x, y);
         }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TreeSelect { .. })
+        ) {
+            return self.pointer_tree_select_popup(scene, id, x, y);
+        }
         // Click on title/host while open → toggle close (Menu/Select).
         if let Some(w) = self.widgets.get(&id) {
             if let Some(node) = w.node {
@@ -3586,6 +4031,7 @@ impl Ui {
                         match &w.kind {
                             Kind::Menu { .. } => return self.pointer_menu_title(scene, id),
                             Kind::Select { .. } => return self.pointer_select_toggle(scene, id),
+                            Kind::TreeSelect { .. } => return self.pointer_tree_select_toggle(scene, id),
                             _ => {}
                         }
                     }
@@ -3773,7 +4219,8 @@ impl Ui {
                 | Kind::ContextMenu { children, .. }
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
-                | Kind::Tooltip { children, .. } => children.as_slice(),
+                | Kind::Tooltip { children, .. }
+                    | Kind::Form { children, .. } => children.as_slice(),
                 _ => continue,
             };
             if kids.contains(&id) {
@@ -4026,6 +4473,14 @@ impl Ui {
                     };
                     (bg, true)
                 }
+                Some(Kind::Form { style, .. }) => (
+                    style.background.unwrap_or(Color::rgba(0, 0, 0, 0)),
+                    style.background.is_some(),
+                ),
+                Some(Kind::TreeSelect { style, .. }) => (style.bg, true),
+                Some(Kind::AlarmList { style, .. }) => (style.bg, true),
+                Some(Kind::Gauge { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Trend { style, .. }) => (style.bg, true),
                 None => return,
             };
 
@@ -4196,6 +4651,49 @@ impl Ui {
                         w.chrome_node = Some(chrome);
                     }
                 }
+                Some(Kind::TreeSelect { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert tree_select label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::AlarmList { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x2f, 0x5b, 0xa8))
+                        .expect("insert alarm chrome");
+                    scene.set_visible(chrome, false);
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::Gauge { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    scene.set_mask(node, Some(AlphaMask::empty()));
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0xc4, 0x8c))
+                        .expect("insert gauge dial");
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert gauge value");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Trend { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x1a, 0x40, 0x55))
+                        .expect("insert trend fill");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::Form { .. }) => {}
                 _ => {}
             }
         }
@@ -4213,7 +4711,8 @@ impl Ui {
                     | Kind::ContextMenu { children, .. }
                     | Kind::Tabs { children, .. }
                     | Kind::Badge { children, .. }
-                    | Kind::Tooltip { children, .. },
+                    | Kind::Tooltip { children, .. }
+                    | Kind::Form { children, .. },
                 node,
                 ..
             }) => (node.unwrap_or(parent), children.clone()),
@@ -4420,6 +4919,27 @@ impl Ui {
                     )
                 }
             }
+            Some(Kind::Form {
+                style, children, ..
+            }) => {
+                let m = self.measure_flex_axis(
+                    Axis::Vertical,
+                    style.width,
+                    style.height,
+                    style.padding,
+                    style.gap,
+                    style.cross_align,
+                    children,
+                );
+                ChildMeasure::new(style.width.max(m.width), m.height.max(40.0))
+            }
+            Some(Kind::TreeSelect { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::AlarmList { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Gauge { style, label, .. }) => {
+                let (_, lh) = self.font.measure_line(label, style.label_size);
+                ChildMeasure::new(style.size, style.size + lh + 6.0)
+            }
+            Some(Kind::Trend { style, .. }) => ChildMeasure::new(style.width, style.height),
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -4495,6 +5015,27 @@ impl Ui {
         let flex = match self.widgets.get(&id) {
             Some(Widget {
                 kind: Kind::Column {
+                    style, children, ..
+                },
+                node,
+                ..
+            }) => Some((
+                FlexParams {
+                    axis: Axis::Vertical,
+                    x: style.x,
+                    y: style.y,
+                    max_width: style.width,
+                    max_height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                },
+                style.background.is_some(),
+                children.clone(),
+                *node,
+            )),
+            Some(Widget {
+                kind: Kind::Form {
                     style, children, ..
                 },
                 node,
@@ -4671,6 +5212,10 @@ impl Ui {
                     style.width = width;
                     style.height = height;
                 }
+                Kind::AlarmList { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
                 _ => {}
             }
         }
@@ -4691,6 +5236,7 @@ impl Ui {
                     | Kind::Tabs { .. }
                     | Kind::Badge { .. }
                     | Kind::Tooltip { .. }
+                    | Kind::Form { .. }
             )
         )
     }
@@ -5166,6 +5712,10 @@ impl Ui {
                     style.x = x;
                     style.y = y;
                 }
+                Kind::Form { style, .. } => {
+                    style.x = x;
+                    style.y = y;
+                }
                 _ => {}
             }
         }
@@ -5210,6 +5760,10 @@ impl Ui {
                     style.width = width;
                     style.height = height;
                 }
+                Kind::Form { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
                 _ => {}
             }
         }
@@ -5228,7 +5782,8 @@ impl Ui {
                 | Kind::ContextMenu { children, .. }
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
-                | Kind::Tooltip { children, .. },
+                | Kind::Tooltip { children, .. }
+                | Kind::Form { children, .. },
             ) => Some(children.clone()),
             _ => None,
         };
@@ -5305,6 +5860,34 @@ impl Ui {
             Some(Kind::Select { .. })
         ) {
             self.paint_select_field(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TreeSelect { .. })
+        ) {
+            self.paint_tree_select_field(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::AlarmList { .. })
+        ) {
+            self.paint_alarm_list(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Gauge { .. })
+        ) {
+            self.paint_gauge(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Trend { .. })
+        ) {
+            self.paint_trend(scene, id);
             return;
         }
         if matches!(
@@ -5669,7 +6252,12 @@ impl Ui {
             | Kind::Tooltip { .. }
             | Kind::Modal { .. }
             | Kind::Progress { .. }
-            | Kind::Alert { .. } => {}
+            | Kind::Alert { .. }
+            | Kind::Form { .. }
+            | Kind::TreeSelect { .. }
+            | Kind::AlarmList { .. }
+            | Kind::Gauge { .. }
+            | Kind::Trend { .. } => {}
         }
     }
 
@@ -6286,6 +6874,7 @@ impl Ui {
                     Some(Kind::Menu { open: false, .. })
                         | Some(Kind::ContextMenu { open: false, .. })
                         | Some(Kind::Select { open: false, .. })
+                        | Some(Kind::TreeSelect { open: false, .. })
                         | Some(Kind::Modal { open: false, .. })
                 ) {
                     if let Some(w) = self.widgets.get(&wid) {
@@ -6301,6 +6890,7 @@ impl Ui {
             Some(Kind::Menu { .. }) => self.paint_menu_popup(scene, id),
             Some(Kind::ContextMenu { .. }) => self.paint_context_popup(scene, id),
             Some(Kind::Select { .. }) => self.paint_select_popup(scene, id),
+            Some(Kind::TreeSelect { .. }) => self.paint_tree_select_popup(scene, id),
             Some(Kind::Modal { .. }) => self.paint_modal_popup(scene, id),
             _ => {}
         }
@@ -6951,6 +7541,826 @@ impl Ui {
             }
         }
     }
+
+// Office P1 methods (included inside `impl Ui`).
+
+    fn tree_label_by_id(roots: &[TreeNode], id: u64) -> Option<String> {
+        for n in roots {
+            if n.id == id {
+                return Some(n.label.clone());
+            }
+            if let Some(l) = Self::tree_label_by_id(&n.children, id) {
+                return Some(l);
+            }
+        }
+        None
+    }
+
+    /// Whether id is a Form.
+    pub fn is_form(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Form { .. }))
+    }
+
+    /// Whether id is a TreeSelect.
+    pub fn is_tree_select(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TreeSelect { .. })
+        )
+    }
+
+    /// Whether id is an AlarmList.
+    pub fn is_alarm_list(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::AlarmList { .. })
+        )
+    }
+
+    /// Whether id is a Gauge.
+    pub fn is_gauge(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Gauge { .. }))
+    }
+
+    /// Whether id is a Trend.
+    pub fn is_trend(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Trend { .. }))
+    }
+
+    /// Selected TreeSelect node id.
+    pub fn tree_select_selected(&self, id: WidgetId) -> Option<u64> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TreeSelect { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// Set TreeSelect selection (closes popup).
+    pub fn set_tree_select_selected(&mut self, id: WidgetId, node_id: Option<u64>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::TreeSelect {
+                selected, open, ..
+            } = &mut w.kind
+            {
+                *selected = node_id;
+                *open = false;
+                if self.open_popup == Some(id) {
+                    self.open_popup = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Selected AlarmList row index.
+    pub fn alarm_list_selected(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::AlarmList { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// Set AlarmList selection.
+    pub fn set_alarm_list_selected(&mut self, id: WidgetId, index: Option<usize>) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::AlarmList { entries, .. }) => entries.len(),
+            _ => return false,
+        };
+        if let Some(i) = index {
+            if i >= n {
+                return false;
+            }
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::AlarmList { selected, .. } = &mut w.kind {
+                *selected = index;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Drive unacked Critical/Major flash phase.
+    pub fn set_alarm_list_flash(&mut self, id: WidgetId, flash_on: bool) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::AlarmList { flash_on: f, .. } = &mut w.kind {
+                if *f == flash_on {
+                    return false;
+                }
+                *f = flash_on;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Acknowledge the selected alarm row; returns entry id if newly acked.
+    pub fn ack_alarm_list_selected(&mut self, id: WidgetId) -> Option<u64> {
+        let sel = self.alarm_list_selected(id)?;
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::AlarmList { entries, .. } = &mut w.kind {
+                if let Some(e) = entries.get_mut(sel) {
+                    if !e.acked {
+                        e.acked = true;
+                        return Some(e.id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Replace AlarmList entries.
+    pub fn set_alarm_list_entries(&mut self, id: WidgetId, entries: Vec<AlarmEntry>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::AlarmList {
+                entries: slot,
+                selected,
+                scroll_y,
+                ..
+            } = &mut w.kind
+            {
+                *slot = entries;
+                if let Some(i) = *selected {
+                    if i >= slot.len() {
+                        *selected = slot.len().checked_sub(1);
+                    }
+                }
+                *scroll_y = 0.0;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Gauge value.
+    pub fn gauge_value(&self, id: WidgetId) -> Option<f32> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Gauge { value, .. }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Set Gauge value (clamped).
+    pub fn set_gauge_value(&mut self, id: WidgetId, value: f32) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Gauge {
+                value: v, min, max, ..
+            } = &mut w.kind
+            {
+                let nv = value.clamp(*min, *max);
+                if (*v - nv).abs() < 1e-6 {
+                    return false;
+                }
+                *v = nv;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Replace Trend sample points.
+    pub fn set_trend_points(&mut self, id: WidgetId, points: Vec<f32>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Trend { points: slot, .. } = &mut w.kind {
+                *slot = points;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Run Form validation against bound TextInput values. Updates error labels.
+    /// Returns `true` when all fields pass.
+    pub fn validate_form(&mut self, id: WidgetId) -> bool {
+        let fields = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Form { fields, .. }) => fields.clone(),
+            _ => return false,
+        };
+        let mut ok = true;
+        for field in &fields {
+            let value = self
+                .text_input_value(field.control)
+                .unwrap_or("")
+                .to_string();
+            let mut err: Option<String> = None;
+            for rule in &field.rules {
+                if let Some(msg) = rule.check(&value) {
+                    err = Some(msg.to_string());
+                    break;
+                }
+            }
+            if err.is_some() {
+                ok = false;
+            }
+            self.set_text(field.error_label, err.unwrap_or_default());
+        }
+        ok
+    }
+
+    /// Clear all Form field error labels.
+    pub fn clear_form_errors(&mut self, id: WidgetId) -> bool {
+        let fields = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Form { fields, .. }) => fields.clone(),
+            _ => return false,
+        };
+        for field in fields {
+            self.set_text(field.error_label, "");
+        }
+        true
+    }
+
+    /// Current error text for a Form field key (empty if none).
+    pub fn form_field_error(&self, id: WidgetId, key: &str) -> Option<String> {
+        let fields = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Form { fields, .. }) => fields,
+            _ => return None,
+        };
+        let field = fields.iter().find(|f| f.key == key)?;
+        self.text_content(field.error_label).map(|s| s.to_string())
+    }
+
+    /// Form field control widget id for `key`.
+    pub fn form_field_control(&self, id: WidgetId, key: &str) -> Option<WidgetId> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Form { fields, .. }) => fields.iter().find(|f| f.key == key).map(|f| f.control),
+            _ => None,
+        }
+    }
+
+    fn pointer_tree_select_toggle(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TreeSelect { open: true, .. })
+        );
+        if let Some(pid) = self.open_popup {
+            self.hide_popup_aux_mut(scene, pid);
+        }
+        self.close_popup_internal();
+        if was_open {
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::TreeSelect { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        true
+    }
+
+    fn pointer_tree_select_popup(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        // Toggle close if clicking host.
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(node) = w.node {
+                if let Some(n) = scene.get(node) {
+                    if n.bounds.contains(x, y) {
+                        return self.pointer_tree_select_toggle(scene, id);
+                    }
+                }
+            }
+        }
+        let (flats, style, scroll_y, panel) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::TreeSelect {
+                        roots,
+                        style,
+                        scroll_y,
+                        open: true,
+                        ..
+                    },
+                aux,
+                ..
+            }) => {
+                let panel = aux
+                    .first()
+                    .and_then(|n| scene.get(*n))
+                    .map(|n| n.bounds)
+                    .unwrap_or_else(Rect::empty);
+                (flatten_tree(roots), *style, *scroll_y, panel)
+            }
+            _ => return false,
+        };
+        if panel.is_empty() || flats.is_empty() {
+            self.close_popup_internal();
+            return true;
+        }
+        if !panel.contains(x, y) {
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        let local_y = y - panel.y + scroll_y;
+        let idx = if style.row_height > 0.0 {
+            (local_y / style.row_height).floor() as isize
+        } else {
+            -1
+        };
+        if idx < 0 || (idx as usize) >= flats.len() {
+            return true;
+        }
+        let row = &flats[idx as usize];
+        let click_x = x - panel.x;
+        let twiddle_w = style.indent.max(12.0);
+        let depth_x = style.padding + row.depth as f32 * style.indent;
+        if row.has_children && click_x >= depth_x && click_x < depth_x + twiddle_w {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::TreeSelect { roots, .. } = &mut w.kind {
+                    toggle_expanded_in_forest(roots, row.id);
+                }
+            }
+            return true;
+        }
+        self.set_tree_select_selected(id, Some(row.id));
+        self.hide_popup_aux_mut(scene, id);
+        true
+    }
+
+    fn pointer_alarm_list(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (style, scroll_y, n, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::AlarmList {
+                        entries,
+                        style,
+                        scroll_y,
+                        ..
+                    },
+                node,
+                ..
+            }) => (*style, *scroll_y, entries.len(), *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let local_y = y - bounds.y - style.padding + scroll_y;
+        let idx = if style.row_height > 0.0 {
+            (local_y / style.row_height).floor() as isize
+        } else {
+            -1
+        };
+        if idx < 0 || (idx as usize) >= n {
+            return true;
+        }
+        let _ = x;
+        self.set_alarm_list_selected(id, Some(idx as usize));
+        true
+    }
+
+    fn key_alarm_list(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::AlarmList { entries, .. }) => entries.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let cur = self.alarm_list_selected(id);
+        match key {
+            UiKey::Down => {
+                let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
+                self.set_alarm_list_selected(id, Some(next));
+                true
+            }
+            UiKey::Up => {
+                let next = cur.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                self.set_alarm_list_selected(id, Some(next));
+                true
+            }
+            UiKey::Enter | UiKey::Space => {
+                self.ack_alarm_list_selected(id).is_some() || true
+            }
+            _ => false,
+        }
+    }
+
+    fn key_tree_select(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TreeSelect { open: true, .. })
+        );
+        match key {
+            UiKey::Escape if open => {
+                self.close_popup_internal();
+                true
+            }
+            UiKey::Enter | UiKey::Space | UiKey::Down if !open => {
+                // Open without scene — caller syncs; use empty hide path.
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::TreeSelect { open, .. } = &mut w.kind {
+                        *open = true;
+                    }
+                }
+                self.open_popup = Some(id);
+                true
+            }
+            UiKey::Up | UiKey::Down if open => {
+                let flats = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::TreeSelect { roots, .. }) => flatten_tree(roots),
+                    _ => return false,
+                };
+                if flats.is_empty() {
+                    return false;
+                }
+                let cur = self.tree_select_selected(id);
+                let idx = cur
+                    .and_then(|cid| flats.iter().position(|r| r.id == cid))
+                    .unwrap_or(0);
+                let next = match key {
+                    UiKey::Down => (idx + 1).min(flats.len() - 1),
+                    _ => idx.saturating_sub(1),
+                };
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::TreeSelect { selected, .. } = &mut w.kind {
+                        *selected = Some(flats[next].id);
+                    }
+                }
+                true
+            }
+            UiKey::Enter if open => {
+                // Keep selection, close.
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::TreeSelect { open, .. } = &mut w.kind {
+                        *open = false;
+                    }
+                }
+                self.open_popup = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn paint_tree_select_field(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::TreeSelect {
+                    roots,
+                    selected,
+                    open,
+                    placeholder,
+                    style,
+                    ..
+                },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let text = match *selected {
+            Some(sid) => Self::tree_label_by_id(roots, sid).unwrap_or_else(|| placeholder.clone()),
+            None => placeholder.clone(),
+        };
+        let fg = match *selected {
+            Some(_) => style.fg,
+            None => style.placeholder_fg,
+        };
+        let open = *open;
+        let style = *style;
+        let Some(node) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(node, if open { style.selected_bg } else { style.bg });
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        let display = format!("{text}  ▾");
+        let (_, mask) = self.font.rasterize_text(&display, style.size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + style.padding;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+    }
+
+    fn paint_tree_select_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (flats, selected, style, scroll_y, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::TreeSelect {
+                        roots,
+                        selected,
+                        style,
+                        scroll_y,
+                        open,
+                        ..
+                    },
+                node,
+                ..
+            }) if *open => {
+                let b = node
+                    .and_then(|n| scene.get(n).map(|n| n.bounds))
+                    .unwrap_or_else(Rect::empty);
+                (flatten_tree(roots), *selected, *style, *scroll_y, b)
+            }
+            _ => return,
+        };
+        let n = flats.len().max(1);
+        let content_h = n as f32 * style.row_height;
+        let popup_h = content_h.min(style.popup_max_height);
+        let panel = Rect::new(
+            host_bounds.x,
+            host_bounds.y + host_bounds.height,
+            host_bounds.width.max(style.width),
+            popup_h,
+        );
+        self.ensure_overlay_aux(scene, id, 1 + flats.len() * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&bg) = aux.first() {
+            scene.set_bounds(bg, panel);
+            scene.set_fill(bg, style.popup_bg);
+            scene.set_mask(bg, None);
+            scene.set_clip(bg, Some(panel));
+            scene.set_visible(bg, true);
+            self.node_to_widget.insert(bg, id);
+        }
+        for (i, row) in flats.iter().enumerate() {
+            let y = panel.y + i as f32 * style.row_height - scroll_y;
+            let row_r = Rect::new(panel.x, y, panel.width, style.row_height);
+            if row_r.y + row_r.height < panel.y || row_r.y > panel.y + panel.height {
+                if let Some(&rbg) = aux.get(1 + i * 2) {
+                    scene.set_visible(rbg, false);
+                }
+                if let Some(&lab) = aux.get(1 + i * 2 + 1) {
+                    scene.set_visible(lab, false);
+                }
+                continue;
+            }
+            let hi = selected == Some(row.id);
+            if let Some(&rbg) = aux.get(1 + i * 2) {
+                scene.set_bounds(rbg, row_r);
+                scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
+                scene.set_mask(rbg, None);
+                scene.set_visible(rbg, true);
+                self.node_to_widget.insert(rbg, id);
+            }
+            let twiddle = if row.has_children {
+                if row.expanded { "▾ " } else { "▸ " }
+            } else {
+                "  "
+            };
+            let label = format!(
+                "{}{}{}",
+                " ".repeat(row.depth.saturating_mul(2)),
+                twiddle,
+                row.label
+            );
+            let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+            if let Some(&lab) = aux.get(1 + i * 2 + 1) {
+                let lx = row_r.x + style.padding;
+                let ly = row_r.y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_fill(lab, style.fg);
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_alarm_list(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::AlarmList {
+                    entries,
+                    selected,
+                    scroll_y,
+                    flash_on,
+                    style,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let entries = entries.clone();
+        let selected = *selected;
+        let scroll_y = *scroll_y;
+        let flash_on = *flash_on;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let chrome = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        let needed = entries.len() * 2;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+
+        if let Some(chrome) = chrome {
+            if let Some(sel) = selected {
+                let y = bounds.y + style.padding + sel as f32 * style.row_height - scroll_y;
+                scene.set_bounds(
+                    chrome,
+                    Rect::new(
+                        bounds.x + 1.0,
+                        y,
+                        (bounds.width - 2.0).max(1.0),
+                        style.row_height,
+                    ),
+                );
+                scene.set_fill(chrome, style.selected_bg);
+                scene.set_mask(chrome, None);
+                scene.set_visible(chrome, true);
+            } else {
+                scene.set_visible(chrome, false);
+            }
+        }
+
+        for (i, e) in entries.iter().enumerate() {
+            let y = bounds.y + style.padding + i as f32 * style.row_height - scroll_y;
+            let row = Rect::new(
+                bounds.x + style.padding,
+                y,
+                (bounds.width - style.padding * 2.0).max(1.0),
+                style.row_height,
+            );
+            if row.y + row.height < bounds.y - style.row_height
+                || row.y > bounds.y + bounds.height + style.row_height
+            {
+                if let Some(&bg) = aux.get(i * 2) {
+                    scene.set_visible(bg, false);
+                }
+                if let Some(&lab) = aux.get(i * 2 + 1) {
+                    scene.set_visible(lab, false);
+                }
+                continue;
+            }
+            let flash = !e.acked && e.severity.flashes() && flash_on;
+            if let Some(&bg) = aux.get(i * 2) {
+                scene.set_bounds(bg, row);
+                scene.set_fill(bg, if flash { style.flash_bg } else { style.bg });
+                scene.set_mask(bg, None);
+                scene.set_visible(bg, flash);
+            }
+            let ack = if e.acked { "ACK" } else { "NEW" };
+            let line = format!(
+                "[{}] {} · {} · {} · {}",
+                e.severity.label(),
+                e.time,
+                e.source,
+                e.message,
+                ack
+            );
+            let (_, mask) = self.font.rasterize_text(&line, style.size, None);
+            if let Some(&lab) = aux.get(i * 2 + 1) {
+                let ly = row.y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(
+                    lab,
+                    Rect::new(row.x + 4.0, ly, mask.width as f32, mask.height as f32),
+                );
+                scene.set_fill(
+                    lab,
+                    if selected == Some(i) {
+                        Color::rgb(0xff, 0xff, 0xff)
+                    } else {
+                        e.severity.color()
+                    },
+                );
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_gauge(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Gauge {
+                    value,
+                    min,
+                    max,
+                    unit,
+                    label,
+                    style,
+                },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let value = *value;
+        let min = *min;
+        let max = *max;
+        let unit = unit.clone();
+        let label = label.clone();
+        let style = *style;
+        let Some(node) = *node else { return };
+        let label_node = *label_node;
+        let chrome = *chrome_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(node, Color::rgba(0, 0, 0, 0));
+        scene.set_mask(node, Some(AlphaMask::empty()));
+        scene.set_visible(node, true);
+
+        let dial = style.size.min(bounds.width).min(bounds.height);
+        let mask = p1_raster::rasterize_gauge(
+            dial.round() as u32,
+            value,
+            min,
+            max,
+            55,
+            210,
+            255,
+        );
+        if let Some(chrome) = chrome {
+            let dx = bounds.x + (bounds.width - dial) * 0.5;
+            let dy = bounds.y;
+            scene.set_bounds(chrome, Rect::new(dx, dy, dial, dial));
+            scene.set_fill(chrome, style.dial_fg);
+            scene.set_mask(chrome, Some(mask));
+            scene.set_visible(chrome, true);
+        }
+        let value_text = format!("{value:.1}{unit}");
+        let (_, vmask) = self.font.rasterize_text(&value_text, style.value_size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + (bounds.width - vmask.width as f32) * 0.5;
+            let ly = bounds.y + dial * 0.55;
+            scene.set_bounds(
+                lid,
+                Rect::new(lx, ly, vmask.width as f32, vmask.height as f32),
+            );
+            scene.set_fill(lid, style.text_fg);
+            scene.set_mask(
+                lid,
+                Some(AlphaMask::new(vmask.width, vmask.height, vmask.pixels)),
+            );
+            scene.set_visible(lid, true);
+        }
+        // Label under dial via aux[0]
+        self.ensure_aux_nodes(scene, node, id, 1);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&lab) = aux.first() {
+            let (_, lmask) = self.font.rasterize_text(&label, style.label_size, None);
+            let lx = bounds.x + (bounds.width - lmask.width as f32) * 0.5;
+            let ly = bounds.y + dial + 2.0;
+            scene.set_bounds(
+                lab,
+                Rect::new(lx, ly, lmask.width as f32, lmask.height as f32),
+            );
+            scene.set_fill(lab, style.text_fg);
+            scene.set_mask(
+                lab,
+                Some(AlphaMask::new(lmask.width, lmask.height, lmask.pixels)),
+            );
+            scene.set_visible(lab, true);
+        }
+    }
+
+    fn paint_trend(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Trend { points, style },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let points = points.clone();
+        let style = *style;
+        let Some(node) = *node else { return };
+        let chrome = *chrome_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_bounds(node, bounds);
+        scene.set_fill(node, style.bg);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+
+        let w = bounds.width.max(8.0).round() as u32;
+        let h = bounds.height.max(8.0).round() as u32;
+        let line_mask = p1_raster::rasterize_trend(w, h, &points, 255, 0);
+        let fill_mask = p1_raster::rasterize_trend(w, h, &points, 0, 70);
+        if let Some(chrome) = chrome {
+            scene.set_bounds(chrome, bounds);
+            scene.set_fill(chrome, style.fill);
+            scene.set_mask(chrome, Some(fill_mask));
+            scene.set_visible(chrome, true);
+        }
+        self.ensure_aux_nodes(scene, node, id, 1);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&line_n) = aux.first() {
+            scene.set_bounds(line_n, bounds);
+            scene.set_fill(line_n, style.line);
+            scene.set_mask(line_n, Some(line_mask));
+            scene.set_visible(line_n, true);
+        }
+    }
+
 }
 
 /// Compact builder for column/row/shell children.
@@ -7853,6 +9263,132 @@ impl FlexBuilder<'_> {
         id
     }
 
+
+    /// TreeSelect: closed field + hierarchical popup (P1; Cascader deferred).
+    pub fn tree_select(
+        &mut self,
+        roots: Vec<TreeNode>,
+        selected: Option<u64>,
+        placeholder: impl Into<String>,
+        style: TreeSelectStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::TreeSelect {
+                    roots,
+                    selected,
+                    open: false,
+                    scroll_y: 0.0,
+                    placeholder: placeholder.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Form container with validation rules (P1).
+    pub fn form<F>(&mut self, style: FormStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FormBuilder<'_>),
+    {
+        let id = self.ui.alloc_container(Kind::Form {
+            style,
+            fields: Vec::new(),
+            children: Vec::new(),
+        });
+        self.push_child(id);
+        {
+            let mut b = FormBuilder {
+                ui: self.ui,
+                form: id,
+            };
+            build(&mut b);
+        }
+        id
+    }
+
+    /// Industrial alarm list with severity + ack (P1).
+    pub fn alarm_list(&mut self, entries: Vec<AlarmEntry>, style: AlarmListStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::AlarmList {
+                    entries,
+                    selected: None,
+                    scroll_y: 0.0,
+                    flash_on: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Dial gauge for a live value (P1).
+    pub fn gauge(
+        &mut self,
+        value: f32,
+        min: f32,
+        max: f32,
+        unit: impl Into<String>,
+        label: impl Into<String>,
+        style: GaugeStyle,
+    ) -> WidgetId {
+        let lo = min.min(max);
+        let hi = min.max(max);
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Gauge {
+                    value: value.clamp(lo, hi),
+                    min: lo,
+                    max: hi,
+                    unit: unit.into(),
+                    label: label.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Trend / sparkline from sample points (P1).
+    pub fn trend(&mut self, points: Vec<f32>, style: TrendStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Trend { points, style },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     fn push_child(&mut self, child: WidgetId) {
         if let Some(w) = self.ui.widgets.get_mut(&self.parent) {
             match &mut w.kind {
@@ -7866,12 +9402,92 @@ impl FlexBuilder<'_> {
                 | Kind::ContextMenu { children, .. }
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
-                | Kind::Tooltip { children, .. } => {
+                | Kind::Tooltip { children, .. }
+                | Kind::Form { children, .. } => {
                     children.push(child);
                 }
                 _ => {}
             }
         }
+    }
+}
+
+
+/// Builder for [`FlexBuilder::form`] fields.
+pub struct FormBuilder<'a> {
+    ui: &'a mut Ui,
+    form: WidgetId,
+}
+
+impl FormBuilder<'_> {
+    /// Add a labeled field with validation rules; `build` should create exactly one control
+    /// (typically [`FlexBuilder::text_input`]). Returns the control [`WidgetId`].
+    pub fn field<F>(
+        &mut self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        rules: Vec<FormRule>,
+        build: F,
+    ) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let key = key.into();
+        let label = label.into();
+        let (label_size, label_fg, error_size, error_fg, before) =
+            match self.ui.widgets.get(&self.form) {
+                Some(Widget {
+                    kind: Kind::Form { style, children, .. },
+                    ..
+                }) => (
+                    style.label_size,
+                    style.label_fg,
+                    style.error_size,
+                    style.error_fg,
+                    children.len(),
+                ),
+                _ => (
+                    12.0,
+                    Color::rgb(0xb0, 0xb8, 0xc4),
+                    11.0,
+                    Color::rgb(0xf0, 0x70, 0x70),
+                    0,
+                ),
+            };
+
+        {
+            let mut b = FlexBuilder {
+                ui: self.ui,
+                parent: self.form,
+            };
+            b.text_styled(label, label_fg, label_size);
+            build(&mut b);
+            b.text_styled("", error_fg, error_size);
+        }
+
+        let (control, error_label) = match self.ui.widgets.get(&self.form) {
+            Some(Widget {
+                kind: Kind::Form { children, .. },
+                ..
+            }) => {
+                // label at before, control at before+1, error at before+2
+                let control = children.get(before + 1).copied().unwrap_or(WidgetId(0));
+                let error_label = children.get(before + 2).copied().unwrap_or(WidgetId(0));
+                (control, error_label)
+            }
+            _ => (WidgetId(0), WidgetId(0)),
+        };
+        if let Some(w) = self.ui.widgets.get_mut(&self.form) {
+            if let Kind::Form { fields, .. } = &mut w.kind {
+                fields.push(FormFieldState {
+                    key,
+                    control,
+                    error_label,
+                    rules,
+                });
+            }
+        }
+        control
     }
 }
 
@@ -8655,5 +10271,131 @@ mod tests {
             "headless counter QA: label span={span} button span={bspan} -> {}",
             path.display()
         );
+    }
+
+
+    #[test]
+    fn office_p1_tree_select_form_alarm_gauge_trend() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut tree_sel = WidgetId(0);
+        let mut form = WidgetId(0);
+        let mut alarms = WidgetId(0);
+        let mut gauge = WidgetId(0);
+        let mut trend = WidgetId(0);
+        let plant = vec![TreeNode::new(
+            1,
+            "Plant",
+            vec![
+                TreeNode::leaf(11, "Bay-01"),
+                TreeNode::leaf(12, "Bay-02"),
+            ],
+        )];
+        ui.column(
+            ColumnStyle {
+                width: 640.0,
+                height: 720.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                tree_sel = col.tree_select(
+                    plant,
+                    None,
+                    "Pick bay…",
+                    TreeSelectStyle::default(),
+                );
+                form = col.form(FormStyle::default(), |f| {
+                    f.field(
+                        "name",
+                        "Name",
+                        vec![FormRule::required("name required")],
+                        |b| {
+                            b.text_input("device name");
+                        },
+                    );
+                    f.field(
+                        "code",
+                        "Code",
+                        vec![
+                            FormRule::required("code required"),
+                            FormRule::digits("digits only"),
+                            FormRule::min_length(3, "min 3"),
+                        ],
+                        |b| {
+                            b.text_input("code");
+                        },
+                    );
+                });
+                alarms = col.alarm_list(
+                    vec![
+                        AlarmEntry::new(
+                            1,
+                            AlarmSeverity::Critical,
+                            "Trip",
+                            "CB-31",
+                            "10:01:02",
+                        ),
+                        AlarmEntry::new(
+                            2,
+                            AlarmSeverity::Info,
+                            "Comm OK",
+                            "GW-1",
+                            "10:01:05",
+                        ),
+                    ],
+                    AlarmListStyle {
+                        height: 120.0,
+                        ..AlarmListStyle::default()
+                    },
+                );
+                gauge = col.gauge(72.5, 0.0, 100.0, "%", "Load", GaugeStyle::default());
+                trend = col.trend(
+                    vec![1.0, 2.0, 1.5, 3.0, 2.5, 4.0],
+                    TrendStyle::default(),
+                );
+            },
+        );
+        ui.sync(&mut scene);
+        assert!(ui.is_tree_select(tree_sel));
+        assert!(ui.is_form(form));
+        assert!(ui.is_alarm_list(alarms));
+        assert!(ui.is_gauge(gauge));
+        assert!(ui.is_trend(trend));
+
+        assert!(!ui.validate_form(form));
+        let name = ui.form_field_control(form, "name").unwrap();
+        let code = ui.form_field_control(form, "code").unwrap();
+        ui.set_text_input(name, "Feeder-1");
+        ui.set_text_input(code, "12"); // too short
+        assert!(!ui.validate_form(form));
+        ui.set_text_input(code, "123");
+        assert!(ui.validate_form(form));
+
+        let tnode = ui.widgets.get(&tree_sel).unwrap().node.unwrap();
+        let tb = scene.get(tnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, tb.x + 4.0, tb.y + 4.0));
+        ui.sync(&mut scene);
+        // Click first leaf-ish row in popup (index 1 after root)
+        let aux0 = ui.widgets.get(&tree_sel).unwrap().aux[0];
+        let panel = scene.get(aux0).unwrap().bounds;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            panel.x + 20.0,
+            panel.y + TreeSelectStyle::default().row_height * 1.5
+        ));
+        ui.sync(&mut scene);
+        assert_eq!(ui.tree_select_selected(tree_sel), Some(11));
+
+        let anode = ui.widgets.get(&alarms).unwrap().node.unwrap();
+        let ab = scene.get(anode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, ab.x + 8.0, ab.y + 8.0));
+        assert_eq!(ui.alarm_list_selected(alarms), Some(0));
+        assert_eq!(ui.ack_alarm_list_selected(alarms), Some(1));
+        assert!(ui.set_alarm_list_flash(alarms, true));
+
+        assert!(ui.set_gauge_value(gauge, 80.0));
+        assert_eq!(ui.gauge_value(gauge), Some(80.0));
+        assert!(ui.set_trend_points(trend, vec![0.0, 1.0, 0.5]));
+        ui.sync(&mut scene);
     }
 }
