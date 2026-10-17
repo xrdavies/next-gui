@@ -1,14 +1,15 @@
 //! Office P0 input demo: ScrollArea, TextInput, Checkbox, Radio, Switch.
 //!
-//! Click fields to focus/toggle. Type ASCII into TextInput (Ctrl/Cmd+A select-all).
+//! Click fields to focus/toggle. Type ASCII or use IME for CJK into TextInput (Ctrl/Cmd+A select-all).
 //! Wheel or drag inside the scroll list. Space toggles focused Checkbox/Switch/Radio,
 //! or Soft↔GPU when nothing focused. Escape / close to quit.
 //!
-//! IME/CJK composition is stubbed — Latin/ASCII via the keyboard path works.
+//! IME/CJK: focus a TextInput, enable a system IME (e.g. fcitx5/ibus), type to compose;
+//! commit inserts CJK. Preedit shows underlined inline; candidate UI is OS-drawn.
 
 use next_gui_layout::CrossAlign;
 use next_gui_platform::{
-    AppCallbacks, Event, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
+    AppCallbacks, Event, ImeEvent, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
 };
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
@@ -244,7 +245,7 @@ impl Demo {
                         mode_label = sb.text_styled("Soft", Color::rgb(0xa0, 0xa8, 0xb4), 12.0);
                         sb.spacer(16.0, 1.0);
                         sb.text_styled(
-                            "IME stubbed · ASCII ok · Space=toggle focus or Soft↔GPU",
+                            "IME on · focus field + system IME for CJK · Space=toggle / Soft↔GPU",
                             Color::rgb(0x88, 0x8e, 0x98),
                             12.0,
                         );
@@ -275,6 +276,16 @@ impl Demo {
             mode_label,
             needs_paint: true,
             pending_native: window_backend == PresentBackend::GpuSurface,
+        }
+    }
+
+    fn sync_ime(&mut self, ctx: &mut WindowCtx<'_>) {
+        let want = self.ui.text_input_wants_ime();
+        ctx.set_ime_allowed(want);
+        if want {
+            if let Some((x, y, w, h)) = self.ui.ime_cursor_area(&self.scene) {
+                ctx.set_ime_cursor_area(x as f64, y as f64, w as f64, h as f64);
+            }
         }
     }
 
@@ -449,6 +460,16 @@ impl AppCallbacks for Demo {
             "next-gui Office inputs — {}",
             self.backend.name()
         ));
+        // NEXT_GUI_IME_QA=1: seed CJK + preedit for visual self-test without a live IME.
+        if std::env::var_os("NEXT_GUI_IME_QA").is_some() {
+            self.ui.set_focus(Some(self.name_input));
+            let _ = self.ui.ime_commit("你好电厂");
+            let _ = self.ui.ime_preedit("hao", Some((3, 3)));
+            self.ui.sync(&mut self.scene);
+            self.needs_paint = true;
+            self.refresh_status();
+        }
+        self.sync_ime(ctx);
         ctx.request_redraw();
     }
 
@@ -475,6 +496,7 @@ impl AppCallbacks for Demo {
                 ..
             } => {
                 if self.ui.pointer_pressed(&mut self.scene, x as f32, y as f32) {
+                    self.sync_ime(ctx);
                     self.refresh_status();
                     ctx.request_redraw();
                 }
@@ -525,6 +547,7 @@ impl AppCallbacks for Demo {
             } => {
                 if let Some(ui_key) = map_key(key, modifiers) {
                     if self.ui.key_input(ui_key) {
+                        self.sync_ime(ctx);
                         self.refresh_status();
                         ctx.request_redraw();
                         return;
@@ -538,6 +561,19 @@ impl AppCallbacks for Demo {
                         ));
                         ctx.request_redraw();
                     }
+                }
+            }
+            Event::Ime { ime, .. } => {
+                let handled = match ime {
+                    ImeEvent::Enabled => false,
+                    ImeEvent::Preedit { text, cursor } => self.ui.ime_preedit(text, cursor),
+                    ImeEvent::Commit { text } => self.ui.ime_commit(text),
+                    ImeEvent::Disabled => self.ui.ime_clear_preedit(),
+                };
+                self.sync_ime(ctx);
+                if handled {
+                    self.refresh_status();
+                    ctx.request_redraw();
                 }
             }
             Event::RedrawRequested { .. } => {

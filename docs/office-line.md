@@ -18,7 +18,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 - Field/Office **Profile 配置 crate**（P4，已推迟）
 - Immediate 视口（P5）
-- 完整 IME/CJK 输入（TextInput 仍 ASCII 优先）；P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地
+- P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地；TextInput IME/CJK 预编辑+提交已接（候选窗靠系统 IME）
 - 动画系统、图表控件
 
 ---
@@ -86,7 +86,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 | Soft 回退 | 示例 | GPU 失败或切换时仍可 Soft |
 | Native Surface | `render-gpu` + `platform` | Office 默认（有适配器时） |
 | `ScrollArea` | `ui` | 视口裁剪 + 滚轮/拖拽滚动 |
-| `TextInput` | `ui` | 单行录入（ASCII）；IME/CJK 组合输入仍 stub |
+| `TextInput` | `ui` | 单行录入；IME preedit/commit（CJK）；系统候选窗 |
 | `Checkbox` / `Radio` / `Switch` | `ui` | 点击/Space 切换；Radio 分组互斥 |
 | `List` | `ui` | 垂直项 + 单选 + ↑↓；内建滚动 |
 | `Tree` | `ui` | 层级展开/折叠 + 单选；厂站/设备树 MVP |
@@ -118,7 +118,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/15_office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
 - `examples/20_office_industrial` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心（TreeSelect/Form/AlarmList/Gauge/Trend）已落地**。下一步：其余 P1（Drawer、虚表等）或增强（IME、虚拟化）。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心已落地；IME/CJK 已接**。下一步：其余 P1（Drawer、虚表等）或虚拟化/图表增强。
 
 ---
 
@@ -139,7 +139,7 @@ P0–P3 完成
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
     · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
-    · P0 齐；P1 核心（TreeSelect/Form/AlarmList/Gauge/Trend）已落地；IME 后置
+    · P0 齐；P1 核心已落地；IME/CJK preedit+commit 已接
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓

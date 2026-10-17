@@ -1,15 +1,15 @@
 //! Linux window backend using winit (+ optional softbuffer).
 
 use crate::{
-    AppCallbacks, Event, KeyCode, Modifiers, PlatformError, PointerButton, PresentBackend, WindowAttrs,
-    WindowCtx, WindowHost, WindowId,
+    AppCallbacks, Event, ImeEvent, KeyCode, Modifiers, PlatformError, PointerButton, PresentBackend,
+    WindowAttrs, WindowCtx, WindowHost, WindowId,
 };
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window as WinitWindow;
@@ -24,6 +24,8 @@ struct Host {
     height: u32,
     cursor: (f64, f64),
     modifiers: Modifiers,
+    /// True while a non-empty IME preedit is active (suppress Key::Character).
+    ime_composing: bool,
 }
 
 impl WindowHost for Host {
@@ -76,6 +78,21 @@ impl WindowHost for Host {
             .present()
             .map_err(|e| PlatformError::new(format!("softbuffer present: {e}")))?;
         Ok(())
+    }
+
+    fn set_ime_allowed(&mut self, allowed: bool) {
+        self.window.set_ime_allowed(allowed);
+        if !allowed {
+            self.ime_composing = false;
+        }
+    }
+
+    fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64) {
+        // Physical pixels from the app; winit accepts Physical via Into<Position/Size>.
+        self.window.set_ime_cursor_area(
+            winit::dpi::PhysicalPosition::new(x, y),
+            winit::dpi::PhysicalSize::new(width.max(1.0), height.max(1.0)),
+        );
     }
 
     fn winit_window(&self) -> Arc<WinitWindow> {
@@ -144,6 +161,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             height: inner.height.max(1),
             cursor: (0.0, 0.0),
             modifiers: Modifiers::default(),
+            ime_composing: false,
         });
     }
 
@@ -282,10 +300,16 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     Key::Named(NamedKey::Home) => KeyCode::Home,
                     Key::Named(NamedKey::End) => KeyCode::End,
                     Key::Character(s) => {
-                        let mut chars = s.chars();
-                        match (chars.next(), chars.next()) {
-                            (Some(c), None) if !c.is_control() => KeyCode::Char(c),
-                            _ => KeyCode::Other(0),
+                        // While IME is composing, text goes through Event::Ime — do not
+                        // also insert Latin Key::Character from the composing keys.
+                        if host.ime_composing {
+                            KeyCode::Other(0)
+                        } else {
+                            let mut chars = s.chars();
+                            match (chars.next(), chars.next()) {
+                                (Some(c), None) if !c.is_control() => KeyCode::Char(c),
+                                _ => KeyCode::Other(0),
+                            }
                         }
                     }
                     _ => KeyCode::Other(0),
@@ -299,6 +323,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                 if !deliver {
                     return;
                 }
+                let ime_composing = host.ime_composing;
                 let mut ctx = WindowCtx { inner: host };
                 self.app.on_event(
                     &mut ctx,
@@ -309,9 +334,39 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         modifiers,
                     },
                 );
-                if matches!(key, KeyCode::Escape) && pressed {
+                if matches!(key, KeyCode::Escape) && pressed && !ime_composing {
                     event_loop.exit();
                 }
+            }
+            WindowEvent::Ime(ime) => {
+                let mapped = match ime {
+                    WinitIme::Enabled => ImeEvent::Enabled,
+                    WinitIme::Preedit(text, cursor) => {
+                        host.ime_composing = !text.is_empty();
+                        ImeEvent::Preedit {
+                            text: text.clone(),
+                            cursor: *cursor,
+                        }
+                    }
+                    WinitIme::Commit(text) => {
+                        host.ime_composing = false;
+                        ImeEvent::Commit {
+                            text: text.clone(),
+                        }
+                    }
+                    WinitIme::Disabled => {
+                        host.ime_composing = false;
+                        ImeEvent::Disabled
+                    }
+                };
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(
+                    &mut ctx,
+                    Event::Ime {
+                        window: WindowId(1),
+                        ime: mapped,
+                    },
+                );
             }
             _ => {}
         }

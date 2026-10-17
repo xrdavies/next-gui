@@ -125,8 +125,8 @@ pub enum KeyCode {
     Home,
     /// End.
     End,
-    /// Printable character (ASCII / Latin from the active keyboard path).
-    /// IME/CJK composition is not delivered here yet (stub).
+    /// Printable character from the keyboard path (typically Latin/ASCII).
+    /// CJK composition arrives via [`Event::Ime`], not here.
     Char(char),
     /// Catch-all scancode/other.
     Other(u32),
@@ -201,6 +201,35 @@ pub enum Event {
         /// Vertical delta (positive = scroll content down / finger up).
         delta_y: f64,
     },
+    /// Input Method Editor (IME) composition / commit (CJK and other IMEs).
+    Ime {
+        /// Window.
+        window: WindowId,
+        /// IME payload.
+        ime: ImeEvent,
+    },
+}
+
+/// IME lifecycle and text from the OS input method (winit `WindowEvent::Ime`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImeEvent {
+    /// IME was enabled for this window (after [`WindowCtx::set_ime_allowed`]).
+    Enabled,
+    /// Composing text shown at the caret. Empty `text` clears preedit.
+    /// `cursor` is an optional byte range into `text` (hide caret when `None`).
+    Preedit {
+        /// Preedit / composition string.
+        text: String,
+        /// Byte-range caret inside `text`, or `None` to hide.
+        cursor: Option<(usize, usize)>,
+    },
+    /// Final text to insert at the caret (may be multi-character CJK).
+    Commit {
+        /// Committed string.
+        text: String,
+    },
+    /// IME disabled; clear any pending preedit.
+    Disabled,
 }
 
 /// Platform error.
@@ -265,6 +294,20 @@ impl WindowCtx<'_> {
         self.inner.present(width, height, pixels)
     }
 
+    /// Allow or deny IME composition for this window.
+    ///
+    /// Enable while a text field is focused so the OS IME can deliver
+    /// [`Event::Ime`] preedit/commit. Disable otherwise so Space/etc. stay
+    /// normal key events.
+    pub fn set_ime_allowed(&mut self, allowed: bool) {
+        self.inner.set_ime_allowed(allowed);
+    }
+
+    /// Tell the IME where the caret is (physical pixels), for candidate UI placement.
+    pub fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64) {
+        self.inner.set_ime_cursor_area(x, y, width, height);
+    }
+
     /// Clone of the underlying winit window (for creating a `wgpu::Surface`).
     ///
     /// Available on Linux / macOS backends built with winit.
@@ -281,6 +324,8 @@ pub(crate) trait WindowHost {
     fn set_title(&mut self, title: &str);
     fn request_redraw(&mut self);
     fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError>;
+    fn set_ime_allowed(&mut self, allowed: bool);
+    fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64);
     #[cfg(any(feature = "linux", feature = "macos", target_os = "macos"))]
     fn winit_window(&self) -> std::sync::Arc<winit::window::Window>;
 }
