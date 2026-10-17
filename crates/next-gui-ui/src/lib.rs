@@ -3,8 +3,8 @@
 //! Retained widget tree built with a short builder or loaded from a compact `.ngui` file,
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
-//! Office P0 shell + input widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
-//! ScrollArea, TextInput, Checkbox, Radio, Switch.
+//! Office P0 shell + input + data widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
+//! ScrollArea, TextInput, Checkbox, Radio, Switch, List, Tree, Table.
 
 #![deny(missing_docs)]
 
@@ -470,6 +470,221 @@ impl Default for SwitchStyle {
     }
 }
 
+
+/// Style for a selectable List.
+#[derive(Debug, Clone, Copy)]
+pub struct ListStyle {
+    /// Outer x (top-level only).
+    pub x: f32,
+    /// Outer y (top-level only).
+    pub y: f32,
+    /// Viewport width.
+    pub width: f32,
+    /// Viewport height.
+    pub height: f32,
+    /// Row height.
+    pub item_height: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Item text color.
+    pub fg: Color,
+    /// Selected item text color.
+    pub selected_fg: Color,
+    /// Viewport background.
+    pub bg: Color,
+    /// Selected row background.
+    pub selected_bg: Color,
+    /// Focus ring / border hint.
+    pub focus_border: Color,
+}
+
+impl Default for ListStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 220.0,
+            height: 200.0,
+            item_height: 26.0,
+            padding: 4.0,
+            size: 13.0,
+            fg: Color::rgb(0xd8, 0xdc, 0xe4),
+            selected_fg: Color::rgb(0xff, 0xff, 0xff),
+            bg: Color::rgb(0x22, 0x22, 0x28),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+/// One node in a [`Kind::Tree`] / builder tree.
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    /// Stable id used for selection and expand APIs.
+    pub id: u64,
+    /// Display label.
+    pub label: String,
+    /// Child nodes.
+    pub children: Vec<TreeNode>,
+    /// Whether children are shown.
+    pub expanded: bool,
+}
+
+impl TreeNode {
+    /// Leaf or branch with `expanded` default true when children exist.
+    pub fn new(id: u64, label: impl Into<String>, children: Vec<TreeNode>) -> Self {
+        let expanded = !children.is_empty();
+        Self {
+            id,
+            label: label.into(),
+            children,
+            expanded,
+        }
+    }
+
+    /// Leaf node.
+    pub fn leaf(id: u64, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            children: Vec::new(),
+            expanded: false,
+        }
+    }
+}
+
+/// Style for a Tree.
+#[derive(Debug, Clone, Copy)]
+pub struct TreeStyle {
+    /// Outer x (top-level only).
+    pub x: f32,
+    /// Outer y (top-level only).
+    pub y: f32,
+    /// Viewport width.
+    pub width: f32,
+    /// Viewport height.
+    pub height: f32,
+    /// Row height.
+    pub row_height: f32,
+    /// Indent per depth level.
+    pub indent: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Label color.
+    pub fg: Color,
+    /// Selected label color.
+    pub selected_fg: Color,
+    /// Viewport background.
+    pub bg: Color,
+    /// Selected row background.
+    pub selected_bg: Color,
+    /// Focus border hint.
+    pub focus_border: Color,
+}
+
+impl Default for TreeStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 240.0,
+            height: 260.0,
+            row_height: 26.0,
+            indent: 14.0,
+            padding: 4.0,
+            size: 13.0,
+            fg: Color::rgb(0xd8, 0xdc, 0xe4),
+            selected_fg: Color::rgb(0xff, 0xff, 0xff),
+            bg: Color::rgb(0x22, 0x22, 0x28),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+/// Column definition for a Table.
+#[derive(Debug, Clone)]
+pub struct TableColumn {
+    /// Header title.
+    pub title: String,
+    /// Column width (px). Resize is stubbed — width is fixed.
+    pub width: f32,
+}
+
+impl TableColumn {
+    /// Column with title and width.
+    pub fn new(title: impl Into<String>, width: f32) -> Self {
+        Self {
+            title: title.into(),
+            width,
+        }
+    }
+}
+
+/// Style for a basic Table.
+#[derive(Debug, Clone, Copy)]
+pub struct TableStyle {
+    /// Outer x (top-level only).
+    pub x: f32,
+    /// Outer y (top-level only).
+    pub y: f32,
+    /// Viewport width.
+    pub width: f32,
+    /// Viewport height (includes header).
+    pub height: f32,
+    /// Header row height.
+    pub header_height: f32,
+    /// Body row height.
+    pub row_height: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Body text color.
+    pub fg: Color,
+    /// Header text color.
+    pub header_fg: Color,
+    /// Selected body text color.
+    pub selected_fg: Color,
+    /// Viewport / body background.
+    pub bg: Color,
+    /// Header background.
+    pub header_bg: Color,
+    /// Selected row background.
+    pub selected_bg: Color,
+    /// Grid / separator hint.
+    pub grid: Color,
+    /// Focus border hint.
+    pub focus_border: Color,
+}
+
+impl Default for TableStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 420.0,
+            height: 240.0,
+            header_height: 28.0,
+            row_height: 26.0,
+            padding: 4.0,
+            size: 13.0,
+            fg: Color::rgb(0xd8, 0xdc, 0xe4),
+            header_fg: Color::rgb(0xc0, 0xc8, 0xd4),
+            selected_fg: Color::rgb(0xff, 0xff, 0xff),
+            bg: Color::rgb(0x22, 0x22, 0x28),
+            header_bg: Color::rgb(0x32, 0x32, 0x3a),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            grid: Color::rgb(0x3a, 0x3a, 0x44),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Kind {
     Column {
@@ -556,6 +771,25 @@ enum Kind {
         on: bool,
         style: SwitchStyle,
     },
+    List {
+        items: Vec<String>,
+        selected: Option<usize>,
+        scroll_y: f32,
+        style: ListStyle,
+    },
+    Tree {
+        roots: Vec<TreeNode>,
+        selected: Option<u64>,
+        scroll_y: f32,
+        style: TreeStyle,
+    },
+    Table {
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        selected_row: Option<usize>,
+        scroll_y: f32,
+        style: TableStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -565,8 +799,10 @@ struct Widget {
     node: Option<NodeId>,
     /// Label mask node for buttons / panel titles.
     label_node: Option<NodeId>,
-    /// Extra chrome: panel title bar bg, splitter sash.
+    /// Extra chrome: panel title bar bg, splitter sash, data selection / header.
     chrome_node: Option<NodeId>,
+    /// Row/cell nodes for List / Tree / Table (bg + text pairs, etc.).
+    aux: Vec<NodeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -588,6 +824,66 @@ enum DragState {
     },
 }
 
+
+#[derive(Debug, Clone)]
+struct FlatTreeRow {
+    id: u64,
+    depth: usize,
+    label: String,
+    has_children: bool,
+    expanded: bool,
+}
+
+fn flatten_tree(roots: &[TreeNode]) -> Vec<FlatTreeRow> {
+    let mut out = Vec::new();
+    fn walk(nodes: &[TreeNode], depth: usize, out: &mut Vec<FlatTreeRow>) {
+        for n in nodes {
+            let has = !n.children.is_empty();
+            out.push(FlatTreeRow {
+                id: n.id,
+                depth,
+                label: n.label.clone(),
+                has_children: has,
+                expanded: n.expanded,
+            });
+            if has && n.expanded {
+                walk(&n.children, depth + 1, out);
+            }
+        }
+    }
+    walk(roots, 0, &mut out);
+    out
+}
+
+fn set_expanded_in_forest(nodes: &mut [TreeNode], id: u64, expanded: bool) -> bool {
+    for n in nodes {
+        if n.id == id {
+            n.expanded = expanded;
+            return true;
+        }
+        if set_expanded_in_forest(&mut n.children, id, expanded) {
+            return true;
+        }
+    }
+    false
+}
+
+fn toggle_expanded_in_forest(nodes: &mut [TreeNode], id: u64) -> bool {
+    for n in nodes {
+        if n.id == id {
+            if !n.children.is_empty() {
+                n.expanded = !n.expanded;
+                return true;
+            }
+            return false;
+        }
+        if toggle_expanded_in_forest(&mut n.children, id) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Retained UI tree that mounts into a [`Scene`].
 #[derive(Debug)]
 pub struct Ui {
@@ -599,7 +895,7 @@ pub struct Ui {
     node_to_widget: HashMap<NodeId, WidgetId>,
     font: Arc<Font>,
     drag: Option<DragState>,
-    /// Focused widget (TextInput / Checkbox / Radio / Switch).
+    /// Focused widget (inputs + List / Tree / Table).
     focus: Option<WidgetId>,
 }
 
@@ -622,6 +918,10 @@ pub enum UiKey {
     Left,
     /// Right arrow.
     Right,
+    /// Up arrow (list/tree/table selection).
+    Up,
+    /// Down arrow (list/tree/table selection).
+    Down,
     /// Home.
     Home,
     /// End.
@@ -808,6 +1108,7 @@ impl Ui {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+            aux: Vec::new(),
             },
         );
         id
@@ -993,6 +1294,18 @@ impl Ui {
                 }
                 return true;
             }
+            Some(Kind::List { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_list(scene, id, x, y);
+            }
+            Some(Kind::Tree { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_tree(scene, id, x, y);
+            }
+            Some(Kind::Table { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_table(scene, id, x, y);
+            }
             Some(Kind::Button { .. }) => {
                 self.focus = None;
                 return false; // let app handle button clicks via hit_widget
@@ -1048,7 +1361,7 @@ impl Ui {
             } => {
                 let dx = start_x - x;
                 let dy = start_y - y;
-                self.set_scroll_offset(area, start_scroll_x + dx, start_scroll_y + dy)
+                self.set_any_scroll(area, start_scroll_x + dx, start_scroll_y + dy)
             }
         }
     }
@@ -1063,22 +1376,23 @@ impl Ui {
         self.drag.is_some()
     }
 
-    /// Apply mouse-wheel scroll at (x,y); returns true if a ScrollArea scrolled.
+    /// Apply mouse-wheel scroll at (x,y); returns true if a scrollable scrolled.
     pub fn pointer_scroll(&mut self, scene: &Scene, x: f32, y: f32, dx: f32, dy: f32) -> bool {
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
         };
-        let area = self.find_scroll_ancestor(id);
+        let area = self.find_scroll_ancestor(id).or_else(|| {
+            if self.is_data_scrollable(id) {
+                Some(id)
+            } else {
+                None
+            }
+        });
         let Some(area) = area else {
             return false;
         };
-        let (sx, sy) = match self.widgets.get(&area).map(|w| &w.kind) {
-            Some(Kind::ScrollArea {
-                scroll_x, scroll_y, ..
-            }) => (*scroll_x, *scroll_y),
-            _ => return false,
-        };
-        self.set_scroll_offset(area, sx + dx, sy + dy)
+        let (sx, sy) = self.any_scroll_offset(area).unwrap_or((0.0, 0.0));
+        self.set_any_scroll(area, sx + dx, sy + dy)
     }
 
     fn find_scroll_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
@@ -1230,6 +1544,7 @@ impl Ui {
         }
     }
 
+
     /// Scroll offsets for a ScrollArea.
     pub fn scroll_offset(&self, id: WidgetId) -> Option<(f32, f32)> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -1238,6 +1553,208 @@ impl Ui {
             }) => Some((*scroll_x, *scroll_y)),
             _ => None,
         }
+    }
+
+    fn is_data_scrollable(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::ScrollArea { .. })
+        )
+    }
+
+    fn any_scroll_offset(&self, id: WidgetId) -> Option<(f32, f32)> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ScrollArea {
+                scroll_x, scroll_y, ..
+            }) => Some((*scroll_x, *scroll_y)),
+            Some(Kind::List { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::Tree { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::Table { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            _ => None,
+        }
+    }
+
+    fn set_any_scroll(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ScrollArea { .. })
+        ) {
+            return self.set_scroll_offset(id, sx, sy);
+        }
+        let max_y = self.data_max_scroll_y(id);
+        let ny = sy.clamp(0.0, max_y);
+        if let Some(w) = self.widgets.get_mut(&id) {
+            match &mut w.kind {
+                Kind::List { scroll_y, .. }
+                | Kind::Tree { scroll_y, .. }
+                | Kind::Table { scroll_y, .. } => {
+                    if (ny - *scroll_y).abs() < 0.1 {
+                        return false;
+                    }
+                    *scroll_y = ny;
+                    let _ = sx;
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn data_max_scroll_y(&self, id: WidgetId) -> f32 {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::List { items, style, .. }) => {
+                let content = style.padding * 2.0 + items.len() as f32 * style.item_height;
+                (content - style.height).max(0.0)
+            }
+            Some(Kind::Tree { roots, style, .. }) => {
+                let n = flatten_tree(roots).len() as f32;
+                let content = style.padding * 2.0 + n * style.row_height;
+                (content - style.height).max(0.0)
+            }
+            Some(Kind::Table {
+                rows, style, ..
+            }) => {
+                let body_h = style.height - style.header_height;
+                let content = rows.len() as f32 * style.row_height + style.padding;
+                (content - body_h).max(0.0)
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Selected list index.
+    pub fn list_selected(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::List { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// Set list selection.
+    pub fn set_list_selected(&mut self, id: WidgetId, selected: Option<usize>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::List {
+                items, selected: s, ..
+            } = &mut w.kind
+            {
+                *s = selected.filter(|i| *i < items.len());
+            }
+        }
+    }
+
+    /// Replace list items; clamps selection.
+    pub fn set_list_items(&mut self, id: WidgetId, items: impl IntoIterator<Item = impl Into<String>>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::List {
+                items: slot,
+                selected,
+                scroll_y,
+                ..
+            } = &mut w.kind
+            {
+                *slot = items.into_iter().map(|s| s.into()).collect();
+                if let Some(i) = *selected {
+                    if i >= slot.len() {
+                        *selected = slot.len().checked_sub(1);
+                    }
+                }
+                *scroll_y = 0.0;
+            }
+        }
+    }
+
+    /// Selected tree node id.
+    pub fn tree_selected(&self, id: WidgetId) -> Option<u64> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Tree { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// Set tree selection by node id.
+    pub fn set_tree_selected(&mut self, id: WidgetId, node_id: Option<u64>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Tree { selected, .. } = &mut w.kind {
+                *selected = node_id;
+            }
+        }
+    }
+
+    /// Expand or collapse a tree node by id.
+    pub fn set_tree_expanded(&mut self, id: WidgetId, node_id: u64, expanded: bool) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Tree { roots, .. } = &mut w.kind {
+                set_expanded_in_forest(roots, node_id, expanded);
+            }
+        }
+    }
+
+    /// Selected table row index.
+    pub fn table_selected_row(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { selected_row, .. }) => *selected_row,
+            _ => None,
+        }
+    }
+
+    /// Set table row selection.
+    pub fn set_table_selected_row(&mut self, id: WidgetId, row: Option<usize>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Table {
+                rows,
+                selected_row,
+                ..
+            } = &mut w.kind
+            {
+                *selected_row = row.filter(|i| *i < rows.len());
+            }
+        }
+    }
+
+    /// Replace table body rows.
+    pub fn set_table_rows(&mut self, id: WidgetId, rows: Vec<Vec<String>>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Table {
+                rows: slot,
+                selected_row,
+                scroll_y,
+                ..
+            } = &mut w.kind
+            {
+                *slot = rows;
+                if let Some(i) = *selected_row {
+                    if i >= slot.len() {
+                        *selected_row = slot.len().checked_sub(1);
+                    }
+                }
+                *scroll_y = 0.0;
+            }
+        }
+    }
+
+    /// Whether id is a List.
+    pub fn is_list(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::List { .. })
+        )
+    }
+
+    /// Whether id is a Tree.
+    pub fn is_tree(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Tree { .. })
+        )
+    }
+
+    /// Whether id is a Table.
+    pub fn is_table(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Table { .. })
+        )
     }
 
     /// Deliver a key to the focused widget. Returns true if handled.
@@ -1269,6 +1786,9 @@ impl Ui {
                 self.select_radio(id);
                 true
             }
+            Some(Kind::List { .. }) => self.key_list(id, key),
+            Some(Kind::Tree { .. }) => self.key_tree(id, key),
+            Some(Kind::Table { .. }) => self.key_table(id, key),
             _ => false,
         }
     }
@@ -1374,7 +1894,7 @@ impl Ui {
                     false
                 }
             }
-            UiKey::Enter | UiKey::Tab | UiKey::Space => false,
+            UiKey::Enter | UiKey::Tab | UiKey::Space | UiKey::Up | UiKey::Down => false,
         }
     }
 
@@ -1392,6 +1912,399 @@ impl Ui {
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::ScrollArea { .. })
         )
+    }
+
+
+    fn pointer_list(&mut self, scene: &Scene, id: WidgetId, _x: f32, y: f32) -> bool {
+        let (sy, style, n_items, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::List {
+                    items,
+                    scroll_y,
+                    style,
+                    ..
+                },
+                node,
+                ..
+            }) => (*scroll_y, *style, items.len(), *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let local_y = y - bounds.y - style.padding + sy;
+        let idx = if style.item_height > 0.0 {
+            (local_y / style.item_height).floor() as isize
+        } else {
+            -1
+        };
+        let mut changed = false;
+        if idx >= 0 && (idx as usize) < n_items {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::List { selected, .. } = &mut w.kind {
+                    let new = Some(idx as usize);
+                    if *selected != new {
+                        *selected = new;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
+        self.drag = Some(DragState::Scroll {
+            area: id,
+            start_x: _x,
+            start_y: y,
+            start_scroll_x: sx,
+            start_scroll_y: scroll_y,
+        });
+        changed || true
+    }
+
+    fn pointer_tree(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (sy, style, flats, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Tree {
+                    roots,
+                    scroll_y,
+                    style,
+                    ..
+                },
+                node,
+                ..
+            }) => (*scroll_y, *style, flatten_tree(roots), *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let local_y = y - bounds.y - style.padding + sy;
+        let idx = if style.row_height > 0.0 {
+            (local_y / style.row_height).floor() as isize
+        } else {
+            -1
+        };
+        if idx >= 0 && (idx as usize) < flats.len() {
+            let row = &flats[idx as usize];
+            let twisty_x = bounds.x + style.padding + row.depth as f32 * style.indent;
+            let in_twisty = x >= twisty_x && x < twisty_x + 16.0;
+            if in_twisty && row.has_children {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Tree { roots, .. } = &mut w.kind {
+                        let _ = toggle_expanded_in_forest(roots, row.id);
+                    }
+                }
+            } else if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Tree { selected, .. } = &mut w.kind {
+                    *selected = Some(row.id);
+                }
+            }
+        }
+        let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
+        self.drag = Some(DragState::Scroll {
+            area: id,
+            start_x: x,
+            start_y: y,
+            start_scroll_x: sx,
+            start_scroll_y: scroll_y,
+        });
+        true
+    }
+
+    fn pointer_table(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (sy, style, n_rows, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Table {
+                    rows,
+                    scroll_y,
+                    style,
+                    ..
+                },
+                node,
+                ..
+            }) => (*scroll_y, *style, rows.len(), *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let body_top = bounds.y + style.header_height;
+        if y < body_top {
+            // header click — no-op (column resize stub)
+            let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
+            self.drag = Some(DragState::Scroll {
+                area: id,
+                start_x: x,
+                start_y: y,
+                start_scroll_x: sx,
+                start_scroll_y: scroll_y,
+            });
+            return true;
+        }
+        let local_y = y - body_top + sy;
+        let idx = if style.row_height > 0.0 {
+            (local_y / style.row_height).floor() as isize
+        } else {
+            -1
+        };
+        if idx >= 0 && (idx as usize) < n_rows {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Table { selected_row, .. } = &mut w.kind {
+                    *selected_row = Some(idx as usize);
+                }
+            }
+        }
+        let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
+        self.drag = Some(DragState::Scroll {
+            area: id,
+            start_x: x,
+            start_y: y,
+            start_scroll_x: sx,
+            start_scroll_y: scroll_y,
+        });
+        true
+    }
+
+    fn ensure_selected_visible_list(&mut self, id: WidgetId) {
+        let (sel, style, scroll_y) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::List {
+                selected,
+                style,
+                scroll_y,
+                ..
+            }) => (*selected, *style, *scroll_y),
+            _ => return,
+        };
+        let Some(i) = sel else { return };
+        let row_top = style.padding + i as f32 * style.item_height;
+        let row_bot = row_top + style.item_height;
+        let view_top = scroll_y;
+        let view_bot = scroll_y + style.height;
+        let mut ny = scroll_y;
+        if row_top < view_top {
+            ny = row_top;
+        } else if row_bot > view_bot {
+            ny = row_bot - style.height;
+        }
+        self.set_any_scroll(id, 0.0, ny);
+    }
+
+    fn ensure_selected_visible_tree(&mut self, id: WidgetId) {
+        let (sel, style, scroll_y, flats) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Tree {
+                    roots,
+                    selected,
+                    style,
+                    scroll_y,
+                    ..
+                },
+                ..
+            }) => (*selected, *style, *scroll_y, flatten_tree(roots)),
+            _ => return,
+        };
+        let Some(sid) = sel else { return };
+        let Some(i) = flats.iter().position(|r| r.id == sid) else {
+            return;
+        };
+        let row_top = style.padding + i as f32 * style.row_height;
+        let row_bot = row_top + style.row_height;
+        let mut ny = scroll_y;
+        if row_top < scroll_y {
+            ny = row_top;
+        } else if row_bot > scroll_y + style.height {
+            ny = row_bot - style.height;
+        }
+        self.set_any_scroll(id, 0.0, ny);
+    }
+
+    fn ensure_selected_visible_table(&mut self, id: WidgetId) {
+        let (sel, style, scroll_y) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table {
+                selected_row,
+                style,
+                scroll_y,
+                ..
+            }) => (*selected_row, *style, *scroll_y),
+            _ => return,
+        };
+        let Some(i) = sel else { return };
+        let body_h = style.height - style.header_height;
+        let row_top = i as f32 * style.row_height;
+        let row_bot = row_top + style.row_height;
+        let mut ny = scroll_y;
+        if row_top < scroll_y {
+            ny = row_top;
+        } else if row_bot > scroll_y + body_h {
+            ny = row_bot - body_h;
+        }
+        self.set_any_scroll(id, 0.0, ny);
+    }
+
+    fn key_list(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::List { items, .. }) => items.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let cur = self.list_selected(id);
+        match key {
+            UiKey::Down => {
+                let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
+                self.set_list_selected(id, Some(next));
+                self.ensure_selected_visible_list(id);
+                true
+            }
+            UiKey::Up => {
+                let next = cur.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                self.set_list_selected(id, Some(next));
+                self.ensure_selected_visible_list(id);
+                true
+            }
+            UiKey::Home => {
+                self.set_list_selected(id, Some(0));
+                self.ensure_selected_visible_list(id);
+                true
+            }
+            UiKey::End => {
+                self.set_list_selected(id, Some(n - 1));
+                self.ensure_selected_visible_list(id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn key_tree(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let flats = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Tree { roots, .. }) => flatten_tree(roots),
+            _ => return false,
+        };
+        if flats.is_empty() {
+            return false;
+        }
+        let cur = self.tree_selected(id);
+        let idx = cur.and_then(|cid| flats.iter().position(|r| r.id == cid));
+        match key {
+            UiKey::Down => {
+                let next = idx.map(|i| (i + 1).min(flats.len() - 1)).unwrap_or(0);
+                self.set_tree_selected(id, Some(flats[next].id));
+                self.ensure_selected_visible_tree(id);
+                true
+            }
+            UiKey::Up => {
+                let next = idx.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                self.set_tree_selected(id, Some(flats[next].id));
+                self.ensure_selected_visible_tree(id);
+                true
+            }
+            UiKey::Right => {
+                if let Some(i) = idx {
+                    let row = &flats[i];
+                    if row.has_children && !row.expanded {
+                        self.set_tree_expanded(id, row.id, true);
+                        return true;
+                    }
+                    if i + 1 < flats.len() {
+                        self.set_tree_selected(id, Some(flats[i + 1].id));
+                        self.ensure_selected_visible_tree(id);
+                        return true;
+                    }
+                }
+                false
+            }
+            UiKey::Left => {
+                if let Some(i) = idx {
+                    let row = &flats[i];
+                    if row.has_children && row.expanded {
+                        self.set_tree_expanded(id, row.id, false);
+                        return true;
+                    }
+                    // move to parent: previous row with smaller depth
+                    if let Some(p) = (0..i).rev().find(|&j| flats[j].depth < row.depth) {
+                        self.set_tree_selected(id, Some(flats[p].id));
+                        self.ensure_selected_visible_tree(id);
+                        return true;
+                    }
+                }
+                false
+            }
+            UiKey::Home => {
+                self.set_tree_selected(id, Some(flats[0].id));
+                self.ensure_selected_visible_tree(id);
+                true
+            }
+            UiKey::End => {
+                self.set_tree_selected(id, Some(flats[flats.len() - 1].id));
+                self.ensure_selected_visible_tree(id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn key_table(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { rows, .. }) => rows.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let cur = self.table_selected_row(id);
+        match key {
+            UiKey::Down => {
+                let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
+                self.set_table_selected_row(id, Some(next));
+                self.ensure_selected_visible_table(id);
+                true
+            }
+            UiKey::Up => {
+                let next = cur.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                self.set_table_selected_row(id, Some(next));
+                self.ensure_selected_visible_table(id);
+                true
+            }
+            UiKey::Home => {
+                self.set_table_selected_row(id, Some(0));
+                self.ensure_selected_visible_table(id);
+                true
+            }
+            UiKey::End => {
+                self.set_table_selected_row(id, Some(n - 1));
+                self.ensure_selected_visible_table(id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn ensure_aux_nodes(
+        &mut self,
+        scene: &mut Scene,
+        host: NodeId,
+        id: WidgetId,
+        needed: usize,
+    ) {
+        let have = self.widgets.get(&id).map(|w| w.aux.len()).unwrap_or(0);
+        for _ in have..needed {
+            let nid = scene
+                .insert(host, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgba(0, 0, 0, 0))
+                .expect("insert aux");
+            scene.set_visible(nid, false);
+            if let Some(w) = self.widgets.get_mut(&id) {
+                w.aux.push(nid);
+            }
+        }
+        if let Some(w) = self.widgets.get(&id) {
+            for (i, nid) in w.aux.iter().copied().enumerate() {
+                if i >= needed {
+                    scene.set_visible(nid, false);
+                }
+            }
+        }
     }
 
     /// Ensure scene nodes exist, run layout, paint labels into the scene.
@@ -1445,6 +2358,9 @@ impl Ui {
                 Some(Kind::Checkbox { style, .. }) => (style.box_bg, true),
                 Some(Kind::Radio { style, .. }) => (style.ring, true),
                 Some(Kind::Switch { style, .. }) => (style.track_off, true),
+                Some(Kind::List { style, .. }) => (style.bg, true),
+                Some(Kind::Tree { style, .. }) => (style.bg, true),
+                Some(Kind::Table { style, .. }) => (style.bg, true),
                 None => return,
             };
 
@@ -1518,6 +2434,16 @@ impl Ui {
                         .expect("insert control chrome");
                     if let Some(w) = self.widgets.get_mut(&id) {
                         w.label_node = Some(label);
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::List { .. }) | Some(Kind::Tree { .. }) | Some(Kind::Table { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x2f, 0x5b, 0xa8))
+                        .expect("insert data chrome");
+                    scene.set_visible(chrome, false);
+                    if let Some(w) = self.widgets.get_mut(&id) {
                         w.chrome_node = Some(chrome);
                     }
                 }
@@ -1665,6 +2591,9 @@ impl Ui {
                 let w = style.width + style.gap + tw;
                 ChildMeasure::new(w, h)
             }
+            Some(Kind::List { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Tree { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Table { style, .. }) => ChildMeasure::new(style.width, style.height),
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -1865,10 +2794,38 @@ impl Ui {
                 scene.set_visible(node, visible);
             }
         }
+        if self.is_data_scrollable(child_id)
+            && !matches!(
+                self.widgets.get(&child_id).map(|w| &w.kind),
+                Some(Kind::ScrollArea { .. })
+            )
+        {
+            self.rebase_data_size(child_id, rect.width, rect.height);
+        }
         if self.is_container(child_id) {
             self.rebase_container_origin(child_id, rect.x, rect.y);
             self.rebase_container_size(child_id, rect.width, rect.height);
             self.layout_widget(scene, child_id);
+        }
+    }
+
+    fn rebase_data_size(&mut self, id: WidgetId, width: f32, height: f32) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            match &mut w.kind {
+                Kind::List { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
+                Kind::Tree { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
+                Kind::Table { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
+                _ => {}
+            }
         }
     }
 
@@ -2275,6 +3232,28 @@ impl Ui {
             return;
         }
 
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::List { .. })
+        ) {
+            self.paint_list(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Tree { .. })
+        ) {
+            self.paint_tree(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Table { .. })
+        ) {
+            self.paint_table(scene, id);
+            return;
+        }
+
         let Some(w) = self.widgets.get(&id) else {
             return;
         };
@@ -2586,7 +3565,357 @@ impl Ui {
             | Kind::Panel { .. }
             | Kind::StatusBar { .. }
             | Kind::Splitter { .. }
-            | Kind::ScrollArea { .. } => {}
+            | Kind::ScrollArea { .. }
+            | Kind::List { .. }
+            | Kind::Tree { .. }
+            | Kind::Table { .. } => {}
+        }
+    }
+
+
+    fn paint_list(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::List {
+                    items,
+                    selected,
+                    scroll_y,
+                    style,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let items = items.clone();
+        let selected = *selected;
+        let scroll_y = *scroll_y;
+        let style = *style;
+        let host = match *node {
+            Some(n) => n,
+            None => return,
+        };
+        let chrome = *chrome_node;
+        let bounds = scene
+            .get(host)
+            .map(|n| n.bounds)
+            .unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        let focused = self.focus == Some(id);
+        let _ = (focused, style.focus_border);
+
+        let needed = items.len() * 2;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+
+        // selection chrome
+        if let Some(chrome) = chrome {
+            if let Some(sel) = selected {
+                let y = bounds.y + style.padding + sel as f32 * style.item_height - scroll_y;
+                scene.set_bounds(
+                    chrome,
+                    Rect::new(
+                        bounds.x + 1.0,
+                        y,
+                        (bounds.width - 2.0).max(1.0),
+                        style.item_height,
+                    ),
+                );
+                scene.set_fill(chrome, style.selected_bg);
+                scene.set_mask(chrome, None);
+                scene.set_visible(chrome, true);
+            } else {
+                scene.set_visible(chrome, false);
+            }
+        }
+
+        for (i, text) in items.iter().enumerate() {
+            let y = bounds.y + style.padding + i as f32 * style.item_height - scroll_y;
+            let row = Rect::new(
+                bounds.x + style.padding,
+                y,
+                (bounds.width - style.padding * 2.0).max(1.0),
+                style.item_height,
+            );
+            // skip far offscreen
+            if row.y + row.height < bounds.y - style.item_height
+                || row.y > bounds.y + bounds.height + style.item_height
+            {
+                if let Some(&bg) = aux.get(i * 2) {
+                    scene.set_visible(bg, false);
+                }
+                if let Some(&lab) = aux.get(i * 2 + 1) {
+                    scene.set_visible(lab, false);
+                }
+                continue;
+            }
+            let is_sel = selected == Some(i);
+            if let Some(&bg) = aux.get(i * 2) {
+                // row bg only when not using chrome selection (keep transparent)
+                scene.set_visible(bg, false);
+                let _ = bg;
+            }
+            let (_, mask) = self.font.rasterize_text(text, style.size, None);
+            if let Some(&lab) = aux.get(i * 2 + 1) {
+                let ly = row.y + ((style.item_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(
+                    lab,
+                    Rect::new(row.x + 4.0, ly, mask.width as f32, mask.height as f32),
+                );
+                scene.set_fill(lab, if is_sel { style.selected_fg } else { style.fg });
+                scene.set_mask(
+                    lab,
+                    Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                );
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_tree(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Tree {
+                    roots,
+                    selected,
+                    scroll_y,
+                    style,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let flats = flatten_tree(roots);
+        let selected = *selected;
+        let scroll_y = *scroll_y;
+        let style = *style;
+        let host = match *node {
+            Some(n) => n,
+            None => return,
+        };
+        let chrome = *chrome_node;
+        let bounds = scene
+            .get(host)
+            .map(|n| n.bounds)
+            .unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        let needed = flats.len() * 2;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+
+        if let Some(chrome) = chrome {
+            if let Some(sel) = selected {
+                if let Some(i) = flats.iter().position(|r| r.id == sel) {
+                    let y = bounds.y + style.padding + i as f32 * style.row_height - scroll_y;
+                    scene.set_bounds(
+                        chrome,
+                        Rect::new(
+                            bounds.x + 1.0,
+                            y,
+                            (bounds.width - 2.0).max(1.0),
+                            style.row_height,
+                        ),
+                    );
+                    scene.set_fill(chrome, style.selected_bg);
+                    scene.set_mask(chrome, None);
+                    scene.set_visible(chrome, true);
+                } else {
+                    scene.set_visible(chrome, false);
+                }
+            } else {
+                scene.set_visible(chrome, false);
+            }
+        }
+
+        for (i, row) in flats.iter().enumerate() {
+            let y = bounds.y + style.padding + i as f32 * style.row_height - scroll_y;
+            if y + style.row_height < bounds.y - style.row_height
+                || y > bounds.y + bounds.height + style.row_height
+            {
+                if let Some(&a) = aux.get(i * 2) {
+                    scene.set_visible(a, false);
+                }
+                if let Some(&a) = aux.get(i * 2 + 1) {
+                    scene.set_visible(a, false);
+                }
+                continue;
+            }
+            let twisty = if row.has_children {
+                if row.expanded {
+                    "▾"
+                } else {
+                    "▸"
+                }
+            } else {
+                "·"
+            };
+            let label = format!("{twisty} {}", row.label);
+            let x = bounds.x + style.padding + row.depth as f32 * style.indent;
+            let is_sel = selected == Some(row.id);
+            if let Some(&bg) = aux.get(i * 2) {
+                scene.set_visible(bg, false);
+            }
+            let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+            if let Some(&lab) = aux.get(i * 2 + 1) {
+                let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(
+                    lab,
+                    Rect::new(x, ly, mask.width as f32, mask.height as f32),
+                );
+                scene.set_fill(lab, if is_sel { style.selected_fg } else { style.fg });
+                scene.set_mask(
+                    lab,
+                    Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                );
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_table(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Table {
+                    columns,
+                    rows,
+                    selected_row,
+                    scroll_y,
+                    style,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let columns = columns.clone();
+        let rows = rows.clone();
+        let selected_row = *selected_row;
+        let scroll_y = *scroll_y;
+        let style = *style;
+        let host = match *node {
+            Some(n) => n,
+            None => return,
+        };
+        let chrome = *chrome_node;
+        let bounds = scene
+            .get(host)
+            .map(|n| n.bounds)
+            .unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        let ncols = columns.len().max(1);
+        // aux layout: [header texts x ncols] then per row: [row_bg + cell texts x ncols]
+        let needed = ncols + rows.len() * (1 + ncols);
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+
+        // header bar via chrome
+        if let Some(chrome) = chrome {
+            scene.set_bounds(
+                chrome,
+                Rect::new(bounds.x, bounds.y, bounds.width, style.header_height),
+            );
+            scene.set_fill(chrome, style.header_bg);
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+
+        let mut x = bounds.x + style.padding;
+        for (ci, col) in columns.iter().enumerate() {
+            let (_, mask) = self.font.rasterize_text(&col.title, style.size, None);
+            if let Some(&lab) = aux.get(ci) {
+                let ly =
+                    bounds.y + ((style.header_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(
+                    lab,
+                    Rect::new(x + 4.0, ly, mask.width as f32, mask.height as f32),
+                );
+                scene.set_fill(lab, style.header_fg);
+                scene.set_mask(
+                    lab,
+                    Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                );
+                scene.set_visible(lab, true);
+            }
+            x += col.width;
+        }
+
+        let body_top = bounds.y + style.header_height;
+        for (ri, row) in rows.iter().enumerate() {
+            let base = ncols + ri * (1 + ncols);
+            let y = body_top + ri as f32 * style.row_height - scroll_y;
+            if y + style.row_height < body_top - style.row_height
+                || y > bounds.y + bounds.height + style.row_height
+            {
+                for k in 0..(1 + ncols) {
+                    if let Some(&n) = aux.get(base + k) {
+                        scene.set_visible(n, false);
+                    }
+                }
+                continue;
+            }
+            let is_sel = selected_row == Some(ri);
+            if let Some(&bg) = aux.get(base) {
+                scene.set_bounds(
+                    bg,
+                    Rect::new(
+                        bounds.x + 1.0,
+                        y,
+                        (bounds.width - 2.0).max(1.0),
+                        style.row_height,
+                    ),
+                );
+                if is_sel {
+                    scene.set_fill(bg, style.selected_bg);
+                    scene.set_mask(bg, None);
+                    scene.set_visible(bg, true);
+                } else {
+                    scene.set_visible(bg, false);
+                }
+            }
+            let mut cx = bounds.x + style.padding;
+            for (ci, col) in columns.iter().enumerate() {
+                let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
+                let (_, mask) = self.font.rasterize_text(cell, style.size, None);
+                if let Some(&lab) = aux.get(base + 1 + ci) {
+                    let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
+                    let max_w = (col.width - 8.0).max(4.0);
+                    scene.set_bounds(
+                        lab,
+                        Rect::new(
+                            cx + 4.0,
+                            ly,
+                            (mask.width as f32).min(max_w),
+                            mask.height as f32,
+                        ),
+                    );
+                    scene.set_fill(lab, if is_sel { style.selected_fg } else { style.fg });
+                    scene.set_mask(
+                        lab,
+                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                    );
+                    scene.set_visible(lab, true);
+                }
+                cx += col.width;
+            }
         }
     }
 
@@ -2657,6 +3986,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -2694,6 +4024,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -2717,6 +4048,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -2743,6 +4075,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -2759,6 +4092,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -2796,6 +4130,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -2984,6 +4319,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -3014,6 +4350,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -3046,6 +4383,7 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -3076,6 +4414,85 @@ impl FlexBuilder<'_> {
                 node: None,
                 label_node: None,
                 chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+
+    /// Selectable vertical list (built-in scroll; click / ↑↓).
+    pub fn list(
+        &mut self,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        style: ListStyle,
+    ) -> WidgetId {
+        let items: Vec<String> = items.into_iter().map(|s| s.into()).collect();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::List {
+                    items,
+                    selected: None,
+                    scroll_y: 0.0,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Hierarchical tree (expand/collapse, click / ↑↓/←→).
+    pub fn tree(&mut self, roots: Vec<TreeNode>, style: TreeStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Tree {
+                    roots,
+                    selected: None,
+                    scroll_y: 0.0,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Basic text table (header + rows; row select; column resize stubbed).
+    pub fn table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        style: TableStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Table {
+                    columns,
+                    rows,
+                    selected_row: None,
+                    scroll_y: 0.0,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
             },
         );
         self.push_child(id);
@@ -3370,6 +4787,102 @@ mod tests {
         let (_, sy) = ui.scroll_offset(scroll).unwrap();
         assert!(sy > 0.0, "expected scroll_y > 0, got {sy}");
         ui.sync(&mut scene);
+
         assert!(scene.get(sarea).unwrap().clip.is_some());
+    }
+
+    #[test]
+    fn office_data_list_tree_table() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut list = WidgetId(0);
+        let mut tree = WidgetId(0);
+        let mut table = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 640.0,
+                height: 480.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                list = col.list(
+                    (1..=8).map(|i| format!("Tag-{i:02}")),
+                    ListStyle {
+                        width: 200.0,
+                        height: 140.0,
+                        ..ListStyle::default()
+                    },
+                );
+                tree = col.tree(
+                    vec![TreeNode::new(
+                        1,
+                        "Plant A",
+                        vec![
+                            TreeNode::leaf(2, "Bay-01"),
+                            TreeNode::new(3, "Bay-02", vec![TreeNode::leaf(4, "CB-1")]),
+                        ],
+                    )],
+                    TreeStyle {
+                        width: 220.0,
+                        height: 160.0,
+                        ..TreeStyle::default()
+                    },
+                );
+                table = col.table(
+                    vec![
+                        TableColumn::new("Tag", 100.0),
+                        TableColumn::new("Status", 80.0),
+                        TableColumn::new("Value", 80.0),
+                    ],
+                    vec![
+                        vec!["CB-1".into(), "Closed".into(), "0.0".into()],
+                        vec!["CB-2".into(), "Open".into(), "1.2".into()],
+                        vec!["DS-1".into(), "Closed".into(), "0.0".into()],
+                    ],
+                    TableStyle {
+                        width: 300.0,
+                        height: 140.0,
+                        ..TableStyle::default()
+                    },
+                );
+            },
+        );
+        ui.sync(&mut scene);
+        assert!(ui.is_list(list));
+        assert!(ui.is_tree(tree));
+        assert!(ui.is_table(table));
+
+        let lnode = ui.widgets.get(&list).unwrap().node.unwrap();
+        let lb = scene.get(lnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&scene, lb.x + 8.0, lb.y + 8.0));
+        assert_eq!(ui.list_selected(list), Some(0));
+        assert_eq!(ui.focused(), Some(list));
+        assert!(ui.key_input(UiKey::Down));
+        assert_eq!(ui.list_selected(list), Some(1));
+
+        let tnode = ui.widgets.get(&tree).unwrap().node.unwrap();
+        let tb = scene.get(tnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&scene, tb.x + 20.0, tb.y + 8.0));
+        assert_eq!(ui.tree_selected(tree), Some(1));
+        ui.set_focus(Some(tree));
+        assert!(ui.key_input(UiKey::Down));
+        assert_eq!(ui.tree_selected(tree), Some(2));
+
+        let tabn = ui.widgets.get(&table).unwrap().node.unwrap();
+        let tab = scene.get(tabn).unwrap().bounds;
+        let style_h = 28.0; // header
+        assert!(ui.pointer_pressed(
+            &scene,
+            tab.x + 10.0,
+            tab.y + style_h + 8.0
+        ));
+        assert_eq!(ui.table_selected_row(table), Some(0));
+        ui.set_focus(Some(table));
+        assert!(ui.key_input(UiKey::Down));
+        assert_eq!(ui.table_selected_row(table), Some(1));
+
+        assert!(ui.pointer_scroll(&scene, lb.x + 10.0, lb.y + 10.0, 0.0, 40.0));
+        ui.sync(&mut scene);
+        assert!(scene.get(lnode).unwrap().clip.is_some());
     }
 }

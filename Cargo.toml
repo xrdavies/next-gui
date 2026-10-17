@@ -17,6 +17,7 @@ members = [
     "examples/office_panel",
     "examples/office_shell",
     "examples/office_inputs",
+    "examples/office_data",
 ]
 
 [workspace.package]

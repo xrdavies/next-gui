@@ -277,6 +277,8 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     Key::Named(NamedKey::Tab) => KeyCode::Tab,
                     Key::Named(NamedKey::ArrowLeft) => KeyCode::Left,
                     Key::Named(NamedKey::ArrowRight) => KeyCode::Right,
+                    Key::Named(NamedKey::ArrowUp) => KeyCode::Up,
+                    Key::Named(NamedKey::ArrowDown) => KeyCode::Down,
                     Key::Named(NamedKey::Home) => KeyCode::Home,
                     Key::Named(NamedKey::End) => KeyCode::End,
                     Key::Character(s) => {
