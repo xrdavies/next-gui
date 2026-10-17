@@ -16,6 +16,7 @@ members = [
     "examples/p3_backend_toggle",
     "examples/office_panel",
     "examples/office_shell",
+    "examples/office_inputs",
 ]
 
 [workspace.package]

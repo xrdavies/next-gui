@@ -1,7 +1,7 @@
 //! macOS Office window backend using winit (+ optional softbuffer).
 
 use crate::{
-    AppCallbacks, Event, KeyCode, PlatformError, PointerButton, PresentBackend, WindowAttrs,
+    AppCallbacks, Event, KeyCode, Modifiers, PlatformError, PointerButton, PresentBackend, WindowAttrs,
     WindowCtx, WindowHost, WindowId,
 };
 use softbuffer::{Context, Surface};
@@ -9,7 +9,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window as WinitWindow;
@@ -22,6 +22,7 @@ struct Host {
     width: u32,
     height: u32,
     cursor: (f64, f64),
+    modifiers: Modifiers,
 }
 
 impl WindowHost for Host {
@@ -138,6 +139,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             width: inner.width.max(1),
             height: inner.height.max(1),
             cursor: (0.0, 0.0),
+            modifiers: Modifiers::default(),
         });
     }
 
@@ -227,31 +229,82 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     },
                 );
             }
+            WindowEvent::ModifiersChanged(mods) => {
+                let state = mods.state();
+                if let Some(host) = self.host.as_mut() {
+                    host.modifiers = Modifiers {
+                        ctrl: state.control_key(),
+                        shift: state.shift_key(),
+                        alt: state.alt_key(),
+                        meta: state.super_key(),
+                    };
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => ((*x as f64) * 24.0, (*y as f64) * 24.0),
+                    MouseScrollDelta::PixelDelta(p) => (p.x, p.y),
+                };
+                let (x, y) = host.cursor;
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(
+                    &mut ctx,
+                    Event::PointerScroll {
+                        window: WindowId(1),
+                        x,
+                        y,
+                        delta_x: dx,
+                        // winit: positive y = scroll up; invert so positive delta_y moves content down.
+                        delta_y: -dy,
+                    },
+                );
+            }
             WindowEvent::KeyboardInput {
                 event: key_event, ..
             } => {
                 let pressed = key_event.state == ElementState::Pressed;
+                let modifiers = host.modifiers;
                 let key = match &key_event.logical_key {
                     Key::Named(NamedKey::Escape) => KeyCode::Escape,
                     Key::Named(NamedKey::Space) => KeyCode::Space,
+                    Key::Named(NamedKey::Backspace) => KeyCode::Backspace,
+                    Key::Named(NamedKey::Delete) => KeyCode::Delete,
+                    Key::Named(NamedKey::Enter) => KeyCode::Enter,
+                    Key::Named(NamedKey::Tab) => KeyCode::Tab,
+                    Key::Named(NamedKey::ArrowLeft) => KeyCode::Left,
+                    Key::Named(NamedKey::ArrowRight) => KeyCode::Right,
+                    Key::Named(NamedKey::Home) => KeyCode::Home,
+                    Key::Named(NamedKey::End) => KeyCode::End,
+                    Key::Character(s) => {
+                        let mut chars = s.chars();
+                        match (chars.next(), chars.next()) {
+                            (Some(c), None) if !c.is_control() => KeyCode::Char(c),
+                            _ => KeyCode::Other(0),
+                        }
+                    }
                     _ => KeyCode::Other(0),
                 };
-                if matches!(key, KeyCode::Other(_)) && !pressed {
+                if matches!(key, KeyCode::Other(_)) {
                     return;
                 }
-                if matches!(key, KeyCode::Escape | KeyCode::Space) {
-                    let mut ctx = WindowCtx { inner: host };
-                    self.app.on_event(
-                        &mut ctx,
-                        Event::Key {
-                            window: WindowId(1),
-                            key,
-                            pressed,
-                        },
-                    );
-                    if matches!(key, KeyCode::Escape) && pressed {
-                        event_loop.exit();
-                    }
+                // Deliver presses for editing keys; Space/Escape also on release for legacy demos.
+                let deliver = pressed
+                    || matches!(key, KeyCode::Escape | KeyCode::Space);
+                if !deliver {
+                    return;
+                }
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(
+                    &mut ctx,
+                    Event::Key {
+                        window: WindowId(1),
+                        key,
+                        pressed,
+                        modifiers,
+                    },
+                );
+                if matches!(key, KeyCode::Escape) && pressed {
+                    event_loop.exit();
                 }
             }
             _ => {}
