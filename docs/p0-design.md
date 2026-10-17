@@ -20,12 +20,12 @@
 
 | 项 | 通过样子 |
 |----|----------|
-| 开窗 | Linux 下 `p0_soft_window` 能创建窗口并显示内容 |
+| 开窗 | Linux 下 `e01_soft_window` 能创建窗口并显示内容 |
 | retained | 树上多个矩形节点；改属性不销毁整树 |
 | 脏区 | 颜色/位置变更只把相关矩形并入脏区；软渲染按脏区裁剪绘制 |
 | 输入 | 指针按下命中节点可改色；键盘（如 Esc 退出、空格切换演示色）可用 |
 | 模块边界 | `ui`/`gpu`/`immediate` 未引入；示例只依赖 platform/scene/render/render-soft |
-| 编译 | `cargo build -p p0_soft_window` 在仓库内通过 |
+| 编译 | `cargo build -p e01_soft_window` 在仓库内通过 |
 
 ### 1.3 本阶段明确不做
 
@@ -49,7 +49,7 @@ next-gui/
     next-gui-render/         # DrawCommand + Renderer trait
     next-gui-render-soft/    # CPU 软渲染实现
   examples/
-    p0_soft_window/          # 可运行演示
+    01_soft_window/          # 可运行演示
   docs/
     p0-design.md             # 本文
 ```
@@ -57,7 +57,7 @@ next-gui/
 依赖方向（硬规则）：
 
 ```text
-p0_soft_window
+e01_soft_window
     → platform, scene, render, render-soft
 
 render-soft → render, scene（仅几何/颜色类型，或经 render 的命令）
@@ -271,7 +271,7 @@ impl Renderer for SoftRenderer {
 
 ---
 
-## 7. 示例 `p0_soft_window` 行为
+## 7. 示例 `e01_soft_window` 行为
 
 1. 创建 800×600 窗口，标题含 `next-gui P0`。  
 2. Scene：根 + 背景矩形 + 若干可点色块（模拟按钮）。  

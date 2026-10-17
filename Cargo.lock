@@ -420,6 +420,161 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
+name = "e01_soft_window"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-soft",
+ "next-gui-scene",
+]
+
+[[package]]
+name = "e02_counter"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e03_ngui_counter"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e04_cjk_text"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e05_backend_toggle"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e10_office_panel"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e11_office_shell"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e12_office_inputs"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e13_office_data"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e14_office_nav"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e15_office_feedback"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
+name = "e20_office_industrial"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1320,104 +1475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "office_data"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "office_feedback"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "office_inputs"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "office_nav"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "office_p1"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "office_panel"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "office_shell"
-version = "0.1.0"
-dependencies = [
- "next-gui-layout",
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1449,63 +1506,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser 0.25.1",
-]
-
-[[package]]
-name = "p0_soft_window"
-version = "0.1.0"
-dependencies = [
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-soft",
- "next-gui-scene",
-]
-
-[[package]]
-name = "p1_counter"
-version = "0.1.0"
-dependencies = [
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-ui",
-]
-
-[[package]]
-name = "p1_ngui_counter"
-version = "0.1.0"
-dependencies = [
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-ui",
-]
-
-[[package]]
-name = "p2_cjk_text"
-version = "0.1.0"
-dependencies = [
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
-]
-
-[[package]]
-name = "p3_backend_toggle"
-version = "0.1.0"
-dependencies = [
- "next-gui-platform",
- "next-gui-render",
- "next-gui-render-gpu",
- "next-gui-render-soft",
- "next-gui-scene",
- "next-gui-text",
- "next-gui-ui",
 ]
 
 [[package]]

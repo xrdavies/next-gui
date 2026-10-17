@@ -25,7 +25,7 @@
 | 切换 | 示例按键（如 Space）在两后端间切换并全量脏区重绘 |
 | 脏区 | 按 dirty 清背景再画相交命令（与 Soft 同策略；P3 用 scissor） |
 | 测试 | `cargo test -p next-gui-render-gpu`（无适配器则跳过 GPU 用例） |
-| 编译 | `cargo build -p p3_backend_toggle` |
+| 编译 | `cargo build -p e05_backend_toggle` |
 
 ### 1.3 本阶段明确不做
 
@@ -41,7 +41,7 @@
 
 ```text
 crates/next-gui-render-gpu/   # GpuRenderer : Renderer
-examples/p3_backend_toggle/   # Soft | GPU 切换演示
+examples/05_backend_toggle/   # Soft | GPU 切换演示
 ```
 
 ```text
@@ -77,7 +77,7 @@ gpu.backend_name() -> &str   // e.g. "Vulkan" / "Gl"
 
 ---
 
-## 4. 示例 `p3_backend_toggle`
+## 4. 示例 `e05_backend_toggle`
 
 - 简单 Column：标题显示当前后端、计数 Text、Increment/Reset、提示「Space 切换」。
 - 启动：优先 `try_new` GPU，失败则 Soft 并在 stderr 说明。

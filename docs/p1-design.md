@@ -27,7 +27,7 @@
 | 状态 | 点击 Increment / Reset，计数状态变，Text 内容随之更新 |
 | 脏区 | 变更仍走 `scene` 脏区；软渲染按脏区栅格 |
 | 边界 | 无 GPU / Immediate / 触控；不引入第三方 UI 内核 |
-| 编译 | `cargo build -p p1_counter -p p1_ngui_counter`；有 DISPLAY 时可运行 |
+| 编译 | `cargo build -p e02_counter -p e03_ngui_counter`；有 DISPLAY 时可运行 |
 
 ### 1.3 本阶段明确不做
 
@@ -45,8 +45,8 @@ crates/
   next-gui-layout/     # 盒/流式几何；不碰 GPU
   next-gui-ui/         # 紧凑 API、.ngui 解析、控件、同步到 scene
 examples/
-  p1_counter/          # Rust API：Column + Text + Button
-  p1_ngui_counter/     # .ngui 文件加载同一套 UI
+  02_counter/          # Rust API：Column + Text + Button
+  03_ngui_counter/     # .ngui 文件加载同一套 UI
     ui/counter.ngui
 docs/
   p1-design.md         # 本文
@@ -55,7 +55,7 @@ docs/
 依赖方向：
 
 ```text
-p1_counter / p1_ngui_counter → ui, layout, platform, scene, render, render-soft
+e02_counter / e03_ngui_counter → ui, layout, platform, scene, render, render-soft
 ui         → layout, scene
 layout     → scene（仅 Rect 等几何类型）
 ```
@@ -161,20 +161,20 @@ P2 起由 `next-gui-text` 提供 TrueType/CJK；`set_text` API 保持。点阵�
 
 ## 5. 示例
 
-### `p1_counter`
+### `e02_counter`
 
 Rust builder 手写 Column；点击 Increment / Reset。
 
 ```bash
-cargo run -p p1_counter
+cargo run -p e02_counter
 ```
 
-### `p1_ngui_counter`
+### `e03_ngui_counter`
 
-从 `examples/p1_ngui_counter/ui/counter.ngui` 加载同一界面；用 `@label` / `@inc` / `@reset` 接线。
+从 `examples/03_ngui_counter/ui/counter.ngui` 加载同一界面；用 `@label` / `@inc` / `@reset` 接线。
 
 ```bash
-cargo run -p p1_ngui_counter
+cargo run -p e03_ngui_counter
 ```
 
 ---

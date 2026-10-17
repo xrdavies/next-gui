@@ -8,7 +8,7 @@
 
 ## P0 — 骨架
 
-> **已完成骨架**（见 [p0-design.md](p0-design.md)、`examples/p0_soft_window`）。
+> **已完成骨架**（见 [p0-design.md](p0-design.md)、`examples/01_soft_window`）。
 
 - 窗口创建与基础生命周期（`platform`）；**先做 Linux 后端**
 - 输入：**指针 + 键盘**（触控接口预留，实现后补）
@@ -18,11 +18,11 @@
 
 验收：空窗 + 若干矩形控件可交互，弱机可跑，变更区域可观测。
 
-运行：`cargo run -p p0_soft_window`（需 Linux/macOS 图形桌面会话）。
+运行：`cargo run -p e01_soft_window`（需 Linux/macOS 图形桌面会话）。
 
 ## P1 — 声明式
 
-> **已完成**（见 [p1-design.md](p1-design.md)、`examples/p1_counter`、`examples/p1_ngui_counter`）。
+> **已完成**（见 [p1-design.md](p1-design.md)、`examples/02_counter`、`examples/03_ngui_counter`）。
 
 - **紧凑 Rust API / builder**（`ui`）；结构短，复杂逻辑在 Rust
 - **独立 `.ngui` 文件 DSL**：`Column` / `Text` / `Button`，`@name` 取 `WidgetId`；`load_ngui` / `load_ngui_path` 映射到同一套 `ui`
@@ -36,15 +36,15 @@
 运行：
 
 ```bash
-cargo run -p p1_counter          # Rust API
-cargo run -p p1_ngui_counter     # .ngui 文件
+cargo run -p e02_counter          # Rust API
+cargo run -p e03_ngui_counter     # .ngui 文件
 ```
 
 （需 Linux/macOS 图形桌面会话）。
 
 ## P2 — 文本
 
-> **已完成骨架**（见 [p2-design.md](p2-design.md)、`examples/p2_cjk_text`）。
+> **已完成骨架**（见 [p2-design.md](p2-design.md)、`examples/04_cjk_text`）。
 
 - 字体加载与度量（`next-gui-text`）
 - 简单换行 / 行布局；栅格化为 alpha mask
@@ -54,11 +54,11 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 验收：中英混排可读；度量/布局 API 可用（完整可编辑控件后补）。
 
-运行：`cargo run -p p2_cjk_text`（需图形会话 + CJK 字体，如 `fonts-noto-cjk`）。
+运行：`cargo run -p e04_cjk_text`（需图形会话 + CJK 字体，如 `fonts-noto-cjk`）。
 
 ## P3 — GPU 后端
 
-> **已完成骨架**（见 [p3-design.md](p3-design.md)、`examples/p3_backend_toggle`）。
+> **已完成骨架**（见 [p3-design.md](p3-design.md)、`examples/05_backend_toggle`）。
 
 - 与软渲染**共用场景图 / `DrawCommand`**（`next-gui-render-gpu`）
 - Linux 上经 **wgpu** 离屏栅格 + CPU readback，再走现有 `platform.present`（softbuffer）；真 Surface present 后补
@@ -68,7 +68,7 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 验收：同一 UI 树可在软渲染与 GPU 间切换，视觉大体一致（允许抗锯齿等实现差）；无 GPU 亦可启动。
 
-运行：`cargo run -p p3_backend_toggle`（需图形会话；有 GPU 时 Space 切换 Soft/GPU）。
+运行：`cargo run -p e05_backend_toggle`（需图形会话；有 GPU 时 Space 切换 Soft/GPU）。
 
 ## Office 线（P3 之后、P4 之前）— **进行中**
 
@@ -76,7 +76,7 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 - 布局：`CrossAlign`；控件：`Row` / `Spacer` / `Separator`（工具条）
 - GPU：**原生 `wgpu::Surface` present 已落地**（`PresentBackend::GpuSurface` + `GpuRenderer::try_new_native`）；Softbuffer/readback 仍保留
-- Soft 始终可回退；示例 `cargo run -p office_panel`
+- Soft 始终可回退；示例 `cargo run -p e10_office_panel`
 - **不**引入 `profile` crate（留给 P4）
 - 控件目录已确认：[office-widget-catalog.md](office-widget-catalog.md)（P0 含 TextInput/Table/Tree；Toolbar/StatusBar/Panel 一等公民）
 - **P0 目录控件（Rust API）已齐**（shell/inputs/data/nav/feedback 五切片 + 对应 `office_*` 示例）

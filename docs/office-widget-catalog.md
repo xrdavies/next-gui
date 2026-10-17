@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**P0 切片**已落地（shell/inputs/data/nav/feedback）。**P1 核心切片**已落地：`tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend`（`examples/office_p1`）。其余 P1（Drawer、虚表等）仍待办。
+> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**P0 切片**已落地（shell/inputs/data/nav/feedback）。**P1 核心切片**已落地：`tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend`（`examples/20_office_industrial`）。其余 P1（Drawer、虚表等）仍待办。
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -271,7 +271,7 @@
 | 状态 | 控件 |
 |------|------|
 | 已实现（Office 线 / P0 Rust API） | `text`，`button`，`column`，`row`，`spacer`，`separator`，`icon`，`toolbar`，`menu`/`dropdown`，`context_menu`，`tabs`，`splitter`，`panel`，`scroll_area`，`text_input`，`checkbox`，`radio`，`switch`，`select`，`slider`，`list`，`table`，`tree`，`tag`，`badge`，`tooltip`，`modal`，`progress`，`alert`，`status_bar` |
-| 已实现（P1 核心切片） | `tree_select`，`form`（校验引擎），`alarm_list`，`gauge`，`trend`（`examples/office_p1`） |
+| 已实现（P1 核心切片） | `tree_select`，`form`（校验引擎），`alarm_list`，`gauge`，`trend`（`examples/20_office_industrial`） |
 | P0 缺口 | **无**（目录 §4 名单已覆盖；IME/虚拟化/列宽拖拽等为增强，见各切片备注） |
 | P1 仍待办（本切片未含） | `card`，`breadcrumb`，`pagination`，`text_area`，`input_number`，`datetime`，`transfer`，`segmented`，`empty`，`collapse`，`descriptions`，`drawer`，`notification`，`spin`，`backdrop`，`property_grid`，`tree_table`，`virtual_list` |
 | 未实现且非本文范围 | 动画系统、完整 IME、Immediate 视口、Profile crate（P4） |
@@ -302,7 +302,7 @@
 |------|------|
 | 2026-10-17 | 初稿：对照 Ant Design / Element Plus / MUI 官方总览，整理 Office 优先级与工业扩展；待确认。 |
 | 2026-10-17 | **拍板锁定：** P0 含 TextInput+基础 Table/Tree；Toolbar/StatusBar/Panel 一等公民；P1 层级选择仅 TreeSelect；AlarmList/Gauge/Trend 仍 P1；Form 校验 P1。 |
-| 2026-10-17 | **Shell 切片落地：** `icon` / `toolbar` / `panel` / `status_bar` / `splitter`（Rust API + `office_shell` 示例）；录入/表/树仍待办。 |
-| 2026-10-17 | **Feedback 切片落地：** `tag` / `badge` / `tooltip` / `modal` / `progress` / `alert`（Rust API + `office_feedback`）；**P0 目录控件齐。** |
+| 2026-10-17 | **Shell 切片落地：** `icon` / `toolbar` / `panel` / `status_bar` / `splitter`（Rust API + `e11_office_shell` 示例）；录入/表/树仍待办。 |
+| 2026-10-17 | **Feedback 切片落地：** `tag` / `badge` / `tooltip` / `modal` / `progress` / `alert`（Rust API + `e15_office_feedback`）；**P0 目录控件齐。** |
 | 2026-10-17 | 补充过程要求：UI/example 合入前视觉自测（指向 AGENTS.md Git Workflow / QA）。 |
-| 2026-10-17 | **P1 核心切片落地：** `tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend` + `office_p1`；Cascader 仍不进 P1；IME 仍后置。 |
+| 2026-10-17 | **P1 核心切片落地：** `tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend` + `e20_office_industrial`；Cascader 仍不进 P1；IME 仍后置。 |
