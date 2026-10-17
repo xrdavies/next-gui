@@ -107,6 +107,13 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 | `AlarmList` | `ui` | **P1** 告警列表；分级色 + 未确认闪烁 + ack |
 | `Gauge` | `ui` | **P1** 仪表盘（软光栅弧 + 指针） |
 | `Trend` | `ui` | **P1** 趋势/迷你折线（软光栅） |
+| `Drawer` | `ui` | **P1** 侧滑抽屉 + Backdrop；Esc/×/遮罩关闭 |
+| `VirtualList` / `VirtualTable` | `ui` | **P1** 窗口化虚表（`virtual_list` / `virtual_table`） |
+| `TextArea` / `InputNumber` | `ui` | **P1** 多行录入 / 数字步进 |
+| `Notification` | `ui` | **P1** 全局 toast 队列 |
+| `Spin` / `Empty` | `ui` | **P1** 加载遮罩 / 空状态 |
+| `Collapse` / `Descriptions` / `Card` | `ui` | **P1** 折叠 / 描述列表 / 卡片 |
+| `Segmented` / `Breadcrumb` / `Pagination` | `ui` | **P1** 分段 / 面包屑 / 分页 |
 
 示例：
 
@@ -117,8 +124,9 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/14_office_nav` — **P0 nav**：Menu + ContextMenu + Tabs + Select + Slider
 - `examples/15_office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
 - `examples/20_office_industrial` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
+- `examples/21_office_p1_rest` — **P1 rest**：Drawer / VirtualList·Table / TextArea / InputNumber / Notification / Spin / Empty / Collapse / Descriptions / Card / Segmented / Breadcrumb / Pagination
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心已落地；IME/CJK 已接**。下一步：其余 P1（Drawer、虚表等）或虚拟化/图表增强。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心 + rest 已落地；IME/CJK 已接**。下一步：Datetime / Transfer / PropertyGrid / TreeTable，或 P4 Profile。
 
 ---
 
@@ -139,7 +147,7 @@ P0–P3 完成
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
     · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
-    · P0 齐；P1 核心已落地；IME/CJK preedit+commit 已接
+    · P0 齐；P1 核心 + rest 已落地；IME/CJK preedit+commit 已接
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓

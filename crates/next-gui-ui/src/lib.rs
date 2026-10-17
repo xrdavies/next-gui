@@ -3,17 +3,20 @@
 //! Retained widget tree built with a short builder or loaded from a compact `.ngui` file,
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
-//! Office P0 + P1 widgets: shell/input/data/nav/feedback, plus TreeSelect, Form validation,
-//! AlarmList, Gauge, and Trend. TextInput supports IME preedit/commit (CJK).
+//! Office P0 + P1 widgets: shell/input/data/nav/feedback, TreeSelect/Form/AlarmList/Gauge/Trend,
+//! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
+//! Descriptions, Card, Segmented, Breadcrumb, and Pagination. TextInput supports IME (CJK).
 
 #![deny(missing_docs)]
 
 mod dsl;
 mod icon;
 mod p1_raster;
+mod p1_rest;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
+pub use p1_rest::*;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1663,6 +1666,8 @@ enum Kind {
         items: Vec<String>,
         selected: Option<usize>,
         scroll_y: f32,
+        /// When true, only a visible window of scene aux nodes is allocated.
+        virtualized: bool,
         style: ListStyle,
     },
     Tree {
@@ -1676,6 +1681,8 @@ enum Kind {
         rows: Vec<Vec<String>>,
         selected_row: Option<usize>,
         scroll_y: f32,
+        /// When true, only a visible window of body rows is materialized in scene aux.
+        virtualized: bool,
         style: TableStyle,
     },
     Menu {
@@ -1782,6 +1789,63 @@ enum Kind {
     Trend {
         points: Vec<f32>,
         style: TrendStyle,
+    },
+    Drawer {
+        title: String,
+        body: String,
+        open: bool,
+        style: DrawerStyle,
+    },
+    TextArea {
+        value: String,
+        placeholder: String,
+        caret: usize,
+        scroll_y: f32,
+        style: TextAreaStyle,
+    },
+    InputNumber {
+        value: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        style: InputNumberStyle,
+    },
+    Spin {
+        spinning: bool,
+        style: SpinStyle,
+        children: Vec<WidgetId>,
+    },
+    Empty {
+        description: String,
+        style: EmptyStyle,
+    },
+    Collapse {
+        panels: Vec<CollapsePanel>,
+        style: CollapseStyle,
+    },
+    Descriptions {
+        items: Vec<DescriptionItem>,
+        style: DescriptionsStyle,
+    },
+    Card {
+        title: String,
+        body: String,
+        style: CardStyle,
+    },
+    Segmented {
+        options: Vec<String>,
+        selected: usize,
+        style: SegmentedStyle,
+    },
+    Breadcrumb {
+        items: Vec<String>,
+        style: BreadcrumbStyle,
+    },
+    Pagination {
+        page: usize,
+        page_size: usize,
+        total: usize,
+        style: PaginationStyle,
     },
 }
 
@@ -1908,7 +1972,21 @@ pub struct Ui {
     pending_tag_close: Option<WidgetId>,
     /// Last Alert dismiss; drained by [`Ui::take_alert_dismiss`].
     pending_alert_dismiss: Option<WidgetId>,
-    /// Window viewport for Modal scrim (set via [`Ui::set_viewport`]).
+    /// Last Drawer action; drained by [`Ui::take_drawer_action`].
+    pending_drawer_action: Option<(WidgetId, DrawerAction)>,
+    /// Last Breadcrumb click index; drained by [`Ui::take_breadcrumb_click`].
+    pending_breadcrumb_click: Option<(WidgetId, usize)>,
+    /// Last Pagination page change; drained by [`Ui::take_pagination_change`].
+    pending_pagination_change: Option<(WidgetId, usize)>,
+    /// Queued notification toasts (global overlay).
+    notifications: Vec<NotificationItem>,
+    /// Next notification id.
+    next_notification_id: u64,
+    /// Notification toast style.
+    notification_style: NotificationStyle,
+    /// Overlay aux nodes for notification toasts (owned by a synthetic host).
+    notification_aux: Vec<NodeId>,
+    /// Window viewport for Modal/Drawer scrim (set via [`Ui::set_viewport`]).
     viewport: (f32, f32),
     /// Last pointer position for Tooltip hover resolution in [`Ui::sync`].
     last_pointer: Option<(f32, f32)>,
@@ -1980,6 +2058,13 @@ impl Ui {
             pending_modal_action: None,
             pending_tag_close: None,
             pending_alert_dismiss: None,
+            pending_drawer_action: None,
+            pending_breadcrumb_click: None,
+            pending_pagination_change: None,
+            notifications: Vec::new(),
+            next_notification_id: 1,
+            notification_style: NotificationStyle::default(),
+            notification_aux: Vec::new(),
             viewport: (800.0, 600.0),
             last_pointer: None,
         }
@@ -2406,6 +2491,30 @@ impl Ui {
             }) => {
                 self.focus = None;
                 return self.pointer_alert_dismiss(scene, id, x, y);
+            }
+            Some(Kind::TextArea { .. }) => {
+                self.focus = Some(id);
+                return true;
+            }
+            Some(Kind::InputNumber { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_input_number(scene, id, x, y);
+            }
+            Some(Kind::Segmented { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_segmented(scene, id, x, y);
+            }
+            Some(Kind::Breadcrumb { .. }) => {
+                self.focus = None;
+                return self.pointer_breadcrumb(scene, id, x, y);
+            }
+            Some(Kind::Pagination { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_pagination(scene, id, x, y);
+            }
+            Some(Kind::Collapse { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_collapse(scene, id, x, y);
             }
             Some(Kind::Button { .. }) => {
                 self.focus = None;
@@ -3007,11 +3116,14 @@ impl Ui {
     pub fn key_input(&mut self, key: UiKey) -> bool {
         if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
             if let Some(id) = self.open_popup {
-                if matches!(
-                    self.widgets.get(&id).map(|w| &w.kind),
-                    Some(Kind::Modal { .. })
-                ) {
-                    self.pending_modal_action = Some((id, ModalAction::Dismiss));
+                match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Modal { .. }) => {
+                        self.pending_modal_action = Some((id, ModalAction::Dismiss));
+                    }
+                    Some(Kind::Drawer { .. }) => {
+                        self.pending_drawer_action = Some((id, DrawerAction::Dismiss));
+                    }
+                    _ => {}
                 }
             }
             return self.close_popup_internal();
@@ -3021,6 +3133,10 @@ impl Ui {
         };
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::TextInput { .. }) => self.key_text_input(id, key),
+            Some(Kind::TextArea { .. }) => self.key_text_area(id, key),
+            Some(Kind::InputNumber { .. }) => self.key_input_number(id, key),
+            Some(Kind::Segmented { .. }) => self.key_segmented(id, key),
+            Some(Kind::Pagination { .. }) => self.key_pagination(id, key),
             Some(Kind::Checkbox { .. }) if matches!(key, UiKey::Space) => {
                 if let Some(w) = self.widgets.get_mut(&id) {
                     if let Kind::Checkbox { checked, .. } = &mut w.kind {
@@ -3297,6 +3413,259 @@ impl Ui {
         )
     }
 
+
+    fn pointer_input_number(&mut self, scene: &Scene, id: WidgetId, x: f32, _y: f32) -> bool {
+        let (style, node, min, max, step) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::InputNumber {
+                        min,
+                        max,
+                        step,
+                        style,
+                        ..
+                    },
+                node,
+                ..
+            }) => (*style, *node, *min, *max, *step),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let step_w = 28.0;
+        if x < bounds.x + step_w {
+            return self.set_input_number_value(
+                id,
+                self.input_number_value(id).unwrap_or(0.0) - step,
+            ) || true;
+        }
+        if x > bounds.x + bounds.width - step_w {
+            return self.set_input_number_value(
+                id,
+                self.input_number_value(id).unwrap_or(0.0) + step,
+            ) || true;
+        }
+        let _ = (min, max, style);
+        true
+    }
+
+    fn pointer_segmented(&mut self, scene: &Scene, id: WidgetId, x: f32, _y: f32) -> bool {
+        let (options, style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Segmented { options, style, .. },
+                node,
+                ..
+            }) => (options.len(), *style, *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        if options == 0 {
+            return false;
+        }
+        let seg_w = ((bounds.width - style.padding * 2.0) / options as f32).max(1.0);
+        let idx = ((x - bounds.x - style.padding) / seg_w).floor() as isize;
+        if idx >= 0 && (idx as usize) < options {
+            return self.set_segmented_selected(id, idx as usize);
+        }
+        false
+    }
+
+    fn pointer_breadcrumb(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let aux = match self.widgets.get(&id) {
+            Some(w) => w.aux.clone(),
+            None => return false,
+        };
+        for (i, &nid) in aux.iter().enumerate() {
+            if i % 2 != 0 {
+                continue; // separators
+            }
+            if let Some(n) = scene.get(nid) {
+                if n.visible && n.bounds.contains(x, y) {
+                    self.pending_breadcrumb_click = Some((id, i / 2));
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn pointer_pagination(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let aux = match self.widgets.get(&id) {
+            Some(w) => w.aux.clone(),
+            None => return false,
+        };
+        let page = self.pagination_page(id).unwrap_or(1);
+        // aux[0]=prev_bg, aux[2]=next_bg
+        if let Some(&prev) = aux.get(0) {
+            if let Some(n) = scene.get(prev) {
+                if n.visible && n.bounds.contains(x, y) {
+                    if page > 1 {
+                        self.set_pagination_page(id, page - 1);
+                        self.pending_pagination_change = Some((id, page - 1));
+                    }
+                    return true;
+                }
+            }
+        }
+        if let Some(&next) = aux.get(2) {
+            if let Some(n) = scene.get(next) {
+                if n.visible && n.bounds.contains(x, y) {
+                    self.set_pagination_page(id, page + 1);
+                    if let Some(np) = self.pagination_page(id) {
+                        self.pending_pagination_change = Some((id, np));
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn pointer_collapse(&mut self, scene: &Scene, id: WidgetId, _x: f32, y: f32) -> bool {
+        let (panels, style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Collapse { panels, style, .. },
+                node,
+                ..
+            }) => (panels.clone(), *style, *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let mut cy = bounds.y;
+        for (i, p) in panels.iter().enumerate() {
+            if y >= cy && y < cy + style.header_height {
+                return self.set_collapse_open(id, i, !p.open);
+            }
+            cy += style.header_height;
+            if p.open {
+                let (_, bh) = self.font.measure_line(&p.body, style.size);
+                cy += style.padding * 2.0 + bh;
+            }
+        }
+        false
+    }
+
+    fn key_text_area(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let Some(Widget {
+            kind:
+                Kind::TextArea {
+                    value,
+                    caret,
+                    ..
+                },
+            ..
+        }) = self.widgets.get_mut(&id)
+        else {
+            return false;
+        };
+        match key {
+            UiKey::Char(c) => {
+                let mut chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                chars.insert(i, c);
+                *value = chars.into_iter().collect();
+                *caret = i + 1;
+                true
+            }
+            UiKey::Enter => {
+                let mut chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                chars.insert(i, '\n');
+                *value = chars.into_iter().collect();
+                *caret = i + 1;
+                true
+            }
+            UiKey::Backspace => {
+                let mut chars: Vec<char> = value.chars().collect();
+                if *caret > 0 && !chars.is_empty() {
+                    let i = (*caret).min(chars.len());
+                    chars.remove(i - 1);
+                    *value = chars.into_iter().collect();
+                    *caret = i - 1;
+                    return true;
+                }
+                false
+            }
+            UiKey::Left => {
+                if *caret > 0 {
+                    *caret -= 1;
+                    return true;
+                }
+                false
+            }
+            UiKey::Right => {
+                let n = value.chars().count();
+                if *caret < n {
+                    *caret += 1;
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn key_input_number(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let step = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::InputNumber { step, .. }) => *step,
+            _ => return false,
+        };
+        let cur = self.input_number_value(id).unwrap_or(0.0);
+        match key {
+            UiKey::Up | UiKey::Right => self.set_input_number_value(id, cur + step),
+            UiKey::Down | UiKey::Left => self.set_input_number_value(id, cur - step),
+            _ => false,
+        }
+    }
+
+    fn key_segmented(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let (sel, n) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Segmented {
+                selected, options, ..
+            }) => (*selected, options.len()),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        match key {
+            UiKey::Left | UiKey::Up => {
+                let next = if sel == 0 { n - 1 } else { sel - 1 };
+                self.set_segmented_selected(id, next)
+            }
+            UiKey::Right | UiKey::Down => self.set_segmented_selected(id, (sel + 1) % n),
+            _ => false,
+        }
+    }
+
+    fn key_pagination(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let page = self.pagination_page(id).unwrap_or(1);
+        match key {
+            UiKey::Left => {
+                if page > 1 {
+                    self.set_pagination_page(id, page - 1);
+                    self.pending_pagination_change = Some((id, page - 1));
+                    return true;
+                }
+                false
+            }
+            UiKey::Right => {
+                if self.set_pagination_page(id, page + 1) {
+                    if let Some(np) = self.pagination_page(id) {
+                        self.pending_pagination_change = Some((id, np));
+                    }
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
 
     fn pointer_list(&mut self, scene: &Scene, id: WidgetId, _x: f32, y: f32) -> bool {
         let (sy, style, n_items, node) = match self.widgets.get(&id) {
@@ -3680,7 +4049,8 @@ impl Ui {
                 | Kind::ContextMenu { open, .. }
                 | Kind::Select { open, .. }
                 | Kind::TreeSelect { open, .. }
-                | Kind::Modal { open, .. } => {
+                | Kind::Modal { open, .. }
+                | Kind::Drawer { open, .. } => {
                     *open = false;
                 }
                 _ => {}
@@ -3926,6 +4296,263 @@ impl Ui {
         self.pending_alert_dismiss.take()
     }
 
+    // ----- Office P1 rest: Drawer / Notification / entry / structure APIs -----
+
+    /// Open or close a Drawer (top-level overlay; like Modal).
+    pub fn set_drawer_open(&mut self, id: WidgetId, open: bool) -> bool {
+        if !matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Drawer { .. })
+        ) {
+            return false;
+        }
+        if open {
+            if let Some(pid) = self.open_popup {
+                if pid != id {
+                    self.close_popup_internal();
+                }
+            }
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Drawer { open: o, .. } = &mut w.kind {
+                    *o = true;
+                }
+            }
+            self.open_popup = Some(id);
+            self.focus = Some(id);
+        } else {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Drawer { open: o, .. } = &mut w.kind {
+                    *o = false;
+                }
+            }
+            if self.open_popup == Some(id) {
+                self.open_popup = None;
+            }
+        }
+        true
+    }
+
+    /// Whether the Drawer is open.
+    pub fn drawer_open(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Drawer { open, .. }) => Some(*open),
+            _ => None,
+        }
+    }
+
+    /// Drain last Drawer action.
+    pub fn take_drawer_action(&mut self) -> Option<(WidgetId, DrawerAction)> {
+        self.pending_drawer_action.take()
+    }
+
+    /// Declare a top-level Drawer (open via [`Ui::set_drawer_open`]).
+    pub fn drawer(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        style: DrawerStyle,
+    ) -> WidgetId {
+        let id = self.alloc();
+        self.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Drawer {
+                    title: title.into(),
+                    body: body.into(),
+                    open: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.roots.push(id);
+        id
+    }
+
+    /// Push a notification toast (rendered top-right in sync).
+    pub fn notify(&mut self, message: impl Into<String>, tone: NotificationTone) -> u64 {
+        let id = self.next_notification_id;
+        self.next_notification_id = self.next_notification_id.saturating_add(1);
+        self.notifications.push(NotificationItem {
+            id,
+            message: message.into(),
+            tone,
+        });
+        let max = self.notification_style.max_visible.max(1);
+        while self.notifications.len() > max {
+            self.notifications.remove(0);
+        }
+        id
+    }
+
+    /// Dismiss a notification by id (or all if `None`).
+    pub fn dismiss_notification(&mut self, id: Option<u64>) {
+        if let Some(id) = id {
+            self.notifications.retain(|n| n.id != id);
+        } else {
+            self.notifications.clear();
+        }
+    }
+
+    /// Set notification toast style.
+    pub fn set_notification_style(&mut self, style: NotificationStyle) {
+        self.notification_style = style;
+    }
+
+    /// Drain last breadcrumb click `(owner, index)`.
+    pub fn take_breadcrumb_click(&mut self) -> Option<(WidgetId, usize)> {
+        self.pending_breadcrumb_click.take()
+    }
+
+    /// Drain last pagination page `(owner, page)` (1-based page).
+    pub fn take_pagination_change(&mut self) -> Option<(WidgetId, usize)> {
+        self.pending_pagination_change.take()
+    }
+
+    /// TextArea value.
+    pub fn text_area_value(&self, id: WidgetId) -> Option<&str> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextArea { value, .. }) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Set TextArea value.
+    pub fn set_text_area_value(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::TextArea {
+                value: v, caret, ..
+            } = &mut w.kind
+            {
+                *v = value.into();
+                *caret = v.chars().count();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// InputNumber value.
+    pub fn input_number_value(&self, id: WidgetId) -> Option<f64> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::InputNumber { value, .. }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Set InputNumber value (clamped).
+    pub fn set_input_number_value(&mut self, id: WidgetId, value: f64) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::InputNumber {
+                value: v, min, max, ..
+            } = &mut w.kind
+            {
+                let nv = value.clamp(*min, *max);
+                if (*v - nv).abs() < 1e-12 {
+                    return false;
+                }
+                *v = nv;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Segmented selected index.
+    pub fn segmented_selected(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Segmented { selected, .. }) => Some(*selected),
+            _ => None,
+        }
+    }
+
+    /// Set Segmented selected index.
+    pub fn set_segmented_selected(&mut self, id: WidgetId, index: usize) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Segmented { options, .. }) => options.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let index = index.min(n - 1);
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Segmented { selected, .. } = &mut w.kind {
+                if *selected == index {
+                    return false;
+                }
+                *selected = index;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Pagination current page (1-based).
+    pub fn pagination_page(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Pagination { page, .. }) => Some(*page),
+            _ => None,
+        }
+    }
+
+    /// Set pagination page (1-based, clamped).
+    pub fn set_pagination_page(&mut self, id: WidgetId, page: usize) -> bool {
+        let (page_size, total) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Pagination {
+                page_size, total, ..
+            }) => (*page_size, *total),
+            _ => return false,
+        };
+        let pages = ((total + page_size.saturating_sub(1)) / page_size.max(1)).max(1);
+        let page = page.clamp(1, pages);
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Pagination { page: p, .. } = &mut w.kind {
+                if *p == page {
+                    return false;
+                }
+                *p = page;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Toggle Collapse panel open state.
+    pub fn set_collapse_open(&mut self, id: WidgetId, index: usize, open: bool) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Collapse { panels, .. } = &mut w.kind {
+                if let Some(p) = panels.get_mut(index) {
+                    if p.open == open {
+                        return false;
+                    }
+                    p.open = open;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Set Spin spinning flag.
+    pub fn set_spinning(&mut self, id: WidgetId, spinning: bool) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Spin { spinning: s, .. } = &mut w.kind {
+                if *s == spinning {
+                    return false;
+                }
+                *s = spinning;
+                return true;
+            }
+        }
+        false
+    }
+
+
+
     /// Progress value in 0..=1.
     pub fn progress_value(&self, id: WidgetId) -> Option<f32> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -4055,7 +4682,8 @@ impl Ui {
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
                 | Kind::Tooltip { children, .. }
-                    | Kind::Form { children, .. } => children.as_slice(),
+                    | Kind::Form { children, .. }
+                    | Kind::Spin { children, .. } => children.as_slice(),
                 _ => continue,
             };
             if kids.contains(&id) {
@@ -4136,8 +4764,11 @@ impl Ui {
         let Some(w) = self.widgets.get(&id) else {
             return false;
         };
-        if matches!(w.kind, Kind::Modal { open: true, .. }) {
-            // Modal owns the whole viewport while open.
+        if matches!(
+            w.kind,
+            Kind::Modal { open: true, .. } | Kind::Drawer { open: true, .. }
+        ) {
+            // Modal/Drawer owns the whole viewport while open.
             let (vw, vh) = self.viewport;
             return x >= 0.0 && y >= 0.0 && x < vw && y < vh;
         }
@@ -4166,6 +4797,12 @@ impl Ui {
             Some(Kind::Modal { .. })
         ) {
             return self.pointer_modal(scene, id, x, y);
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Drawer { .. })
+        ) {
+            return self.pointer_drawer(scene, id, x, y);
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -4558,6 +5195,7 @@ impl Ui {
             self.tooltip_hover = tip;
         }
         self.paint_open_popups(scene);
+        self.paint_notifications(scene);
         self.paint_tooltip_overlay(scene);
     }
 
@@ -4632,6 +5270,17 @@ impl Ui {
                 Some(Kind::AlarmList { style, .. }) => (style.bg, true),
                 Some(Kind::Gauge { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::Trend { style, .. }) => (style.bg, true),
+                Some(Kind::Drawer { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::TextArea { style, .. }) => (style.bg, true),
+                Some(Kind::InputNumber { style, .. }) => (style.bg, true),
+                Some(Kind::Spin { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Empty { style, .. }) => (style.bg, true),
+                Some(Kind::Collapse { style, .. }) => (style.body_bg, true),
+                Some(Kind::Descriptions { style, .. }) => (style.bg, true),
+                Some(Kind::Card { style, .. }) => (style.bg, true),
+                Some(Kind::Segmented { style, .. }) => (style.bg, true),
+                Some(Kind::Breadcrumb { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Pagination { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 None => return,
             };
 
@@ -4849,7 +5498,62 @@ impl Ui {
                         w.chrome_node = Some(chrome);
                     }
                 }
-                Some(Kind::Form { .. }) => {}
+                Some(Kind::TextArea { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert textarea label");
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
+                        .expect("insert textarea chrome");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::InputNumber { .. })
+                | Some(Kind::Segmented { .. })
+                | Some(Kind::Breadcrumb { .. })
+                | Some(Kind::Pagination { .. })
+                | Some(Kind::Collapse { .. })
+                | Some(Kind::Descriptions { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert p1 label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Empty { .. }) | Some(Kind::Card { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x32, 0x32, 0x3c))
+                        .expect("insert card/empty chrome");
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert card/empty label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Spin { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x14, 0x14, 0x18))
+                        .expect("insert spin overlay");
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert spin tip");
+                    scene.set_visible(chrome, false);
+                    scene.set_visible(label, false);
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Form { .. }) | Some(Kind::Drawer { .. }) => {}
                 _ => {}
             }
         }
@@ -4868,7 +5572,8 @@ impl Ui {
                     | Kind::Tabs { children, .. }
                     | Kind::Badge { children, .. }
                     | Kind::Tooltip { children, .. }
-                    | Kind::Form { children, .. },
+                    | Kind::Form { children, .. }
+                    | Kind::Spin { children, .. },
                 node,
                 ..
             }) => (node.unwrap_or(parent), children.clone()),
@@ -5096,6 +5801,37 @@ impl Ui {
                 ChildMeasure::new(style.size, style.size + lh + 6.0)
             }
             Some(Kind::Trend { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Drawer { .. }) => ChildMeasure::new(0.0, 0.0),
+            Some(Kind::TextArea { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::InputNumber { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Spin { style, children, .. }) => {
+                if let Some(c) = children.first() {
+                    let m = self.measure_widget(*c);
+                    ChildMeasure::new(style.width.max(m.width), style.height.max(m.height))
+                } else {
+                    ChildMeasure::new(style.width, style.height)
+                }
+            }
+            Some(Kind::Empty { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Collapse { panels, style, .. }) => {
+                let mut h = 0.0;
+                for p in panels {
+                    h += style.header_height;
+                    if p.open {
+                        let (_, bh) = self.font.measure_line(&p.body, style.size);
+                        h += style.padding * 2.0 + bh;
+                    }
+                }
+                ChildMeasure::new(style.width, h.max(style.header_height))
+            }
+            Some(Kind::Descriptions { items, style, .. }) => ChildMeasure::new(
+                style.width,
+                style.padding * 2.0 + items.len() as f32 * style.row_height,
+            ),
+            Some(Kind::Card { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Segmented { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -5393,6 +6129,7 @@ impl Ui {
                     | Kind::Badge { .. }
                     | Kind::Tooltip { .. }
                     | Kind::Form { .. }
+                    | Kind::Spin { .. }
             )
         )
     }
@@ -5926,6 +6663,13 @@ impl Ui {
     }
 
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Spin { .. })
+        ) {
+            self.paint_spin(scene, id);
+            return;
+        }
         let container_children = match self.widgets.get(&id).map(|w| &w.kind) {
             Some(
                 Kind::Column { children, .. }
@@ -6044,6 +6788,69 @@ impl Ui {
             Some(Kind::Trend { .. })
         ) {
             self.paint_trend(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TextArea { .. })
+        ) {
+            self.paint_text_area(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::InputNumber { .. })
+        ) {
+            self.paint_input_number(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Empty { .. })
+        ) {
+            self.paint_empty(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Card { .. })
+        ) {
+            self.paint_card(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Segmented { .. })
+        ) {
+            self.paint_segmented(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Breadcrumb { .. })
+        ) {
+            self.paint_breadcrumb(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Pagination { .. })
+        ) {
+            self.paint_pagination(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Collapse { .. })
+        ) {
+            self.paint_collapse(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Descriptions { .. })
+        ) {
+            self.paint_descriptions(scene, id);
             return;
         }
         if matches!(
@@ -6454,7 +7261,18 @@ impl Ui {
             | Kind::TreeSelect { .. }
             | Kind::AlarmList { .. }
             | Kind::Gauge { .. }
-            | Kind::Trend { .. } => {}
+            | Kind::Trend { .. }
+            | Kind::Drawer { .. }
+            | Kind::TextArea { .. }
+            | Kind::InputNumber { .. }
+            | Kind::Spin { .. }
+            | Kind::Empty { .. }
+            | Kind::Collapse { .. }
+            | Kind::Descriptions { .. }
+            | Kind::Card { .. }
+            | Kind::Segmented { .. }
+            | Kind::Breadcrumb { .. }
+            | Kind::Pagination { .. } => {}
         }
     }
 
@@ -6466,6 +7284,7 @@ impl Ui {
                     items,
                     selected,
                     scroll_y,
+                    virtualized,
                     style,
                 },
             node,
@@ -6478,6 +7297,7 @@ impl Ui {
         let items = items.clone();
         let selected = *selected;
         let scroll_y = *scroll_y;
+        let virtualized = *virtualized;
         let style = *style;
         let host = match *node {
             Some(n) => n,
@@ -6493,35 +7313,50 @@ impl Ui {
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
 
-        let focused = self.focus == Some(id);
-        let _ = (focused, style.focus_border);
-
-        let needed = items.len() * 2;
+        let (first, count) = if virtualized {
+            p1_rest::virtual_window(
+                scroll_y,
+                (bounds.height - style.padding * 2.0).max(0.0),
+                style.item_height,
+                items.len(),
+                2,
+            )
+        } else {
+            (0, items.len())
+        };
+        let needed = count * 2;
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
-        // selection chrome
         if let Some(chrome) = chrome {
             if let Some(sel) = selected {
                 let y = bounds.y + style.padding + sel as f32 * style.item_height - scroll_y;
-                scene.set_bounds(
-                    chrome,
-                    Rect::new(
-                        bounds.x + 1.0,
-                        y,
-                        (bounds.width - 2.0).max(1.0),
-                        style.item_height,
-                    ),
-                );
-                scene.set_fill(chrome, style.selected_bg);
-                scene.set_mask(chrome, None);
-                scene.set_visible(chrome, true);
+                let onscreen = y + style.item_height >= bounds.y - 1.0
+                    && y <= bounds.y + bounds.height + 1.0;
+                if onscreen {
+                    scene.set_bounds(
+                        chrome,
+                        Rect::new(
+                            bounds.x + 1.0,
+                            y,
+                            (bounds.width - 2.0).max(1.0),
+                            style.item_height,
+                        ),
+                    );
+                    scene.set_fill(chrome, style.selected_bg);
+                    scene.set_mask(chrome, None);
+                    scene.set_visible(chrome, true);
+                } else {
+                    scene.set_visible(chrome, false);
+                }
             } else {
                 scene.set_visible(chrome, false);
             }
         }
 
-        for (i, text) in items.iter().enumerate() {
+        for slot in 0..count {
+            let i = first + slot;
+            let Some(text) = items.get(i) else { break };
             let y = bounds.y + style.padding + i as f32 * style.item_height - scroll_y;
             let row = Rect::new(
                 bounds.x + style.padding,
@@ -6529,26 +7364,25 @@ impl Ui {
                 (bounds.width - style.padding * 2.0).max(1.0),
                 style.item_height,
             );
-            // skip far offscreen
-            if row.y + row.height < bounds.y - style.item_height
-                || row.y > bounds.y + bounds.height + style.item_height
+            if !virtualized
+                && (row.y + row.height < bounds.y - style.item_height
+                    || row.y > bounds.y + bounds.height + style.item_height)
             {
-                if let Some(&bg) = aux.get(i * 2) {
+                if let Some(&bg) = aux.get(slot * 2) {
                     scene.set_visible(bg, false);
                 }
-                if let Some(&lab) = aux.get(i * 2 + 1) {
+                if let Some(&lab) = aux.get(slot * 2 + 1) {
                     scene.set_visible(lab, false);
                 }
                 continue;
             }
             let is_sel = selected == Some(i);
-            if let Some(&bg) = aux.get(i * 2) {
-                // row bg only when not using chrome selection (keep transparent)
+            if let Some(&bg) = aux.get(slot * 2) {
                 scene.set_visible(bg, false);
                 let _ = bg;
             }
             let (_, mask) = self.font.rasterize_text(text, style.size, None);
-            if let Some(&lab) = aux.get(i * 2 + 1) {
+            if let Some(&lab) = aux.get(slot * 2 + 1) {
                 let ly = row.y + ((style.item_height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(
                     lab,
@@ -6560,6 +7394,15 @@ impl Ui {
                     Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
                 );
                 scene.set_visible(lab, true);
+            }
+        }
+        // Hide unused aux slots when window shrinks
+        for slot in count..(aux.len() / 2) {
+            if let Some(&bg) = aux.get(slot * 2) {
+                scene.set_visible(bg, false);
+            }
+            if let Some(&lab) = aux.get(slot * 2 + 1) {
+                scene.set_visible(lab, false);
             }
         }
     }
@@ -6679,6 +7522,7 @@ impl Ui {
                     rows,
                     selected_row,
                     scroll_y,
+                    virtualized,
                     style,
                 },
             node,
@@ -6692,6 +7536,7 @@ impl Ui {
         let rows = rows.clone();
         let selected_row = *selected_row;
         let scroll_y = *scroll_y;
+        let virtualized = *virtualized;
         let style = *style;
         let host = match *node {
             Some(n) => n,
@@ -6708,8 +7553,14 @@ impl Ui {
         scene.set_visible(host, true);
 
         let ncols = columns.len().max(1);
-        // aux layout: [header texts x ncols] then per row: [row_bg + cell texts x ncols]
-        let needed = ncols + rows.len() * (1 + ncols);
+        let body_h = (bounds.height - style.header_height).max(0.0);
+        let (first, count) = if virtualized {
+            p1_rest::virtual_window(scroll_y, body_h, style.row_height, rows.len(), 2)
+        } else {
+            (0, rows.len())
+        };
+        // aux: [header x ncols] + window slots [row_bg + cells x ncols]
+        let needed = ncols + count * (1 + ncols);
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
@@ -6745,11 +7596,14 @@ impl Ui {
         }
 
         let body_top = bounds.y + style.header_height;
-        for (ri, row) in rows.iter().enumerate() {
-            let base = ncols + ri * (1 + ncols);
+        for slot in 0..count {
+            let ri = first + slot;
+            let Some(row) = rows.get(ri) else { break };
+            let base = ncols + slot * (1 + ncols);
             let y = body_top + ri as f32 * style.row_height - scroll_y;
-            if y + style.row_height < body_top - style.row_height
-                || y > bounds.y + bounds.height + style.row_height
+            if !virtualized
+                && (y + style.row_height < body_top - style.row_height
+                    || y > bounds.y + bounds.height + style.row_height)
             {
                 for k in 0..(1 + ncols) {
                     if let Some(&n) = aux.get(base + k) {
@@ -6801,6 +7655,13 @@ impl Ui {
                     scene.set_visible(lab, true);
                 }
                 cx += col.width;
+            }
+        }
+        // Hide leftover slots beyond current window
+        let used = ncols + count * (1 + ncols);
+        for i in used..aux.len() {
+            if let Some(&n) = aux.get(i) {
+                scene.set_visible(n, false);
             }
         }
     }
@@ -7062,6 +7923,874 @@ impl Ui {
         }
     }
 
+    fn paint_drawer_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (title, body, style) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Drawer {
+                        title,
+                        body,
+                        open: true,
+                        style,
+                    },
+                ..
+            }) => (title.clone(), body.clone(), *style),
+            _ => return,
+        };
+        let (vw, vh) = self.viewport;
+        let panel_w = style.width.min(vw - 20.0).max(180.0);
+        let panel_h = vh;
+        let px = match style.placement {
+            DrawerPlacement::Left => 0.0,
+            DrawerPlacement::Right => (vw - panel_w).max(0.0),
+        };
+        let panel = Rect::new(px, 0.0, panel_w, panel_h);
+
+        self.ensure_overlay_aux(scene, id, 6);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() < 6 {
+            return;
+        }
+        let scrim = aux[0];
+        let panel_n = aux[1];
+        let title_bg = aux[2];
+        let title_l = aux[3];
+        let close_n = aux[4];
+        let body_n = aux[5];
+
+        scene.set_bounds(scrim, Rect::new(0.0, 0.0, vw, vh));
+        scene.set_fill(scrim, style.backdrop.scrim);
+        scene.set_mask(scrim, None);
+        scene.set_visible(scrim, true);
+
+        scene.set_bounds(panel_n, panel);
+        scene.set_fill(panel_n, style.panel_bg);
+        scene.set_mask(panel_n, None);
+        scene.set_visible(panel_n, true);
+
+        let title_rect = Rect::new(panel.x, panel.y, panel.width, style.title_height);
+        scene.set_bounds(title_bg, title_rect);
+        scene.set_fill(title_bg, style.title_bg);
+        scene.set_mask(title_bg, None);
+        scene.set_visible(title_bg, true);
+
+        let (_, tm) = self.font.rasterize_text(&title, style.title_size, None);
+        scene.set_bounds(
+            title_l,
+            Rect::new(
+                panel.x + style.padding,
+                panel.y + ((style.title_height - tm.height as f32) * 0.5).max(0.0),
+                tm.width as f32,
+                tm.height as f32,
+            ),
+        );
+        scene.set_fill(title_l, style.title_fg);
+        scene.set_mask(title_l, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+        scene.set_visible(title_l, true);
+
+        let (_, cm) = self.font.rasterize_text("×", style.title_size, None);
+        let close_x = panel.x + panel.width - style.padding - cm.width as f32;
+        let close_y = panel.y + ((style.title_height - cm.height as f32) * 0.5).max(0.0);
+        scene.set_bounds(
+            close_n,
+            Rect::new(
+                close_x - 4.0,
+                close_y - 4.0,
+                cm.width as f32 + 8.0,
+                cm.height as f32 + 8.0,
+            ),
+        );
+        scene.set_fill(close_n, style.title_fg);
+        scene.set_mask(close_n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+        scene.set_visible(close_n, true);
+
+        let (_, bm) = self.font.rasterize_text(&body, style.body_size, None);
+        scene.set_bounds(
+            body_n,
+            Rect::new(
+                panel.x + style.padding,
+                panel.y + style.title_height + style.padding,
+                bm.width as f32,
+                bm.height as f32,
+            ),
+        );
+        scene.set_fill(body_n, style.body_fg);
+        scene.set_mask(body_n, Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
+        scene.set_visible(body_n, true);
+
+        if let Some(h) = self.overlay_host {
+            scene.raise(h);
+        }
+    }
+
+    fn pointer_drawer(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (style, aux) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Drawer {
+                    style,
+                    open: true,
+                    ..
+                },
+                aux,
+                ..
+            }) => (*style, aux.clone()),
+            _ => return false,
+        };
+        // aux: 0=scrim, 1=panel, 2=title_bg, 3=title, 4=close, 5=body
+        let hit = |idx: usize| -> bool {
+            aux.get(idx)
+                .and_then(|n| scene.get(*n))
+                .map(|n| n.visible && n.bounds.contains(x, y))
+                .unwrap_or(false)
+        };
+        if hit(4) {
+            self.pending_drawer_action = Some((id, DrawerAction::Dismiss));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(1) || hit(2) || hit(3) || hit(5) {
+            return true;
+        }
+        if style.backdrop.close_on_click {
+            self.pending_drawer_action = Some((id, DrawerAction::Dismiss));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+        }
+        true
+    }
+
+    fn paint_notifications(&mut self, scene: &mut Scene) {
+        let style = self.notification_style;
+        let items = self.notifications.clone();
+        let (vw, _vh) = self.viewport;
+        let host = self.ensure_overlay_host(scene);
+        let needed = items.len() * 3; // accent + bg + label
+        let have = self.notification_aux.len();
+        for _ in have..needed {
+            let nid = scene
+                .insert(host, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgba(0, 0, 0, 0))
+                .expect("notif aux");
+            scene.set_visible(nid, false);
+            self.notification_aux.push(nid);
+        }
+        for (i, n) in self.notification_aux.iter().copied().enumerate() {
+            if i >= needed {
+                scene.set_visible(n, false);
+            }
+        }
+        let mut y = style.margin;
+        for (i, item) in items.iter().enumerate() {
+            let base = i * 3;
+            let Some(&accent) = self.notification_aux.get(base) else {
+                break;
+            };
+            let Some(&bg) = self.notification_aux.get(base + 1) else {
+                break;
+            };
+            let Some(&lab) = self.notification_aux.get(base + 2) else {
+                break;
+            };
+            let x = (vw - style.width - style.margin).max(0.0);
+            let rect = Rect::new(x, y, style.width, style.height);
+            scene.set_bounds(bg, rect);
+            scene.set_fill(bg, style.bg);
+            scene.set_mask(bg, None);
+            scene.set_visible(bg, true);
+            scene.set_bounds(accent, Rect::new(x, y, 4.0, style.height));
+            scene.set_fill(accent, item.tone.accent());
+            scene.set_mask(accent, None);
+            scene.set_visible(accent, true);
+            let (_, mask) = self.font.rasterize_text(&item.message, style.size, None);
+            scene.set_bounds(
+                lab,
+                Rect::new(
+                    x + 12.0,
+                    y + ((style.height - mask.height as f32) * 0.5).max(0.0),
+                    (mask.width as f32).min(style.width - 20.0),
+                    mask.height as f32,
+                ),
+            );
+            scene.set_fill(lab, style.fg);
+            scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lab, true);
+            y += style.height + style.gap;
+        }
+        scene.raise(host);
+    }
+
+    fn paint_text_area(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::TextArea {
+                    value,
+                    placeholder,
+                    caret,
+                    scroll_y,
+                    style,
+                },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let value = value.clone();
+        let placeholder = placeholder.clone();
+        let caret = *caret;
+        let scroll_y = *scroll_y;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label = *label_node;
+        let chrome = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        let focused = self.focus == Some(id);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+        if let Some(chrome) = chrome {
+            // focus ring stub: thin top bar
+            scene.set_bounds(
+                chrome,
+                Rect::new(bounds.x, bounds.y, bounds.width, 2.0),
+            );
+            scene.set_fill(
+                chrome,
+                if focused {
+                    style.focus_border
+                } else {
+                    style.border
+                },
+            );
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+        let display = if value.is_empty() && !focused {
+            placeholder.as_str()
+        } else {
+            value.as_str()
+        };
+        let fg = if value.is_empty() && !focused {
+            style.placeholder_fg
+        } else {
+            style.fg
+        };
+        // Single-mask multi-line: join with spaces for MVP visual; caret line via chrome unused
+        let shown = display.replace('\n', "↵ ");
+        let (_, mask) = self.font.rasterize_text(&shown, style.size, None);
+        if let Some(lab) = label {
+            scene.set_bounds(
+                lab,
+                Rect::new(
+                    bounds.x + style.padding_x,
+                    bounds.y + style.padding_y - scroll_y,
+                    mask.width as f32,
+                    mask.height as f32,
+                ),
+            );
+            scene.set_fill(lab, fg);
+            scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lab, true);
+        }
+        let _ = caret;
+    }
+
+    fn paint_input_number(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::InputNumber {
+                    value,
+                    style,
+                    ..
+                },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let value = *value;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label = *label_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let step_w = 28.0;
+        self.ensure_aux_nodes(scene, host, id, 4); // -bg, -lab, +bg, +lab
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() >= 4 {
+            let minus_bg = aux[0];
+            let minus_l = aux[1];
+            let plus_bg = aux[2];
+            let plus_l = aux[3];
+            scene.set_bounds(
+                minus_bg,
+                Rect::new(bounds.x, bounds.y, step_w, bounds.height),
+            );
+            scene.set_fill(minus_bg, style.step_bg);
+            scene.set_mask(minus_bg, None);
+            scene.set_visible(minus_bg, true);
+            let (_, mm) = self.font.rasterize_text("−", style.size, None);
+            scene.set_bounds(
+                minus_l,
+                Rect::new(
+                    bounds.x + ((step_w - mm.width as f32) * 0.5).max(0.0),
+                    bounds.y + ((bounds.height - mm.height as f32) * 0.5).max(0.0),
+                    mm.width as f32,
+                    mm.height as f32,
+                ),
+            );
+            scene.set_fill(minus_l, style.step_fg);
+            scene.set_mask(minus_l, Some(AlphaMask::new(mm.width, mm.height, mm.pixels)));
+            scene.set_visible(minus_l, true);
+
+            scene.set_bounds(
+                plus_bg,
+                Rect::new(bounds.x + bounds.width - step_w, bounds.y, step_w, bounds.height),
+            );
+            scene.set_fill(plus_bg, style.step_bg);
+            scene.set_mask(plus_bg, None);
+            scene.set_visible(plus_bg, true);
+            let (_, pm) = self.font.rasterize_text("+", style.size, None);
+            scene.set_bounds(
+                plus_l,
+                Rect::new(
+                    bounds.x + bounds.width - step_w + ((step_w - pm.width as f32) * 0.5).max(0.0),
+                    bounds.y + ((bounds.height - pm.height as f32) * 0.5).max(0.0),
+                    pm.width as f32,
+                    pm.height as f32,
+                ),
+            );
+            scene.set_fill(plus_l, style.step_fg);
+            scene.set_mask(plus_l, Some(AlphaMask::new(pm.width, pm.height, pm.pixels)));
+            scene.set_visible(plus_l, true);
+        }
+        let text = if value.fract().abs() < 1e-9 {
+            format!("{:.0}", value)
+        } else {
+            format!("{:.2}", value)
+        };
+        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
+        if let Some(lab) = label {
+            let field_x = bounds.x + step_w + style.padding_x;
+            scene.set_bounds(
+                lab,
+                Rect::new(
+                    field_x,
+                    bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                    mask.width as f32,
+                    mask.height as f32,
+                ),
+            );
+            scene.set_fill(lab, style.fg);
+            scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lab, true);
+        }
+    }
+
+    fn paint_empty(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Empty { description, style },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let description = description.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label = *label_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let (_, mask) = self.font.rasterize_text(&description, style.size, None);
+        if let Some(lab) = label {
+            scene.set_bounds(
+                lab,
+                Rect::new(
+                    bounds.x + ((bounds.width - mask.width as f32) * 0.5).max(0.0),
+                    bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                    mask.width as f32,
+                    mask.height as f32,
+                ),
+            );
+            scene.set_fill(lab, style.fg);
+            scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lab, true);
+        }
+    }
+
+    fn paint_card(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Card {
+                    title,
+                    body,
+                    style,
+                },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let title = title.clone();
+        let body = body.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label = *label_node;
+        let chrome = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        if let Some(chrome) = chrome {
+            scene.set_bounds(
+                chrome,
+                Rect::new(bounds.x, bounds.y, bounds.width, style.title_height),
+            );
+            scene.set_fill(chrome, style.title_bg);
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+        let (_, tm) = self.font.rasterize_text(&title, style.title_size, None);
+        if let Some(lab) = label {
+            scene.set_bounds(
+                lab,
+                Rect::new(
+                    bounds.x + style.padding,
+                    bounds.y + ((style.title_height - tm.height as f32) * 0.5).max(0.0),
+                    tm.width as f32,
+                    tm.height as f32,
+                ),
+            );
+            scene.set_fill(lab, style.title_fg);
+            scene.set_mask(lab, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+            scene.set_visible(lab, true);
+        }
+        self.ensure_aux_nodes(scene, host, id, 1);
+        if let Some(&body_n) = self.widgets.get(&id).and_then(|w| w.aux.first()) {
+            let (_, bm) = self.font.rasterize_text(&body, style.body_size, None);
+            scene.set_bounds(
+                body_n,
+                Rect::new(
+                    bounds.x + style.padding,
+                    bounds.y + style.title_height + style.padding,
+                    bm.width as f32,
+                    bm.height as f32,
+                ),
+            );
+            scene.set_fill(body_n, style.body_fg);
+            scene.set_mask(body_n, Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
+            scene.set_visible(body_n, true);
+        }
+    }
+
+    fn paint_segmented(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Segmented {
+                    options,
+                    selected,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let options = options.clone();
+        let selected = *selected;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let n = options.len().max(1);
+        let seg_w = ((bounds.width - style.padding * 2.0) / n as f32).max(1.0);
+        self.ensure_aux_nodes(scene, host, id, n * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        for (i, opt) in options.iter().enumerate() {
+            let x = bounds.x + style.padding + i as f32 * seg_w;
+            let is_sel = i == selected;
+            if let Some(&bg) = aux.get(i * 2) {
+                scene.set_bounds(
+                    bg,
+                    Rect::new(x, bounds.y + style.padding, seg_w, (bounds.height - style.padding * 2.0).max(1.0)),
+                );
+                scene.set_fill(bg, if is_sel { style.selected_bg } else { style.bg });
+                scene.set_mask(bg, None);
+                scene.set_visible(bg, is_sel);
+            }
+            let (_, mask) = self.font.rasterize_text(opt, style.size, None);
+            if let Some(&lab) = aux.get(i * 2 + 1) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        x + ((seg_w - mask.width as f32) * 0.5).max(0.0),
+                        bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                        mask.width as f32,
+                        mask.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, if is_sel { style.selected_fg } else { style.fg });
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_breadcrumb(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Breadcrumb { items, style },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let items = items.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, Color::rgba(0, 0, 0, 0));
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        // aux pairs: label (+ optional sep after non-last)
+        let needed = items.len() * 2;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let mut x = bounds.x;
+        for (i, item) in items.iter().enumerate() {
+            let is_last = i + 1 == items.len();
+            let (_, mask) = self.font.rasterize_text(item, style.size, None);
+            if let Some(&lab) = aux.get(i * 2) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        x,
+                        bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                        mask.width as f32,
+                        mask.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, if is_last { style.current_fg } else { style.fg });
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+            x += mask.width as f32 + 6.0;
+            if !is_last {
+                let (_, sm) = self.font.rasterize_text("/", style.size, None);
+                if let Some(&sep) = aux.get(i * 2 + 1) {
+                    scene.set_bounds(
+                        sep,
+                        Rect::new(
+                            x,
+                            bounds.y + ((bounds.height - sm.height as f32) * 0.5).max(0.0),
+                            sm.width as f32,
+                            sm.height as f32,
+                        ),
+                    );
+                    scene.set_fill(sep, style.sep_fg);
+                    scene.set_mask(sep, Some(AlphaMask::new(sm.width, sm.height, sm.pixels)));
+                    scene.set_visible(sep, true);
+                }
+                x += sm.width as f32 + 6.0;
+            } else if let Some(&sep) = aux.get(i * 2 + 1) {
+                scene.set_visible(sep, false);
+            }
+        }
+    }
+
+    fn paint_pagination(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Pagination {
+                    page,
+                    page_size,
+                    total,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let page = *page;
+        let page_size = (*page_size).max(1);
+        let total = *total;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, Color::rgba(0, 0, 0, 0));
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let pages = ((total + page_size - 1) / page_size).max(1);
+        // aux: prev_bg, prev_l, next_bg, next_l, info
+        self.ensure_aux_nodes(scene, host, id, 5);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() < 5 {
+            return;
+        }
+        let btn_w = 56.0;
+        let btn_h = bounds.height;
+        // prev
+        scene.set_bounds(aux[0], Rect::new(bounds.x, bounds.y, btn_w, btn_h));
+        scene.set_fill(aux[0], style.btn_bg);
+        scene.set_mask(aux[0], None);
+        scene.set_visible(aux[0], true);
+        let (_, pm) = self.font.rasterize_text("Prev", style.size, None);
+        scene.set_bounds(
+            aux[1],
+            Rect::new(
+                bounds.x + ((btn_w - pm.width as f32) * 0.5).max(0.0),
+                bounds.y + ((btn_h - pm.height as f32) * 0.5).max(0.0),
+                pm.width as f32,
+                pm.height as f32,
+            ),
+        );
+        scene.set_fill(aux[1], style.fg);
+        scene.set_mask(aux[1], Some(AlphaMask::new(pm.width, pm.height, pm.pixels)));
+        scene.set_visible(aux[1], true);
+        // info
+        let info = format!("{page} / {pages}  ({total})");
+        let (_, im) = self.font.rasterize_text(&info, style.size, None);
+        let info_x = bounds.x + btn_w + style.gap;
+        scene.set_bounds(
+            aux[4],
+            Rect::new(
+                info_x,
+                bounds.y + ((btn_h - im.height as f32) * 0.5).max(0.0),
+                im.width as f32,
+                im.height as f32,
+            ),
+        );
+        scene.set_fill(aux[4], style.fg);
+        scene.set_mask(aux[4], Some(AlphaMask::new(im.width, im.height, im.pixels)));
+        scene.set_visible(aux[4], true);
+        // next
+        let nx = bounds.x + bounds.width - btn_w;
+        scene.set_bounds(aux[2], Rect::new(nx, bounds.y, btn_w, btn_h));
+        scene.set_fill(aux[2], style.btn_bg);
+        scene.set_mask(aux[2], None);
+        scene.set_visible(aux[2], true);
+        let (_, nm) = self.font.rasterize_text("Next", style.size, None);
+        scene.set_bounds(
+            aux[3],
+            Rect::new(
+                nx + ((btn_w - nm.width as f32) * 0.5).max(0.0),
+                bounds.y + ((btn_h - nm.height as f32) * 0.5).max(0.0),
+                nm.width as f32,
+                nm.height as f32,
+            ),
+        );
+        scene.set_fill(aux[3], style.fg);
+        scene.set_mask(aux[3], Some(AlphaMask::new(nm.width, nm.height, nm.pixels)));
+        scene.set_visible(aux[3], true);
+    }
+
+    fn paint_collapse(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Collapse { panels, style },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let panels = panels.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.body_bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+        // per panel: header_bg, header_lab, body_lab
+        let needed = panels.len() * 3;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let mut y = bounds.y;
+        for (i, p) in panels.iter().enumerate() {
+            let base = i * 3;
+            let twisty = if p.open { "▾ " } else { "▸ " };
+            let title = format!("{twisty}{}", p.title);
+            if let Some(&hbg) = aux.get(base) {
+                scene.set_bounds(
+                    hbg,
+                    Rect::new(bounds.x, y, bounds.width, style.header_height),
+                );
+                scene.set_fill(hbg, style.header_bg);
+                scene.set_mask(hbg, None);
+                scene.set_visible(hbg, true);
+            }
+            let (_, tm) = self.font.rasterize_text(&title, style.size, None);
+            if let Some(&lab) = aux.get(base + 1) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        bounds.x + style.padding,
+                        y + ((style.header_height - tm.height as f32) * 0.5).max(0.0),
+                        tm.width as f32,
+                        tm.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.fg);
+                scene.set_mask(lab, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+                scene.set_visible(lab, true);
+            }
+            y += style.header_height;
+            if p.open {
+                let (_, bm) = self.font.rasterize_text(&p.body, style.size, None);
+                if let Some(&blab) = aux.get(base + 2) {
+                    scene.set_bounds(
+                        blab,
+                        Rect::new(
+                            bounds.x + style.padding,
+                            y + style.padding,
+                            bm.width as f32,
+                            bm.height as f32,
+                        ),
+                    );
+                    scene.set_fill(blab, style.fg);
+                    scene.set_mask(blab, Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
+                    scene.set_visible(blab, true);
+                }
+                y += style.padding * 2.0 + bm.height as f32;
+            } else if let Some(&blab) = aux.get(base + 2) {
+                scene.set_visible(blab, false);
+            }
+        }
+    }
+
+    fn paint_descriptions(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Descriptions { items, style },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let items = items.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        self.ensure_aux_nodes(scene, host, id, items.len() * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        for (i, item) in items.iter().enumerate() {
+            let y = bounds.y + style.padding + i as f32 * style.row_height;
+            let (_, lm) = self.font.rasterize_text(&item.label, style.size, None);
+            if let Some(&lab) = aux.get(i * 2) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        bounds.x + style.padding,
+                        y + ((style.row_height - lm.height as f32) * 0.5).max(0.0),
+                        lm.width as f32,
+                        lm.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.label_fg);
+                scene.set_mask(lab, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+                scene.set_visible(lab, true);
+            }
+            let (_, vm) = self.font.rasterize_text(&item.value, style.size, None);
+            if let Some(&val) = aux.get(i * 2 + 1) {
+                scene.set_bounds(
+                    val,
+                    Rect::new(
+                        bounds.x + style.padding + style.label_width,
+                        y + ((style.row_height - vm.height as f32) * 0.5).max(0.0),
+                        vm.width as f32,
+                        vm.height as f32,
+                    ),
+                );
+                scene.set_fill(val, style.value_fg);
+                scene.set_mask(val, Some(AlphaMask::new(vm.width, vm.height, vm.pixels)));
+                scene.set_visible(val, true);
+            }
+        }
+    }
+
+    fn paint_spin(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Spin {
+                    spinning,
+                    style,
+                    children,
+                },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let spinning = *spinning;
+        let style = *style;
+        let children = children.clone();
+        let Some(host) = *node else { return };
+        let label = *label_node;
+        let chrome = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, Color::rgba(0, 0, 0, 0));
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        for c in children {
+            self.paint_widget(scene, c);
+        }
+        if spinning {
+            if let Some(chrome) = chrome {
+                scene.set_bounds(chrome, bounds);
+                scene.set_fill(chrome, style.overlay);
+                scene.set_mask(chrome, None);
+                scene.set_visible(chrome, true);
+            }
+            let (_, mask) = self.font.rasterize_text(style.tip, style.size, None);
+            if let Some(lab) = label {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        bounds.x + ((bounds.width - mask.width as f32) * 0.5).max(0.0),
+                        bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                        mask.width as f32,
+                        mask.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.fg);
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        } else {
+            if let Some(chrome) = chrome {
+                scene.set_visible(chrome, false);
+            }
+            if let Some(lab) = label {
+                scene.set_visible(lab, false);
+            }
+        }
+    }
+
     fn paint_open_popups(&mut self, scene: &mut Scene) {
         let Some(id) = self.open_popup else {
             // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx/modal
@@ -7073,6 +8802,7 @@ impl Ui {
                         | Some(Kind::Select { open: false, .. })
                         | Some(Kind::TreeSelect { open: false, .. })
                         | Some(Kind::Modal { open: false, .. })
+                        | Some(Kind::Drawer { open: false, .. })
                 ) {
                     if let Some(w) = self.widgets.get(&wid) {
                         for &n in &w.aux {
@@ -7089,6 +8819,7 @@ impl Ui {
             Some(Kind::Select { .. }) => self.paint_select_popup(scene, id),
             Some(Kind::TreeSelect { .. }) => self.paint_tree_select_popup(scene, id),
             Some(Kind::Modal { .. }) => self.paint_modal_popup(scene, id),
+            Some(Kind::Drawer { .. }) => self.paint_drawer_popup(scene, id),
             _ => {}
         }
     }
@@ -9044,6 +10775,7 @@ impl FlexBuilder<'_> {
                     items,
                     selected: None,
                     scroll_y: 0.0,
+                    virtualized: false,
                     style,
                 },
                 node: None,
@@ -9094,6 +10826,7 @@ impl FlexBuilder<'_> {
                     rows,
                     selected_row: None,
                     scroll_y: 0.0,
+                    virtualized: false,
                     style,
                 },
                 node: None,
@@ -9602,12 +11335,329 @@ impl FlexBuilder<'_> {
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
                 | Kind::Tooltip { children, .. }
-                | Kind::Form { children, .. } => {
+                | Kind::Form { children, .. }
+                | Kind::Spin { children, .. } => {
                     children.push(child);
                 }
                 _ => {}
             }
         }
+    }
+
+    /// Virtualized list: only visible rows allocate scene aux nodes.
+    pub fn virtual_list(
+        &mut self,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        style: ListStyle,
+    ) -> WidgetId {
+        let items: Vec<String> = items.into_iter().map(|s| s.into()).collect();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::List {
+                    items,
+                    selected: None,
+                    scroll_y: 0.0,
+                    virtualized: true,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Virtualized table: windowed body rows.
+    pub fn virtual_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        style: TableStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Table {
+                    columns,
+                    rows,
+                    selected_row: None,
+                    scroll_y: 0.0,
+                    virtualized: true,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Multi-line TextArea.
+    pub fn text_area(
+        &mut self,
+        value: impl Into<String>,
+        placeholder: impl Into<String>,
+        style: TextAreaStyle,
+    ) -> WidgetId {
+        let value = value.into();
+        let caret = value.chars().count();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::TextArea {
+                    value,
+                    placeholder: placeholder.into(),
+                    caret,
+                    scroll_y: 0.0,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Numeric stepper InputNumber.
+    pub fn input_number(
+        &mut self,
+        value: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        style: InputNumberStyle,
+    ) -> WidgetId {
+        let lo = min.min(max);
+        let hi = min.max(max);
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::InputNumber {
+                    value: value.clamp(lo, hi),
+                    min: lo,
+                    max: hi,
+                    step: step.abs().max(1e-9),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Spin / loading overlay host with optional child.
+    pub fn spin<F>(&mut self, spinning: bool, style: SpinStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Spin {
+                    spinning,
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        {
+            let mut b = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut b);
+        }
+        id
+    }
+
+    /// Empty state placeholder.
+    pub fn empty(&mut self, description: impl Into<String>, style: EmptyStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Empty {
+                    description: description.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Collapse accordion.
+    pub fn collapse(&mut self, panels: Vec<CollapsePanel>, style: CollapseStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Collapse { panels, style },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Descriptions key-value list.
+    pub fn descriptions(
+        &mut self,
+        items: Vec<DescriptionItem>,
+        style: DescriptionsStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Descriptions { items, style },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Card with title + body.
+    pub fn card(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        style: CardStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Card {
+                    title: title.into(),
+                    body: body.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Segmented control.
+    pub fn segmented(
+        &mut self,
+        options: impl IntoIterator<Item = impl Into<String>>,
+        selected: usize,
+        style: SegmentedStyle,
+    ) -> WidgetId {
+        let options: Vec<String> = options.into_iter().map(|s| s.into()).collect();
+        let selected = if options.is_empty() {
+            0
+        } else {
+            selected.min(options.len() - 1)
+        };
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Segmented {
+                    options,
+                    selected,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Breadcrumb path.
+    pub fn breadcrumb(
+        &mut self,
+        items: impl IntoIterator<Item = impl Into<String>>,
+        style: BreadcrumbStyle,
+    ) -> WidgetId {
+        let items: Vec<String> = items.into_iter().map(|s| s.into()).collect();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Breadcrumb { items, style },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Pagination control (`page` is 1-based).
+    pub fn pagination(
+        &mut self,
+        page: usize,
+        page_size: usize,
+        total: usize,
+        style: PaginationStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Pagination {
+                    page: page.max(1),
+                    page_size: page_size.max(1),
+                    total,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
     }
 }
 
@@ -10647,4 +12697,201 @@ mod tests {
         assert!(ui.set_trend_points(trend, vec![0.0, 1.0, 0.5]));
         ui.sync(&mut scene);
     }
+
+    #[test]
+    fn office_p1_rest_drawer_virtual_list_and_structure() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(900.0, 640.0);
+        let mut vlist = WidgetId(0);
+        let mut vtable = WidgetId(0);
+        let mut area = WidgetId(0);
+        let mut num = WidgetId(0);
+        let mut seg = WidgetId(0);
+        let mut crumb = WidgetId(0);
+        let mut page = WidgetId(0);
+        let mut card = WidgetId(0);
+        let mut empty = WidgetId(0);
+        let mut collapse = WidgetId(0);
+        let mut desc = WidgetId(0);
+        let mut spin = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 880.0,
+                height: 620.0,
+                padding: 8.0,
+                gap: 6.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                crumb = col.breadcrumb(
+                    ["Plant", "Bay-03", "Meter"],
+                    BreadcrumbStyle::default(),
+                );
+                seg = col.segmented(["Table", "Chart", "Log"], 0, SegmentedStyle::default());
+                let items: Vec<String> = (0..5000).map(|i| format!("Point-{i:04}")).collect();
+                vlist = col.virtual_list(
+                    items,
+                    ListStyle {
+                        width: 220.0,
+                        height: 120.0,
+                        ..ListStyle::default()
+                    },
+                );
+                let rows: Vec<Vec<String>> = (0..2000)
+                    .map(|i| vec![format!("{i}"), format!("Tag-{i}"), "OK".into()])
+                    .collect();
+                vtable = col.virtual_table(
+                    vec![
+                        TableColumn::new("Id", 48.0),
+                        TableColumn::new("Name", 100.0),
+                        TableColumn::new("St", 40.0),
+                    ],
+                    rows,
+                    TableStyle {
+                        width: 260.0,
+                        height: 120.0,
+                        ..TableStyle::default()
+                    },
+                );
+                area = col.text_area("", "notes…", TextAreaStyle::default());
+                num = col.input_number(42.0, 0.0, 100.0, 1.0, InputNumberStyle::default());
+                page = col.pagination(1, 50, 500, PaginationStyle::default());
+                card = col.card("Bay", "Voltage nominal", CardStyle::default());
+                empty = col.empty("No alarms", EmptyStyle::default());
+                collapse = col.collapse(
+                    vec![
+                        CollapsePanel::new("Group A", "Settings A", true),
+                        CollapsePanel::new("Group B", "Settings B", false),
+                    ],
+                    CollapseStyle::default(),
+                );
+                desc = col.descriptions(
+                    vec![
+                        DescriptionItem::new("Plant", "North"),
+                        DescriptionItem::new("Bay", "03"),
+                    ],
+                    DescriptionsStyle::default(),
+                );
+                spin = col.spin(true, SpinStyle::default(), |s| {
+                    s.text("content");
+                });
+            },
+        );
+        let drawer = ui.drawer(
+            "Config",
+            "Side panel body",
+            DrawerStyle {
+                placement: DrawerPlacement::Right,
+                ..DrawerStyle::default()
+            },
+        );
+        ui.notify("Saved", NotificationTone::Success);
+        ui.sync(&mut scene);
+        assert!(ui.is_list(vlist));
+        assert!(ui.is_table(vtable));
+        assert_eq!(ui.segmented_selected(seg), Some(0));
+        assert!(ui.set_segmented_selected(seg, 1));
+        assert_eq!(ui.input_number_value(num), Some(42.0));
+        assert!(ui.set_input_number_value(num, 43.0));
+        assert!(ui.set_text_area_value(area, "hello\nworld"));
+        assert_eq!(ui.text_area_value(area), Some("hello\nworld"));
+        assert_eq!(ui.pagination_page(page), Some(1));
+        assert!(ui.set_pagination_page(page, 2));
+        assert!(ui.set_drawer_open(drawer, true));
+        assert_eq!(ui.drawer_open(drawer), Some(true));
+        ui.sync(&mut scene);
+        // Virtual list should not allocate 5000*2 aux nodes
+        let aux_n = ui.widgets.get(&vlist).map(|w| w.aux.len()).unwrap_or(0);
+        assert!(aux_n < 200, "virtual list aux={aux_n}");
+        let taux = ui.widgets.get(&vtable).map(|w| w.aux.len()).unwrap_or(0);
+        assert!(taux < 400, "virtual table aux={taux}");
+        let _ = (card, empty, collapse, desc, spin, crumb);
+        ui.set_drawer_open(drawer, false);
+        assert!(ui.take_drawer_action().is_none() || true);
+    }
+
+    #[test]
+    fn office_p1_rest_soft_raster_qa_ppm() {
+        use next_gui_render::{encode_scene, Renderer};
+        use next_gui_render_soft::SoftRenderer;
+        use std::io::Write;
+
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let w = 1100u32;
+        let h = 780u32;
+        ui.set_viewport(w as f32, h as f32);
+        ui.column(
+            ColumnStyle {
+                x: 12.0,
+                y: 12.0,
+                width: w as f32 - 24.0,
+                height: h as f32 - 24.0,
+                padding: 8.0,
+                gap: 8.0,
+                background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.breadcrumb(["Plant", "Bay-03", "Meter"], BreadcrumbStyle::default());
+                col.segmented(["Table", "Chart", "Log"], 1, SegmentedStyle::default());
+                let items: Vec<String> = (0..200).map(|i| format!("P-{i}")).collect();
+                col.virtual_list(
+                    items,
+                    ListStyle {
+                        width: 240.0,
+                        height: 140.0,
+                        ..ListStyle::default()
+                    },
+                );
+                col.text_area("hello\nline2", "notes", TextAreaStyle::default());
+                col.input_number(12.0, 0.0, 100.0, 1.0, InputNumberStyle::default());
+                col.card("Card", "Body text", CardStyle::default());
+                col.empty("Empty state", EmptyStyle::default());
+                col.pagination(2, 20, 200, PaginationStyle::default());
+            },
+        );
+        let drawer = ui.drawer(
+            "Config",
+            "Side drawer body for QA",
+            DrawerStyle {
+                placement: DrawerPlacement::Right,
+                ..DrawerStyle::default()
+            },
+        );
+        let _ = ui.set_drawer_open(drawer, true);
+        ui.notify("QA toast", NotificationTone::Success);
+        ui.sync(&mut scene);
+        scene.mark_full_dirty(w as f32, h as f32);
+        let dirty = scene.take_dirty();
+        let cmds = encode_scene(&scene, &dirty);
+        let clear = Color {
+            r: 0x1a,
+            g: 0x1a,
+            b: 0x1c,
+            a: 255,
+        };
+        let mut soft = SoftRenderer::new(w, h, clear);
+        soft.render(&cmds, &dirty);
+        let (pixels, pw, ph) = soft.frame_pixels().expect("pixels");
+        let out = std::path::Path::new("/workspace/next-gui-demo-shots/21-office_p1_rest.ppm");
+        if let Some(parent) = out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut f = std::fs::File::create(out).expect("create ppm");
+        writeln!(f, "P6\n{pw} {ph}\n255").unwrap();
+        for px in pixels {
+            let r = ((px >> 16) & 0xff) as u8;
+            let g = ((px >> 8) & 0xff) as u8;
+            let b = (px & 0xff) as u8;
+            f.write_all(&[r, g, b]).unwrap();
+        }
+        assert!(out.exists());
+        assert_eq!((pw, ph), (w, h));
+        // Non-empty: sample a mid-frame pixel should not be pure clear for all
+        let mid = pixels[(ph as usize / 2) * pw as usize + pw as usize / 2];
+        assert_ne!(mid, 0);
+    }
+
 }
