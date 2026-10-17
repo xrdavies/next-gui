@@ -1,12 +1,12 @@
-//! Linux window backend using winit + softbuffer (OS API layer only).
+//! Linux window backend using winit (+ optional softbuffer).
 
 use crate::{
-    AppCallbacks, Event, KeyCode, PlatformError, PointerButton, WindowAttrs, WindowCtx, WindowHost,
-    WindowId,
+    AppCallbacks, Event, KeyCode, PlatformError, PointerButton, PresentBackend, WindowAttrs,
+    WindowCtx, WindowHost, WindowId,
 };
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
-use std::rc::Rc;
+use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -16,8 +16,10 @@ use winit::window::Window as WinitWindow;
 
 struct Host {
     window_id: WindowId,
-    window: Rc<WinitWindow>,
-    surface: Surface<Rc<WinitWindow>, Rc<WinitWindow>>,
+    window: Arc<WinitWindow>,
+    /// Softbuffer surface when [`PresentBackend::Softbuffer`]; `None` for GPU-first.
+    surface: Option<Surface<Arc<WinitWindow>, Arc<WinitWindow>>>,
+    present_backend: PresentBackend,
     width: u32,
     height: u32,
     cursor: (f64, f64),
@@ -32,6 +34,10 @@ impl WindowHost for Host {
         (self.width, self.height)
     }
 
+    fn present_backend(&self) -> PresentBackend {
+        self.present_backend
+    }
+
     fn set_title(&mut self, title: &str) {
         self.window.set_title(title);
     }
@@ -41,6 +47,11 @@ impl WindowHost for Host {
     }
 
     fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError> {
+        let Some(surface) = self.surface.as_mut() else {
+            return Err(PlatformError::new(
+                "present: GpuSurface window has no softbuffer; use GpuRenderer native present",
+            ));
+        };
         if width == 0 || height == 0 {
             return Ok(());
         }
@@ -49,14 +60,13 @@ impl WindowHost for Host {
         }
         self.width = width;
         self.height = height;
-        self.surface
+        surface
             .resize(
                 NonZeroU32::new(width).ok_or_else(|| PlatformError::new("width is zero"))?,
                 NonZeroU32::new(height).ok_or_else(|| PlatformError::new("height is zero"))?,
             )
             .map_err(|e| PlatformError::new(format!("softbuffer resize: {e}")))?;
-        let mut buffer = self
-            .surface
+        let mut buffer = surface
             .buffer_mut()
             .map_err(|e| PlatformError::new(format!("softbuffer buffer: {e}")))?;
         let n = (width as usize) * (height as usize);
@@ -65,6 +75,10 @@ impl WindowHost for Host {
             .present()
             .map_err(|e| PlatformError::new(format!("softbuffer present: {e}")))?;
         Ok(())
+    }
+
+    fn winit_window(&self) -> Arc<WinitWindow> {
+        self.window.clone()
     }
 }
 
@@ -85,34 +99,46 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             .with_title(self.attrs.title.clone())
             .with_inner_size(size);
         let window = match event_loop.create_window(winit_attrs) {
-            Ok(w) => Rc::new(w),
+            Ok(w) => Arc::new(w),
             Err(e) => {
                 eprintln!("next-gui-platform: failed to create window: {e}");
                 event_loop.exit();
                 return;
             }
         };
-        let context = match Context::new(window.clone()) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("next-gui-platform: softbuffer context: {e}");
-                event_loop.exit();
-                return;
+
+        let present_backend = self.attrs.present_backend;
+        let surface = match present_backend {
+            PresentBackend::Softbuffer => {
+                let context = match Context::new(window.clone()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("next-gui-platform: softbuffer context: {e}");
+                        event_loop.exit();
+                        return;
+                    }
+                };
+                match Surface::new(&context, window.clone()) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        eprintln!("next-gui-platform: softbuffer surface: {e}");
+                        event_loop.exit();
+                        return;
+                    }
+                }
+            }
+            PresentBackend::GpuSurface => {
+                // Leave the window free for wgpu::Surface (no softbuffer contention).
+                None
             }
         };
-        let surface = match Surface::new(&context, window.clone()) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("next-gui-platform: softbuffer surface: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
+
         let inner = window.inner_size();
         self.host = Some(Host {
             window_id: WindowId(1),
             window,
             surface,
+            present_backend,
             width: inner.width.max(1),
             height: inner.height.max(1),
             cursor: (0.0, 0.0),
@@ -217,7 +243,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                 if matches!(key, KeyCode::Other(_)) && !pressed {
                     return;
                 }
-                // Only forward Escape/Space for P0 noise reduction; still allow Other on press if needed
                 if matches!(key, KeyCode::Escape | KeyCode::Space) {
                     let mut ctx = WindowCtx { inner: host };
                     self.app.on_event(
@@ -241,6 +266,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
 /// Run a single-window Linux app until exit.
 ///
 /// Requires a working `DISPLAY` (or Wayland) on the host.
+/// Use [`WindowAttrs::with_gpu_surface`] for Office native wgpu present.
 pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
     let event_loop =
         EventLoop::new().map_err(|e| PlatformError::new(format!("event loop: {e}")))?;

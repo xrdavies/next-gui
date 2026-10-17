@@ -75,9 +75,10 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 > 决策：**暂时跳过 P4**，先做厚 Office 桌面能力。设计见 [office-line.md](office-line.md)。
 
 - 布局：`CrossAlign`；控件：`Row` / `Spacer` / `Separator`（工具条）
-- GPU：优先目标为原生 `wgpu::Surface` present；**当前仍为 readback→softbuffer**（缺口见 office-line）
+- GPU：**原生 `wgpu::Surface` present 已落地**（`PresentBackend::GpuSurface` + `GpuRenderer::try_new_native`）；Softbuffer/readback 仍保留
 - Soft 始终可回退；示例 `cargo run -p office_panel`
 - **不**引入 `profile` crate（留给 P4）
+- 下一步：确认并扩充 Office 控件列表
 
 ## P4 — 双档 Profile
 

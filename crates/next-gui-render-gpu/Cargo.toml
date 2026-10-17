@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "wgpu GPU backend for next-gui (shared DrawCommand path; softbuffer present via readback)"
+description = "wgpu GPU backend for next-gui (DrawCommand path; native Surface or readback present)"
 
 [dependencies]
 next-gui-render = { workspace = true }

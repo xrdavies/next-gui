@@ -30,7 +30,7 @@
 ### 1.3 本阶段明确不做
 
 - Field/Office `profile` 配置（P4）
-- 经 wgpu Surface 直接 present（绕过 softbuffer）；P3 用 readback 保持平台简单；Office 线见 [office-line.md](office-line.md) / `GpuPresentPath`
+- ~~经 wgpu Surface 直接 present~~ → **Office 线已实现**（见 [office-line.md](office-line.md)）；P3 示例仍默认 readback 保持 Softbuffer 窗简单
 - 字形 GPU atlas / 距离场（仍用 CPU mask + `BlitAlpha`）
 - Windows/macOS 专用 GPU 路径差异（wgpu 可多后端，但验收以 Linux 为主）
 - 复杂特效、MSAA、动画系统
