@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nextgui.codex-review</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/r001/opensource/next-gui/tools/codex-review-loop.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/r001/opensource/next-gui</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/r001/.local/bin:/Users/r001/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/r001/Library/Logs/next-gui-codex/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/r001/Library/Logs/next-gui-codex/stderr.log</string>
+</dict>
+</plist>
