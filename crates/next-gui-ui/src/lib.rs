@@ -4228,7 +4228,8 @@ impl Ui {
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::Text { content, size, .. }) => {
                 let (w, h) = self.font.measure_line(content, *size);
-                ChildMeasure::new(w, h + 4.0)
+                // Small slack so descenders / AA rows are not flush-clipped by parents.
+                ChildMeasure::new(w, h + 6.0)
             }
             Some(Kind::Button {
                 label,
@@ -4237,9 +4238,15 @@ impl Ui {
                 height,
                 ..
             }) => {
-                let (tw, _) = self.font.measure_line(label, *size);
+                let (tw, th) = self.font.measure_line(label, *size);
                 let pad_x = 16.0;
-                ChildMeasure::new((*min_width).max(tw + pad_x * 2.0), *height)
+                // Keep authored height, but never shorter than font line box + padding
+                // (avoids clipping after correct baseline placement).
+                let pad_y = 10.0;
+                ChildMeasure::new(
+                    (*min_width).max(tw + pad_x * 2.0),
+                    (*height).max(th + pad_y),
+                )
             }
             Some(Kind::Icon { size, .. }) => ChildMeasure::new(*size, *size),
             Some(Kind::Spacer { width, height }) => ChildMeasure::new(*width, *height),
@@ -8520,5 +8527,133 @@ mod tests {
         let cb = scene.get(cnode).unwrap().bounds;
         assert!(ui.pointer_pressed(&mut scene, cb.x + 1.0, cb.y + 1.0));
         assert_eq!(ui.take_tag_close(), Some(tag));
+    }
+
+    /// Headless soft-render of a P1-like counter: label/button glyphs must not be
+    /// bottom-clipped (regression for fontdue ymin placement).
+    #[test]
+    fn headless_counter_text_not_vertically_clipped() {
+        use next_gui_render::{encode_scene, Renderer};
+        use next_gui_render_soft::SoftRenderer;
+
+        let w = 480u32;
+        let h = 420u32;
+        let clear = Color::rgb(0x20, 0x20, 0x20);
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut label = WidgetId(0);
+        let mut btn = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 40.0,
+                y: 40.0,
+                width: 360.0,
+                height: 520.0,
+                padding: 20.0,
+                gap: 14.0,
+                background: Some(Color::rgb(0x2a, 0x2a, 0x2e)),
+                ..ColumnStyle::default()
+            },
+            |col| {
+                label = col.text("Count: 0");
+                btn = col.button("Increment");
+            },
+        );
+        ui.sync(&mut scene);
+        scene.mark_full_dirty(w as f32, h as f32);
+        let dirty = scene.take_dirty();
+        let cmds = encode_scene(&scene, &dirty);
+        let mut soft = SoftRenderer::new(w, h, clear);
+        soft.render(&cmds, &dirty);
+        let (pixels, fw, fh) = soft.frame_pixels().expect("cpu pixels");
+        assert_eq!((fw, fh), (w, h));
+
+        let node = ui.widgets.get(&label).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        let x0 = b.x.floor().max(0.0) as u32;
+        let y0 = b.y.floor().max(0.0) as u32;
+        let x1 = ((b.x + b.width).ceil() as u32).min(w);
+        let y1 = ((b.y + b.height).ceil() as u32).min(h);
+        let mut ink_rows = Vec::new();
+        for y in y0..y1 {
+            let mut ink = false;
+            for x in x0..x1 {
+                let px = pixels[(y * fw + x) as usize];
+                let r = (px >> 16) & 0xff;
+                let g = (px >> 8) & 0xff;
+                let bl = px & 0xff;
+                if r > 0x60 || g > 0x60 || bl > 0x60 {
+                    ink = true;
+                    break;
+                }
+            }
+            if ink {
+                ink_rows.push(y);
+            }
+        }
+        assert!(
+            !ink_rows.is_empty(),
+            "label bounds ({x0},{y0})-({x1},{y1}) have no bright pixels"
+        );
+        let first = *ink_rows.first().unwrap();
+        let last = *ink_rows.last().unwrap();
+        let span = last - first + 1;
+        let box_h = y1 - y0;
+        assert!(
+            first < y0 + box_h / 2,
+            "label ink starts at bottom half (first={first} y0={y0} h={box_h})"
+        );
+        assert!(
+            span >= 14,
+            "label ink span {span} too thin — still vertically clipped?"
+        );
+
+        let lid = ui.widgets.get(&btn).unwrap().label_node.unwrap();
+        let lb = scene.get(lid).unwrap().bounds;
+        let lx0 = lb.x.floor().max(0.0) as u32;
+        let ly0 = lb.y.floor().max(0.0) as u32;
+        let lx1 = ((lb.x + lb.width).ceil() as u32).min(w);
+        let ly1 = ((lb.y + lb.height).ceil() as u32).min(h);
+        let mut b_rows = Vec::new();
+        for y in ly0..ly1 {
+            let mut ink = false;
+            for x in lx0..lx1 {
+                let px = pixels[(y * fw + x) as usize];
+                let r = (px >> 16) & 0xff;
+                if r > 0x80 {
+                    ink = true;
+                    break;
+                }
+            }
+            if ink {
+                b_rows.push(y);
+            }
+        }
+        assert!(!b_rows.is_empty(), "button label has no bright pixels");
+        let bspan = b_rows.last().unwrap() - b_rows.first().unwrap() + 1;
+        assert!(
+            bspan >= 12,
+            "button label ink span {bspan} too thin — clipped?"
+        );
+
+        let out_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp/text-qa");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let path = out_dir.join("headless_counter.ppm");
+        let mut body = format!("P3\n{w} {h}\n255\n");
+        for y in 0..h {
+            for x in 0..w {
+                let px = pixels[(y * fw + x) as usize];
+                let r = (px >> 16) & 0xff;
+                let g = (px >> 8) & 0xff;
+                let bchan = px & 0xff;
+                body.push_str(&format!("{r} {g} {bchan} "));
+            }
+            body.push('\n');
+        }
+        std::fs::write(&path, body).expect("write ppm");
+        eprintln!(
+            "headless counter QA: label span={span} button span={bspan} -> {}",
+            path.display()
+        );
     }
 }

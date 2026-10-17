@@ -9,3 +9,7 @@ description = "Compact declarative UI API for next-gui (retained sync to scene)"
 next-gui-scene = { workspace = true }
 next-gui-layout = { workspace = true }
 next-gui-text = { workspace = true }
+
+[dev-dependencies]
+next-gui-render = { workspace = true }
+next-gui-render-soft = { workspace = true }
