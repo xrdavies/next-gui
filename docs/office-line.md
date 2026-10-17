@@ -102,6 +102,11 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 | `Modal` | `ui` | 居中对话框 + 遮罩；Esc/×/按钮 |
 | `Progress` | `ui` | 确定进度条 0..=1；不确定为 stub |
 | `Alert` | `ui` | 页内横幅；可关闭 |
+| `TreeSelect` | `ui` | **P1** 厂站/设备树选择（Cascader 仍后置） |
+| `Form` + `FormRule` | `ui` | **P1** 表单容器 + Required/Min/Max/Digits 校验 |
+| `AlarmList` | `ui` | **P1** 告警列表；分级色 + 未确认闪烁 + ack |
+| `Gauge` | `ui` | **P1** 仪表盘（软光栅弧 + 指针） |
+| `Trend` | `ui` | **P1** 趋势/迷你折线（软光栅） |
 
 示例：
 
@@ -111,8 +116,9 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 - `examples/office_data` — **P0 data**：List + Tree + Table
 - `examples/office_nav` — **P0 nav**：Menu + ContextMenu + Tabs + Select + Slider
 - `examples/office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
+- `examples/office_p1` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 目录控件已齐**；下一步多为 P1（Form 校验、TreeSelect、Drawer、虚表等）或增强（IME、虚拟化）。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心（TreeSelect/Form/AlarmList/Gauge/Trend）已落地**。下一步：其余 P1（Drawer、虚表等）或增强（IME、虚拟化）。
 
 ---
 
@@ -133,7 +139,7 @@ P0–P3 完成
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
     · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
-    · P0 壳/录入/表树切片已落地；下一步：Select/Slider/Menu/Tabs/…
+    · P0 齐；P1 核心（TreeSelect/Form/AlarmList/Gauge/Trend）已落地；IME 后置
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓
@@ -157,4 +163,4 @@ P5 Immediate → P6 工业打磨
 
 运行：`cargo run -p office_panel`（需图形会话；CJK 字体同 P2）。
 有适配器时应看到：`native Surface ready (…, present=NativeSurface)`。
-Office 切片示例：`office_shell` / `office_inputs` / `office_data` / `office_nav` / `office_feedback`。
+Office 切片示例：`office_shell` / `office_inputs` / `office_data` / `office_nav` / `office_feedback` / `office_p1`。

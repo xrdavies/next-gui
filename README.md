@@ -48,7 +48,7 @@
 | [docs/p2-design.md](docs/p2-design.md) | P2 文本引擎 / CJK / 软渲染字形 |
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
 | [docs/office-line.md](docs/office-line.md) | Office 线（跳过 P4）：布局/控件加厚与 Surface 缺口 |
-| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 已锁定，Shell/Input/Data/Nav 已落地） |
+| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 齐，P1 核心 TreeSelect/Form/AlarmList/Gauge/Trend 已落地） |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Grok/Codex 跨机器交接、review 协议与 macOS 定时任务 |
 
@@ -64,6 +64,7 @@ cargo run -p office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Sw
 cargo run -p office_data      # P0 data: List/Tree/Table
 cargo run -p office_nav                        # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
 cargo run -p office_feedback                   # P0 feedback: Tag/Badge/Tooltip/Modal/Progress/Alert
+cargo run -p office_p1                         # P1: TreeSelect/Form/AlarmList/Gauge/Trend
 cargo run -p office_panel     # 早期 Row 工具条 demo
 ```
 
@@ -76,6 +77,8 @@ cargo run -p office_panel     # 早期 Row 工具条 demo
 `office_nav`：菜单栏下拉、右键 ContextMenu、Tabs、Select、Slider；**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。无嵌套子菜单、无多选 Select、无垂直 Slider。
 
 `office_feedback`：Tag/Badge/Tooltip/Modal/Progress/Alert；悬停工具条图标出提示；Alert × 关闭；Open Modal；**Esc**/×/按钮关对话框。
+
+`office_p1`：TreeSelect 选厂站/间隔；Form 校验（Required/Digits/MinLength）；AlarmList 分级闪烁与 Enter/Space 确认；Gauge/Trend 实时刷新。**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。IME 仍后置。
 
 默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 

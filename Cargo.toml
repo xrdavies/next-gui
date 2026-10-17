@@ -20,6 +20,7 @@ members = [
     "examples/office_data",
     "examples/office_nav",
     "examples/office_feedback",
+    "examples/office_p1",
 ]
 
 [workspace.package]
