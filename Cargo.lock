@@ -1318,6 +1318,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "office_data"
+version = "0.1.0"
+dependencies = [
+ "next-gui-layout",
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-gpu",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
 name = "office_inputs"
 version = "0.1.0"
 dependencies = [

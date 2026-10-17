@@ -117,6 +117,10 @@ pub enum KeyCode {
     Left,
     /// Right arrow.
     Right,
+    /// Up arrow.
+    Up,
+    /// Down arrow.
+    Down,
     /// Home.
     Home,
     /// End.

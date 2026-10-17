@@ -18,7 +18,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 - Field/Office **Profile 配置 crate**（P4，已推迟）
 - Immediate 视口（P5）
-- 完整 IME/CJK 输入、List / Table / Tree / Select / Slider / Menu（后续切片）
+- 完整 IME/CJK 输入、Select / Slider / Menu / Tabs / Modal（后续切片）；List/Tree/Table 已落地
 - 动画系统、图表控件
 
 ---
@@ -88,14 +88,18 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 | `ScrollArea` | `ui` | 视口裁剪 + 滚轮/拖拽滚动 |
 | `TextInput` | `ui` | 单行录入（ASCII）；IME/CJK 组合输入仍 stub |
 | `Checkbox` / `Radio` / `Switch` | `ui` | 点击/Space 切换；Radio 分组互斥 |
+| `List` | `ui` | 垂直项 + 单选 + ↑↓；内建滚动 |
+| `Tree` | `ui` | 层级展开/折叠 + 单选；厂站/设备树 MVP |
+| `Table` | `ui` | 表头 + 文本单元格 + 行选；列宽拖拽 stub；无编辑 |
 
 示例：
 
 - `examples/office_panel` — 早期 Row 工具条 + Soft/GPU 切换
 - `examples/office_shell` — **P0 shell**：Toolbar + Icon + Panel + Splitter + StatusBar
 - `examples/office_inputs` — **P0 input**：ScrollArea + TextInput + Checkbox + Radio + Switch
+- `examples/office_data` — **P0 data**：List + Tree + Table
 
-Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Table` / `Tree` / `List` / `Select` / `Slider` / `Menu`。
+Rust API 优先；复杂控件暂未进 `.ngui`。下一切片：`Select` / `Slider` / `Menu` / `Tabs` / `Modal` / `Tag`…
 
 ---
 
@@ -116,7 +120,7 @@ P0–P3 完成
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
     · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
-    · 下一步：按锁定 P0 名单实现控件（先壳层再录入/表树，见目录 §10）
+    · P0 壳/录入/表树切片已落地；下一步：Select/Slider/Menu/Tabs/…
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓

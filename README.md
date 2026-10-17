@@ -48,7 +48,7 @@
 | [docs/p2-design.md](docs/p2-design.md) | P2 文本引擎 / CJK / 软渲染字形 |
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
 | [docs/office-line.md](docs/office-line.md) | Office 线（跳过 P4）：布局/控件加厚与 Surface 缺口 |
-| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 已锁定，Shell/Input 已落地） |
+| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 已锁定，Shell/Input/Data 已落地） |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Grok/Codex 跨机器交接、review 协议与 macOS 定时任务 |
 
@@ -61,12 +61,15 @@
 ```bash
 cargo run -p office_shell     # P0 shell: Toolbar/Icon/Panel/Splitter/StatusBar
 cargo run -p office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Switch
+cargo run -p office_data      # P0 data: List/Tree/Table
 cargo run -p office_panel     # 早期 Row 工具条 demo
 ```
 
 `office_shell`：拖拽中间 sash 调整左右面板；工具条 **Open** / **Save** / **Inc**；**Space** 切换 Soft ↔ GPU（有适配器时）。
 
 `office_inputs`：单行输入（ASCII）、Checkbox/Radio/Switch、ScrollArea 滚轮/拖拽；焦点上 **Space** 切换开关，无焦点时 **Space** 切 Soft↔GPU。IME/CJK 组合输入仍为 stub。
+
+`office_data`：左 Tree（厂站层级）+ 右 List/Table；点击选中，**↑↓** 导航（Tree 另支持 **←→** 展开/折叠）；滚轮/拖拽滚动；无焦点 **Space** 切 Soft↔GPU。无虚拟化、无单元格编辑、列宽拖拽为 stub。
 
 默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 
