@@ -23,41 +23,50 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 ---
 
-## 2. GPU present：优先原生 Surface，当前缺口
+## 2. GPU present：原生 Surface（已落地）
 
-### 2.1 期望（Office 理想路径）
-
-```text
-encode_scene → DrawCommand[] → wgpu 栅格 → wgpu::Surface::present → OS 窗口
-```
-
-无 CPU readback，利于高刷新与动态内容。
-
-### 2.2 现状（P3 骨架）
+### 2.1 Office 路径（当前默认，有适配器时）
 
 ```text
-encode_scene → DrawCommand[] → wgpu 离屏纹理 → CPU readback (XRGB)
-                                              → platform.present (softbuffer)
+encode_scene → DrawCommand[] → wgpu 离屏 retained 纹理
+                              → blit → wgpu::Surface::present → OS 窗口
 ```
 
-`GpuRenderer::present_path()` 返回 `GpuPresentPath::ReadbackSoftbuffer`。
+无 CPU readback。`GpuRenderer::present_path()` → [`GpuPresentPath::NativeSurface`]。
 
-### 2.3 为何还没有 Native Surface
+前提：窗口以 [`PresentBackend::GpuSurface`] 创建（**不**附着 softbuffer），再在 `on_start` 里
+`GpuRenderer::try_new_native(winit_window, …)`。
 
-| 阻塞 | 说明 |
+### 2.2 Softbuffer / readback 路径（仍保留）
+
+```text
+encode_scene → DrawCommand[] → wgpu 离屏 → CPU readback (XRGB)
+                                          → platform.present (softbuffer)
+```
+
+或纯 Soft：`SoftRenderer` → `platform.present`。
+
+`PresentBackend::Softbuffer` 建窗；`GpuRenderer::try_new` → `GpuPresentPath::ReadbackSoftbuffer`。
+P3 示例 `p3_backend_toggle` 仍走此路径。
+
+### 2.3 Soft ↔ GPU 在 GpuSurface 窗口上
+
+| 模式 | 做法 |
 |------|------|
-| softbuffer 占窗 | Linux/macOS `platform` 在建窗时即附着 softbuffer Surface；与 wgpu Surface **争用同一窗口**，不能简单叠加 |
-| 契约单一 | `WindowCtx::present(pixels)` 只接受 CPU 像素；无「GPU 帧已直出」分支 |
-| 双路径生命周期 | Soft 需要 softbuffer；Native Surface 需要 **不挂 softbuffer 的 GPU-first 窗口**（或运行时切换，复杂度高） |
+| GPU | `GpuRenderer::render` 内部已 Surface present |
+| Soft | `SoftRenderer` 出 XRGB → `GpuRenderer::present_xrgb_frame` 上传并 blit 到同一 Surface |
 
-### 2.4 后续落地条件（未实现）
+不在同一窗口同时挂 softbuffer 与 wgpu Surface。
 
-1. `platform` 增加 GPU-first 建窗模式（可选：不创建 softbuffer）。
-2. 暴露 `raw_window_handle` / `raw_display_handle`（或直接在 platform 内创建 `wgpu::Surface`）。
-3. `GpuRenderer` 支持 `GpuPresentPath::NativeSurface`：按 surface 格式建 pipeline、`get_current_texture`、渲染后 `present`；失败则回退 Readback 或 Soft。
-4. Soft 路径保持现有 softbuffer，**永不依赖** GPU Surface。
+### 2.4 平台契约
 
-**本阶段策略：** 文档化缺口 + API 标明 present 路径；继续用 Readback 服务 Office demo；控件与布局先行。
+| API | 说明 |
+|-----|------|
+| `WindowAttrs::with_gpu_surface()` | 建窗不创建 softbuffer |
+| `WindowCtx::winit_window()` | `Arc<winit::Window>`，供 `try_new_native` |
+| `WindowCtx::present` | 仅 Softbuffer；GpuSurface 上调用会报错 |
+| `GpuRenderer::try_new_native` | 创建 Surface + 离屏 retained + copy pipeline |
+| `GpuRenderer::present_xrgb_frame` | Soft-on-Surface 上传 present |
 
 ---
 
@@ -69,7 +78,8 @@ encode_scene → DrawCommand[] → wgpu 离屏纹理 → CPU readback (XRGB)
 | `Row` | `ui` + `.ngui` | 横向 flex 容器（工具条） |
 | `Spacer` | `ui` + `.ngui` | 固定宽高占位 |
 | `Separator` | `ui` + `.ngui` | 细分割线 |
-| Soft 回退 | 示例 | GPU 失败或切换时仍走 Soft |
+| Soft 回退 | 示例 | GPU 失败或切换时仍可 Soft |
+| Native Surface | `render-gpu` + `platform` | Office 默认（有适配器时） |
 
 示例：`examples/office_panel`（工具条 Row + 内容区 + Soft/GPU 切换）。
 
@@ -81,6 +91,9 @@ encode_scene → DrawCommand[] → wgpu 离屏纹理 → CPU readback (XRGB)
 P0–P3 完成
     ↓
 【当前】Office 线加厚（本文）  ←── P4 推迟
+    · 布局/工具条控件 ✓
+    · 原生 Surface present ✓
+    · 下一步：控件列表确认与扩充
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓
@@ -93,11 +106,13 @@ P5 Immediate → P6 工业打磨
 
 | 项 | 通过样子 |
 |----|----------|
-| 文档 | 本文存在且写明 Surface 缺口与回退 |
+| 文档 | 本文写明 Surface 路径与 Softbuffer 回退 |
 | 布局 | `CrossAlign` + Row 工具条可测 |
 | 控件 | Spacer / Separator 出现在场景中 |
-| Soft | 无 GPU 或切 Soft 时示例可跑 |
-| GPU | 有适配器时默认 GPU（仍为 readback present） |
+| Soft | Softbuffer 窗或 Surface blit 可跑 |
+| GPU native | 有适配器时 `present=NativeSurface`（见 stderr） |
+| GPU readback | Softbuffer 窗上 `try_new` 仍可用 |
 | 路线图 | P4 标明推迟；指向本文 |
 
 运行：`cargo run -p office_panel`（需图形会话；CJK 字体同 P2）。
+有适配器时应看到：`native Surface ready (…, present=NativeSurface)`。

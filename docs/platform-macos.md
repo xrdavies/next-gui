@@ -12,7 +12,7 @@
 | Field (industrial / embedded) | **Not required** on macOS |
 | OS order | Linux (done) → Windows (later) → **macOS (Office)** |
 | Input for first pass | Pointer + keyboard (same as Linux P0); touch later |
-| Full windowing | **Implemented** with `winit` + `softbuffer`; do not block Linux demos |
+| Full windowing | **Implemented** with `winit` + optional softbuffer; `PresentBackend::GpuSurface` supported (same as Linux); do not block Linux demos |
 
 macOS must implement the **same public platform contract** as Linux (`AppCallbacks`, `WindowAttrs`, `WindowCtx`, `Event`, `present` of XRGB8888). Upper layers (`scene` / `ui` / soft render) must not grow macOS-specific branches.
 

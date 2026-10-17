@@ -1,11 +1,12 @@
 //! wgpu GPU rasterizer for next-gui.
 //!
-//! Consumes the same [`DrawCommand`] stream as `next-gui-render-soft`, draws into an
-//! off-screen texture, then readbacks XRGB8888 for [`next_gui_platform`] present.
+//! Consumes the same [`DrawCommand`] stream as `next-gui-render-soft` and draws into an
+//! off-screen retained texture (Rgba8Unorm).
 //!
-//! Native wgpu `Surface` present is the Office-line goal but **not wired yet** — see
-//! [`GpuPresentPath`] and `docs/office-line.md`. Softbuffer ownership on the OS window
-//! blocks attaching a wgpu surface without a GPU-first platform path.
+//! Present paths ([`GpuPresentPath`]):
+//! - [`GpuPresentPath::ReadbackSoftbuffer`] — CPU readback → `platform.present` (softbuffer).
+//! - [`GpuPresentPath::NativeSurface`] — blit off-screen → `wgpu::Surface` → present
+//!   (requires a GPU-first window without softbuffer; see `docs/office-line.md`).
 
 #![deny(missing_docs)]
 
@@ -67,6 +68,40 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const COPY_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@group(0) @binding(0) var src_tex: texture_2d<f32>;
+@group(0) @binding(1) var src_samp: sampler;
+
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32) -> VsOut {
+    // Fullscreen triangle
+    var pos = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var uv = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+    );
+    var o: VsOut;
+    o.pos = vec4<f32>(pos[idx], 0.0, 1.0);
+    o.uv = uv[idx];
+    return o;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(src_tex, src_samp, in.uv);
+}
+"#;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct SolidVertex {
@@ -106,18 +141,30 @@ impl std::error::Error for GpuInitError {}
 
 /// How GPU frames reach the OS window.
 ///
-/// Office prefers [`GpuPresentPath::NativeSurface`]; the running backend reports what
-/// it actually does today via [`GpuRenderer::present_path`].
+/// Office prefers [`GpuPresentPath::NativeSurface`]; query via [`GpuRenderer::present_path`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuPresentPath {
-    /// Off-screen wgpu → CPU readback → `platform.present` (softbuffer). **Current.**
+    /// Off-screen wgpu → CPU readback → `platform.present` (softbuffer).
     ReadbackSoftbuffer,
-    /// Direct `wgpu::Surface` present on the OS window. **Not implemented** until
-    /// `platform` offers a GPU-first window without softbuffer contention.
+    /// Off-screen wgpu → blit → `wgpu::Surface::present` (no CPU readback).
     NativeSurface,
 }
 
-/// GPU backend implementing [`Renderer`] via wgpu off-screen + CPU readback.
+struct TargetTextures {
+    color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    staging: Option<wgpu::Buffer>,
+}
+
+struct NativeSurfaceState {
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    copy_pipeline: wgpu::RenderPipeline,
+    copy_bind_layout: wgpu::BindGroupLayout,
+    copy_sampler: wgpu::Sampler,
+}
+
+/// GPU backend implementing [`Renderer`] via wgpu.
 pub struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -131,17 +178,39 @@ pub struct GpuRenderer {
     blit_pipeline: wgpu::RenderPipeline,
     blit_bind_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
-}
-
-struct TargetTextures {
-    color: wgpu::Texture,
-    color_view: wgpu::TextureView,
-    staging: wgpu::Buffer,
+    native: Option<NativeSurfaceState>,
 }
 
 impl GpuRenderer {
-    /// Try to create a GPU renderer. Falls back path: caller should use soft on `Err`.
+    /// Probe whether a wgpu adapter is available (no window required).
+    pub fn adapter_available() -> bool {
+        Self::try_new(1, 1, Color::rgb(0, 0, 0)).is_ok()
+    }
+
+    /// Create a readback renderer (softbuffer present via [`Renderer::frame_pixels`]).
     pub fn try_new(width: u32, height: u32, clear: Color) -> Result<Self, GpuInitError> {
+        Self::create(width, height, clear, None)
+    }
+
+    /// Create a native-surface renderer for a GPU-first window (no softbuffer).
+    ///
+    /// `window` must outlive this renderer for the surface to stay valid; pass an
+    /// `Rc`/`Arc` of the winit window (implements wgpu's `WindowHandle`).
+    pub fn try_new_native(
+        window: impl wgpu::WindowHandle + 'static,
+        width: u32,
+        height: u32,
+        clear: Color,
+    ) -> Result<Self, GpuInitError> {
+        Self::create(width, height, clear, Some(Box::new(window)))
+    }
+
+    fn create(
+        width: u32,
+        height: u32,
+        clear: Color,
+        window: Option<Box<dyn wgpu::WindowHandle>>,
+    ) -> Result<Self, GpuInitError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
@@ -149,12 +218,22 @@ impl GpuRenderer {
             ..Default::default()
         });
 
+        let surface = if let Some(window) = window {
+            Some(
+                instance
+                    .create_surface(window)
+                    .map_err(|e| GpuInitError::new(format!("create_surface: {e}")))?,
+            )
+        } else {
+            None
+        };
+
         let adapter = {
             let mut found = None;
             for force_fallback in [false, true] {
                 found = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
+                    compatible_surface: surface.as_ref(),
                     force_fallback_adapter: force_fallback,
                 }));
                 if found.is_some() {
@@ -301,6 +380,128 @@ impl GpuRenderer {
             ..Default::default()
         });
 
+        let native = if let Some(surface) = surface {
+            let caps = surface.get_capabilities(&adapter);
+            if caps.formats.is_empty() {
+                return Err(GpuInitError::new("surface has no supported formats"));
+            }
+            let format = caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| {
+                    matches!(
+                        f,
+                        wgpu::TextureFormat::Bgra8Unorm
+                            | wgpu::TextureFormat::Rgba8Unorm
+                            | wgpu::TextureFormat::Bgra8UnormSrgb
+                            | wgpu::TextureFormat::Rgba8UnormSrgb
+                    )
+                })
+                .unwrap_or(caps.formats[0]);
+
+            let alpha_mode = caps
+                .alpha_modes
+                .iter()
+                .copied()
+                .find(|m| *m == wgpu::CompositeAlphaMode::Opaque)
+                .unwrap_or(caps.alpha_modes[0]);
+
+            let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Fifo) {
+                wgpu::PresentMode::Fifo
+            } else {
+                caps.present_modes[0]
+            };
+
+            let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: width.max(1),
+                height: height.max(1),
+                present_mode,
+                desired_maximum_frame_latency: 2,
+                alpha_mode,
+                view_formats: vec![],
+            };
+            surface.configure(&device, &config);
+
+            let copy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("copy"),
+                source: wgpu::ShaderSource::Wgsl(COPY_SHADER.into()),
+            });
+            let copy_bind_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("copy-bind"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+            let copy_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("copy-layout"),
+                bind_group_layouts: &[&copy_bind_layout],
+                push_constant_ranges: &[],
+            });
+            let copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("copy-pipeline"),
+                layout: Some(&copy_layout),
+                vertex: wgpu::VertexState {
+                    module: &copy_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &copy_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+            let copy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("copy-sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            });
+
+            Some(NativeSurfaceState {
+                surface,
+                config,
+                copy_pipeline,
+                copy_bind_layout,
+                copy_sampler,
+            })
+        } else {
+            None
+        };
+
         let mut gpu = Self {
             device,
             queue,
@@ -314,6 +515,7 @@ impl GpuRenderer {
             blit_pipeline,
             blit_bind_layout,
             blit_sampler,
+            native,
         };
         gpu.resize(width, height);
         Ok(gpu)
@@ -324,9 +526,13 @@ impl GpuRenderer {
         &self.backend_name
     }
 
-    /// How this renderer presents frames (always readback until Surface lands).
+    /// How this renderer presents frames.
     pub fn present_path(&self) -> GpuPresentPath {
-        GpuPresentPath::ReadbackSoftbuffer
+        if self.native.is_some() {
+            GpuPresentPath::NativeSurface
+        } else {
+            GpuPresentPath::ReadbackSoftbuffer
+        }
     }
 
     /// Clear / background color.
@@ -337,6 +543,73 @@ impl GpuRenderer {
     /// Update clear color.
     pub fn set_clear_color(&mut self, clear: Color) {
         self.clear = clear;
+    }
+
+    /// Upload CPU XRGB8888 pixels and present via the native surface (Soft-on-GPU window).
+    ///
+    /// No-op / error if this renderer is readback-only.
+    pub fn present_xrgb_frame(
+        &mut self,
+        width: u32,
+        height: u32,
+        pixels: &[u32],
+    ) -> Result<(), GpuInitError> {
+        if self.native.is_none() {
+            return Err(GpuInitError::new(
+                "present_xrgb_frame requires NativeSurface path",
+            ));
+        }
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        if pixels.len() < (width as usize) * (height as usize) {
+            return Err(GpuInitError::new("pixel buffer too small"));
+        }
+        if width != self.width || height != self.height {
+            self.resize(width, height);
+        }
+        self.ensure_target();
+        let Some(target) = self.target.as_ref() else {
+            return Ok(());
+        };
+
+        // Convert XRGB → RGBA bytes for write_texture.
+        let mut rgba = vec![0u8; (width as usize) * (height as usize) * 4];
+        for (i, px) in pixels[..(width as usize) * (height as usize)]
+            .iter()
+            .enumerate()
+        {
+            let r = ((*px >> 16) & 0xff) as u8;
+            let g = ((*px >> 8) & 0xff) as u8;
+            let b = (*px & 0xff) as u8;
+            let o = i * 4;
+            rgba[o] = r;
+            rgba[o + 1] = g;
+            rgba[o + 2] = b;
+            rgba[o + 3] = 255;
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target.color,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.blit_offscreen_to_surface()
+            .map_err(GpuInitError::new)?;
+        Ok(())
     }
 
     fn ensure_target(&mut self) {
@@ -352,6 +625,11 @@ impl GpuRenderer {
             return;
         }
 
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::TEXTURE_BINDING;
+
         let color = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gpu-color"),
             size: wgpu::Extent3d {
@@ -363,23 +641,25 @@ impl GpuRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
+            usage,
             view_formats: &[],
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let unpadded_bytes_per_row = self.width * 4;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
-        let staging_size = padded_bytes_per_row as u64 * self.height as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu-staging"),
-            size: staging_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging = if self.native.is_none() {
+            let unpadded_bytes_per_row = self.width * 4;
+            let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+            let staging_size = padded_bytes_per_row as u64 * self.height as u64;
+            Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu-staging"),
+                size: staging_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }))
+        } else {
+            None
+        };
 
         self.target = Some(TargetTextures {
             color,
@@ -488,6 +768,9 @@ impl GpuRenderer {
         let Some(target) = self.target.as_ref() else {
             return;
         };
+        let Some(staging) = target.staging.as_ref() else {
+            return;
+        };
         if self.width == 0 || self.height == 0 {
             return;
         }
@@ -509,7 +792,7 @@ impl GpuRenderer {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &target.staging,
+                buffer: staging,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded),
@@ -524,7 +807,7 @@ impl GpuRenderer {
         );
         self.queue.submit(Some(encoder.finish()));
 
-        let slice = target.staging.slice(..);
+        let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
@@ -552,7 +835,78 @@ impl GpuRenderer {
             }
         }
         drop(data);
-        target.staging.unmap();
+        staging.unmap();
+    }
+
+    fn blit_offscreen_to_surface(&mut self) -> Result<(), String> {
+        let Some(native) = self.native.as_ref() else {
+            return Ok(());
+        };
+        let Some(target) = self.target.as_ref() else {
+            return Ok(());
+        };
+        if self.width == 0 || self.height == 0 {
+            return Ok(());
+        }
+
+        let frame = match native.surface.get_current_texture() {
+            Ok(f) => f,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                // Reconfigure and retry once.
+                native.surface.configure(&self.device, &native.config);
+                native
+                    .surface
+                    .get_current_texture()
+                    .map_err(|e| format!("get_current_texture retry: {e}"))?
+            }
+            Err(e) => return Err(format!("get_current_texture: {e}")),
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("copy-bg"),
+            layout: &native.copy_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&target.color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&native.copy_sampler),
+                },
+            ],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("surface-blit"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("surface-copy"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&native.copy_pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+        Ok(())
     }
 
     fn upload_mask(
@@ -611,6 +965,18 @@ impl GpuRenderer {
         });
         (texture, bind)
     }
+
+    fn configure_surface_size(&mut self, width: u32, height: u32) {
+        if let Some(native) = self.native.as_mut() {
+            let w = width.max(1);
+            let h = height.max(1);
+            if native.config.width != w || native.config.height != h {
+                native.config.width = w;
+                native.config.height = h;
+                native.surface.configure(&self.device, &native.config);
+            }
+        }
+    }
 }
 
 impl Renderer for GpuRenderer {
@@ -623,6 +989,7 @@ impl Renderer for GpuRenderer {
         for p in &mut self.pixels {
             *p = clear_px;
         }
+        self.configure_surface_size(width, height);
         self.ensure_target();
     }
 
@@ -643,7 +1010,6 @@ impl Renderer for GpuRenderer {
                 label: Some("gpu-frame"),
             });
 
-        // Keep mask textures alive for the submit.
         let mut mask_keep: Vec<(wgpu::Texture, wgpu::BindGroup)> = Vec::new();
         let mut solid_bufs: Vec<wgpu::Buffer> = Vec::new();
         let mut blit_bufs: Vec<wgpu::Buffer> = Vec::new();
@@ -671,7 +1037,6 @@ impl Renderer for GpuRenderer {
                 };
                 pass.set_scissor_rect(sx, sy, sw, sh);
 
-                // Clear dirty patch.
                 let clear_verts = Self::solid_quad(d, self.clear, fw, fh);
                 let clear_buf = self
                     .device
@@ -750,11 +1115,21 @@ impl Renderer for GpuRenderer {
         drop(solid_bufs);
         drop(blit_bufs);
 
-        self.readback_to_pixels();
+        if self.native.is_some() {
+            if let Err(e) = self.blit_offscreen_to_surface() {
+                eprintln!("next-gui-render-gpu: surface present failed: {e}");
+            }
+        } else {
+            self.readback_to_pixels();
+        }
     }
 
     fn frame_pixels(&self) -> Option<(&[u32], u32, u32)> {
-        Some((&self.pixels, self.width, self.height))
+        if self.native.is_some() {
+            None
+        } else {
+            Some((&self.pixels, self.width, self.height))
+        }
     }
 }
 
@@ -769,6 +1144,7 @@ mod tests {
         match GpuRenderer::try_new(32, 32, Color::rgb(0, 0, 0)) {
             Ok(gpu) => {
                 assert!(!gpu.backend_name().is_empty());
+                assert_eq!(gpu.present_path(), GpuPresentPath::ReadbackSoftbuffer);
                 let mut dirty = DirtyRegion::new();
                 dirty.add(Rect::new(0.0, 0.0, 32.0, 32.0));
                 let cmds = [DrawCommand::FillRect {
@@ -780,7 +1156,6 @@ mod tests {
                 let (px, w, h) = gpu.frame_pixels().unwrap();
                 assert_eq!((w, h), (32, 32));
                 let p = px[(4 * 32 + 4) as usize];
-                // Allow some variance; expect red-ish in low bits of XRGB.
                 let r = (p >> 16) & 0xff;
                 assert!(r > 200, "expected red pixel, got {p:#x}");
             }

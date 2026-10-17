@@ -1,9 +1,11 @@
-//! Office-line demo: toolbar Row + content panel; GPU preferred, Soft fallback.
+//! Office-line demo: toolbar Row + content panel; native GPU Surface when available.
 //!
 //! Space toggles Soft ↔ GPU when available. Escape / close to quit.
 
 use next_gui_layout::CrossAlign;
-use next_gui_platform::{AppCallbacks, Event, KeyCode, PointerButton, WindowAttrs, WindowCtx};
+use next_gui_platform::{
+    AppCallbacks, Event, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
+};
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
@@ -33,7 +35,7 @@ impl Backend {
 
     fn detail(&self) -> String {
         match self {
-            Backend::Soft(_) => "CPU softbuffer".into(),
+            Backend::Soft(_) => "CPU soft / softbuffer-or-surface-blit".into(),
             Backend::Gpu(g) => {
                 let path = match g.present_path() {
                     GpuPresentPath::ReadbackSoftbuffer => "readback→softbuffer",
@@ -61,21 +63,19 @@ impl Backend {
             Backend::Gpu(g) => g.render(cmds, dirty),
         }
     }
-
-    fn frame_pixels(&self) -> Option<(&[u32], u32, u32)> {
-        match self {
-            Backend::Soft(s) => s.frame_pixels(),
-            Backend::Gpu(g) => g.frame_pixels(),
-        }
-    }
 }
 
 struct Demo {
     scene: Scene,
     ui: Ui,
+    /// Active Soft or GPU backend (GPU may be created in `on_start` for native surface).
     backend: Backend,
+    /// Stashed GPU when toggling to Soft on a Softbuffer window (readback path).
     gpu_stash: Option<GpuRenderer>,
+    /// On GpuSurface windows, Soft still needs the GPU for surface blit present.
+    surface_gpu: Option<GpuRenderer>,
     using_gpu: bool,
+    window_backend: PresentBackend,
     status: WidgetId,
     hint: WidgetId,
     btn_open: WidgetId,
@@ -83,29 +83,15 @@ struct Demo {
     btn_inc: WidgetId,
     count: i32,
     needs_paint: bool,
+    pending_native: bool,
 }
 
 impl Demo {
-    fn new(width: u32, height: u32) -> Self {
+    fn new_soft(width: u32, height: u32, window_backend: PresentBackend) -> Self {
         let font = load_default_cjk_font().unwrap_or_else(|e| {
             eprintln!("font error: {e}");
             std::process::exit(1);
         });
-
-        let (backend, using_gpu) = match GpuRenderer::try_new(width, height, CLEAR) {
-            Ok(gpu) => {
-                eprintln!(
-                    "office_panel: GPU ready ({}, present={:?}); Soft fallback via Space",
-                    gpu.backend_name(),
-                    gpu.present_path()
-                );
-                (Backend::Gpu(gpu), true)
-            }
-            Err(e) => {
-                eprintln!("office_panel: GPU unavailable ({e}); Soft only");
-                (Backend::Soft(SoftRenderer::new(width, height, CLEAR)), false)
-            }
-        };
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
@@ -159,11 +145,7 @@ impl Demo {
                 );
                 col.separator();
                 hint = col.text_styled(
-                    if using_gpu {
-                        "Space: Soft ↔ GPU · present still readback→softbuffer (see docs/office-line.md)"
-                    } else {
-                        "GPU unavailable — Soft only"
-                    },
+                    "starting…",
                     Color::rgb(0xa0, 0xa8, 0xb4),
                     14.0,
                 );
@@ -178,12 +160,15 @@ impl Demo {
         ui.sync(&mut scene);
         scene.mark_full_dirty(width as f32, height as f32);
 
+        let pending_native = window_backend == PresentBackend::GpuSurface;
         Self {
             scene,
             ui,
-            backend,
+            backend: Backend::Soft(SoftRenderer::new(width, height, CLEAR)),
             gpu_stash: None,
-            using_gpu,
+            surface_gpu: None,
+            using_gpu: false,
+            window_backend,
             status,
             hint,
             btn_open,
@@ -191,6 +176,7 @@ impl Demo {
             btn_inc,
             count: 0,
             needs_paint: true,
+            pending_native,
         }
     }
 
@@ -201,55 +187,186 @@ impl Demo {
         self.needs_paint = true;
     }
 
-    fn toggle(&mut self, w: u32, h: u32) {
-        if !self.using_gpu {
-            match self.gpu_stash.take() {
-                Some(mut gpu) => {
-                    gpu.resize(w, h);
-                    self.backend = Backend::Gpu(gpu);
-                    self.using_gpu = true;
-                }
-                None => match GpuRenderer::try_new(w, h, CLEAR) {
-                    Ok(gpu) => {
-                        self.backend = Backend::Gpu(gpu);
-                        self.using_gpu = true;
-                    }
-                    Err(e) => {
-                        eprintln!("toggle: GPU unavailable: {e}");
-                        return;
-                    }
-                },
+    fn set_hint_for_mode(&mut self) {
+        let hint = match (self.window_backend, self.using_gpu) {
+            (PresentBackend::GpuSurface, true) => {
+                "Space: Soft ↔ GPU · present = native wgpu Surface"
             }
-        } else if let Backend::Gpu(gpu) = std::mem::replace(
-            &mut self.backend,
-            Backend::Soft(SoftRenderer::new(w, h, CLEAR)),
-        ) {
-            self.gpu_stash = Some(gpu);
-            self.using_gpu = false;
-        }
-        let hint = if self.using_gpu || self.gpu_stash.is_some() {
-            "Space: Soft ↔ GPU · present still readback→softbuffer (see docs/office-line.md)"
-        } else {
-            "GPU unavailable — Soft only"
+            (PresentBackend::GpuSurface, false) => {
+                "Space: Soft ↔ GPU · Soft blits via Surface (no softbuffer)"
+            }
+            (PresentBackend::Softbuffer, true) => {
+                "Space: Soft ↔ GPU · present = readback→softbuffer"
+            }
+            (PresentBackend::Softbuffer, false) => {
+                if self.gpu_stash.is_some() {
+                    "Space: Soft ↔ GPU · Soft softbuffer"
+                } else {
+                    "GPU unavailable — Soft only"
+                }
+            }
         };
         self.ui.set_text(self.hint, hint);
+    }
+
+    fn toggle(&mut self, w: u32, h: u32) {
+        match self.window_backend {
+            PresentBackend::GpuSurface => {
+                if self.using_gpu {
+                    // GPU → Soft (keep surface_gpu for blit present)
+                    if let Backend::Gpu(gpu) = std::mem::replace(
+                        &mut self.backend,
+                        Backend::Soft(SoftRenderer::new(w, h, CLEAR)),
+                    ) {
+                        self.surface_gpu = Some(gpu);
+                    }
+                    self.using_gpu = false;
+                } else {
+                    // Soft → GPU
+                    match self.surface_gpu.take() {
+                        Some(mut gpu) => {
+                            gpu.resize(w, h);
+                            self.backend = Backend::Gpu(gpu);
+                            self.using_gpu = true;
+                        }
+                        None => {
+                            eprintln!("toggle: no native GPU available");
+                            return;
+                        }
+                    }
+                }
+            }
+            PresentBackend::Softbuffer => {
+                if !self.using_gpu {
+                    match self.gpu_stash.take() {
+                        Some(mut gpu) => {
+                            gpu.resize(w, h);
+                            self.backend = Backend::Gpu(gpu);
+                            self.using_gpu = true;
+                        }
+                        None => match GpuRenderer::try_new(w, h, CLEAR) {
+                            Ok(gpu) => {
+                                self.backend = Backend::Gpu(gpu);
+                                self.using_gpu = true;
+                            }
+                            Err(e) => {
+                                eprintln!("toggle: GPU unavailable: {e}");
+                                return;
+                            }
+                        },
+                    }
+                } else if let Backend::Gpu(gpu) = std::mem::replace(
+                    &mut self.backend,
+                    Backend::Soft(SoftRenderer::new(w, h, CLEAR)),
+                ) {
+                    self.gpu_stash = Some(gpu);
+                    self.using_gpu = false;
+                }
+            }
+        }
+        self.set_hint_for_mode();
         self.refresh();
         self.scene.mark_full_dirty(w as f32, h as f32);
-        eprintln!("switched to {} ({})", self.backend.name(), self.backend.detail());
+        eprintln!(
+            "switched to {} ({})",
+            self.backend.name(),
+            self.backend.detail()
+        );
+    }
+
+    fn present_frame(&mut self, ctx: &mut WindowCtx<'_>) {
+        match &mut self.backend {
+            Backend::Gpu(g) => {
+                if g.present_path() == GpuPresentPath::NativeSurface {
+                    // Already presented inside GpuRenderer::render.
+                    return;
+                }
+                if let Some((pixels, w, h)) = g.frame_pixels() {
+                    if let Err(e) = ctx.present(w, h, pixels) {
+                        eprintln!("present error: {e}");
+                    }
+                }
+            }
+            Backend::Soft(s) => {
+                let Some((pixels, w, h)) = s.frame_pixels() else {
+                    return;
+                };
+                let pixels = pixels.to_vec();
+                match self.window_backend {
+                    PresentBackend::Softbuffer => {
+                        if let Err(e) = ctx.present(w, h, &pixels) {
+                            eprintln!("present error: {e}");
+                        }
+                    }
+                    PresentBackend::GpuSurface => {
+                        if let Some(gpu) = self.surface_gpu.as_mut() {
+                            if let Err(e) = gpu.present_xrgb_frame(w, h, &pixels) {
+                                eprintln!("surface soft blit error: {e}");
+                            }
+                        } else {
+                            eprintln!("Soft on GpuSurface but no surface_gpu for blit");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 impl AppCallbacks for Demo {
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>) {
         let (w, h) = ctx.size();
+        if self.pending_native {
+            self.pending_native = false;
+            let window = ctx.winit_window();
+            match GpuRenderer::try_new_native(window, w, h, CLEAR) {
+                Ok(gpu) => {
+                    eprintln!(
+                        "office_panel: native Surface ready ({}, present={:?})",
+                        gpu.backend_name(),
+                        gpu.present_path()
+                    );
+                    self.backend = Backend::Gpu(gpu);
+                    self.using_gpu = true;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "office_panel: native Surface failed ({e}); Soft needs softbuffer — exit"
+                    );
+                    eprintln!(
+                        "hint: start with Softbuffer window if GPU surface init fails"
+                    );
+                    std::process::exit(1);
+                }
+            }
+        } else if matches!(self.window_backend, PresentBackend::Softbuffer) {
+            match GpuRenderer::try_new(w, h, CLEAR) {
+                Ok(gpu) => {
+                    eprintln!(
+                        "office_panel: GPU readback ready ({}, present={:?})",
+                        gpu.backend_name(),
+                        gpu.present_path()
+                    );
+                    self.backend = Backend::Gpu(gpu);
+                    self.using_gpu = true;
+                }
+                Err(e) => {
+                    eprintln!("office_panel: GPU unavailable ({e}); Soft only");
+                }
+            }
+        }
+
+        self.set_hint_for_mode();
+        self.refresh();
+        self.scene.mark_full_dirty(w as f32, h as f32);
         eprintln!(
-            "office_panel ready {}x{} backend={} ({})",
+            "office_panel ready {}x{} backend={} ({}) window={:?}",
             w,
             h,
             self.backend.name(),
-            self.backend.detail()
+            self.backend.detail(),
+            self.window_backend
         );
-        self.refresh();
         ctx.set_title(&format!("next-gui Office — {}", self.backend.name()));
         ctx.request_redraw();
     }
@@ -259,6 +376,9 @@ impl AppCallbacks for Demo {
             Event::Resized { width, height, .. } => {
                 self.backend.resize(width, height);
                 if let Some(g) = self.gpu_stash.as_mut() {
+                    g.resize(width, height);
+                }
+                if let Some(g) = self.surface_gpu.as_mut() {
                     g.resize(width, height);
                 }
                 self.ui.sync(&mut self.scene);
@@ -313,18 +433,22 @@ impl AppCallbacks for Demo {
         }
         let cmds = encode_scene(&self.scene, &dirty);
         self.backend.render(&cmds, &dirty);
-        if let Some((pixels, w, h)) = self.backend.frame_pixels() {
-            if let Err(e) = ctx.present(w, h, pixels) {
-                eprintln!("present error: {e}");
-            }
-        }
+        self.present_frame(ctx);
         self.needs_paint = false;
     }
 }
 
 fn main() {
-    let attrs = WindowAttrs::new("next-gui Office panel", 820, 560);
-    let demo = Demo::new(attrs.width, attrs.height);
+    // Prefer GpuSurface when an adapter exists; else Softbuffer.
+    let use_native = GpuRenderer::adapter_available();
+    let attrs = if use_native {
+        eprintln!("office_panel: adapter found → PresentBackend::GpuSurface");
+        WindowAttrs::new("next-gui Office panel", 820, 560).with_gpu_surface()
+    } else {
+        eprintln!("office_panel: no adapter → PresentBackend::Softbuffer");
+        WindowAttrs::new("next-gui Office panel", 820, 560)
+    };
+    let demo = Demo::new_soft(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
     let result = next_gui_platform::macos::run(attrs, demo);
     #[cfg(not(target_os = "macos"))]
