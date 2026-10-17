@@ -47,7 +47,7 @@ encode_scene → DrawCommand[] → wgpu 离屏 → CPU readback (XRGB)
 或纯 Soft：`SoftRenderer` → `platform.present`。
 
 `PresentBackend::Softbuffer` 建窗；`GpuRenderer::try_new` → `GpuPresentPath::ReadbackSoftbuffer`。
-P3 示例 `p3_backend_toggle` 仍走此路径。
+P3 示例 `e05_backend_toggle` 仍走此路径。
 
 ### 2.3 Soft ↔ GPU 在 GpuSurface 窗口上
 
@@ -110,13 +110,13 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 
 示例：
 
-- `examples/office_panel` — 早期 Row 工具条 + Soft/GPU 切换
-- `examples/office_shell` — **P0 shell**：Toolbar + Icon + Panel + Splitter + StatusBar
-- `examples/office_inputs` — **P0 input**：ScrollArea + TextInput + Checkbox + Radio + Switch
-- `examples/office_data` — **P0 data**：List + Tree + Table
-- `examples/office_nav` — **P0 nav**：Menu + ContextMenu + Tabs + Select + Slider
-- `examples/office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
-- `examples/office_p1` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
+- `examples/10_office_panel` — 早期 Row 工具条 + Soft/GPU 切换
+- `examples/11_office_shell` — **P0 shell**：Toolbar + Icon + Panel + Splitter + StatusBar
+- `examples/12_office_inputs` — **P0 input**：ScrollArea + TextInput + Checkbox + Radio + Switch
+- `examples/13_office_data` — **P0 data**：List + Tree + Table
+- `examples/14_office_nav` — **P0 nav**：Menu + ContextMenu + Tabs + Select + Slider
+- `examples/15_office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
+- `examples/20_office_industrial` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
 
 Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心（TreeSelect/Form/AlarmList/Gauge/Trend）已落地**。下一步：其余 P1（Drawer、虚表等）或增强（IME、虚拟化）。
 
@@ -161,6 +161,6 @@ P5 Immediate → P6 工业打磨
 | 路线图 | P4 标明推迟；指向本文 |
 | **视觉自测** | 新控件/示例合入前须跑相关 example，核对照面布局与交互是否符合预期；有桌面时截图复查。仅编译/单测不算 UI 完成（见 [AGENTS.md](../AGENTS.md) Git Workflow / QA） |
 
-运行：`cargo run -p office_panel`（需图形会话；CJK 字体同 P2）。
+运行：`cargo run -p e10_office_panel`（需图形会话；CJK 字体同 P2）。
 有适配器时应看到：`native Surface ready (…, present=NativeSurface)`。
-Office 切片示例：`office_shell` / `office_inputs` / `office_data` / `office_nav` / `office_feedback` / `office_p1`。
+Office 切片示例：`e11_office_shell` / `e12_office_inputs` / `e13_office_data` / `e14_office_nav` / `e15_office_feedback` / `e20_office_industrial`。

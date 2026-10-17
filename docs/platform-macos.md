@@ -63,7 +63,7 @@ crates/next-gui-platform/
 
 - [x] Documented as **Office only** (README / this doc); no Field acceptance criteria on Mac
 - [x] Soft-render path works first (Office may add GPU later; do not block on Metal)
-- [x] No changes that break `cargo run -p p0_soft_window` or `p1_counter` on Linux
+- [x] No changes that break `cargo run -p e01_soft_window` or `e02_counter` on Linux
 
 ### 4.3 Integration
 
@@ -88,14 +88,14 @@ On a Mac:
 ```bash
 cargo check -p next-gui-platform --features macos
 # after real windowing:
-cargo run -p p0_soft_window   # or cfg'd mac example
-cargo run -p p1_counter
+cargo run -p e01_soft_window   # or cfg'd mac example
+cargo run -p e02_counter
 ```
 
 On Linux (must stay green):
 
 ```bash
-cargo build -p p0_soft_window -p p1_counter
+cargo build -p e01_soft_window -p e02_counter
 cargo check -p next-gui-platform --features macos   # cross-target typecheck
 ```
 

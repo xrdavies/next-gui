@@ -25,7 +25,7 @@
 | CJK | 「你好」「工业」等与 Latin 同框可栅格且非空 mask |
 | 渲染 | 软渲染 `BlitAlpha` 按 coverage tint；无 GPU |
 | UI | P1 计数器仍可用；点阵 `bitmap_font` 移除 |
-| 示例 | `cargo run -p p2_cjk_text` 显示中英标题与按钮 |
+| 示例 | `cargo run -p e04_cjk_text` 显示中英标题与按钮 |
 | 测试 | `cargo test -p next-gui-text -p next-gui-ui -p next-gui-render-soft` |
 
 ### 1.3 本阶段明确不做
@@ -45,7 +45,7 @@ crates/next-gui-scene/    # Node.mask: Option<AlphaMask>
 crates/next-gui-render/   # DrawCommand::BlitAlpha
 crates/next-gui-render-soft/
 crates/next-gui-ui/       # uses text for measure + paint
-examples/p2_cjk_text/
+examples/04_cjk_text/
 ```
 
 ```text
@@ -95,7 +95,7 @@ Debian/Ubuntu：`sudo apt install fonts-noto-cjk`
 ## 6. 示例
 
 ```bash
-cargo run -p p2_cjk_text
+cargo run -p e04_cjk_text
 ```
 
 显示「next-gui P2 — 文本 / CJK」「Hello 工业界面 · 你好世界」与中英按钮；点击更新「计数 Count: N」。

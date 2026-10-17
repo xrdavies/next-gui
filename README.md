@@ -59,33 +59,33 @@
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
 ```bash
-cargo run -p office_shell     # P0 shell: Toolbar/Icon/Panel/Splitter/StatusBar
-cargo run -p office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Switch
-cargo run -p office_data      # P0 data: List/Tree/Table
-cargo run -p office_nav                        # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
-cargo run -p office_feedback                   # P0 feedback: Tag/Badge/Tooltip/Modal/Progress/Alert
-cargo run -p office_p1                         # P1: TreeSelect/Form/AlarmList/Gauge/Trend
-cargo run -p office_panel     # 早期 Row 工具条 demo
+cargo run -p e11_office_shell     # P0 shell: Toolbar/Icon/Panel/Splitter/StatusBar
+cargo run -p e12_office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Switch
+cargo run -p e13_office_data      # P0 data: List/Tree/Table
+cargo run -p e14_office_nav                        # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
+cargo run -p e15_office_feedback                   # P0 feedback: Tag/Badge/Tooltip/Modal/Progress/Alert
+cargo run -p e20_office_industrial                         # P1: TreeSelect/Form/AlarmList/Gauge/Trend
+cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 ```
 
-`office_shell`：拖拽中间 sash 调整左右面板；工具条 **Open** / **Save** / **Inc**；**Space** 切换 Soft ↔ GPU（有适配器时）。
+`e11_office_shell`：拖拽中间 sash 调整左右面板；工具条 **Open** / **Save** / **Inc**；**Space** 切换 Soft ↔ GPU（有适配器时）。
 
-`office_inputs`：单行输入（ASCII）、Checkbox/Radio/Switch、ScrollArea 滚轮/拖拽；焦点上 **Space** 切换开关，无焦点时 **Space** 切 Soft↔GPU。IME/CJK 组合输入仍为 stub。
+`e12_office_inputs`：单行输入（ASCII）、Checkbox/Radio/Switch、ScrollArea 滚轮/拖拽；焦点上 **Space** 切换开关，无焦点时 **Space** 切 Soft↔GPU。IME/CJK 组合输入仍为 stub。
 
-`office_data`：左 Tree（厂站层级）+ 右 List/Table；点击选中，**↑↓** 导航（Tree 另支持 **←→** 展开/折叠）；滚轮/拖拽滚动；无焦点 **Space** 切 Soft↔GPU。无虚拟化、无单元格编辑、列宽拖拽为 stub。
+`e13_office_data`：左 Tree（厂站层级）+ 右 List/Table；点击选中，**↑↓** 导航（Tree 另支持 **←→** 展开/折叠）；滚轮/拖拽滚动；无焦点 **Space** 切 Soft↔GPU。无虚拟化、无单元格编辑、列宽拖拽为 stub。
 
-`office_nav`：菜单栏下拉、右键 ContextMenu、Tabs、Select、Slider；**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。无嵌套子菜单、无多选 Select、无垂直 Slider。
+`e14_office_nav`：菜单栏下拉、右键 ContextMenu、Tabs、Select、Slider；**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。无嵌套子菜单、无多选 Select、无垂直 Slider。
 
-`office_feedback`：Tag/Badge/Tooltip/Modal/Progress/Alert；悬停工具条图标出提示；Alert × 关闭；Open Modal；**Esc**/×/按钮关对话框。
+`e15_office_feedback`：Tag/Badge/Tooltip/Modal/Progress/Alert；悬停工具条图标出提示；Alert × 关闭；Open Modal；**Esc**/×/按钮关对话框。
 
-`office_p1`：TreeSelect 选厂站/间隔；Form 校验（Required/Digits/MinLength）；AlarmList 分级闪烁与 Enter/Space 确认；Gauge/Trend 实时刷新。**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。IME 仍后置。
+`e20_office_industrial`：TreeSelect 选厂站/间隔；Form 校验（Required/Digits/MinLength）；AlarmList 分级闪烁与 Enter/Space 确认；Gauge/Trend 实时刷新。**Esc** 关弹层；无焦点 **Space** 切 Soft↔GPU。IME 仍后置。
 
 默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 
 ### 试跑 P3（Linux/macOS，需要图形桌面会话；GPU 可选）
 
 ```bash
-cargo run -p p3_backend_toggle
+cargo run -p e05_backend_toggle
 ```
 
 操作：点击 **Increment** / **Reset**；有 GPU 时按 **Space** 在 Soft ↔ GPU 间切换（标题与 stderr 显示当前后端）。无 GPU 时自动 Soft。需 CJK 字体（同 P2）。
@@ -93,7 +93,7 @@ cargo run -p p3_backend_toggle
 ### 试跑 P2（Linux/macOS，需要图形桌面会话 + CJK 字体）
 
 ```bash
-cargo run -p p2_cjk_text
+cargo run -p e04_cjk_text
 ```
 
 操作：查看中英标题与混排文案；点击 **增加 Increment** / **重置 Reset**。系统需有 Noto Sans CJK（Debian/Ubuntu：`fonts-noto-cjk`）或 macOS PingFang / Windows 雅黑。
@@ -101,8 +101,8 @@ cargo run -p p2_cjk_text
 ### 试跑 P1（Linux/macOS，需要图形桌面会话）
 
 ```bash
-cargo run -p p1_counter          # Rust builder API
-cargo run -p p1_ngui_counter     # load examples/p1_ngui_counter/ui/counter.ngui
+cargo run -p e02_counter          # Rust builder API
+cargo run -p e03_ngui_counter     # load examples/03_ngui_counter/ui/counter.ngui
 ```
 
 操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。`.ngui` 语法见 [docs/p1-design.md](docs/p1-design.md)。
@@ -110,7 +110,7 @@ cargo run -p p1_ngui_counter     # load examples/p1_ngui_counter/ui/counter.ngui
 ### 试跑 P0（Linux/macOS，需要图形桌面会话）
 
 ```bash
-cargo run -p p0_soft_window
+cargo run -p e01_soft_window
 ```
 
 操作：左键点击色块换色；`Space` 轮换全部色块；`Esc` 退出。stderr 会打印每帧脏区面积。

@@ -98,13 +98,42 @@ finding heading. New runs may reference earlier findings instead of duplicating 
 Never delete a finding. Record a reason for `blocked` or `wont_fix`; a reviewer must
 confirm `wont_fix`. Reopen a failed fix as `open` and preserve the earlier evidence.
 
+## Examples naming
+
+Example **directories** use a single global order: `NN_topic` (zero-padded number +
+underscore + snake_case topic), e.g. `examples/01_soft_window`,
+`examples/11_office_shell`, `examples/20_office_industrial`.
+
+Cargo **package / bin** names cannot start with a digit, so they take an `e` prefix:
+`eNN_topic` (e = example). Run with `cargo run -p e11_office_shell`.
+
+Phase labels (P0 / P1 / Office slice) belong in docs and commit messages only — not in
+folder names. Do not reintroduce `p0_` / `p1_` / bare `office_*` example paths.
+
+Current map (dir → `cargo run -p`):
+
+| Directory | Package |
+|-----------|---------|
+| `01_soft_window` | `e01_soft_window` |
+| `02_counter` | `e02_counter` |
+| `03_ngui_counter` | `e03_ngui_counter` |
+| `04_cjk_text` | `e04_cjk_text` |
+| `05_backend_toggle` | `e05_backend_toggle` |
+| `10_office_panel` | `e10_office_panel` |
+| `11_office_shell` | `e11_office_shell` |
+| `12_office_inputs` | `e12_office_inputs` |
+| `13_office_data` | `e13_office_data` |
+| `14_office_nav` | `e14_office_nav` |
+| `15_office_feedback` | `e15_office_feedback` |
+| `20_office_industrial` | `e20_office_industrial` |
+
 ## Git Workflow / QA
 
 Compile and unit tests are necessary but **not sufficient** for UI work.
 
 After implementing any new UI feature, widget, layout change, or example:
 
-1. **Run** the relevant example(s) (e.g. `cargo run -p office_shell`) on a real
+1. **Run** the relevant example(s) (e.g. `cargo run -p e11_office_shell`) on a real
    graphical session when available.
 2. **Verify on screen** that layout, spacing, hit targets, keyboard/pointer
    interaction, Soft/GPU present path, and labels match the intended design —
