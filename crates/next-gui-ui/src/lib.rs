@@ -5,17 +5,20 @@
 //!
 //! Office P0 + P1 widgets: shell/input/data/nav/feedback, TreeSelect/Form/AlarmList/Gauge/Trend,
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
-//! Descriptions, Card, Segmented, Breadcrumb, and Pagination. TextInput supports IME (CJK).
+//! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
+//! and TreeTable. TextInput supports IME (CJK). Cascader stays deferred (TreeSelect only).
 
 #![deny(missing_docs)]
 
 mod dsl;
 mod icon;
+mod p1_deferred;
 mod p1_raster;
 mod p1_rest;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
+pub use p1_deferred::*;
 pub use p1_rest::*;
 
 use std::collections::HashMap;
@@ -1847,6 +1850,36 @@ enum Kind {
         total: usize,
         style: PaginationStyle,
     },
+    DateTime {
+        value: DateTimeValue,
+        /// Draft while popup open (committed on Confirm/Enter).
+        draft: DateTimeValue,
+        open: bool,
+        style: DateTimeStyle,
+    },
+    Transfer {
+        source: Vec<TransferItem>,
+        target: Vec<TransferItem>,
+        source_selected: Option<usize>,
+        target_selected: Option<usize>,
+        /// Optional filter substring (source list); empty = show all.
+        filter: String,
+        style: TransferStyle,
+    },
+    PropertyGrid {
+        rows: Vec<PropertyRow>,
+        selected: Option<usize>,
+        scroll_y: f32,
+        style: PropertyGridStyle,
+    },
+    TreeTable {
+        /// Extra column titles (after the tree column).
+        columns: Vec<TableColumn>,
+        roots: Vec<TreeTableNode>,
+        selected: Option<u64>,
+        scroll_y: f32,
+        style: TreeTableStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -2516,6 +2549,22 @@ impl Ui {
                 self.focus = Some(id);
                 return self.pointer_collapse(scene, id, x, y);
             }
+            Some(Kind::DateTime { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_datetime_toggle(scene, id);
+            }
+            Some(Kind::Transfer { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_transfer(scene, id, x, y);
+            }
+            Some(Kind::PropertyGrid { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_property_grid(scene, id, x, y);
+            }
+            Some(Kind::TreeTable { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_tree_table(scene, id, x, y);
+            }
             Some(Kind::Button { .. }) => {
                 self.focus = None;
                 return false; // let app handle button clicks via hit_widget
@@ -2900,7 +2949,7 @@ impl Ui {
     fn is_data_scrollable(&self, id: WidgetId) -> bool {
         matches!(
             self.widgets.get(&id).map(|w| &w.kind),
-            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. })
+            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. } | Kind::PropertyGrid { .. } | Kind::TreeTable { .. })
         )
     }
 
@@ -2914,6 +2963,8 @@ impl Ui {
             Some(Kind::Table { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::AlarmList { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::TreeSelect { scroll_y, open: true, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::PropertyGrid { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::TreeTable { scroll_y, .. }) => Some((0.0, *scroll_y)),
             _ => None,
         }
     }
@@ -2933,7 +2984,9 @@ impl Ui {
                 | Kind::Tree { scroll_y, .. }
                 | Kind::Table { scroll_y, .. }
                 | Kind::AlarmList { scroll_y, .. }
-                | Kind::TreeSelect { scroll_y, .. } => {
+                | Kind::TreeSelect { scroll_y, .. }
+                | Kind::PropertyGrid { scroll_y, .. }
+                | Kind::TreeTable { scroll_y, .. } => {
                     if (ny - *scroll_y).abs() < 0.1 {
                         return false;
                     }
@@ -2973,6 +3026,17 @@ impl Ui {
                 let n = flatten_tree(roots).len();
                 let content = n as f32 * style.row_height;
                 (content - style.popup_max_height).max(0.0)
+            }
+            Some(Kind::PropertyGrid { rows, style, .. }) => {
+                let header = style.row_height;
+                let content = header + rows.len() as f32 * style.row_height;
+                (content - style.height).max(0.0)
+            }
+            Some(Kind::TreeTable { roots, style, .. }) => {
+                let n = flatten_tree_table(roots).len() as f32;
+                let body_h = style.height - style.header_height;
+                let content = n * style.row_height + style.padding;
+                (content - body_h).max(0.0)
             }
             _ => 0.0,
         }
@@ -3137,6 +3201,10 @@ impl Ui {
             Some(Kind::InputNumber { .. }) => self.key_input_number(id, key),
             Some(Kind::Segmented { .. }) => self.key_segmented(id, key),
             Some(Kind::Pagination { .. }) => self.key_pagination(id, key),
+            Some(Kind::DateTime { .. }) => self.key_datetime(id, key),
+            Some(Kind::Transfer { .. }) => self.key_transfer(id, key),
+            Some(Kind::PropertyGrid { .. }) => self.key_property_grid(id, key),
+            Some(Kind::TreeTable { .. }) => self.key_tree_table(id, key),
             Some(Kind::Checkbox { .. }) if matches!(key, UiKey::Space) => {
                 if let Some(w) = self.widgets.get_mut(&id) {
                     if let Kind::Checkbox { checked, .. } = &mut w.kind {
@@ -4050,7 +4118,8 @@ impl Ui {
                 | Kind::Select { open, .. }
                 | Kind::TreeSelect { open, .. }
                 | Kind::Modal { open, .. }
-                | Kind::Drawer { open, .. } => {
+                | Kind::Drawer { open, .. }
+                | Kind::DateTime { open, .. } => {
                     *open = false;
                 }
                 _ => {}
@@ -4553,6 +4622,800 @@ impl Ui {
 
 
 
+    // ----- Office P1 deferred: DateTime / Transfer / PropertyGrid / TreeTable -----
+
+    /// Committed DateTime value.
+    pub fn datetime_value(&self, id: WidgetId) -> Option<DateTimeValue> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::DateTime { value, .. }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Set DateTime value (closes popup).
+    pub fn set_datetime_value(&mut self, id: WidgetId, value: DateTimeValue) -> bool {
+        let value = value.clamp_day();
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::DateTime {
+                value: v,
+                draft,
+                open,
+                ..
+            } = &mut w.kind
+            {
+                *v = value;
+                *draft = value;
+                *open = false;
+                if self.open_popup == Some(id) {
+                    self.open_popup = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether DateTime popup is open.
+    pub fn datetime_open(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::DateTime { open, .. }) => Some(*open),
+            _ => None,
+        }
+    }
+
+    /// Open or close the DateTime picker popup.
+    pub fn set_datetime_open(&mut self, id: WidgetId, open: bool) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::DateTime {
+                value,
+                draft,
+                open: o,
+                ..
+            } = &mut w.kind
+            {
+                if *o == open {
+                    return false;
+                }
+                if open {
+                    *draft = *value;
+                    *o = true;
+                    self.open_popup = Some(id);
+                } else {
+                    *o = false;
+                    if self.open_popup == Some(id) {
+                        self.open_popup = None;
+                    }
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Transfer target (right) items.
+    pub fn transfer_target(&self, id: WidgetId) -> Option<&[TransferItem]> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Transfer { target, .. }) => Some(target.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Transfer source (left) items.
+    pub fn transfer_source(&self, id: WidgetId) -> Option<&[TransferItem]> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Transfer { source, .. }) => Some(source.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Set Transfer filter (source list substring; empty = all).
+    pub fn set_transfer_filter(&mut self, id: WidgetId, filter: impl Into<String>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Transfer { filter: f, .. } = &mut w.kind {
+                *f = filter.into();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// PropertyGrid selected row index.
+    pub fn property_grid_selected(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::PropertyGrid { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// PropertyGrid row value by index.
+    pub fn property_grid_value(&self, id: WidgetId, index: usize) -> Option<&PropertyValue> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::PropertyGrid { rows, .. }) => rows.get(index).map(|r| &r.value),
+            _ => None,
+        }
+    }
+
+    /// Set a PropertyGrid row value.
+    pub fn set_property_grid_value(
+        &mut self,
+        id: WidgetId,
+        index: usize,
+        value: PropertyValue,
+    ) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::PropertyGrid { rows, .. } = &mut w.kind {
+                if let Some(r) = rows.get_mut(index) {
+                    r.value = value;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Selected TreeTable node id.
+    pub fn tree_table_selected(&self, id: WidgetId) -> Option<u64> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TreeTable { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// Set TreeTable selection.
+    pub fn set_tree_table_selected(&mut self, id: WidgetId, node: Option<u64>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::TreeTable { selected, .. } = &mut w.kind {
+                if *selected == node {
+                    return false;
+                }
+                *selected = node;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn pointer_datetime_toggle(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::DateTime { open: true, .. })
+        );
+        if let Some(pid) = self.open_popup {
+            self.hide_popup_aux_mut(scene, pid);
+        }
+        self.close_popup_internal();
+        if was_open {
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::DateTime {
+                value, draft, open, ..
+            } = &mut w.kind
+            {
+                *draft = *value;
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        true
+    }
+
+    fn pointer_datetime_popup(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        // Click on host while open → toggle close.
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(node) = w.node {
+                if let Some(n) = scene.get(node) {
+                    if n.bounds.contains(x, y) {
+                        return self.pointer_datetime_toggle(scene, id);
+                    }
+                }
+            }
+        }
+        let (draft, style, aux) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::DateTime { draft, style, open: true, .. },
+                aux,
+                ..
+            }) => (*draft, *style, aux.clone()),
+            _ => return false,
+        };
+        let Some(&panel) = aux.first() else {
+            return true;
+        };
+        let Some(pb) = scene.get(panel).map(|n| n.bounds) else {
+            return true;
+        };
+        if !pb.contains(x, y) {
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        // Layout: header (month nav) ~30, grid 6*cell, time row, confirm row.
+        let header_h = 30.0;
+        let grid_top = pb.y + header_h;
+        let grid_h = style.cell * 6.0;
+        let time_y = grid_top + grid_h + 4.0;
+        let confirm_y = time_y + 28.0;
+        let local_x = x - pb.x;
+        let local_y = y - pb.y;
+
+        // Month prev / next in header (left/right thirds of header height).
+        if local_y < header_h {
+            if local_x < pb.width * 0.25 {
+                self.datetime_nudge_month(id, -1);
+                return true;
+            }
+            if local_x > pb.width * 0.75 {
+                self.datetime_nudge_month(id, 1);
+                return true;
+            }
+            return true;
+        }
+
+        // Calendar grid: day cells.
+        if y >= grid_top && y < grid_top + grid_h {
+            let col = ((x - pb.x - 8.0) / style.cell).floor() as isize;
+            let row = ((y - grid_top) / style.cell).floor() as isize;
+            if col >= 0 && col < 7 && row >= 0 && row < 6 {
+                let dim = DateTimeValue::days_in_month(draft.year, draft.month) as i32;
+                // Simple: day = row*7+col+1 (no weekday offset MVP).
+                let day = (row * 7 + col + 1) as i32;
+                if day >= 1 && day <= dim {
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::DateTime { draft, .. } = &mut w.kind {
+                            draft.day = day as u8;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Time: hour- / hour+ / min- / min+ in four quarters of time row.
+        if y >= time_y && y < time_y + 28.0 {
+            let q = ((x - pb.x) / (pb.width / 4.0)).floor() as isize;
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::DateTime { draft, .. } = &mut w.kind {
+                    match q {
+                        0 => draft.hour = draft.hour.saturating_sub(1),
+                        1 => draft.hour = (draft.hour + 1).min(23),
+                        2 => draft.minute = draft.minute.saturating_sub(1),
+                        3 => draft.minute = (draft.minute + 1).min(59),
+                        _ => {}
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Confirm / Cancel bottom row.
+        if y >= confirm_y && y < confirm_y + 28.0 {
+            if local_x < pb.width * 0.5 {
+                // Cancel
+                self.hide_popup_aux_mut(scene, id);
+                self.close_popup_internal();
+            } else {
+                // Confirm
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::DateTime {
+                        value, draft, open, ..
+                    } = &mut w.kind
+                    {
+                        *value = draft.clamp_day();
+                        *draft = *value;
+                        *open = false;
+                    }
+                }
+                self.hide_popup_aux_mut(scene, id);
+                self.open_popup = None;
+            }
+            return true;
+        }
+        true
+    }
+
+    fn datetime_nudge_month(&mut self, id: WidgetId, delta: i32) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::DateTime { draft, .. } = &mut w.kind {
+                let mut m = draft.month as i32 + delta;
+                let mut y = draft.year;
+                while m < 1 {
+                    m += 12;
+                    y -= 1;
+                }
+                while m > 12 {
+                    m -= 12;
+                    y += 1;
+                }
+                draft.year = y;
+                draft.month = m as u8;
+                *draft = draft.clamp_day();
+            }
+        }
+    }
+
+    fn key_datetime(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::DateTime { open: true, .. })
+        );
+        match key {
+            UiKey::Enter if open => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::DateTime {
+                        value, draft, open, ..
+                    } = &mut w.kind
+                    {
+                        *value = draft.clamp_day();
+                        *draft = *value;
+                        *open = false;
+                    }
+                }
+                self.open_popup = None;
+                true
+            }
+            UiKey::Escape if open => self.close_popup_internal(),
+            UiKey::Space | UiKey::Enter if !open => {
+                // Open without scene — caller syncs next frame.
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::DateTime {
+                        value, draft, open, ..
+                    } = &mut w.kind
+                    {
+                        *draft = *value;
+                        *open = true;
+                    }
+                }
+                self.open_popup = Some(id);
+                true
+            }
+            UiKey::Left if open => {
+                self.datetime_nudge_month(id, -1);
+                true
+            }
+            UiKey::Right if open => {
+                self.datetime_nudge_month(id, 1);
+                true
+            }
+            UiKey::Up if open => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::DateTime { draft, .. } = &mut w.kind {
+                        draft.hour = (draft.hour + 1).min(23);
+                    }
+                }
+                true
+            }
+            UiKey::Down if open => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::DateTime { draft, .. } = &mut w.kind {
+                        draft.hour = draft.hour.saturating_sub(1);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_transfer(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (style, node, source_len, target_len, filter) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Transfer {
+                        source,
+                        target,
+                        filter,
+                        style,
+                        ..
+                    },
+                node,
+                ..
+            }) => (*style, *node, source.len(), target.len(), filter.clone()),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let list_w = style.list_width;
+        let btn_w = (style.width - list_w * 2.0 - style.gap * 2.0).max(40.0);
+        let left_x = bounds.x;
+        let btn_x = left_x + list_w + style.gap;
+        let right_x = btn_x + btn_w + style.gap;
+        let header_h = 28.0;
+        let body_top = bounds.y + header_h;
+
+        // Button column: four buttons stacked.
+        if x >= btn_x && x < btn_x + btn_w && y >= body_top {
+            let bh = 28.0;
+            let gap = 6.0;
+            let idx = ((y - body_top) / (bh + gap)).floor() as isize;
+            match idx {
+                0 => self.transfer_move_selected(id, true),  // >
+                1 => self.transfer_move_selected(id, false), // <
+                2 => self.transfer_move_all(id, true),       // >>
+                3 => self.transfer_move_all(id, false),      // <<
+                _ => false,
+            };
+            return true;
+        }
+
+        // Left list
+        if x >= left_x && x < left_x + list_w && y >= body_top {
+            let row = ((y - body_top) / style.row_height).floor() as isize;
+            if row >= 0 {
+                let visible = self.transfer_filtered_source_indices(id);
+                if let Some(&si) = visible.get(row as usize) {
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Transfer {
+                            source_selected, ..
+                        } = &mut w.kind
+                        {
+                            *source_selected = Some(si);
+                        }
+                    }
+                    let _ = (source_len, filter);
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        // Right list
+        if x >= right_x && x < right_x + list_w && y >= body_top {
+            let row = ((y - body_top) / style.row_height).floor() as isize;
+            if row >= 0 && (row as usize) < target_len {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Transfer {
+                        target_selected, ..
+                    } = &mut w.kind
+                    {
+                        *target_selected = Some(row as usize);
+                    }
+                }
+                return true;
+            }
+            return true;
+        }
+        true
+    }
+
+    fn transfer_filtered_source_indices(&self, id: WidgetId) -> Vec<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Transfer { source, filter, .. }) => {
+                let f = filter.to_lowercase();
+                source
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, it)| f.is_empty() || it.label.to_lowercase().contains(&f))
+                    .map(|(i, _)| i)
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn transfer_move_selected(&mut self, id: WidgetId, to_target: bool) -> bool {
+        if to_target {
+            let sel = match self.widgets.get(&id).map(|w| &w.kind) {
+                Some(Kind::Transfer {
+                    source_selected, ..
+                }) => *source_selected,
+                _ => return false,
+            };
+            let Some(i) = sel else { return false };
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Transfer {
+                    source,
+                    target,
+                    source_selected,
+                    ..
+                } = &mut w.kind
+                {
+                    if i < source.len() {
+                        let item = source.remove(i);
+                        target.push(item);
+                        *source_selected = None;
+                        return true;
+                    }
+                }
+            }
+        } else {
+            let sel = match self.widgets.get(&id).map(|w| &w.kind) {
+                Some(Kind::Transfer {
+                    target_selected, ..
+                }) => *target_selected,
+                _ => return false,
+            };
+            let Some(i) = sel else { return false };
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Transfer {
+                    source,
+                    target,
+                    target_selected,
+                    ..
+                } = &mut w.kind
+                {
+                    if i < target.len() {
+                        let item = target.remove(i);
+                        source.push(item);
+                        *target_selected = None;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn transfer_move_all(&mut self, id: WidgetId, to_target: bool) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Transfer {
+                source,
+                target,
+                source_selected,
+                target_selected,
+                ..
+            } = &mut w.kind
+            {
+                if to_target {
+                    target.append(source);
+                    *source_selected = None;
+                } else {
+                    source.append(target);
+                    *target_selected = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    fn key_transfer(&mut self, id: WidgetId, key: UiKey) -> bool {
+        match key {
+            UiKey::Right | UiKey::Enter => self.transfer_move_selected(id, true),
+            UiKey::Left => self.transfer_move_selected(id, false),
+            UiKey::Down => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Transfer {
+                        source,
+                        source_selected,
+                        ..
+                    } = &mut w.kind
+                    {
+                        let n = source.len();
+                        if n == 0 {
+                            return false;
+                        }
+                        let next = source_selected.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
+                        *source_selected = Some(next);
+                        return true;
+                    }
+                }
+                false
+            }
+            UiKey::Up => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Transfer {
+                        source_selected, ..
+                    } = &mut w.kind
+                    {
+                        let next = source_selected.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                        *source_selected = Some(next);
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_property_grid(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (rows_len, style, node, scroll_y) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::PropertyGrid {
+                        rows,
+                        style,
+                        scroll_y,
+                        ..
+                    },
+                node,
+                ..
+            }) => (rows.len(), *style, *node, *scroll_y),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let header = style.row_height;
+        if y < bounds.y + header {
+            return true;
+        }
+        let body_y = y - (bounds.y + header) + scroll_y;
+        let row = (body_y / style.row_height).floor() as isize;
+        if row < 0 || (row as usize) >= rows_len {
+            return true;
+        }
+        let i = row as usize;
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::PropertyGrid { selected, .. } = &mut w.kind {
+                *selected = Some(i);
+            }
+        }
+        // Click in value column → interact
+        if x >= bounds.x + style.key_width {
+            self.property_grid_activate(id, i);
+        }
+        true
+    }
+
+    fn property_grid_activate(&mut self, id: WidgetId, index: usize) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::PropertyGrid { rows, .. } = &mut w.kind {
+                if let Some(r) = rows.get_mut(index) {
+                    match &mut r.value {
+                        PropertyValue::Bool(b) => {
+                            *b = !*b;
+                            return true;
+                        }
+                        PropertyValue::Number(n) => {
+                            *n += 1.0;
+                            return true;
+                        }
+                        PropertyValue::Select { options, selected } => {
+                            if !options.is_empty() {
+                                *selected = (*selected + 1) % options.len();
+                                return true;
+                            }
+                        }
+                        PropertyValue::Text(_) => {
+                            // MVP: no inline edit; selection only.
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn key_property_grid(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::PropertyGrid { rows, .. }) => rows.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        match key {
+            UiKey::Down => {
+                let cur = self.property_grid_selected(id).unwrap_or(0);
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::PropertyGrid { selected, .. } = &mut w.kind {
+                        *selected = Some((cur + 1).min(n - 1));
+                    }
+                }
+                true
+            }
+            UiKey::Up => {
+                let cur = self.property_grid_selected(id).unwrap_or(0);
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::PropertyGrid { selected, .. } = &mut w.kind {
+                        *selected = Some(cur.saturating_sub(1));
+                    }
+                }
+                true
+            }
+            UiKey::Space | UiKey::Enter => {
+                if let Some(i) = self.property_grid_selected(id) {
+                    self.property_grid_activate(id, i)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_tree_table(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (flats, style, node, scroll_y) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::TreeTable {
+                        roots,
+                        style,
+                        scroll_y,
+                        ..
+                    },
+                node,
+                ..
+            }) => (flatten_tree_table(roots), *style, *node, *scroll_y),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        if y < bounds.y + style.header_height {
+            return true;
+        }
+        let body_y = y - (bounds.y + style.header_height) + scroll_y;
+        let row = (body_y / style.row_height).floor() as isize;
+        if row < 0 || (row as usize) >= flats.len() {
+            return true;
+        }
+        let flat = &flats[row as usize];
+        // Twisty hit: left indent zone
+        let twisty_right =
+            bounds.x + style.padding + flat.depth as f32 * style.indent + 18.0;
+        if flat.has_children && x < twisty_right {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::TreeTable { roots, .. } = &mut w.kind {
+                    toggle_tree_table_expanded(roots, flat.id);
+                }
+            }
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::TreeTable { selected, .. } = &mut w.kind {
+                *selected = Some(flat.id);
+            }
+        }
+        true
+    }
+
+    fn key_tree_table(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let flats = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TreeTable { roots, .. }) => flatten_tree_table(roots),
+            _ => return false,
+        };
+        if flats.is_empty() {
+            return false;
+        }
+        let sel = self.tree_table_selected(id);
+        let idx = sel.and_then(|s| flats.iter().position(|r| r.id == s));
+        match key {
+            UiKey::Down => {
+                let next = idx.map(|i| (i + 1).min(flats.len() - 1)).unwrap_or(0);
+                self.set_tree_table_selected(id, Some(flats[next].id));
+                true
+            }
+            UiKey::Up => {
+                let next = idx.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                self.set_tree_table_selected(id, Some(flats[next].id));
+                true
+            }
+            UiKey::Left => {
+                if let Some(i) = idx {
+                    if flats[i].has_children && flats[i].expanded {
+                        if let Some(w) = self.widgets.get_mut(&id) {
+                            if let Kind::TreeTable { roots, .. } = &mut w.kind {
+                                toggle_tree_table_expanded(roots, flats[i].id);
+                            }
+                        }
+                        return true;
+                    }
+                }
+                false
+            }
+            UiKey::Right | UiKey::Enter => {
+                if let Some(i) = idx {
+                    if flats[i].has_children && !flats[i].expanded {
+                        if let Some(w) = self.widgets.get_mut(&id) {
+                            if let Kind::TreeTable { roots, .. } = &mut w.kind {
+                                toggle_tree_table_expanded(roots, flats[i].id);
+                            }
+                        }
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+
     /// Progress value in 0..=1.
     pub fn progress_value(&self, id: WidgetId) -> Option<f32> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -4810,6 +5673,12 @@ impl Ui {
         ) {
             return self.pointer_tree_select_popup(scene, id, x, y);
         }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::DateTime { .. })
+        ) {
+            return self.pointer_datetime_popup(scene, id, x, y);
+        }
         // Click on title/host while open → toggle close (Menu/Select).
         if let Some(w) = self.widgets.get(&id) {
             if let Some(node) = w.node {
@@ -4819,6 +5688,7 @@ impl Ui {
                             Kind::Menu { .. } => return self.pointer_menu_title(scene, id),
                             Kind::Select { .. } => return self.pointer_select_toggle(scene, id),
                             Kind::TreeSelect { .. } => return self.pointer_tree_select_toggle(scene, id),
+                            Kind::DateTime { .. } => return self.pointer_datetime_toggle(scene, id),
                             _ => {}
                         }
                     }
@@ -5281,6 +6151,10 @@ impl Ui {
                 Some(Kind::Segmented { style, .. }) => (style.bg, true),
                 Some(Kind::Breadcrumb { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::Pagination { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::DateTime { style, .. }) => (style.bg, true),
+                Some(Kind::Transfer { style, .. }) => (style.bg, true),
+                Some(Kind::PropertyGrid { style, .. }) => (style.bg, true),
+                Some(Kind::TreeTable { style, .. }) => (style.bg, true),
                 None => return,
             };
 
@@ -5516,12 +6390,28 @@ impl Ui {
                 | Some(Kind::Breadcrumb { .. })
                 | Some(Kind::Pagination { .. })
                 | Some(Kind::Collapse { .. })
-                | Some(Kind::Descriptions { .. }) => {
+                | Some(Kind::Descriptions { .. })
+                | Some(Kind::DateTime { .. }) => {
                     self.node_to_widget.insert(node, id);
                     let label = scene
                         .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
                         .expect("insert p1 label");
                     if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Transfer { .. })
+                | Some(Kind::PropertyGrid { .. })
+                | Some(Kind::TreeTable { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x2f, 0x5b, 0xa8))
+                        .expect("insert deferred chrome");
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert deferred label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
                         w.label_node = Some(label);
                     }
                 }
@@ -5832,6 +6722,10 @@ impl Ui {
             Some(Kind::Segmented { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::DateTime { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Transfer { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::PropertyGrid { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::TreeTable { style, .. }) => ChildMeasure::new(style.width, style.height),
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -6855,6 +7749,34 @@ impl Ui {
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::DateTime { .. })
+        ) {
+            self.paint_datetime_field(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Transfer { .. })
+        ) {
+            self.paint_transfer(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::PropertyGrid { .. })
+        ) {
+            self.paint_property_grid(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::TreeTable { .. })
+        ) {
+            self.paint_tree_table(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Slider { .. })
         ) {
             self.paint_slider(scene, id);
@@ -7272,7 +8194,11 @@ impl Ui {
             | Kind::Card { .. }
             | Kind::Segmented { .. }
             | Kind::Breadcrumb { .. }
-            | Kind::Pagination { .. } => {}
+            | Kind::Pagination { .. }
+            | Kind::DateTime { .. }
+            | Kind::Transfer { .. }
+            | Kind::PropertyGrid { .. }
+            | Kind::TreeTable { .. } => {}
         }
     }
 
@@ -8791,6 +9717,641 @@ impl Ui {
         }
     }
 
+    fn paint_datetime_field(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::DateTime { value, open, style, .. },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let text = format!("{}  ▾", value.format_display());
+        let open = *open;
+        let style = *style;
+        let Some(node) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(node, if open { style.focus_border } else { style.bg });
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + style.padding;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, style.fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+    }
+
+    fn paint_datetime_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (draft, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::DateTime { draft, style, open: true, .. },
+                node,
+                ..
+            }) => {
+                let b = node
+                    .and_then(|n| scene.get(n).map(|n| n.bounds))
+                    .unwrap_or_else(Rect::empty);
+                (*draft, *style, b)
+            }
+            _ => return,
+        };
+        let header_h = 30.0;
+        let grid_h = style.cell * 6.0;
+        let popup_h = header_h + grid_h + 28.0 + 28.0 + 16.0;
+        let panel = Rect::new(
+            host_bounds.x,
+            host_bounds.y + host_bounds.height,
+            style.popup_width,
+            popup_h,
+        );
+        // aux: 0=panel, 1=header text, 2..=43 day cells (labels), then time + confirm labels
+        // Keep it simpler: panel + header + time + confirm + up to 31 day labels
+        let needed = 1 + 1 + 31 + 2 + 2;
+        let host = match self.widgets.get(&id).and_then(|w| w.node) {
+            Some(n) => n,
+            None => return,
+        };
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&p) = aux.first() {
+            scene.set_bounds(p, panel);
+            scene.set_fill(p, style.popup_bg);
+            scene.set_mask(p, None);
+            scene.set_visible(p, true);
+        }
+        let header = format!("‹  {:04}-{:02}  ›", draft.year, draft.month);
+        let (_, hm) = self.font.rasterize_text(&header, style.size, None);
+        if let Some(&hlab) = aux.get(1) {
+            scene.set_bounds(
+                hlab,
+                Rect::new(
+                    panel.x + ((panel.width - hm.width as f32) * 0.5).max(0.0),
+                    panel.y + ((header_h - hm.height as f32) * 0.5).max(0.0),
+                    hm.width as f32,
+                    hm.height as f32,
+                ),
+            );
+            scene.set_fill(hlab, style.fg);
+            scene.set_mask(hlab, Some(AlphaMask::new(hm.width, hm.height, hm.pixels)));
+            scene.set_visible(hlab, true);
+        }
+        let dim = DateTimeValue::days_in_month(draft.year, draft.month) as usize;
+        let grid_top = panel.y + header_h;
+        for d in 1..=31 {
+            let slot = 1 + d; // aux[2..] days
+            if d > dim {
+                if let Some(&n) = aux.get(slot) {
+                    scene.set_visible(n, false);
+                }
+                continue;
+            }
+            let idx = d - 1;
+            let col = (idx % 7) as f32;
+            let row = (idx / 7) as f32;
+            let label = format!("{d}");
+            let (_, dm) = self.font.rasterize_text(&label, style.size, None);
+            if let Some(&n) = aux.get(slot) {
+                let cx = panel.x + 8.0 + col * style.cell;
+                let cy = grid_top + row * style.cell;
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        cx + ((style.cell - dm.width as f32) * 0.5).max(0.0),
+                        cy + ((style.cell - dm.height as f32) * 0.5).max(0.0),
+                        dm.width as f32,
+                        dm.height as f32,
+                    ),
+                );
+                scene.set_fill(
+                    n,
+                    if d as u8 == draft.day {
+                        style.accent
+                    } else {
+                        style.fg
+                    },
+                );
+                scene.set_mask(n, Some(AlphaMask::new(dm.width, dm.height, dm.pixels)));
+                scene.set_visible(n, true);
+            }
+        }
+        let time_y = grid_top + grid_h + 4.0;
+        let time = format!(
+            "−H  {:02}  +H   −M  {:02}  +M",
+            draft.hour, draft.minute
+        );
+        let (_, tm) = self.font.rasterize_text(&time, style.size, None);
+        if let Some(&n) = aux.get(33) {
+            scene.set_bounds(
+                n,
+                Rect::new(panel.x + 8.0, time_y + 4.0, tm.width as f32, tm.height as f32),
+            );
+            scene.set_fill(n, style.fg);
+            scene.set_mask(n, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+            scene.set_visible(n, true);
+        }
+        let confirm_y = time_y + 28.0;
+        let actions = "Cancel            OK";
+        let (_, am) = self.font.rasterize_text(actions, style.size, None);
+        if let Some(&n) = aux.get(34) {
+            scene.set_bounds(
+                n,
+                Rect::new(panel.x + 8.0, confirm_y + 4.0, am.width as f32, am.height as f32),
+            );
+            scene.set_fill(n, style.fg);
+            scene.set_mask(n, Some(AlphaMask::new(am.width, am.height, am.pixels)));
+            scene.set_visible(n, true);
+        }
+        // Hide unused
+        for i in 35..aux.len() {
+            scene.set_visible(aux[i], false);
+        }
+    }
+
+    fn paint_transfer(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Transfer {
+                    source,
+                    target,
+                    source_selected,
+                    target_selected,
+                    filter,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let source = source.clone();
+        let target = target.clone();
+        let source_selected = *source_selected;
+        let target_selected = *target_selected;
+        let filter = filter.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        let list_w = style.list_width;
+        let btn_w = (style.width - list_w * 2.0 - style.gap * 2.0).max(40.0);
+        let left_x = bounds.x;
+        let btn_x = left_x + list_w + style.gap;
+        let right_x = btn_x + btn_w + style.gap;
+        let header_h = 28.0;
+
+        let filtered: Vec<(usize, &TransferItem)> = source
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| {
+                filter.is_empty() || it.label.to_lowercase().contains(&filter.to_lowercase())
+            })
+            .collect();
+
+        // aux budget: headers(2) + btns(4) + left rows*2 + right rows*2
+        let needed = 2 + 4 + filtered.len() * 2 + target.len() * 2 + 4;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+
+        // Headers
+        for (i, (title, x0)) in [("Source", left_x), ("Target", right_x)]
+            .iter()
+            .enumerate()
+        {
+            if let Some(&n) = aux.get(i) {
+                let (_, m) = self.font.rasterize_text(title, style.size, None);
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        *x0 + style.padding,
+                        bounds.y + ((header_h - m.height as f32) * 0.5).max(0.0),
+                        m.width as f32,
+                        m.height as f32,
+                    ),
+                );
+                scene.set_fill(n, style.fg);
+                scene.set_mask(n, Some(AlphaMask::new(m.width, m.height, m.pixels)));
+                scene.set_visible(n, true);
+            }
+        }
+        // Buttons
+        let labels = [">", "<", ">>", "<<"];
+        for (i, lab) in labels.iter().enumerate() {
+            if let Some(&n) = aux.get(2 + i) {
+                let by = bounds.y + header_h + i as f32 * 34.0;
+                let (_, m) = self.font.rasterize_text(lab, style.size, None);
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        btn_x + ((btn_w - m.width as f32) * 0.5).max(0.0),
+                        by + 4.0,
+                        m.width as f32,
+                        m.height as f32,
+                    ),
+                );
+                scene.set_fill(n, style.btn_fg);
+                scene.set_mask(n, Some(AlphaMask::new(m.width, m.height, m.pixels)));
+                scene.set_visible(n, true);
+            }
+        }
+        let mut slot = 6;
+        let body_top = bounds.y + header_h;
+        for (vis_i, (si, it)) in filtered.iter().enumerate() {
+            let y = body_top + vis_i as f32 * style.row_height;
+            let selected = source_selected == Some(*si);
+            // bg
+            if let Some(&bg) = aux.get(slot) {
+                if selected {
+                    scene.set_bounds(
+                        bg,
+                        Rect::new(left_x + 1.0, y, list_w - 2.0, style.row_height),
+                    );
+                    scene.set_fill(bg, style.selected_bg);
+                    scene.set_mask(bg, None);
+                    scene.set_visible(bg, true);
+                } else {
+                    scene.set_visible(bg, false);
+                }
+            }
+            slot += 1;
+            let (_, m) = self.font.rasterize_text(&it.label, style.size, None);
+            if let Some(&lab) = aux.get(slot) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        left_x + style.padding,
+                        y + ((style.row_height - m.height as f32) * 0.5).max(0.0),
+                        m.width as f32,
+                        m.height as f32,
+                    ),
+                );
+                scene.set_fill(
+                    lab,
+                    if selected {
+                        style.selected_fg
+                    } else {
+                        style.fg
+                    },
+                );
+                scene.set_mask(lab, Some(AlphaMask::new(m.width, m.height, m.pixels)));
+                scene.set_visible(lab, true);
+            }
+            slot += 1;
+        }
+        for (ri, it) in target.iter().enumerate() {
+            let y = body_top + ri as f32 * style.row_height;
+            let selected = target_selected == Some(ri);
+            if let Some(&bg) = aux.get(slot) {
+                if selected {
+                    scene.set_bounds(
+                        bg,
+                        Rect::new(right_x + 1.0, y, list_w - 2.0, style.row_height),
+                    );
+                    scene.set_fill(bg, style.selected_bg);
+                    scene.set_mask(bg, None);
+                    scene.set_visible(bg, true);
+                } else {
+                    scene.set_visible(bg, false);
+                }
+            }
+            slot += 1;
+            let (_, m) = self.font.rasterize_text(&it.label, style.size, None);
+            if let Some(&lab) = aux.get(slot) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        right_x + style.padding,
+                        y + ((style.row_height - m.height as f32) * 0.5).max(0.0),
+                        m.width as f32,
+                        m.height as f32,
+                    ),
+                );
+                scene.set_fill(
+                    lab,
+                    if selected {
+                        style.selected_fg
+                    } else {
+                        style.fg
+                    },
+                );
+                scene.set_mask(lab, Some(AlphaMask::new(m.width, m.height, m.pixels)));
+                scene.set_visible(lab, true);
+            }
+            slot += 1;
+        }
+        for i in slot..aux.len() {
+            scene.set_visible(aux[i], false);
+        }
+    }
+
+    fn paint_property_grid(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::PropertyGrid {
+                    rows,
+                    selected,
+                    scroll_y,
+                    style,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let rows = rows.clone();
+        let selected = *selected;
+        let scroll_y = *scroll_y;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let chrome = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        let header_h = style.row_height;
+        // header bg via chrome
+        if let Some(chrome) = chrome {
+            scene.set_bounds(
+                chrome,
+                Rect::new(bounds.x, bounds.y, bounds.width, header_h),
+            );
+            scene.set_fill(chrome, style.header_bg);
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+        let needed = 2 + rows.len() * 3; // header labels + per row: sel_bg, key, value
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let (_, km) = self.font.rasterize_text("Property", style.size, None);
+        if let Some(&n) = aux.get(0) {
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    bounds.x + style.padding,
+                    bounds.y + ((header_h - km.height as f32) * 0.5).max(0.0),
+                    km.width as f32,
+                    km.height as f32,
+                ),
+            );
+            scene.set_fill(n, style.key_fg);
+            scene.set_mask(n, Some(AlphaMask::new(km.width, km.height, km.pixels)));
+            scene.set_visible(n, true);
+        }
+        let (_, vm) = self.font.rasterize_text("Value", style.size, None);
+        if let Some(&n) = aux.get(1) {
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    bounds.x + style.key_width,
+                    bounds.y + ((header_h - vm.height as f32) * 0.5).max(0.0),
+                    vm.width as f32,
+                    vm.height as f32,
+                ),
+            );
+            scene.set_fill(n, style.key_fg);
+            scene.set_mask(n, Some(AlphaMask::new(vm.width, vm.height, vm.pixels)));
+            scene.set_visible(n, true);
+        }
+        let body_top = bounds.y + header_h;
+        for (i, row) in rows.iter().enumerate() {
+            let y = body_top + i as f32 * style.row_height - scroll_y;
+            let base = 2 + i * 3;
+            if y + style.row_height < bounds.y + header_h || y > bounds.y + bounds.height {
+                for k in 0..3 {
+                    if let Some(&n) = aux.get(base + k) {
+                        scene.set_visible(n, false);
+                    }
+                }
+                continue;
+            }
+            let is_sel = selected == Some(i);
+            if let Some(&bg) = aux.get(base) {
+                if is_sel {
+                    scene.set_bounds(
+                        bg,
+                        Rect::new(bounds.x + 1.0, y, bounds.width - 2.0, style.row_height),
+                    );
+                    scene.set_fill(bg, style.selected_bg);
+                    scene.set_mask(bg, None);
+                    scene.set_visible(bg, true);
+                } else {
+                    scene.set_visible(bg, false);
+                }
+            }
+            let (_, kl) = self.font.rasterize_text(&row.key, style.size, None);
+            if let Some(&n) = aux.get(base + 1) {
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        bounds.x + style.padding,
+                        y + ((style.row_height - kl.height as f32) * 0.5).max(0.0),
+                        kl.width as f32,
+                        kl.height as f32,
+                    ),
+                );
+                scene.set_fill(n, if is_sel { style.selected_fg } else { style.key_fg });
+                scene.set_mask(n, Some(AlphaMask::new(kl.width, kl.height, kl.pixels)));
+                scene.set_visible(n, true);
+            }
+            let val = row.value.display();
+            let (_, vl) = self.font.rasterize_text(&val, style.size, None);
+            if let Some(&n) = aux.get(base + 2) {
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        bounds.x + style.key_width,
+                        y + ((style.row_height - vl.height as f32) * 0.5).max(0.0),
+                        vl.width as f32,
+                        vl.height as f32,
+                    ),
+                );
+                scene.set_fill(
+                    n,
+                    if is_sel {
+                        style.selected_fg
+                    } else {
+                        style.value_fg
+                    },
+                );
+                scene.set_mask(n, Some(AlphaMask::new(vl.width, vl.height, vl.pixels)));
+                scene.set_visible(n, true);
+            }
+        }
+    }
+
+    fn paint_tree_table(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::TreeTable {
+                    columns,
+                    roots,
+                    selected,
+                    scroll_y,
+                    style,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let columns = columns.clone();
+        let flats = flatten_tree_table(roots);
+        let selected = *selected;
+        let scroll_y = *scroll_y;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let chrome = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_clip(host, Some(bounds));
+        scene.set_visible(host, true);
+
+        if let Some(chrome) = chrome {
+            scene.set_bounds(
+                chrome,
+                Rect::new(bounds.x, bounds.y, bounds.width, style.header_height),
+            );
+            scene.set_fill(chrome, style.header_bg);
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+
+        // header labels: tree + columns; then rows: sel_bg + tree_lab + cell labs
+        let col_n = columns.len();
+        let needed = 1 + col_n + flats.len() * (2 + col_n);
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+
+        let (_, tm) = self.font.rasterize_text("Name", style.size, None);
+        if let Some(&n) = aux.get(0) {
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    bounds.x + style.padding,
+                    bounds.y + ((style.header_height - tm.height as f32) * 0.5).max(0.0),
+                    tm.width as f32,
+                    tm.height as f32,
+                ),
+            );
+            scene.set_fill(n, style.header_fg);
+            scene.set_mask(n, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+            scene.set_visible(n, true);
+        }
+        let mut cx = bounds.x + style.tree_col_width;
+        for (ci, col) in columns.iter().enumerate() {
+            let (_, m) = self.font.rasterize_text(&col.title, style.size, None);
+            if let Some(&n) = aux.get(1 + ci) {
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        cx + 4.0,
+                        bounds.y + ((style.header_height - m.height as f32) * 0.5).max(0.0),
+                        m.width as f32,
+                        m.height as f32,
+                    ),
+                );
+                scene.set_fill(n, style.header_fg);
+                scene.set_mask(n, Some(AlphaMask::new(m.width, m.height, m.pixels)));
+                scene.set_visible(n, true);
+            }
+            cx += col.width;
+        }
+
+        let body_top = bounds.y + style.header_height;
+        let row_stride = 2 + col_n;
+        let header_slots = 1 + col_n;
+        for (ri, row) in flats.iter().enumerate() {
+            let y = body_top + ri as f32 * style.row_height - scroll_y;
+            let base = header_slots + ri * row_stride;
+            if y + style.row_height < body_top || y > bounds.y + bounds.height {
+                for k in 0..row_stride {
+                    if let Some(&n) = aux.get(base + k) {
+                        scene.set_visible(n, false);
+                    }
+                }
+                continue;
+            }
+            let is_sel = selected == Some(row.id);
+            if let Some(&bg) = aux.get(base) {
+                if is_sel {
+                    scene.set_bounds(
+                        bg,
+                        Rect::new(bounds.x + 1.0, y, bounds.width - 2.0, style.row_height),
+                    );
+                    scene.set_fill(bg, style.selected_bg);
+                    scene.set_mask(bg, None);
+                    scene.set_visible(bg, true);
+                } else {
+                    scene.set_visible(bg, false);
+                }
+            }
+            let twisty = if row.has_children {
+                if row.expanded {
+                    "▾"
+                } else {
+                    "▸"
+                }
+            } else {
+                "·"
+            };
+            let label = format!("{twisty} {}", row.label);
+            let (_, lm) = self.font.rasterize_text(&label, style.size, None);
+            let lx = bounds.x + style.padding + row.depth as f32 * style.indent;
+            if let Some(&n) = aux.get(base + 1) {
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        lx,
+                        y + ((style.row_height - lm.height as f32) * 0.5).max(0.0),
+                        lm.width as f32,
+                        lm.height as f32,
+                    ),
+                );
+                scene.set_fill(n, if is_sel { style.selected_fg } else { style.fg });
+                scene.set_mask(n, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+                scene.set_visible(n, true);
+            }
+            let mut cx = bounds.x + style.tree_col_width;
+            for (ci, col) in columns.iter().enumerate() {
+                let cell = row.cells.get(ci).map(|s| s.as_str()).unwrap_or("");
+                let (_, cm) = self.font.rasterize_text(cell, style.size, None);
+                if let Some(&n) = aux.get(base + 2 + ci) {
+                    scene.set_bounds(
+                        n,
+                        Rect::new(
+                            cx + 4.0,
+                            y + ((style.row_height - cm.height as f32) * 0.5).max(0.0),
+                            cm.width as f32,
+                            cm.height as f32,
+                        ),
+                    );
+                    scene.set_fill(n, if is_sel { style.selected_fg } else { style.fg });
+                    scene.set_mask(n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+                    scene.set_visible(n, true);
+                }
+                cx += col.width;
+            }
+        }
+    }
+
+
     fn paint_open_popups(&mut self, scene: &mut Scene) {
         let Some(id) = self.open_popup else {
             // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx/modal
@@ -8803,6 +10364,7 @@ impl Ui {
                         | Some(Kind::TreeSelect { open: false, .. })
                         | Some(Kind::Modal { open: false, .. })
                         | Some(Kind::Drawer { open: false, .. })
+                        | Some(Kind::DateTime { open: false, .. })
                 ) {
                     if let Some(w) = self.widgets.get(&wid) {
                         for &n in &w.aux {
@@ -8818,6 +10380,7 @@ impl Ui {
             Some(Kind::ContextMenu { .. }) => self.paint_context_popup(scene, id),
             Some(Kind::Select { .. }) => self.paint_select_popup(scene, id),
             Some(Kind::TreeSelect { .. }) => self.paint_tree_select_popup(scene, id),
+            Some(Kind::DateTime { .. }) => self.paint_datetime_popup(scene, id),
             Some(Kind::Modal { .. }) => self.paint_modal_popup(scene, id),
             Some(Kind::Drawer { .. }) => self.paint_drawer_popup(scene, id),
             _ => {}
@@ -11659,6 +13222,113 @@ impl FlexBuilder<'_> {
         self.push_child(id);
         id
     }
+
+    /// DateTime picker (field + calendar/time popup).
+    pub fn datetime(&mut self, value: DateTimeValue, style: DateTimeStyle) -> WidgetId {
+        let value = value.clamp_day();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::DateTime {
+                    value,
+                    draft: value,
+                    open: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Transfer / shuttle dual list.
+    pub fn transfer(
+        &mut self,
+        source: Vec<TransferItem>,
+        target: Vec<TransferItem>,
+        style: TransferStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Transfer {
+                    source,
+                    target,
+                    source_selected: None,
+                    target_selected: None,
+                    filter: String::new(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// PropertyGrid key-value editor.
+    pub fn property_grid(
+        &mut self,
+        rows: Vec<PropertyRow>,
+        style: PropertyGridStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::PropertyGrid {
+                    rows,
+                    selected: None,
+                    scroll_y: 0.0,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// TreeTable hierarchical rows + columns.
+    pub fn tree_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        roots: Vec<TreeTableNode>,
+        style: TreeTableStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::TreeTable {
+                    columns,
+                    roots,
+                    selected: None,
+                    scroll_y: 0.0,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
 }
 
 
@@ -12893,5 +14563,235 @@ mod tests {
         let mid = pixels[(ph as usize / 2) * pw as usize + pw as usize / 2];
         assert_ne!(mid, 0);
     }
+
+    #[test]
+    fn office_p1_deferred_datetime_transfer_property_tree_table() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(900.0, 700.0);
+        let mut dt = WidgetId(0);
+        let mut xfer = WidgetId(0);
+        let mut grid = WidgetId(0);
+        let mut tt = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 880.0,
+                height: 680.0,
+                padding: 8.0,
+                gap: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                dt = col.datetime(
+                    DateTimeValue::new(2026, 10, 18, 9, 15),
+                    DateTimeStyle::default(),
+                );
+                xfer = col.transfer(
+                    vec![TransferItem::new(1, "A"), TransferItem::new(2, "B")],
+                    vec![TransferItem::new(3, "C")],
+                    TransferStyle {
+                        width: 480.0,
+                        height: 200.0,
+                        ..TransferStyle::default()
+                    },
+                );
+                grid = col.property_grid(
+                    vec![
+                        PropertyRow::new("On", PropertyValue::Bool(false)),
+                        PropertyRow::new("N", PropertyValue::Number(1.0)),
+                        PropertyRow::new(
+                            "Mode",
+                            PropertyValue::Select {
+                                options: vec!["A".into(), "B".into()],
+                                selected: 0,
+                            },
+                        ),
+                    ],
+                    PropertyGridStyle {
+                        width: 300.0,
+                        height: 140.0,
+                        ..PropertyGridStyle::default()
+                    },
+                );
+                tt = col.tree_table(
+                    vec![TableColumn::new("Type", 80.0)],
+                    vec![TreeTableNode::new(
+                        1,
+                        "Root",
+                        vec!["Plant".into()],
+                        vec![TreeTableNode::leaf(2, "Leaf", vec!["AI".into()])],
+                    )],
+                    TreeTableStyle {
+                        width: 400.0,
+                        height: 180.0,
+                        ..TreeTableStyle::default()
+                    },
+                );
+            },
+        );
+        ui.sync(&mut scene);
+
+        assert_eq!(
+            ui.datetime_value(dt).unwrap().format_display(),
+            "2026-10-18 09:15"
+        );
+        assert!(ui.set_datetime_open(dt, true));
+        assert_eq!(ui.datetime_open(dt), Some(true));
+        ui.set_focus(Some(dt));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.datetime_open(dt), Some(false));
+
+        // Transfer: select first source row then move to target.
+        let xn = ui.widgets.get(&xfer).unwrap().node.unwrap();
+        let xb = scene.get(xn).unwrap().bounds;
+        let style = TransferStyle {
+            width: 480.0,
+            height: 200.0,
+            ..TransferStyle::default()
+        };
+        let body_y = xb.y + 28.0 + 4.0;
+        assert!(ui.pointer_pressed(&mut scene, xb.x + 8.0, body_y));
+        ui.set_focus(Some(xfer));
+        assert!(ui.key_input(UiKey::Right));
+        assert_eq!(ui.transfer_target(xfer).unwrap().len(), 2);
+
+        // PropertyGrid: click value of row 0 (bool) to toggle.
+        let gn = ui.widgets.get(&grid).unwrap().node.unwrap();
+        let gb = scene.get(gn).unwrap().bounds;
+        let row0_y = gb.y + PropertyGridStyle::default().row_height + 4.0;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            gb.x + PropertyGridStyle::default().key_width + 8.0,
+            row0_y
+        ));
+        match ui.property_grid_value(grid, 0) {
+            Some(PropertyValue::Bool(true)) => {}
+            other => panic!("expected bool true, got {other:?}"),
+        }
+
+        assert!(ui.set_tree_table_selected(tt, Some(2)));
+        assert_eq!(ui.tree_table_selected(tt), Some(2));
+        ui.set_focus(Some(tt));
+        assert!(ui.key_input(UiKey::Up));
+        assert_eq!(ui.tree_table_selected(tt), Some(1));
+        ui.sync(&mut scene);
+        let _ = style;
+    }
+
+    #[test]
+    fn office_p1_deferred_soft_raster_qa_ppm() {
+        use next_gui_render::{encode_scene, Renderer};
+        use next_gui_render_soft::SoftRenderer;
+        use std::io::Write;
+
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let w = 1120u32;
+        let h = 820u32;
+        ui.set_viewport(w as f32, h as f32);
+        let mut dt = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 12.0,
+                y: 12.0,
+                width: w as f32 - 24.0,
+                height: h as f32 - 24.0,
+                padding: 8.0,
+                gap: 8.0,
+                background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.text_styled(
+                    "P1 deferred QA",
+                    Color::rgb(0xa0, 0xa8, 0xb4),
+                    12.0,
+                );
+                dt = col.datetime(
+                    DateTimeValue::new(2026, 10, 18, 8, 30),
+                    DateTimeStyle::default(),
+                );
+                col.transfer(
+                    vec![
+                        TransferItem::new(1, "Point-01"),
+                        TransferItem::new(2, "Point-02"),
+                        TransferItem::new(3, "Point-03"),
+                    ],
+                    vec![TransferItem::new(9, "Chosen")],
+                    TransferStyle {
+                        width: 520.0,
+                        height: 200.0,
+                        ..TransferStyle::default()
+                    },
+                );
+                col.property_grid(
+                    vec![
+                        PropertyRow::new("Name", PropertyValue::Text("Bay-03".into())),
+                        PropertyRow::new("Enabled", PropertyValue::Bool(true)),
+                        PropertyRow::new("kV", PropertyValue::Number(10.5)),
+                    ],
+                    PropertyGridStyle {
+                        width: 320.0,
+                        height: 120.0,
+                        ..PropertyGridStyle::default()
+                    },
+                );
+                col.tree_table(
+                    vec![
+                        TableColumn::new("Type", 80.0),
+                        TableColumn::new("Value", 80.0),
+                    ],
+                    vec![TreeTableNode::new(
+                        1,
+                        "Plant",
+                        vec!["Plant".into(), "—".into()],
+                        vec![TreeTableNode::leaf(
+                            2,
+                            "Ua",
+                            vec!["AI".into(), "10.2".into()],
+                        )],
+                    )],
+                    TreeTableStyle {
+                        width: 480.0,
+                        height: 180.0,
+                        ..TreeTableStyle::default()
+                    },
+                );
+            },
+        );
+        let _ = ui.set_datetime_open(dt, true);
+        ui.sync(&mut scene);
+        scene.mark_full_dirty(w as f32, h as f32);
+        let dirty = scene.take_dirty();
+        let cmds = encode_scene(&scene, &dirty);
+        let clear = Color {
+            r: 0x1a,
+            g: 0x1a,
+            b: 0x1c,
+            a: 255,
+        };
+        let mut soft = SoftRenderer::new(w, h, clear);
+        soft.render(&cmds, &dirty);
+        let (pixels, pw, ph) = soft.frame_pixels().expect("pixels");
+        let out = std::path::Path::new("/workspace/next-gui-demo-shots/22-office_p1_deferred.ppm");
+        if let Some(parent) = out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut f = std::fs::File::create(out).expect("create ppm");
+        writeln!(f, "P6\n{pw} {ph}\n255").unwrap();
+        for px in pixels {
+            let r = ((px >> 16) & 0xff) as u8;
+            let g = ((px >> 8) & 0xff) as u8;
+            let b = (px & 0xff) as u8;
+            f.write_all(&[r, g, b]).unwrap();
+        }
+        assert!(out.exists());
+        assert_eq!((pw, ph), (w, h));
+        let mid = pixels[(ph as usize / 2) * pw as usize + pw as usize / 2];
+        assert_ne!(mid, 0);
+    }
+
+
+
 
 }

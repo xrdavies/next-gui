@@ -110,6 +110,10 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 | `Drawer` | `ui` | **P1** 侧滑抽屉 + Backdrop；Esc/×/遮罩关闭 |
 | `VirtualList` / `VirtualTable` | `ui` | **P1** 窗口化虚表（`virtual_list` / `virtual_table`） |
 | `TextArea` / `InputNumber` | `ui` | **P1** 多行录入 / 数字步进 |
+| `DateTime` | `ui` | **P1** 日期时间选择（日历网格 + 时分；Confirm/Enter） |
+| `Transfer` | `ui` | **P1** 穿梭框双列表批量选择 |
+| `PropertyGrid` | `ui` | **P1** 属性网格键值编辑 |
+| `TreeTable` | `ui` | **P1** 树表（层级列 + 数据列） |
 | `Notification` | `ui` | **P1** 全局 toast 队列 |
 | `Spin` / `Empty` | `ui` | **P1** 加载遮罩 / 空状态 |
 | `Collapse` / `Descriptions` / `Card` | `ui` | **P1** 折叠 / 描述列表 / 卡片 |
@@ -125,8 +129,9 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/15_office_feedback` — **P0 feedback**：Tag + Badge + Tooltip + Modal + Progress + Alert
 - `examples/20_office_industrial` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
 - `examples/21_office_p1_rest` — **P1 rest**：Drawer / VirtualList·Table / TextArea / InputNumber / Notification / Spin / Empty / Collapse / Descriptions / Card / Segmented / Breadcrumb / Pagination
+- `examples/22_office_p1_deferred` — **P1 deferred**：DateTime / Transfer / PropertyGrid / TreeTable
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心 + rest 已落地；IME/CJK 已接**。下一步：Datetime / Transfer / PropertyGrid / TreeTable，或 P4 Profile。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心 + rest + deferred 已落地；IME/CJK 已接**。下一步：P4 Profile，或图表多图 / 打磨。
 
 ---
 
