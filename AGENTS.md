@@ -37,6 +37,8 @@ When starting a change:
 - If the fix SHA is not known until commit creation, use the `Fixes-Review` trailer as
   the reference. Codex records the actual fix SHA during verification.
 - Run the relevant tests before committing.
+- For UI / example work, complete the visual self-test in **Git Workflow / QA**
+  before treating the change as done.
 
 Grok commits must use Conventional Commits and include:
 
@@ -96,11 +98,34 @@ finding heading. New runs may reference earlier findings instead of duplicating 
 Never delete a finding. Record a reason for `blocked` or `wont_fix`; a reviewer must
 confirm `wont_fix`. Reopen a failed fix as `open` and preserve the earlier evidence.
 
+## Git Workflow / QA
+
+Compile and unit tests are necessary but **not sufficient** for UI work.
+
+After implementing any new UI feature, widget, layout change, or example:
+
+1. **Run** the relevant example(s) (e.g. `cargo run -p office_shell`) on a real
+   graphical session when available.
+2. **Verify on screen** that layout, spacing, hit targets, keyboard/pointer
+   interaction, Soft/GPU present path, and labels match the intended design —
+   not merely that the binary starts.
+3. **Capture and review screenshots** of each touched example when the desktop
+   or box GUI is available; skim every Office example window if the change is
+   catalog-wide or shared chrome.
+4. **Do not claim UI work complete** from `cargo build` / `cargo test` / clippy
+   alone. Building a GUI is not GUI acceptance (same bar Codex uses in reviews).
+
+If a headless environment blocks interactive run, say so in the commit message
+or handoff, list which examples were not visually checked, and do not imply
+visual QA passed.
+
 ## Completion
 
 Before pushing:
 
 - Run the relevant tests.
+- For UI / example changes, finish the visual self-test above (run examples,
+  check on-screen behavior, screenshots when possible).
 - Run `git diff --check`.
 - Create focused Conventional Commits for the completed changes and review evidence.
 - Confirm the worktree is clean.

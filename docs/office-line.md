@@ -153,6 +153,8 @@ P5 Immediate → P6 工业打磨
 | GPU native | 有适配器时 `present=NativeSurface`（见 stderr） |
 | GPU readback | Softbuffer 窗上 `try_new` 仍可用 |
 | 路线图 | P4 标明推迟；指向本文 |
+| **视觉自测** | 新控件/示例合入前须跑相关 example，核对照面布局与交互是否符合预期；有桌面时截图复查。仅编译/单测不算 UI 完成（见 [AGENTS.md](../AGENTS.md) Git Workflow / QA） |
 
 运行：`cargo run -p office_panel`（需图形会话；CJK 字体同 P2）。
 有适配器时应看到：`native Surface ready (…, present=NativeSurface)`。
+Office 切片示例：`office_shell` / `office_inputs` / `office_data` / `office_nav` / `office_feedback`。
