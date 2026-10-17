@@ -47,11 +47,20 @@
 | [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
 | [docs/p2-design.md](docs/p2-design.md) | P2 文本引擎 / CJK / 软渲染字形 |
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
+| [docs/office-line.md](docs/office-line.md) | Office 线（跳过 P4）：布局/控件加厚与 Surface 缺口 |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 
 ## 状态
 
-**需求与架构已确认；P0–P3 已通；P1 含 Rust API + `.ngui`；P2 含 `next-gui-text`（CJK）；P3 含 `next-gui-render-gpu`（wgpu）与 Soft 切换；macOS Office 平台首版已通。** 下一步：双档 Profile（P4）→ Immediate 与工业打磨；macOS 仍只覆盖 Office 桌面。
+**需求与架构已确认；P0–P3 已通；正在做厚 Office 线（P4 Profile 已推迟）。** P1 含 Rust API + `.ngui`（含 Row/Spacer/Separator）；P2 文本/CJK；P3 GPU + Soft；macOS Office 平台首版已通。详见 [docs/office-line.md](docs/office-line.md)。
+
+### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
+
+```bash
+cargo run -p office_panel
+```
+
+操作：工具条 **Open** / **Save**（stub）/ **Increment**；有 GPU 时 **Space** 切换 Soft ↔ GPU。present 仍为 readback→softbuffer（原生 Surface 缺口见 office-line）。
 
 ### 试跑 P3（Linux/macOS，需要图形桌面会话；GPU 可选）
 

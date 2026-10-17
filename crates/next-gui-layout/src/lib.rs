@@ -1,6 +1,6 @@
 //! Simple flex/box layout helpers for next-gui.
 //!
-//! P1: column/row placement from child measures into absolute [`Rect`]s.
+//! Column/row placement from child measures into absolute [`Rect`]s.
 //! Does not touch rendering backends.
 
 #![deny(missing_docs)]
@@ -14,6 +14,18 @@ pub enum Axis {
     Vertical,
     /// Left → right.
     Horizontal,
+}
+
+/// Cross-axis alignment within the content box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CrossAlign {
+    /// Pack toward the start of the cross axis (left for column, top for row).
+    #[default]
+    Start,
+    /// Center on the cross axis.
+    Center,
+    /// Pack toward the end of the cross axis.
+    End,
 }
 
 /// Parameters for a single flex layout pass.
@@ -33,6 +45,8 @@ pub struct FlexParams {
     pub padding: f32,
     /// Gap between children along the main axis.
     pub gap: f32,
+    /// Cross-axis alignment.
+    pub cross_align: CrossAlign,
 }
 
 impl FlexParams {
@@ -46,6 +60,7 @@ impl FlexParams {
             max_height,
             padding: 0.0,
             gap: 0.0,
+            cross_align: CrossAlign::Start,
         }
     }
 
@@ -59,6 +74,7 @@ impl FlexParams {
             max_height,
             padding: 0.0,
             gap: 0.0,
+            cross_align: CrossAlign::Start,
         }
     }
 }
@@ -79,10 +95,17 @@ impl ChildMeasure {
     }
 }
 
+fn cross_offset(align: CrossAlign, inner: f32, child: f32) -> f32 {
+    match align {
+        CrossAlign::Start => 0.0,
+        CrossAlign::Center => ((inner - child) * 0.5).max(0.0),
+        CrossAlign::End => (inner - child).max(0.0),
+    }
+}
+
 /// Lay out children along the main axis; returns absolute bounds per child (same order).
 ///
-/// Cross-axis: left/top aligned within the content box. Children are not clipped here;
-/// callers may clip when syncing to the scene.
+/// Cross-axis: aligned per [`FlexParams::cross_align`]. Children are not clipped here.
 pub fn layout_flex(params: &FlexParams, children: &[ChildMeasure]) -> Vec<Rect> {
     let content_x = params.x + params.padding;
     let content_y = params.y + params.padding;
@@ -99,10 +122,10 @@ pub fn layout_flex(params: &FlexParams, children: &[ChildMeasure]) -> Vec<Rect> 
                     cursor += params.gap;
                 }
                 let w = child.width.min(inner_w);
-                let h = child.height.min(inner_h.max(child.height));
-                out.push(Rect::new(content_x, content_y + cursor, w, child.height));
-                cursor += h.min(child.height);
-                let _ = inner_h; // available height documented for future wrap/scroll
+                let h = child.height;
+                let ox = cross_offset(params.cross_align, inner_w, w);
+                out.push(Rect::new(content_x + ox, content_y + cursor, w, h));
+                cursor += h;
             }
         }
         Axis::Horizontal => {
@@ -112,9 +135,9 @@ pub fn layout_flex(params: &FlexParams, children: &[ChildMeasure]) -> Vec<Rect> 
                 }
                 let w = child.width;
                 let h = child.height.min(inner_h);
-                out.push(Rect::new(content_x + cursor, content_y, w, h));
+                let oy = cross_offset(params.cross_align, inner_h, h);
+                out.push(Rect::new(content_x + cursor, content_y + oy, w, h));
                 cursor += w;
-                let _ = inner_w;
             }
         }
     }
@@ -163,6 +186,7 @@ mod tests {
             max_height: 400.0,
             padding: 8.0,
             gap: 4.0,
+            cross_align: CrossAlign::Start,
         };
         let kids = [
             ChildMeasure::new(100.0, 20.0),
@@ -185,5 +209,31 @@ mod tests {
         let rects = layout_flex(&params, &kids);
         assert_eq!(rects[0].x, 0.0);
         assert_eq!(rects[1].x, 60.0);
+    }
+
+    #[test]
+    fn column_cross_align_end() {
+        let params = FlexParams {
+            cross_align: CrossAlign::End,
+            padding: 0.0,
+            gap: 0.0,
+            ..FlexParams::column(0.0, 0.0, 100.0, 200.0)
+        };
+        let kids = [ChildMeasure::new(40.0, 10.0)];
+        let rects = layout_flex(&params, &kids);
+        assert_eq!(rects[0].x, 60.0);
+    }
+
+    #[test]
+    fn row_cross_align_center() {
+        let params = FlexParams {
+            cross_align: CrossAlign::Center,
+            padding: 0.0,
+            gap: 0.0,
+            ..FlexParams::row(0.0, 0.0, 200.0, 40.0)
+        };
+        let kids = [ChildMeasure::new(20.0, 10.0)];
+        let rects = layout_flex(&params, &kids);
+        assert_eq!(rects[0].y, 15.0);
     }
 }

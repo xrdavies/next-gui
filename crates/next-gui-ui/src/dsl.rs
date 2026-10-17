@@ -1,6 +1,6 @@
 //! Compact `.ngui` file DSL (P1).
 //!
-//! Parses a small Column / Text / Button markup and builds a retained [`Ui`]
+//! Parses a small Column / Row / Text / Button / Spacer / Separator markup and builds a retained [`Ui`]
 //! via the same builders as the Rust API. No bindings, no GPU; text uses next-gui-text (CJK via system font).
 
 use std::collections::HashMap;
@@ -8,7 +8,9 @@ use std::path::Path;
 
 use next_gui_scene::Color;
 
-use crate::{ColumnStyle, Ui, WidgetId};
+use next_gui_layout::CrossAlign;
+
+use crate::{ColumnStyle, RowStyle, Ui, WidgetId};
 
 /// Result of loading a `.ngui` document into a [`Ui`].
 #[derive(Debug)]
@@ -87,6 +89,13 @@ struct AstColumn {
 }
 
 #[derive(Debug)]
+struct AstRow {
+    name: Option<String>,
+    style: RowStyle,
+    children: Vec<AstChild>,
+}
+
+#[derive(Debug)]
 enum AstChild {
     Text {
         name: Option<String>,
@@ -98,7 +107,16 @@ enum AstChild {
         bg: Option<Color>,
         fg: Option<Color>,
     },
+    Spacer {
+        width: f32,
+        height: f32,
+    },
+    Separator {
+        vertical: bool,
+        length: f32,
+    },
     Column(AstColumn),
+    Row(AstRow),
 }
 
 fn ast_to_ui(root: AstColumn) -> Result<LoadedUi, DslError> {
@@ -151,6 +169,16 @@ fn build_children(
                     names.insert(n, id);
                 }
             }
+            AstChild::Spacer { width, height } => {
+                builder.spacer(width, height);
+            }
+            AstChild::Separator { vertical, length } => {
+                if vertical {
+                    builder.separator_vertical(length);
+                } else {
+                    builder.separator_styled(1.0, length, true, Color::rgb(0x55, 0x55, 0x5a));
+                }
+            }
             AstChild::Column(nested) => {
                 let AstColumn {
                     name,
@@ -158,6 +186,19 @@ fn build_children(
                     children,
                 } = nested;
                 let id = builder.column(style, |inner| {
+                    build_children(inner, names, children);
+                });
+                if let Some(n) = name {
+                    names.insert(n, id);
+                }
+            }
+            AstChild::Row(nested) => {
+                let AstRow {
+                    name,
+                    style,
+                    children,
+                } = nested;
+                let id = builder.row(style, |inner| {
                     build_children(inner, names, children);
                 });
                 if let Some(n) = name {
@@ -436,7 +477,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 Tok::Eof => return Err(self.err("unclosed Column `{`")),
-                Tok::Ident(ref id) if id == "Text" || id == "Button" || id == "Column" => {
+                Tok::Ident(ref id) if id == "Text" || id == "Button" || id == "Column" || id == "Row" || id == "Spacer" || id == "Separator" => {
                     children.push(self.parse_child()?);
                 }
                 Tok::Ident(_) => {
@@ -474,6 +515,7 @@ impl<'a> Parser<'a> {
             "background" => {
                 style.background = Some(self.expect_color()?);
             }
+            "cross_align" => style.cross_align = self.expect_cross_align()?,
             other => {
                 return Err(self.err(format!("unknown Column property `{other}`")));
             }
@@ -506,8 +548,178 @@ impl<'a> Parser<'a> {
         match self.peek_tok()? {
             Tok::Ident(ref s) if s == "Text" => self.parse_text(),
             Tok::Ident(ref s) if s == "Button" => self.parse_button(),
+            Tok::Ident(ref s) if s == "Spacer" => self.parse_spacer(),
+            Tok::Ident(ref s) if s == "Separator" => self.parse_separator(),
             Tok::Ident(ref s) if s == "Column" => Ok(AstChild::Column(self.parse_column()?)),
-            other => Err(self.err(format!("expected Text, Button, or Column, got {other:?}"))),
+            Tok::Ident(ref s) if s == "Row" => Ok(AstChild::Row(self.parse_row()?)),
+            other => Err(self.err(format!(
+                "expected Text, Button, Spacer, Separator, Column, or Row, got {other:?}"
+            ))),
+        }
+    }
+
+    fn parse_spacer(&mut self) -> Result<AstChild, DslError> {
+        self.expect_ident("Spacer")?;
+        let mut width = 12.0;
+        let mut height = 12.0;
+        if matches!(self.peek_tok()?, Tok::LBrace) {
+            self.next_tok()?;
+            loop {
+                match self.peek_tok()? {
+                    Tok::RBrace => {
+                        self.next_tok()?;
+                        break;
+                    }
+                    Tok::Ident(_) => {
+                        let key = match self.next_tok()? {
+                            Tok::Ident(s) => s,
+                            _ => unreachable!(),
+                        };
+                        match self.next_tok()? {
+                            Tok::Colon => {}
+                            _ => return Err(self.err(format!("expected `:` after `{key}`"))),
+                        }
+                        match key.as_str() {
+                            "width" => width = self.expect_number()?,
+                            "height" => height = self.expect_number()?,
+                            other => {
+                                return Err(self.err(format!("unknown Spacer property `{other}`")));
+                            }
+                        }
+                    }
+                    other => {
+                        return Err(self.err(format!("unexpected token in Spacer: {other:?}")));
+                    }
+                }
+            }
+        }
+        Ok(AstChild::Spacer { width, height })
+    }
+
+    fn parse_separator(&mut self) -> Result<AstChild, DslError> {
+        self.expect_ident("Separator")?;
+        let mut vertical = false;
+        let mut length = 200.0;
+        if matches!(self.peek_tok()?, Tok::LBrace) {
+            self.next_tok()?;
+            loop {
+                match self.peek_tok()? {
+                    Tok::RBrace => {
+                        self.next_tok()?;
+                        break;
+                    }
+                    Tok::Ident(_) => {
+                        let key = match self.next_tok()? {
+                            Tok::Ident(s) => s,
+                            _ => unreachable!(),
+                        };
+                        match self.next_tok()? {
+                            Tok::Colon => {}
+                            _ => return Err(self.err(format!("expected `:` after `{key}`"))),
+                        }
+                        match key.as_str() {
+                            "vertical" => {
+                                // accept 1 / 0 or ident true/false via number: 1 = true
+                                match self.next_tok()? {
+                                    Tok::Number(n) => vertical = n != 0.0,
+                                    Tok::Ident(s) if s == "true" => vertical = true,
+                                    Tok::Ident(s) if s == "false" => vertical = false,
+                                    other => {
+                                        return Err(self.err(format!(
+                                            "expected bool for vertical, got {other:?}"
+                                        )));
+                                    }
+                                }
+                            }
+                            "length" => length = self.expect_number()?,
+                            other => {
+                                return Err(
+                                    self.err(format!("unknown Separator property `{other}`"))
+                                );
+                            }
+                        }
+                    }
+                    other => {
+                        return Err(self.err(format!("unexpected token in Separator: {other:?}")));
+                    }
+                }
+            }
+        }
+        Ok(AstChild::Separator { vertical, length })
+    }
+
+    fn parse_row(&mut self) -> Result<AstRow, DslError> {
+        self.expect_ident("Row")?;
+        let name = self.parse_name_opt()?;
+        match self.next_tok()? {
+            Tok::LBrace => {}
+            other => return Err(self.err(format!("expected `{{` after Row, got {other:?}"))),
+        }
+        let mut style = RowStyle::default();
+        let mut children = Vec::new();
+        loop {
+            match self.peek_tok()? {
+                Tok::RBrace => {
+                    self.next_tok()?;
+                    break;
+                }
+                Tok::Eof => return Err(self.err("unclosed Row `{`")),
+                Tok::Ident(ref id)
+                    if id == "Text"
+                        || id == "Button"
+                        || id == "Column"
+                        || id == "Row"
+                        || id == "Spacer"
+                        || id == "Separator" =>
+                {
+                    children.push(self.parse_child()?);
+                }
+                Tok::Ident(_) => {
+                    self.parse_row_prop(&mut style)?;
+                }
+                other => {
+                    return Err(self.err(format!("unexpected token in Row: {other:?}")));
+                }
+            }
+        }
+        Ok(AstRow {
+            name,
+            style,
+            children,
+        })
+    }
+
+    fn parse_row_prop(&mut self, style: &mut RowStyle) -> Result<(), DslError> {
+        let key = match self.next_tok()? {
+            Tok::Ident(s) => s,
+            _ => return Err(self.err("expected property name")),
+        };
+        match self.next_tok()? {
+            Tok::Colon => {}
+            _ => return Err(self.err(format!("expected `:` after property `{key}`"))),
+        }
+        match key.as_str() {
+            "x" => style.x = self.expect_number()?,
+            "y" => style.y = self.expect_number()?,
+            "width" => style.width = self.expect_number()?,
+            "height" => style.height = self.expect_number()?,
+            "padding" => style.padding = self.expect_number()?,
+            "gap" => style.gap = self.expect_number()?,
+            "background" => style.background = Some(self.expect_color()?),
+            "cross_align" => style.cross_align = self.expect_cross_align()?,
+            other => return Err(self.err(format!("unknown Row property `{other}`"))),
+        }
+        Ok(())
+    }
+
+    fn expect_cross_align(&mut self) -> Result<CrossAlign, DslError> {
+        match self.next_tok()? {
+            Tok::Ident(s) if s == "start" => Ok(CrossAlign::Start),
+            Tok::Ident(s) if s == "center" => Ok(CrossAlign::Center),
+            Tok::Ident(s) if s == "end" => Ok(CrossAlign::End),
+            other => Err(self.err(format!(
+                "expected cross_align start|center|end, got {other:?}"
+            ))),
         }
     }
 
@@ -630,5 +842,30 @@ Column {
     fn reject_unknown_prop() {
         let err = load_ngui("Column { foo: 1 }").unwrap_err();
         assert!(err.message.contains("unknown Column property"));
+    }
+
+    #[test]
+    fn parse_row_toolbar() {
+        let src = r#"
+Column {
+  width: 640
+  height: 400
+  Row {
+    width: 600
+    height: 44
+    gap: 8
+    cross_align: center
+    Button("Open") @open
+    Spacer { width: 12 height: 1 }
+    Separator { vertical: true length: 24 }
+    Button("Save") @save
+  }
+  Text("body") @body
+}
+"#;
+        let loaded = load_ngui(src).expect("parse");
+        assert!(loaded.widget("open").is_some());
+        assert!(loaded.widget("save").is_some());
+        assert!(loaded.ui.is_button(loaded.widget("open").unwrap()));
     }
 }

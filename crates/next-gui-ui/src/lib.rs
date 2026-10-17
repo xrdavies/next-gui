@@ -1,8 +1,8 @@
 //! Compact declarative UI API for next-gui.
 //!
-//! P1/P2: retained widget tree (Column / Text / Button) built with a short builder
-//! or loaded from a compact `.ngui` file, synced into [`next_gui_scene::Scene`].
-//! Text uses [`next_gui_text`] (font metrics + CJK-capable masks), not bitmap placeholders.
+//! Retained widget tree (Column / Row / Text / Button / Spacer / Separator)
+//! built with a short builder or loaded from a compact `.ngui` file, synced into
+//! [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 
 #![deny(missing_docs)]
 
@@ -13,7 +13,7 @@ pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use next_gui_layout::{layout_flex, Axis, ChildMeasure, FlexParams};
+use next_gui_layout::{layout_flex, Axis, ChildMeasure, CrossAlign, FlexParams};
 use next_gui_scene::{AlphaMask, Color, NodeId, Rect, Scene};
 use next_gui_text::{load_default_cjk_font, Font};
 
@@ -43,6 +43,8 @@ pub struct ColumnStyle {
     pub padding: f32,
     /// Gap between children.
     pub gap: f32,
+    /// Cross-axis alignment (horizontal for a column).
+    pub cross_align: CrossAlign,
     /// Optional panel fill; `None` = host node stays invisible.
     pub background: Option<Color>,
 }
@@ -56,7 +58,44 @@ impl Default for ColumnStyle {
             height: 560.0,
             padding: 16.0,
             gap: 12.0,
+            cross_align: CrossAlign::Start,
             background: Some(Color::rgb(0x2a, 0x2a, 0x2e)),
+        }
+    }
+}
+
+/// Style for a row container (toolbars, action strips).
+#[derive(Debug, Clone, Copy)]
+pub struct RowStyle {
+    /// Outer x (ignored when nested; parent layout places the row).
+    pub x: f32,
+    /// Outer y (ignored when nested).
+    pub y: f32,
+    /// Max width available to the row.
+    pub width: f32,
+    /// Max height available.
+    pub height: f32,
+    /// Padding inside the row.
+    pub padding: f32,
+    /// Gap between children.
+    pub gap: f32,
+    /// Cross-axis alignment (vertical for a row).
+    pub cross_align: CrossAlign,
+    /// Optional strip fill.
+    pub background: Option<Color>,
+}
+
+impl Default for RowStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 600.0,
+            height: 48.0,
+            padding: 8.0,
+            gap: 8.0,
+            cross_align: CrossAlign::Center,
+            background: Some(Color::rgb(0x36, 0x36, 0x3a)),
         }
     }
 }
@@ -67,10 +106,13 @@ enum Kind {
         style: ColumnStyle,
         children: Vec<WidgetId>,
     },
+    Row {
+        style: RowStyle,
+        children: Vec<WidgetId>,
+    },
     Text {
         content: String,
         color: Color,
-        /// Font size in pixels (replaces P1 integer bitmap scale).
         size: f32,
     },
     Button {
@@ -80,6 +122,16 @@ enum Kind {
         size: f32,
         min_width: f32,
         height: f32,
+    },
+    Spacer {
+        width: f32,
+        height: f32,
+    },
+    Separator {
+        thickness: f32,
+        length: f32,
+        horizontal: bool,
+        color: Color,
     },
 }
 
@@ -97,7 +149,7 @@ struct Widget {
 pub struct Ui {
     next_id: u64,
     widgets: HashMap<WidgetId, Widget>,
-    /// Top-level columns (mount roots).
+    /// Top-level columns/rows (mount roots).
     roots: Vec<WidgetId>,
     /// scene node → widget (buttons primarily).
     node_to_widget: HashMap<NodeId, WidgetId>,
@@ -112,9 +164,6 @@ impl Default for Ui {
 
 impl Ui {
     /// Empty UI using the default system CJK-capable font.
-    ///
-    /// Panics if no system font can be loaded — use [`Ui::with_font`] in tests
-    /// that supply bytes, or ensure Noto/PingFang/YaHei is installed.
     pub fn new() -> Self {
         let font = load_default_cjk_font().unwrap_or_else(|e| {
             panic!("next-gui-ui: failed to load default CJK font: {e}");
@@ -144,32 +193,54 @@ impl Ui {
         id
     }
 
-    /// Declare a column and build its children with a compact closure.
+    /// Declare a top-level column and build its children.
     pub fn column<F>(&mut self, style: ColumnStyle, build: F) -> WidgetId
     where
-        F: FnOnce(&mut ColumnBuilder<'_>),
+        F: FnOnce(&mut FlexBuilder<'_>),
     {
-        let id = self.alloc();
-        self.widgets.insert(
-            id,
-            Widget {
-                kind: Kind::Column {
-                    style,
-                    children: Vec::new(),
-                },
-                node: None,
-                label_node: None,
-            },
-        );
+        let id = self.alloc_container(Kind::Column {
+            style,
+            children: Vec::new(),
+        });
         self.roots.push(id);
         {
-            let mut builder = ColumnBuilder { ui: self, column: id };
+            let mut builder = FlexBuilder { ui: self, parent: id };
             build(&mut builder);
         }
         id
     }
 
-    /// Update text content; call [`Ui::sync`] afterwards to refresh scene glyphs/layout.
+    /// Declare a top-level row (e.g. window toolbar).
+    pub fn row<F>(&mut self, style: RowStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.alloc_container(Kind::Row {
+            style,
+            children: Vec::new(),
+        });
+        self.roots.push(id);
+        {
+            let mut builder = FlexBuilder { ui: self, parent: id };
+            build(&mut builder);
+        }
+        id
+    }
+
+    fn alloc_container(&mut self, kind: Kind) -> WidgetId {
+        let id = self.alloc();
+        self.widgets.insert(
+            id,
+            Widget {
+                kind,
+                node: None,
+                label_node: None,
+            },
+        );
+        id
+    }
+
+    /// Update text content; call [`Ui::sync`] afterwards.
     pub fn set_text(&mut self, id: WidgetId, content: impl Into<String>) {
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::Text { content: c, .. } = &mut w.kind {
@@ -199,7 +270,7 @@ impl Ui {
         self.node_to_widget.get(&node).copied()
     }
 
-    /// Hit-test widgets using the scene graph (label hits walk up to the button).
+    /// Hit-test widgets using the scene graph.
     pub fn hit_widget(&self, scene: &Scene, x: f32, y: f32) -> Option<WidgetId> {
         let node = scene.hit_test(x, y)?;
         if let Some(wid) = self.widget_from_node(node) {
@@ -233,8 +304,14 @@ impl Ui {
                     style.background.unwrap_or(Color::rgba(0, 0, 0, 0)),
                     style.background.is_some(),
                 ),
+                Some(Kind::Row { style, .. }) => (
+                    style.background.unwrap_or(Color::rgba(0, 0, 0, 0)),
+                    style.background.is_some(),
+                ),
                 Some(Kind::Text { color, .. }) => (*color, true),
                 Some(Kind::Button { bg, .. }) => (*bg, true),
+                Some(Kind::Spacer { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Separator { color, .. }) => (*color, true),
                 None => return,
             };
 
@@ -252,26 +329,28 @@ impl Ui {
                 Some(Kind::Button { .. })
             ) {
                 self.node_to_widget.insert(node, id);
-                // Label child for mask
                 let label = scene
                     .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
                     .expect("insert label node");
-                // Labels are not hit targets themselves when mask-only; keep visible for paint.
                 if let Some(w) = self.widgets.get_mut(&id) {
                     w.label_node = Some(label);
                 }
             }
         }
 
-        let (col_node, children) = match self.widgets.get(&id) {
+        let (host, children) = match self.widgets.get(&id) {
             Some(Widget {
                 kind: Kind::Column { children, .. },
                 node,
                 ..
-            }) => (*node, children.clone()),
+            })
+            | Some(Widget {
+                kind: Kind::Row { children, .. },
+                node,
+                ..
+            }) => (node.unwrap_or(parent), children.clone()),
             _ => return,
         };
-        let host = col_node.unwrap_or(parent);
         for child in children {
             self.ensure_mounted(scene, host, child);
         }
@@ -294,6 +373,19 @@ impl Ui {
                 let pad_x = 16.0;
                 ChildMeasure::new((*min_width).max(tw + pad_x * 2.0), *height)
             }
+            Some(Kind::Spacer { width, height }) => ChildMeasure::new(*width, *height),
+            Some(Kind::Separator {
+                thickness,
+                length,
+                horizontal,
+                ..
+            }) => {
+                if *horizontal {
+                    ChildMeasure::new(*length, *thickness)
+                } else {
+                    ChildMeasure::new(*thickness, *length)
+                }
+            }
             Some(Kind::Column {
                 style, children, ..
             }) => {
@@ -309,6 +401,26 @@ impl Ui {
                     max_height: style.height,
                     padding: style.padding,
                     gap: style.gap,
+                    cross_align: style.cross_align,
+                };
+                next_gui_layout::measure_flex(&params, &measures)
+            }
+            Some(Kind::Row {
+                style, children, ..
+            }) => {
+                let measures: Vec<_> = children
+                    .iter()
+                    .map(|c| self.measure_widget(*c))
+                    .collect();
+                let params = FlexParams {
+                    axis: Axis::Horizontal,
+                    x: 0.0,
+                    y: 0.0,
+                    max_width: style.width,
+                    max_height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
                 };
                 next_gui_layout::measure_flex(&params, &measures)
             }
@@ -317,64 +429,150 @@ impl Ui {
     }
 
     fn layout_widget(&mut self, scene: &mut Scene, id: WidgetId) {
-        let (style, children, col_node) = match self.widgets.get(&id) {
+        let flex = match self.widgets.get(&id) {
             Some(Widget {
                 kind: Kind::Column {
                     style, children, ..
                 },
                 node,
                 ..
-            }) => (*style, children.clone(), *node),
-            _ => return,
+            }) => Some((
+                FlexParams {
+                    axis: Axis::Vertical,
+                    x: style.x,
+                    y: style.y,
+                    max_width: style.width,
+                    max_height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                },
+                style.background.is_some(),
+                children.clone(),
+                *node,
+            )),
+            Some(Widget {
+                kind: Kind::Row {
+                    style, children, ..
+                },
+                node,
+                ..
+            }) => Some((
+                FlexParams {
+                    axis: Axis::Horizontal,
+                    x: style.x,
+                    y: style.y,
+                    max_width: style.width,
+                    max_height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                },
+                style.background.is_some(),
+                children.clone(),
+                *node,
+            )),
+            _ => None,
+        };
+
+        let Some((params, has_bg, children, col_node)) = flex else {
+            return;
         };
 
         let measures: Vec<_> = children
             .iter()
             .map(|c| self.measure_widget(*c))
             .collect();
-        let params = FlexParams {
-            axis: Axis::Vertical,
-            x: style.x,
-            y: style.y,
-            max_width: style.width,
-            max_height: style.height,
-            padding: style.padding,
-            gap: style.gap,
-        };
         let total = next_gui_layout::measure_flex(&params, &measures);
         if let Some(node) = col_node {
+            // Nested flex: keep origin from parent-assigned bounds if already placed.
+            let (ox, oy) = scene
+                .get(node)
+                .map(|n| {
+                    // Top-level uses style x/y; nested was set by parent — prefer existing if non-zero tree.
+                    if self.roots.contains(&id) {
+                        (params.x, params.y)
+                    } else {
+                        (n.bounds.x, n.bounds.y)
+                    }
+                })
+                .unwrap_or((params.x, params.y));
+            let mut placed = params;
+            placed.x = ox;
+            placed.y = oy;
             scene.set_bounds(
                 node,
                 Rect::new(
-                    style.x,
-                    style.y,
-                    total.width.max(100.0),
-                    total.height.max(40.0),
+                    ox,
+                    oy,
+                    total.width.max(40.0),
+                    total.height.max(24.0),
                 ),
             );
-            if style.background.is_some() {
+            if has_bg {
                 scene.set_visible(node, true);
             }
+            let rects = layout_flex(&placed, &measures);
+            for (child_id, rect) in children.iter().copied().zip(rects) {
+                if let Some(w) = self.widgets.get(&child_id) {
+                    if let Some(node) = w.node {
+                        scene.set_bounds(node, rect);
+                        let visible = !matches!(w.kind, Kind::Spacer { .. });
+                        scene.set_visible(node, visible);
+                    }
+                }
+                if matches!(
+                    self.widgets.get(&child_id).map(|w| &w.kind),
+                    Some(Kind::Column { .. }) | Some(Kind::Row { .. })
+                ) {
+                    // Nested container: override its style origin to the allocated rect.
+                    self.rebase_container_origin(child_id, rect.x, rect.y);
+                    self.layout_widget(scene, child_id);
+                }
+            }
+            return;
         }
+
         let rects = layout_flex(&params, &measures);
         for (child_id, rect) in children.iter().copied().zip(rects) {
             if let Some(w) = self.widgets.get(&child_id) {
                 if let Some(node) = w.node {
                     scene.set_bounds(node, rect);
-                    scene.set_visible(node, true);
+                    let visible = !matches!(w.kind, Kind::Spacer { .. });
+                    scene.set_visible(node, visible);
                 }
             }
             if matches!(
                 self.widgets.get(&child_id).map(|w| &w.kind),
-                Some(Kind::Column { .. })
+                Some(Kind::Column { .. }) | Some(Kind::Row { .. })
             ) {
+                self.rebase_container_origin(child_id, rect.x, rect.y);
                 self.layout_widget(scene, child_id);
             }
         }
     }
 
+    fn rebase_container_origin(&mut self, id: WidgetId, x: f32, y: f32) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            match &mut w.kind {
+                Kind::Column { style, .. } => {
+                    style.x = x;
+                    style.y = y;
+                }
+                Kind::Row { style, .. } => {
+                    style.x = x;
+                    style.y = y;
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
-        if let Some(Kind::Column { children, .. }) = self.widgets.get(&id).map(|w| &w.kind) {
+        if let Some(
+            Kind::Column { children, .. } | Kind::Row { children, .. },
+        ) = self.widgets.get(&id).map(|w| &w.kind)
+        {
             let children = children.clone();
             for child in children {
                 self.paint_widget(scene, child);
@@ -409,7 +607,6 @@ impl Ui {
                     node,
                     Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
                 );
-                // Ensure bounds tall/wide enough for mask hit/dirty
                 let bw = bounds.width.max(mask.width as f32);
                 let bh = bounds.height.max(mask.height as f32);
                 scene.set_bounds(node, Rect::new(bounds.x, bounds.y, bw, bh));
@@ -443,18 +640,23 @@ impl Ui {
                     scene.set_visible(lid, true);
                 }
             }
-            Kind::Column { .. } => {}
+            Kind::Separator { color, .. } => {
+                scene.set_fill(node, *color);
+                scene.set_mask(node, None);
+                scene.set_visible(node, true);
+            }
+            Kind::Spacer { .. } | Kind::Column { .. } | Kind::Row { .. } => {}
         }
     }
 }
 
-/// Compact builder for column children.
-pub struct ColumnBuilder<'a> {
+/// Compact builder for column/row children.
+pub struct FlexBuilder<'a> {
     ui: &'a mut Ui,
-    column: WidgetId,
+    parent: WidgetId,
 }
 
-impl ColumnBuilder<'_> {
+impl FlexBuilder<'_> {
     /// Add a text label; returns its [`WidgetId`].
     pub fn text(&mut self, content: impl Into<String>) -> WidgetId {
         self.text_styled(content, Color::rgb(0xe5, 0xe5, 0xe5), 22.0)
@@ -508,9 +710,9 @@ impl ColumnBuilder<'_> {
                     label: label.into(),
                     bg,
                     fg,
-                    size: 20.0,
-                    min_width: 160.0,
-                    height: 44.0,
+                    size: 18.0,
+                    min_width: 88.0,
+                    height: 36.0,
                 },
                 node: None,
                 label_node: None,
@@ -520,28 +722,91 @@ impl ColumnBuilder<'_> {
         id
     }
 
-    /// Nest another column inside this column (used by `.ngui` and Rust API).
-    pub fn column<F>(&mut self, style: ColumnStyle, build: F) -> WidgetId
-    where
-        F: FnOnce(&mut ColumnBuilder<'_>),
-    {
+    /// Fixed-size spacer (invisible).
+    pub fn spacer(&mut self, width: f32, height: f32) -> WidgetId {
         let id = self.ui.alloc();
         self.ui.widgets.insert(
             id,
             Widget {
-                kind: Kind::Column {
-                    style,
-                    children: Vec::new(),
+                kind: Kind::Spacer { width, height },
+                node: None,
+                label_node: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Horizontal separator (thin bar along the main cross of a column).
+    pub fn separator(&mut self) -> WidgetId {
+        self.separator_styled(1.0, 200.0, true, Color::rgb(0x55, 0x55, 0x5a))
+    }
+
+    /// Vertical separator for rows (thin upright bar).
+    pub fn separator_vertical(&mut self, length: f32) -> WidgetId {
+        self.separator_styled(1.0, length, false, Color::rgb(0x55, 0x55, 0x5a))
+    }
+
+    /// Separator with explicit geometry.
+    pub fn separator_styled(
+        &mut self,
+        thickness: f32,
+        length: f32,
+        horizontal: bool,
+        color: Color,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Separator {
+                    thickness,
+                    length,
+                    horizontal,
+                    color,
                 },
                 node: None,
                 label_node: None,
             },
         );
         self.push_child(id);
+        id
+    }
+
+    /// Nest a column.
+    pub fn column<F>(&mut self, style: ColumnStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc_container(Kind::Column {
+            style,
+            children: Vec::new(),
+        });
+        self.push_child(id);
         {
-            let mut builder = ColumnBuilder {
+            let mut builder = FlexBuilder {
                 ui: self.ui,
-                column: id,
+                parent: id,
+            };
+            build(&mut builder);
+        }
+        id
+    }
+
+    /// Nest a row (toolbar strip).
+    pub fn row<F>(&mut self, style: RowStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc_container(Kind::Row {
+            style,
+            children: Vec::new(),
+        });
+        self.push_child(id);
+        {
+            let mut builder = FlexBuilder {
+                ui: self.ui,
+                parent: id,
             };
             build(&mut builder);
         }
@@ -549,13 +814,19 @@ impl ColumnBuilder<'_> {
     }
 
     fn push_child(&mut self, child: WidgetId) {
-        if let Some(w) = self.ui.widgets.get_mut(&self.column) {
-            if let Kind::Column { children, .. } = &mut w.kind {
-                children.push(child);
+        if let Some(w) = self.ui.widgets.get_mut(&self.parent) {
+            match &mut w.kind {
+                Kind::Column { children, .. } | Kind::Row { children, .. } => {
+                    children.push(child);
+                }
+                _ => {}
             }
         }
     }
 }
+
+/// Alias kept for call sites that used the P1 name.
+pub type ColumnBuilder<'a> = FlexBuilder<'a>;
 
 #[cfg(test)]
 mod tests {
@@ -582,6 +853,45 @@ mod tests {
         ui.set_text(label, "Count: 1");
         ui.sync(&mut scene);
         assert_eq!(ui.text_content(label), Some("Count: 1"));
+    }
+
+    #[test]
+    fn row_toolbar_lays_out_buttons() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut open = WidgetId(0);
+        let mut save = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 640.0,
+                height: 400.0,
+                padding: 12.0,
+                gap: 10.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.row(
+                    RowStyle {
+                        width: 600.0,
+                        height: 44.0,
+                        ..RowStyle::default()
+                    },
+                    |row| {
+                        open = row.button("Open");
+                        row.spacer(12.0, 1.0);
+                        row.separator_vertical(24.0);
+                        row.spacer(12.0, 1.0);
+                        save = row.button("Save");
+                    },
+                );
+                col.text("Workspace");
+            },
+        );
+        ui.sync(&mut scene);
+        let a = scene.get(ui.widgets.get(&open).unwrap().node.unwrap()).unwrap().bounds;
+        let b = scene.get(ui.widgets.get(&save).unwrap().node.unwrap()).unwrap().bounds;
+        assert!(b.x > a.x + a.width, "Save should sit to the right of Open");
+        assert!(ui.is_button(open) && ui.is_button(save));
     }
 
     #[test]

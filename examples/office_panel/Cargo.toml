@@ -1,0 +1,20 @@
+[package]
+name = "office_panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "office_panel"
+path = "src/main.rs"
+
+[dependencies]
+next-gui-platform = { workspace = true }
+next-gui-scene = { workspace = true }
+next-gui-render = { workspace = true }
+next-gui-render-soft = { workspace = true }
+next-gui-render-gpu = { workspace = true }
+next-gui-ui = { workspace = true }
+next-gui-text = { workspace = true }
+next-gui-layout = { workspace = true }

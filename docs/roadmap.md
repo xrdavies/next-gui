@@ -70,7 +70,18 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 运行：`cargo run -p p3_backend_toggle`（需图形会话；有 GPU 时 Space 切换 Soft/GPU）。
 
+## Office 线（P3 之后、P4 之前）— **进行中**
+
+> 决策：**暂时跳过 P4**，先做厚 Office 桌面能力。设计见 [office-line.md](office-line.md)。
+
+- 布局：`CrossAlign`；控件：`Row` / `Spacer` / `Separator`（工具条）
+- GPU：优先目标为原生 `wgpu::Surface` present；**当前仍为 readback→softbuffer**（缺口见 office-line）
+- Soft 始终可回退；示例 `cargo run -p office_panel`
+- **不**引入 `profile` crate（留给 P4）
+
 ## P4 — 双档 Profile
+
+> **已推迟（deferred）。** 等 Office 线与 Field Soft 路径都更稳后再抽配置层。
 
 - Field / Office 特性开关与性能预算（`profile`）
 - 最低机型清单与降级策略（停帧、降 fps、关特效、强制 soft、关 GPU）
@@ -98,4 +109,4 @@ cargo run -p p1_ngui_counter     # .ngui 文件
 
 ## 建议顺序
 
-先打通 **P0 软渲染 + 脏区（Linux，指针+键盘）**，再紧凑声明式与文本，再 GPU 与双档，最后 Immediate、触控与多 OS。不要先做满血 GPU demo 再回头补弱机路径；也不要第一天做满血 QML 式语言。
+P0–P3 已通 → **当前做厚 Office 线**（跳过 P4）→ 稍后 P4 Profile → P5 Immediate → P6 工业打磨。不要先做满血 GPU Surface demo 再回头补弱机 Soft；也不要第一天做满血 QML 式语言。

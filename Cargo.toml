@@ -14,6 +14,7 @@ members = [
     "examples/p1_ngui_counter",
     "examples/p2_cjk_text",
     "examples/p3_backend_toggle",
+    "examples/office_panel",
 ]
 
 [workspace.package]
