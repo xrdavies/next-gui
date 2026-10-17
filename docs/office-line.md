@@ -85,6 +85,14 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 
 ---
 
+## 3.1 控件目录（待确认）
+
+完整对照表与优先级见 **[office-widget-catalog.md](office-widget-catalog.md)**（Ant Design / Element Plus / MUI + 工业扩展）。
+
+本阶段**只确认清单**，不在本文实现表单/树/表等控件。推荐 MVP（P0）以该文档 §4 为准。
+
+---
+
 ## 4. 与路线图的关系
 
 ```text
@@ -93,7 +101,8 @@ P0–P3 完成
 【当前】Office 线加厚（本文）  ←── P4 推迟
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
-    · 下一步：控件列表确认与扩充
+    · 控件目录（待确认）：[office-widget-catalog.md](office-widget-catalog.md)
+    · 下一步：按目录确认后扩充实现
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓
