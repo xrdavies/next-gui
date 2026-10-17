@@ -2,7 +2,10 @@
 //!
 //! Consumes the same [`DrawCommand`] stream as `next-gui-render-soft`, draws into an
 //! off-screen texture, then readbacks XRGB8888 for [`next_gui_platform`] present.
-//! Native wgpu surface present is out of P3 scope.
+//!
+//! Native wgpu `Surface` present is the Office-line goal but **not wired yet** — see
+//! [`GpuPresentPath`] and `docs/office-line.md`. Softbuffer ownership on the OS window
+//! blocks attaching a wgpu surface without a GPU-first platform path.
 
 #![deny(missing_docs)]
 
@@ -100,6 +103,19 @@ impl fmt::Display for GpuInitError {
 }
 
 impl std::error::Error for GpuInitError {}
+
+/// How GPU frames reach the OS window.
+///
+/// Office prefers [`GpuPresentPath::NativeSurface`]; the running backend reports what
+/// it actually does today via [`GpuRenderer::present_path`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuPresentPath {
+    /// Off-screen wgpu → CPU readback → `platform.present` (softbuffer). **Current.**
+    ReadbackSoftbuffer,
+    /// Direct `wgpu::Surface` present on the OS window. **Not implemented** until
+    /// `platform` offers a GPU-first window without softbuffer contention.
+    NativeSurface,
+}
 
 /// GPU backend implementing [`Renderer`] via wgpu off-screen + CPU readback.
 pub struct GpuRenderer {
@@ -306,6 +322,11 @@ impl GpuRenderer {
     /// Adapter backend label (e.g. `Vulkan`, `Gl`).
     pub fn backend_name(&self) -> &str {
         &self.backend_name
+    }
+
+    /// How this renderer presents frames (always readback until Surface lands).
+    pub fn present_path(&self) -> GpuPresentPath {
+        GpuPresentPath::ReadbackSoftbuffer
     }
 
     /// Clear / background color.

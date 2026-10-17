@@ -30,7 +30,7 @@
 ### 1.3 本阶段明确不做
 
 - Field/Office `profile` 配置（P4）
-- 经 wgpu Surface 直接 present（绕过 softbuffer）；P3 用 readback 保持平台简单
+- 经 wgpu Surface 直接 present（绕过 softbuffer）；P3 用 readback 保持平台简单；Office 线见 [office-line.md](office-line.md) / `GpuPresentPath`
 - 字形 GPU atlas / 距离场（仍用 CPU mask + `BlitAlpha`）
 - Windows/macOS 专用 GPU 路径差异（wgpu 可多后端，但验收以 Linux 为主）
 - 复杂特效、MSAA、动画系统
@@ -93,4 +93,4 @@ gpu.backend_name() -> &str   // e.g. "Vulkan" / "Gl"
 | readback 延迟 | P3 可接受；真 Surface present 后续 |
 | 与 Soft 像素差 | 允许抗锯齿/混合舍入差；几何应对齐 |
 
-下一步（非本阶段）：wgpu Surface present、合批优化、P4 Profile 默认 Office=GPU / Field=Soft。
+下一步：Office 线做厚（Surface present 缺口文档化；Row/工具条）；**P4 Profile 已推迟**。

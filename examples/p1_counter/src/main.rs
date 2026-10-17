@@ -48,6 +48,7 @@ impl Demo {
                 padding: 20.0,
                 gap: 14.0,
                 background: Some(Color::rgb(0x2a, 0x2a, 0x2e)),
+                            ..ColumnStyle::default()
             },
             |col| {
                 label = col.text("Count: 0");

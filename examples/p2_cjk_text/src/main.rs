@@ -54,6 +54,7 @@ impl Demo {
                 padding: 20.0,
                 gap: 12.0,
                 background: Some(Color::rgb(0x2c, 0x2c, 0x2e)),
+                            ..ColumnStyle::default()
             },
             |col| {
                 title = col.text_styled(
