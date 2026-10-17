@@ -537,7 +537,7 @@ impl AppCallbacks for Demo {
                 y,
                 ..
             } => {
-                if self.ui.pointer_pressed(&self.scene, x as f32, y as f32) {
+                if self.ui.pointer_pressed(&mut self.scene, x as f32, y as f32) {
                     self.refresh_status();
                     ctx.request_redraw();
                 }

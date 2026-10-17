@@ -3,8 +3,9 @@
 //! Retained widget tree built with a short builder or loaded from a compact `.ngui` file,
 //! synced into [`next_gui_scene::Scene`]. Text uses [`next_gui_text`] (font metrics + CJK).
 //!
-//! Office P0 shell + input + data widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
-//! ScrollArea, TextInput, Checkbox, Radio, Switch, List, Tree, Table.
+//! Office P0 shell + input + data + nav widgets: Icon/Toolbar/Panel/StatusBar/Splitter,
+//! ScrollArea, TextInput, Checkbox, Radio, Switch, List, Tree, Table,
+//! Menu, ContextMenu, Tabs, Select, Slider.
 
 #![deny(missing_docs)]
 
@@ -685,6 +686,256 @@ impl Default for TableStyle {
     }
 }
 
+/// One actionable entry in a [`Kind::Menu`] / [`Kind::ContextMenu`].
+#[derive(Debug, Clone)]
+pub struct MenuItem {
+    /// Stable id returned by [`Ui::take_menu_action`].
+    pub id: u64,
+    /// Display label.
+    pub label: String,
+    /// When false, item is drawn muted and not activatable.
+    pub enabled: bool,
+}
+
+impl MenuItem {
+    /// Enabled menu item.
+    pub fn new(id: u64, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            enabled: true,
+        }
+    }
+
+    /// Disabled menu item.
+    pub fn disabled(id: u64, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            enabled: false,
+        }
+    }
+}
+
+/// Style for a dropdown Menu (title button + popup list).
+#[derive(Debug, Clone, Copy)]
+pub struct MenuStyle {
+    /// Title button min width.
+    pub min_width: f32,
+    /// Title / item height.
+    pub item_height: f32,
+    /// Popup min width (falls back to title width).
+    pub popup_width: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Title / item text.
+    pub fg: Color,
+    /// Disabled item text.
+    pub disabled_fg: Color,
+    /// Title button background.
+    pub title_bg: Color,
+    /// Open title / hover row background.
+    pub open_bg: Color,
+    /// Popup panel background.
+    pub popup_bg: Color,
+    /// Selected / hover row background.
+    pub hover_bg: Color,
+}
+
+impl Default for MenuStyle {
+    fn default() -> Self {
+        Self {
+            min_width: 72.0,
+            item_height: 28.0,
+            popup_width: 160.0,
+            size: 13.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            disabled_fg: Color::rgb(0x70, 0x74, 0x80),
+            title_bg: Color::rgb(0x36, 0x36, 0x3e),
+            open_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
+            hover_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+        }
+    }
+}
+
+/// Style for a ContextMenu host region + popup.
+#[derive(Debug, Clone, Copy)]
+pub struct ContextMenuStyle {
+    /// Host width.
+    pub width: f32,
+    /// Host height.
+    pub height: f32,
+    /// Popup width.
+    pub popup_width: f32,
+    /// Item row height.
+    pub item_height: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Host fill.
+    pub host_bg: Color,
+    /// Host hint text color.
+    pub hint_fg: Color,
+    /// Popup panel background.
+    pub popup_bg: Color,
+    /// Item text.
+    pub fg: Color,
+    /// Disabled item text.
+    pub disabled_fg: Color,
+    /// Hover row background.
+    pub hover_bg: Color,
+}
+
+impl Default for ContextMenuStyle {
+    fn default() -> Self {
+        Self {
+            width: 280.0,
+            height: 120.0,
+            popup_width: 180.0,
+            item_height: 28.0,
+            size: 13.0,
+            host_bg: Color::rgb(0x26, 0x26, 0x2c),
+            hint_fg: Color::rgb(0xa0, 0xa8, 0xb4),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            disabled_fg: Color::rgb(0x70, 0x74, 0x80),
+            hover_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+        }
+    }
+}
+
+/// Style for Tabs (strip + content pane).
+#[derive(Debug, Clone, Copy)]
+pub struct TabsStyle {
+    /// Outer width.
+    pub width: f32,
+    /// Outer height (strip + content).
+    pub height: f32,
+    /// Tab strip height.
+    pub strip_height: f32,
+    /// Content padding.
+    pub padding: f32,
+    /// Gap between content children.
+    pub gap: f32,
+    /// Content cross-align.
+    pub cross_align: CrossAlign,
+    /// Font size (px).
+    pub size: f32,
+    /// Inactive tab text.
+    pub fg: Color,
+    /// Active tab text.
+    pub active_fg: Color,
+    /// Strip / inactive tab background.
+    pub strip_bg: Color,
+    /// Active tab background.
+    pub active_bg: Color,
+    /// Content pane background.
+    pub content_bg: Color,
+}
+
+impl Default for TabsStyle {
+    fn default() -> Self {
+        Self {
+            width: 400.0,
+            height: 240.0,
+            strip_height: 32.0,
+            padding: 10.0,
+            gap: 8.0,
+            cross_align: CrossAlign::Start,
+            size: 13.0,
+            fg: Color::rgb(0xa8, 0xb0, 0xbc),
+            active_fg: Color::rgb(0xff, 0xff, 0xff),
+            strip_bg: Color::rgb(0x2c, 0x2c, 0x34),
+            active_bg: Color::rgb(0x3a, 0x3a, 0x48),
+            content_bg: Color::rgb(0x24, 0x24, 0x2a),
+        }
+    }
+}
+
+/// Style for a Select (combobox-lite).
+#[derive(Debug, Clone, Copy)]
+pub struct SelectStyle {
+    /// Closed field width.
+    pub width: f32,
+    /// Closed field height.
+    pub height: f32,
+    /// Dropdown max height.
+    pub popup_max_height: f32,
+    /// Option row height.
+    pub item_height: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size (px).
+    pub size: f32,
+    /// Value / option text.
+    pub fg: Color,
+    /// Placeholder when nothing selected.
+    pub placeholder_fg: Color,
+    /// Closed field background.
+    pub bg: Color,
+    /// Popup background.
+    pub popup_bg: Color,
+    /// Selected / hover row background.
+    pub selected_bg: Color,
+    /// Focus border hint.
+    pub focus_border: Color,
+}
+
+impl Default for SelectStyle {
+    fn default() -> Self {
+        Self {
+            width: 200.0,
+            height: 30.0,
+            popup_max_height: 160.0,
+            item_height: 26.0,
+            padding: 8.0,
+            size: 13.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            placeholder_fg: Color::rgb(0x70, 0x74, 0x80),
+            bg: Color::rgb(0x2a, 0x2a, 0x32),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+/// Style for a horizontal Slider.
+#[derive(Debug, Clone, Copy)]
+pub struct SliderStyle {
+    /// Track width.
+    pub width: f32,
+    /// Control height (thumb diameter budget).
+    pub height: f32,
+    /// Track thickness.
+    pub track_thickness: f32,
+    /// Thumb diameter.
+    pub thumb_size: f32,
+    /// Track background.
+    pub track: Color,
+    /// Filled portion of track.
+    pub fill: Color,
+    /// Thumb fill.
+    pub thumb: Color,
+    /// Focus ring hint.
+    pub focus_border: Color,
+}
+
+impl Default for SliderStyle {
+    fn default() -> Self {
+        Self {
+            width: 220.0,
+            height: 28.0,
+            track_thickness: 6.0,
+            thumb_size: 16.0,
+            track: Color::rgb(0x3a, 0x3a, 0x44),
+            fill: Color::rgb(0x3b, 0x82, 0xf6),
+            thumb: Color::rgb(0xe8, 0xec, 0xf4),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Kind {
     Column {
@@ -790,6 +1041,41 @@ enum Kind {
         scroll_y: f32,
         style: TableStyle,
     },
+    Menu {
+        title: String,
+        items: Vec<MenuItem>,
+        open: bool,
+        style: MenuStyle,
+    },
+    ContextMenu {
+        hint: String,
+        items: Vec<MenuItem>,
+        open: bool,
+        /// Popup anchor in window coords (set on open).
+        anchor_x: f32,
+        anchor_y: f32,
+        style: ContextMenuStyle,
+        children: Vec<WidgetId>,
+    },
+    Tabs {
+        titles: Vec<String>,
+        selected: usize,
+        style: TabsStyle,
+        children: Vec<WidgetId>,
+    },
+    Select {
+        options: Vec<String>,
+        selected: Option<usize>,
+        open: bool,
+        placeholder: String,
+        style: SelectStyle,
+    },
+    Slider {
+        min: f32,
+        max: f32,
+        value: f32,
+        style: SliderStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -821,6 +1107,10 @@ enum DragState {
         start_y: f32,
         start_scroll_x: f32,
         start_scroll_y: f32,
+    },
+    Slider {
+        slider: WidgetId,
+        track: Rect,
     },
 }
 
@@ -895,8 +1185,14 @@ pub struct Ui {
     node_to_widget: HashMap<NodeId, WidgetId>,
     font: Arc<Font>,
     drag: Option<DragState>,
-    /// Focused widget (inputs + List / Tree / Table).
+    /// Focused widget (inputs + List / Tree / Table / Select / Slider / Tabs).
     focus: Option<WidgetId>,
+    /// Currently open popup owner (Menu / ContextMenu / Select); at most one.
+    open_popup: Option<WidgetId>,
+    /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
+    pending_menu_action: Option<(WidgetId, u64)>,
+    /// Scene overlay host (last child of root) for popup panels.
+    overlay_host: Option<NodeId>,
 }
 
 impl Default for Ui {
@@ -934,6 +1230,8 @@ pub enum UiKey {
     Space,
     /// Select-all in focused text input (Ctrl/Cmd+A).
     SelectAll,
+    /// Escape (close open popup).
+    Escape,
 }
 
 impl Ui {
@@ -955,6 +1253,9 @@ impl Ui {
             font: Arc::new(font),
             drag: None,
             focus: None,
+            open_popup: None,
+            pending_menu_action: None,
+            overlay_host: None,
         }
     }
 
@@ -1194,16 +1495,44 @@ impl Ui {
         None
     }
 
-    /// Begin a pointer press.
+    /// Begin a pointer press (primary button).
     ///
-    /// Handles splitter sash drag, scroll-area drag, focus for inputs, and
-    /// toggle for Checkbox / Radio / Switch. Returns true if the UI mutated
+    /// Handles splitter sash drag, scroll-area drag, focus for inputs,
+    /// toggle for Checkbox / Radio / Switch, data selection, Menu / Select
+    /// open-close, Slider thumb, and Tabs. Returns true if the UI mutated
     /// (caller should [`Ui::sync`] + redraw).
-    pub fn pointer_pressed(&mut self, scene: &Scene, x: f32, y: f32) -> bool {
+    pub fn pointer_pressed(&mut self, scene: &mut Scene, x: f32, y: f32) -> bool {
+        self.pointer_press(scene, x, y, false)
+    }
+
+    /// Begin a pointer press with primary (`secondary = false`) or secondary
+    /// / right button (`secondary = true`, opens [`Kind::ContextMenu`]).
+    pub fn pointer_press(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool) -> bool {
+        // Open popup hit first (overlay sits above everything).
+        if let Some(pid) = self.open_popup {
+            if self.popup_contains(scene, pid, x, y) {
+                return self.pointer_popup_item(scene, pid, x, y);
+            }
+            // Click outside closes popup; hide overlay aux immediately so the
+            // underlying widget can be hit without an intervening sync.
+            self.hide_popup_aux_mut(scene, pid);
+            self.close_popup_internal();
+        }
+
         let Some(id) = self.hit_widget(scene, x, y) else {
             self.focus = None;
             return true;
         };
+
+        if secondary {
+            // Right-click: open context menu if host (or ancestor) is ContextMenu.
+            if let Some(cm) = self.find_context_menu_ancestor(id) {
+                self.focus = Some(cm);
+                self.open_context_menu_at(cm, x, y);
+                return true;
+            }
+            return false;
+        }
 
         // Splitter sash
         if self.is_splitter(id) {
@@ -1232,7 +1561,7 @@ impl Ui {
             return true;
         }
 
-        // ScrollArea: start drag-scroll; also focus clears to none unless child hit first
+        // ScrollArea: start drag-scroll
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::ScrollArea { .. })
@@ -1306,6 +1635,27 @@ impl Ui {
                 self.focus = Some(id);
                 return self.pointer_table(scene, id, x, y);
             }
+            Some(Kind::Menu { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_menu_title(scene, id);
+            }
+            Some(Kind::ContextMenu { .. }) => {
+                // Left click on host: no menu; children handle via hit.
+                self.focus = None;
+                return false;
+            }
+            Some(Kind::Tabs { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_tabs(scene, id, x, y);
+            }
+            Some(Kind::Select { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_select_toggle(scene, id);
+            }
+            Some(Kind::Slider { .. }) => {
+                self.focus = Some(id);
+                return self.pointer_slider(scene, id, x, y);
+            }
             Some(Kind::Button { .. }) => {
                 self.focus = None;
                 return false; // let app handle button clicks via hit_widget
@@ -1317,7 +1667,7 @@ impl Ui {
         }
     }
 
-    /// Continue an active drag (splitter or scroll); returns true if state changed.
+        /// Continue an active drag (splitter or scroll); returns true if state changed.
     pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
         let Some(drag) = self.drag.clone() else {
             return false;
@@ -1363,6 +1713,7 @@ impl Ui {
                 let dy = start_y - y;
                 self.set_any_scroll(area, start_scroll_x + dx, start_scroll_y + dy)
             }
+            DragState::Slider { slider, track } => self.apply_slider_x(slider, track, x),
         }
     }
 
@@ -1426,7 +1777,9 @@ impl Ui {
                     | Kind::Panel { children, .. }
                     | Kind::StatusBar { children, .. }
                     | Kind::Splitter { children, .. }
-                    | Kind::ScrollArea { children, .. } => children.as_slice(),
+                    | Kind::ScrollArea { children, .. }
+                    | Kind::ContextMenu { children, .. }
+                    | Kind::Tabs { children, .. } => children.as_slice(),
                     _ => &[],
                 };
                 if self.subtree_contains(*c, kids, target) {
@@ -1759,6 +2112,9 @@ impl Ui {
 
     /// Deliver a key to the focused widget. Returns true if handled.
     pub fn key_input(&mut self, key: UiKey) -> bool {
+        if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
+            return self.close_popup_internal();
+        }
         let Some(id) = self.focus else {
             return false;
         };
@@ -1789,8 +2145,113 @@ impl Ui {
             Some(Kind::List { .. }) => self.key_list(id, key),
             Some(Kind::Tree { .. }) => self.key_tree(id, key),
             Some(Kind::Table { .. }) => self.key_table(id, key),
+            Some(Kind::Tabs { .. }) => self.key_tabs(id, key),
+            Some(Kind::Select { .. }) => self.key_select(id, key),
+            Some(Kind::Slider { .. }) => self.key_slider(id, key),
             _ => false,
         }
+    }
+
+    fn key_tabs(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Tabs { titles, .. }) => titles.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let cur = self.tabs_selected(id).unwrap_or(0);
+        match key {
+            UiKey::Left | UiKey::Up => {
+                let next = if cur == 0 { n - 1 } else { cur - 1 };
+                self.set_tabs_selected(id, next)
+            }
+            UiKey::Right | UiKey::Down => self.set_tabs_selected(id, (cur + 1) % n),
+            UiKey::Home => self.set_tabs_selected(id, 0),
+            UiKey::End => self.set_tabs_selected(id, n - 1),
+            _ => false,
+        }
+    }
+
+    fn key_select(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Select { open: true, .. })
+        );
+        match key {
+            UiKey::Enter | UiKey::Space => {
+                if open {
+                    self.close_popup_internal()
+                } else {
+                    self.close_popup_internal();
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Select { open, .. } = &mut w.kind {
+                            *open = true;
+                        }
+                    }
+                    self.open_popup = Some(id);
+                    true
+                }
+            }
+            UiKey::Down | UiKey::Up => {
+                let _ = open;
+                let n = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Select { options, .. }) => options.len(),
+                    _ => return false,
+                };
+                if n == 0 {
+                    return false;
+                }
+                let cur = self.select_selected(id).unwrap_or(0);
+                let next = match key {
+                    UiKey::Down => (cur + 1) % n,
+                    UiKey::Up => {
+                        if cur == 0 {
+                            n - 1
+                        } else {
+                            cur - 1
+                        }
+                    }
+                    _ => return false,
+                };
+                if !open {
+                    self.close_popup_internal();
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Select { open, .. } = &mut w.kind {
+                            *open = true;
+                        }
+                    }
+                    self.open_popup = Some(id);
+                }
+                self.set_select_selected(id, Some(next));
+                // keep open after set_select_selected closed it
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Select { open, .. } = &mut w.kind {
+                        *open = true;
+                    }
+                }
+                self.open_popup = Some(id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn key_slider(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let (min, max, value) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Slider { min, max, value, .. }) => (*min, *max, *value),
+            _ => return false,
+        };
+        let span = (max - min).abs().max(1e-6);
+        let step = span / 20.0;
+        let nv = match key {
+            UiKey::Left | UiKey::Down => value - step,
+            UiKey::Right | UiKey::Up => value + step,
+            UiKey::Home => min,
+            UiKey::End => max,
+            _ => return false,
+        };
+        self.set_slider_value(id, nv)
     }
 
     fn key_text_input(&mut self, id: WidgetId, key: UiKey) -> bool {
@@ -1894,7 +2355,7 @@ impl Ui {
                     false
                 }
             }
-            UiKey::Enter | UiKey::Tab | UiKey::Space | UiKey::Up | UiKey::Down => false,
+            UiKey::Enter | UiKey::Tab | UiKey::Space | UiKey::Up | UiKey::Down | UiKey::Escape => false,
         }
     }
 
@@ -2281,7 +2742,482 @@ impl Ui {
         }
     }
 
-    fn ensure_aux_nodes(
+
+    /// Close any open Menu / ContextMenu / Select popup.
+    pub fn close_popup(&mut self) -> bool {
+        self.close_popup_internal()
+    }
+
+    fn close_popup_internal(&mut self) -> bool {
+        let Some(id) = self.open_popup.take() else {
+            return false;
+        };
+        if let Some(w) = self.widgets.get_mut(&id) {
+            match &mut w.kind {
+                Kind::Menu { open, .. }
+                | Kind::ContextMenu { open, .. }
+                | Kind::Select { open, .. } => {
+                    *open = false;
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
+    fn hide_popup_aux_mut(&self, scene: &mut Scene, id: WidgetId) {
+        if let Some(w) = self.widgets.get(&id) {
+            for &n in &w.aux {
+                scene.set_visible(n, false);
+            }
+        }
+    }
+
+    /// Drain the last activated menu / context-menu item `(owner, item_id)`.
+    pub fn take_menu_action(&mut self) -> Option<(WidgetId, u64)> {
+        self.pending_menu_action.take()
+    }
+
+    /// Selected tab index.
+    pub fn tabs_selected(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Tabs { selected, .. }) => Some(*selected),
+            _ => None,
+        }
+    }
+
+    /// Set selected tab index (clamped).
+    pub fn set_tabs_selected(&mut self, id: WidgetId, index: usize) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Tabs { titles, .. }) => titles.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let index = index.min(n - 1);
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Tabs { selected, .. } = &mut w.kind {
+                if *selected != index {
+                    *selected = index;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Selected option index for a Select.
+    pub fn select_selected(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Select { selected, .. }) => *selected,
+            _ => None,
+        }
+    }
+
+    /// Set Select selection.
+    pub fn set_select_selected(&mut self, id: WidgetId, index: Option<usize>) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Select { options, .. }) => options.len(),
+            _ => return false,
+        };
+        if let Some(i) = index {
+            if i >= n {
+                return false;
+            }
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Select { selected, open, .. } = &mut w.kind {
+                *selected = index;
+                *open = false;
+                if self.open_popup == Some(id) {
+                    self.open_popup = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Current slider value.
+    pub fn slider_value(&self, id: WidgetId) -> Option<f32> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Slider { value, .. }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Set slider value (clamped to min..=max).
+    pub fn set_slider_value(&mut self, id: WidgetId, value: f32) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Slider {
+                min, max, value: v, ..
+            } = &mut w.kind
+            {
+                let nv = value.clamp(*min, *max);
+                if (*v - nv).abs() < 1e-6 {
+                    return false;
+                }
+                *v = nv;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether id is a Menu.
+    pub fn is_menu(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Menu { .. }))
+    }
+
+    /// Whether id is a ContextMenu host.
+    pub fn is_context_menu(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ContextMenu { .. })
+        )
+    }
+
+    /// Whether id is Tabs.
+    pub fn is_tabs(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Tabs { .. }))
+    }
+
+    /// Whether id is a Select.
+    pub fn is_select(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Select { .. })
+        )
+    }
+
+    /// Whether id is a Slider.
+    pub fn is_slider(&self, id: WidgetId) -> bool {
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Slider { .. })
+        )
+    }
+
+    fn find_context_menu_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ContextMenu { .. })
+        ) {
+            return Some(id);
+        }
+        // Search containers that list this id as child.
+        for (wid, w) in &self.widgets {
+            let kids = match &w.kind {
+                Kind::Column { children, .. }
+                | Kind::Row { children, .. }
+                | Kind::Toolbar { children, .. }
+                | Kind::Panel { children, .. }
+                | Kind::StatusBar { children, .. }
+                | Kind::Splitter { children, .. }
+                | Kind::ScrollArea { children, .. }
+                | Kind::ContextMenu { children, .. }
+                | Kind::Tabs { children, .. } => children.as_slice(),
+                _ => continue,
+            };
+            if kids.contains(&id) {
+                if matches!(w.kind, Kind::ContextMenu { .. }) {
+                    return Some(*wid);
+                }
+                if let Some(found) = self.find_context_menu_ancestor(*wid) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    fn open_context_menu_at(&mut self, id: WidgetId, x: f32, y: f32) {
+        if self.open_popup != Some(id) {
+            self.close_popup_internal();
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::ContextMenu {
+                open,
+                anchor_x,
+                anchor_y,
+                ..
+            } = &mut w.kind
+            {
+                *open = true;
+                *anchor_x = x;
+                *anchor_y = y;
+            }
+        }
+        self.open_popup = Some(id);
+    }
+
+    fn pointer_menu_title(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Menu { open: true, .. })
+        );
+        if let Some(pid) = self.open_popup {
+            self.hide_popup_aux_mut(scene, pid);
+        }
+        self.close_popup_internal();
+        if was_open {
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Menu { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        true
+    }
+
+    fn pointer_select_toggle(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Select { open: true, .. })
+        );
+        if let Some(pid) = self.open_popup {
+            self.hide_popup_aux_mut(scene, pid);
+        }
+        self.close_popup_internal();
+        if was_open {
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Select { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        true
+    }
+
+    fn popup_contains(&self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let Some(w) = self.widgets.get(&id) else {
+            return false;
+        };
+        // First aux node is the popup panel background when open.
+        if let Some(&panel) = w.aux.first() {
+            if let Some(n) = scene.get(panel) {
+                if n.visible && n.bounds.contains(x, y) {
+                    return true;
+                }
+            }
+        }
+        // Also treat title/host click as "inside" for Menu/Select so toggle works.
+        if let Some(node) = w.node {
+            if let Some(n) = scene.get(node) {
+                if n.bounds.contains(x, y) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn pointer_popup_item(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        // Click on title/host while open → toggle close (Menu/Select).
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(node) = w.node {
+                if let Some(n) = scene.get(node) {
+                    if n.bounds.contains(x, y) {
+                        match &w.kind {
+                            Kind::Menu { .. } => return self.pointer_menu_title(scene, id),
+                            Kind::Select { .. } => return self.pointer_select_toggle(scene, id),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        let (items_len, item_h, panel_bounds, kind_menu) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Menu { items, style, .. },
+                aux,
+                ..
+            }) => {
+                let panel = aux.first().and_then(|n| scene.get(*n)).map(|n| n.bounds);
+                (
+                    items.len(),
+                    style.item_height,
+                    panel.unwrap_or_else(Rect::empty),
+                    0u8,
+                )
+            }
+            Some(Widget {
+                kind: Kind::ContextMenu { items, style, .. },
+                aux,
+                ..
+            }) => {
+                let panel = aux.first().and_then(|n| scene.get(*n)).map(|n| n.bounds);
+                (
+                    items.len(),
+                    style.item_height,
+                    panel.unwrap_or_else(Rect::empty),
+                    1u8,
+                )
+            }
+            Some(Widget {
+                kind: Kind::Select {
+                    options, style, ..
+                },
+                aux,
+                ..
+            }) => {
+                let panel = aux.first().and_then(|n| scene.get(*n)).map(|n| n.bounds);
+                (
+                    options.len(),
+                    style.item_height,
+                    panel.unwrap_or_else(Rect::empty),
+                    2u8,
+                )
+            }
+            _ => return false,
+        };
+
+        if items_len == 0 || panel_bounds.is_empty() {
+            self.close_popup_internal();
+            return true;
+        }
+        let local_y = y - panel_bounds.y;
+        let idx = if item_h > 0.0 {
+            (local_y / item_h).floor() as isize
+        } else {
+            -1
+        };
+        if idx < 0 || (idx as usize) >= items_len {
+            return true;
+        }
+        let i = idx as usize;
+        match kind_menu {
+            0 | 1 => {
+                let (item_id, enabled) = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Menu { items, .. }) | Some(Kind::ContextMenu { items, .. }) => {
+                        (items[i].id, items[i].enabled)
+                    }
+                    _ => return false,
+                };
+                if enabled {
+                    self.pending_menu_action = Some((id, item_id));
+                }
+                self.hide_popup_aux_mut(scene, id);
+                self.close_popup_internal();
+                true
+            }
+            2 => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Select { selected, open, .. } = &mut w.kind {
+                        *selected = Some(i);
+                        *open = false;
+                    }
+                }
+                self.hide_popup_aux_mut(scene, id);
+                self.open_popup = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_tabs(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (titles, style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Tabs { titles, style, .. },
+                node,
+                ..
+            }) => (titles.clone(), *style, *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        if y > bounds.y + style.strip_height {
+            return true; // content click — keep focus
+        }
+        if titles.is_empty() {
+            return false;
+        }
+        let tab_w = (bounds.width / titles.len() as f32).max(40.0);
+        let idx = ((x - bounds.x) / tab_w).floor() as isize;
+        if idx < 0 || (idx as usize) >= titles.len() {
+            return false;
+        }
+        self.set_tabs_selected(id, idx as usize)
+    }
+
+    fn pointer_slider(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Slider { style, .. },
+                node,
+                ..
+            }) => (*style, *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let track = Rect::new(
+            bounds.x + style.thumb_size * 0.5,
+            bounds.y + (bounds.height - style.track_thickness) * 0.5,
+            (bounds.width - style.thumb_size).max(1.0),
+            style.track_thickness,
+        );
+        let _ = y;
+        let changed = self.apply_slider_x(id, track, x);
+        self.drag = Some(DragState::Slider { slider: id, track });
+        changed || true
+    }
+
+    fn apply_slider_x(&mut self, id: WidgetId, track: Rect, x: f32) -> bool {
+        let (min, max) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Slider { min, max, .. }) => (*min, *max),
+            _ => return false,
+        };
+        let t = if track.width <= 0.0 {
+            0.0
+        } else {
+            ((x - track.x) / track.width).clamp(0.0, 1.0)
+        };
+        let value = min + t * (max - min);
+        self.set_slider_value(id, value)
+    }
+
+    fn ensure_overlay_host(&mut self, scene: &mut Scene) -> NodeId {
+        if let Some(h) = self.overlay_host {
+            if scene.get(h).is_some() {
+                scene.raise(h);
+                return h;
+            }
+        }
+        let h = scene
+            .insert(
+                scene.root(),
+                Rect::new(0.0, 0.0, 0.0, 0.0),
+                Color::rgba(0, 0, 0, 0),
+            )
+            .expect("overlay host");
+        scene.set_visible(h, false);
+        scene.set_mask(h, Some(AlphaMask::empty()));
+        self.overlay_host = Some(h);
+        h
+    }
+
+    fn ensure_overlay_aux(
+        &mut self,
+        scene: &mut Scene,
+        id: WidgetId,
+        needed: usize,
+    ) {
+        let host = self.ensure_overlay_host(scene);
+        self.ensure_aux_nodes(scene, host, id, needed);
+        scene.raise(host);
+    }
+
+        fn ensure_aux_nodes(
         &mut self,
         scene: &mut Scene,
         host: NodeId,
@@ -2315,6 +3251,7 @@ impl Ui {
             self.layout_widget(scene, root);
             self.paint_widget(scene, root);
         }
+        self.paint_open_popups(scene);
     }
 
     fn ensure_mounted(&mut self, scene: &mut Scene, parent: NodeId, id: WidgetId) {
@@ -2361,6 +3298,11 @@ impl Ui {
                 Some(Kind::List { style, .. }) => (style.bg, true),
                 Some(Kind::Tree { style, .. }) => (style.bg, true),
                 Some(Kind::Table { style, .. }) => (style.bg, true),
+                Some(Kind::Menu { style, .. }) => (style.title_bg, true),
+                Some(Kind::ContextMenu { style, .. }) => (style.host_bg, true),
+                Some(Kind::Tabs { style, .. }) => (style.content_bg, true),
+                Some(Kind::Select { style, .. }) => (style.bg, true),
+                Some(Kind::Slider { style, .. }) => (style.track, true),
                 None => return,
             };
 
@@ -2447,6 +3389,46 @@ impl Ui {
                         w.chrome_node = Some(chrome);
                     }
                 }
+                Some(Kind::Menu { .. }) | Some(Kind::Select { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert menu/select label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::ContextMenu { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert ctx hint");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Tabs { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x2c, 0x2c, 0x34))
+                        .expect("insert tabs strip");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                    }
+                }
+                Some(Kind::Slider { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let chrome = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
+                        .expect("insert slider fill");
+                    let thumb = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0xe8, 0xec, 0xf4))
+                        .expect("insert slider thumb");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.chrome_node = Some(chrome);
+                        w.label_node = Some(thumb);
+                    }
+                }
                 _ => {}
             }
         }
@@ -2460,7 +3442,9 @@ impl Ui {
                     | Kind::Panel { children, .. }
                     | Kind::StatusBar { children, .. }
                     | Kind::Splitter { children, .. }
-                    | Kind::ScrollArea { children, .. },
+                    | Kind::ScrollArea { children, .. }
+                    | Kind::ContextMenu { children, .. }
+                    | Kind::Tabs { children, .. },
                 node,
                 ..
             }) => (node.unwrap_or(parent), children.clone()),
@@ -2594,6 +3578,14 @@ impl Ui {
             Some(Kind::List { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Tree { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Table { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Menu { title, style, .. }) => {
+                let (tw, _) = self.font.measure_line(title, style.size);
+                ChildMeasure::new(style.min_width.max(tw + 24.0), style.item_height)
+            }
+            Some(Kind::ContextMenu { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Tabs { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Select { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Slider { style, .. }) => ChildMeasure::new(style.width, style.height),
             None => ChildMeasure::new(0.0, 0.0),
         }
     }
@@ -2642,6 +3634,20 @@ impl Ui {
             Some(Kind::Panel { .. })
         ) {
             self.layout_panel(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Tabs { .. })
+        ) {
+            self.layout_tabs(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ContextMenu { .. })
+        ) {
+            self.layout_context_menu_host(scene, id);
             return;
         }
 
@@ -2840,6 +3846,8 @@ impl Ui {
                     | Kind::StatusBar { .. }
                     | Kind::Splitter { .. }
                     | Kind::ScrollArea { .. }
+                    | Kind::ContextMenu { .. }
+                    | Kind::Tabs { .. }
             )
         )
     }
@@ -2923,7 +3931,130 @@ impl Ui {
         }
     }
 
-    fn layout_splitter(&mut self, scene: &mut Scene, id: WidgetId) {
+
+    fn layout_tabs(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Tabs {
+                    titles,
+                    selected,
+                    style,
+                    children,
+                },
+            node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let style = *style;
+        let selected = *selected;
+        let children = children.clone();
+        let titles = titles.clone();
+        let col_node = *node;
+        let chrome = *chrome_node;
+
+        let (ox, oy, w, h) = if let Some(node) = col_node {
+            scene
+                .get(node)
+                .map(|n| {
+                    if self.roots.contains(&id) {
+                        (0.0, 0.0, style.width, style.height)
+                    } else {
+                        (
+                            n.bounds.x,
+                            n.bounds.y,
+                            n.bounds.width.max(40.0),
+                            n.bounds.height.max(40.0),
+                        )
+                    }
+                })
+                .unwrap_or((0.0, 0.0, style.width, style.height))
+        } else {
+            (0.0, 0.0, style.width, style.height)
+        };
+
+        if let Some(node) = col_node {
+            scene.set_bounds(node, Rect::new(ox, oy, w, h));
+            scene.set_fill(node, style.content_bg);
+            scene.set_visible(node, true);
+        }
+        if let Some(chrome) = chrome {
+            scene.set_bounds(chrome, Rect::new(ox, oy, w, style.strip_height));
+            scene.set_fill(chrome, style.strip_bg);
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+
+        let content_y = oy + style.strip_height;
+        let content_h = (h - style.strip_height).max(0.0);
+        for (i, child_id) in children.iter().copied().enumerate() {
+            if i == selected {
+                self.place_child(
+                    scene,
+                    child_id,
+                    Rect::new(ox, content_y, w, content_h),
+                );
+            } else if let Some(w) = self.widgets.get(&child_id) {
+                if let Some(n) = w.node {
+                    scene.set_visible(n, false);
+                }
+            }
+        }
+        let _ = titles;
+    }
+
+    fn layout_context_menu_host(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::ContextMenu {
+                    style, children, ..
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let style = *style;
+        let children = children.clone();
+        let col_node = *node;
+        let (ox, oy, w, h) = if let Some(node) = col_node {
+            if self.roots.contains(&id) {
+                (0.0, 0.0, style.width, style.height)
+            } else {
+                scene
+                    .get(node)
+                    .map(|n| (n.bounds.x, n.bounds.y, n.bounds.width.max(40.0), n.bounds.height.max(40.0)))
+                    .unwrap_or((0.0, 0.0, style.width, style.height))
+            }
+        } else {
+            (0.0, 0.0, style.width, style.height)
+        };
+        if let Some(node) = col_node {
+            scene.set_bounds(node, Rect::new(ox, oy, w, h));
+            scene.set_fill(node, style.host_bg);
+            scene.set_visible(node, true);
+        }
+        let params = FlexParams {
+            axis: Axis::Vertical,
+            x: ox,
+            y: oy,
+            max_width: w,
+            max_height: h,
+            padding: 8.0,
+            gap: 6.0,
+            cross_align: CrossAlign::Start,
+        };
+        let measures: Vec<_> = children.iter().map(|c| self.measure_widget(*c)).collect();
+        let rects = layout_flex(&params, &measures);
+        for (child_id, rect) in children.iter().copied().zip(rects) {
+            self.place_child(scene, child_id, rect);
+        }
+    }
+
+        fn layout_splitter(&mut self, scene: &mut Scene, id: WidgetId) {
         let Some(Widget {
             kind: Kind::Splitter { style, children },
             node,
@@ -3201,6 +4332,14 @@ impl Ui {
                     style.width = width;
                     style.height = height;
                 }
+                Kind::Tabs { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
+                Kind::ContextMenu { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
                 _ => {}
             }
         }
@@ -3215,7 +4354,9 @@ impl Ui {
                 | Kind::Panel { children, .. }
                 | Kind::StatusBar { children, .. }
                 | Kind::Splitter { children, .. }
-                | Kind::ScrollArea { children, .. },
+                | Kind::ScrollArea { children, .. }
+                | Kind::ContextMenu { children, .. }
+                | Kind::Tabs { children, .. },
             ) => Some(children.clone()),
             _ => None,
         };
@@ -3226,7 +4367,28 @@ impl Ui {
             ) {
                 self.paint_panel_title(scene, id);
             }
-            for child in children {
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Tabs { .. })
+            ) {
+                self.paint_tabs_strip(scene, id);
+            }
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::ContextMenu { .. })
+            ) {
+                self.paint_context_menu_hint(scene, id);
+            }
+            let selected_tab = match self.widgets.get(&id).map(|w| &w.kind) {
+                Some(Kind::Tabs { selected, .. }) => Some(*selected),
+                _ => None,
+            };
+            for (i, child) in children.into_iter().enumerate() {
+                if let Some(sel) = selected_tab {
+                    if i != sel {
+                        continue;
+                    }
+                }
                 self.paint_widget(scene, child);
             }
             return;
@@ -3251,6 +4413,27 @@ impl Ui {
             Some(Kind::Table { .. })
         ) {
             self.paint_table(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Menu { .. })
+        ) {
+            self.paint_menu_title(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Select { .. })
+        ) {
+            self.paint_select_field(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Slider { .. })
+        ) {
+            self.paint_slider(scene, id);
             return;
         }
 
@@ -3568,7 +4751,12 @@ impl Ui {
             | Kind::ScrollArea { .. }
             | Kind::List { .. }
             | Kind::Tree { .. }
-            | Kind::Table { .. } => {}
+            | Kind::Table { .. }
+            | Kind::Menu { .. }
+            | Kind::ContextMenu { .. }
+            | Kind::Tabs { .. }
+            | Kind::Select { .. }
+            | Kind::Slider { .. } => {}
         }
     }
 
@@ -3952,6 +5140,402 @@ impl Ui {
             Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
         );
         scene.set_visible(label, true);
+    }
+
+    fn paint_menu_title(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Menu { title, open, style, .. },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let title = title.clone();
+        let open = *open;
+        let style = *style;
+        let Some(node) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        let bg = if open { style.open_bg } else { style.title_bg };
+        scene.set_fill(node, bg);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        let (_, mask) = self.font.rasterize_text(&title, style.size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + 10.0;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, style.fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+    }
+
+    fn paint_select_field(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Select {
+                    options,
+                    selected,
+                    open,
+                    placeholder,
+                    style,
+                },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let text = match *selected {
+            Some(i) if i < options.len() => options[i].clone(),
+            _ => placeholder.clone(),
+        };
+        let fg = match *selected {
+            Some(i) if i < options.len() => style.fg,
+            _ => style.placeholder_fg,
+        };
+        let open = *open;
+        let style = *style;
+        let Some(node) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(node, if open { style.selected_bg } else { style.bg });
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        let display = format!("{text}  ▾");
+        let (_, mask) = self.font.rasterize_text(&display, style.size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + style.padding;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+    }
+
+    fn paint_slider(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Slider { min, max, value, style },
+            node,
+            chrome_node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let min = *min;
+        let max = *max;
+        let value = *value;
+        let style = *style;
+        let Some(node) = *node else { return };
+        let chrome = *chrome_node;
+        let thumb = *label_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+
+        // Invisible full hit target.
+        scene.set_bounds(node, bounds);
+        scene.set_fill(node, Color::rgba(0, 0, 0, 0));
+        scene.set_mask(node, Some(AlphaMask::empty()));
+        scene.set_visible(node, true);
+
+        let track_y = bounds.y + (bounds.height - style.track_thickness) * 0.5;
+        let track_x = bounds.x + style.thumb_size * 0.5;
+        let track_w = (bounds.width - style.thumb_size).max(1.0);
+        let t = if (max - min).abs() < 1e-9 {
+            0.0
+        } else {
+            ((value - min) / (max - min)).clamp(0.0, 1.0)
+        };
+
+        self.ensure_aux_nodes(scene, node, id, 1);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&track_n) = aux.first() {
+            scene.set_bounds(
+                track_n,
+                Rect::new(track_x, track_y, track_w, style.track_thickness),
+            );
+            scene.set_fill(track_n, style.track);
+            scene.set_mask(track_n, None);
+            scene.set_visible(track_n, true);
+        }
+        if let Some(chrome) = chrome {
+            let fill_w = (track_w * t).max(0.001);
+            scene.set_bounds(
+                chrome,
+                Rect::new(track_x, track_y, fill_w, style.track_thickness),
+            );
+            scene.set_fill(chrome, style.fill);
+            scene.set_mask(chrome, None);
+            scene.set_visible(chrome, true);
+        }
+        if let Some(thumb_n) = thumb {
+            let tx = track_x + track_w * t - style.thumb_size * 0.5;
+            let ty = bounds.y + (bounds.height - style.thumb_size) * 0.5;
+            scene.set_bounds(
+                thumb_n,
+                Rect::new(tx, ty, style.thumb_size, style.thumb_size),
+            );
+            scene.set_fill(thumb_n, style.thumb);
+            scene.set_mask(thumb_n, None);
+            scene.set_visible(thumb_n, true);
+        }
+    }
+
+    fn paint_tabs_strip(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Tabs { titles, selected, style, .. },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let titles = titles.clone();
+        let selected = *selected;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        if titles.is_empty() {
+            return;
+        }
+        let tab_w = (bounds.width / titles.len() as f32).max(40.0);
+        let needed = titles.len() * 2;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        for (i, title) in titles.iter().enumerate() {
+            let x = bounds.x + i as f32 * tab_w;
+            let active = i == selected;
+            if let Some(&bg) = aux.get(i * 2) {
+                scene.set_bounds(bg, Rect::new(x, bounds.y, tab_w, style.strip_height));
+                scene.set_fill(bg, if active { style.active_bg } else { style.strip_bg });
+                scene.set_mask(bg, None);
+                scene.set_visible(bg, true);
+            }
+            let (_, mask) = self.font.rasterize_text(title, style.size, None);
+            if let Some(&lab) = aux.get(i * 2 + 1) {
+                let lx = x + 10.0;
+                let ly = bounds.y + ((style.strip_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_fill(lab, if active { style.active_fg } else { style.fg });
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_context_menu_hint(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::ContextMenu { hint, style, .. },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let hint = hint.clone();
+        let style = *style;
+        let Some(node) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(node, style.host_bg);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+        if hint.is_empty() {
+            if let Some(lid) = label_node {
+                scene.set_visible(lid, false);
+            }
+            return;
+        }
+        let (_, mask) = self.font.rasterize_text(&hint, style.size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + 8.0;
+            let ly = bounds.y + bounds.height - mask.height as f32 - 6.0;
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, style.hint_fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+    }
+
+    fn paint_open_popups(&mut self, scene: &mut Scene) {
+        let Some(id) = self.open_popup else {
+            // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx
+            for wid in self.widgets.keys().copied().collect::<Vec<_>>() {
+                if matches!(
+                    self.widgets.get(&wid).map(|w| &w.kind),
+                    Some(Kind::Menu { open: false, .. })
+                        | Some(Kind::ContextMenu { open: false, .. })
+                        | Some(Kind::Select { open: false, .. })
+                ) {
+                    if let Some(w) = self.widgets.get(&wid) {
+                        for &n in &w.aux {
+                            scene.set_visible(n, false);
+                        }
+                    }
+                }
+            }
+            return;
+        };
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Menu { .. }) => self.paint_menu_popup(scene, id),
+            Some(Kind::ContextMenu { .. }) => self.paint_context_popup(scene, id),
+            Some(Kind::Select { .. }) => self.paint_select_popup(scene, id),
+            _ => {}
+        }
+    }
+
+    fn paint_menu_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (items, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Menu { items, style, open, .. },
+                node,
+                ..
+            }) if *open => {
+                let b = node.and_then(|n| scene.get(n).map(|n| n.bounds)).unwrap_or_else(Rect::empty);
+                (items.clone(), *style, b)
+            }
+            _ => return,
+        };
+        let popup_w = style.popup_width.max(host_bounds.width);
+        let popup_h = style.item_height * items.len().max(1) as f32;
+        let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, popup_w, popup_h);
+        self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg);
+    }
+
+    fn paint_context_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (items, style, ax, ay) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::ContextMenu {
+                        items,
+                        style,
+                        open,
+                        anchor_x,
+                        anchor_y,
+                        ..
+                    },
+                ..
+            }) if *open => (items.clone(), *style, *anchor_x, *anchor_y),
+            _ => return,
+        };
+        let popup_h = style.item_height * items.len().max(1) as f32;
+        let panel = Rect::new(ax, ay, style.popup_width, popup_h);
+        self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg);
+    }
+
+    fn paint_select_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (options, selected, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Select {
+                        options,
+                        selected,
+                        style,
+                        open,
+                        ..
+                    },
+                node,
+                ..
+            }) if *open => {
+                let b = node.and_then(|n| scene.get(n).map(|n| n.bounds)).unwrap_or_else(Rect::empty);
+                (options.clone(), *selected, *style, b)
+            }
+            _ => return,
+        };
+        let n = options.len().max(1);
+        let popup_h = (style.item_height * n as f32).min(style.popup_max_height);
+        let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, host_bounds.width.max(style.width), popup_h);
+        let items: Vec<MenuItem> = options
+            .iter()
+            .enumerate()
+            .map(|(i, l)| MenuItem {
+                id: i as u64,
+                label: l.clone(),
+                enabled: true,
+            })
+            .collect();
+        // highlight selected via hover_bg on that row — pass selected index through paint
+        self.ensure_overlay_aux(scene, id, 1 + items.len() * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&bg) = aux.first() {
+            scene.set_bounds(bg, panel);
+            scene.set_fill(bg, style.popup_bg);
+            scene.set_mask(bg, None);
+            scene.set_visible(bg, true);
+            self.node_to_widget.insert(bg, id);
+        }
+        for (i, item) in items.iter().enumerate() {
+            let y = panel.y + i as f32 * style.item_height;
+            let row = Rect::new(panel.x, y, panel.width, style.item_height);
+            let hi = selected == Some(i);
+            if let Some(&rbg) = aux.get(1 + i * 2) {
+                scene.set_bounds(rbg, row);
+                scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
+                scene.set_mask(rbg, None);
+                scene.set_visible(rbg, true);
+                self.node_to_widget.insert(rbg, id);
+            }
+            let (_, mask) = self.font.rasterize_text(&item.label, style.size, None);
+            if let Some(&lab) = aux.get(1 + i * 2 + 1) {
+                let lx = row.x + style.padding;
+                let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_fill(lab, style.fg);
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_item_popup(
+        &mut self,
+        scene: &mut Scene,
+        id: WidgetId,
+        panel: Rect,
+        items: &[MenuItem],
+        item_height: f32,
+        size: f32,
+        popup_bg: Color,
+        fg: Color,
+        disabled_fg: Color,
+        _hover_bg: Color,
+    ) {
+        self.ensure_overlay_aux(scene, id, 1 + items.len() * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&bg) = aux.first() {
+            scene.set_bounds(bg, panel);
+            scene.set_fill(bg, popup_bg);
+            scene.set_mask(bg, None);
+            scene.set_visible(bg, true);
+            self.node_to_widget.insert(bg, id);
+        }
+        for (i, item) in items.iter().enumerate() {
+            let y = panel.y + i as f32 * item_height;
+            let row = Rect::new(panel.x, y, panel.width, item_height);
+            if let Some(&rbg) = aux.get(1 + i * 2) {
+                scene.set_bounds(rbg, row);
+                scene.set_fill(rbg, popup_bg);
+                scene.set_mask(rbg, None);
+                scene.set_visible(rbg, true);
+                self.node_to_widget.insert(rbg, id);
+            }
+            let (_, mask) = self.font.rasterize_text(&item.label, size, None);
+            if let Some(&lab) = aux.get(1 + i * 2 + 1) {
+                let lx = row.x + 10.0;
+                let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_fill(lab, if item.enabled { fg } else { disabled_fg });
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
     }
 }
 
@@ -4499,6 +6083,160 @@ impl FlexBuilder<'_> {
         id
     }
 
+    /// Dropdown Menu (title button; click to open item list).
+    pub fn menu(
+        &mut self,
+        title: impl Into<String>,
+        items: Vec<MenuItem>,
+        style: MenuStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Menu {
+                    title: title.into(),
+                    items,
+                    open: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Context-menu host: children layout inside; right-click opens `items`.
+    pub fn context_menu<F>(
+        &mut self,
+        hint: impl Into<String>,
+        items: Vec<MenuItem>,
+        style: ContextMenuStyle,
+        build: F,
+    ) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::ContextMenu {
+                    hint: hint.into(),
+                    items,
+                    open: false,
+                    anchor_x: 0.0,
+                    anchor_y: 0.0,
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        {
+            let mut b = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut b);
+        }
+        id
+    }
+
+    /// Tabs strip + pages. Each `page` call adds one title and one content child.
+    pub fn tabs<F>(&mut self, style: TabsStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut TabsBuilder<'_>),
+    {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Tabs {
+                    titles: Vec::new(),
+                    selected: 0,
+                    style,
+                    children: Vec::new(),
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        {
+            let mut b = TabsBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut b);
+        }
+        id
+    }
+
+    /// Combobox-lite Select (single option from list).
+    pub fn select(
+        &mut self,
+        options: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<usize>,
+        placeholder: impl Into<String>,
+        style: SelectStyle,
+    ) -> WidgetId {
+        let options: Vec<String> = options.into_iter().map(|s| s.into()).collect();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Select {
+                    options,
+                    selected,
+                    open: false,
+                    placeholder: placeholder.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Horizontal Slider in `min..=max`.
+    pub fn slider(&mut self, min: f32, max: f32, value: f32, style: SliderStyle) -> WidgetId {
+        let lo = min.min(max);
+        let hi = min.max(max);
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Slider {
+                    min: lo,
+                    max: hi,
+                    value: value.clamp(lo, hi),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     fn push_child(&mut self, child: WidgetId) {
         if let Some(w) = self.ui.widgets.get_mut(&self.parent) {
             match &mut w.kind {
@@ -4508,12 +6246,66 @@ impl FlexBuilder<'_> {
                 | Kind::Panel { children, .. }
                 | Kind::StatusBar { children, .. }
                 | Kind::Splitter { children, .. }
-                | Kind::ScrollArea { children, .. } => {
+                | Kind::ScrollArea { children, .. }
+                | Kind::ContextMenu { children, .. }
+                | Kind::Tabs { children, .. } => {
                     children.push(child);
                 }
                 _ => {}
             }
         }
+    }
+}
+
+/// Builder for [`FlexBuilder::tabs`] pages.
+pub struct TabsBuilder<'a> {
+    ui: &'a mut Ui,
+    parent: WidgetId,
+}
+
+impl TabsBuilder<'_> {
+    /// Add a tab page with `title` and content built into a nested column.
+    pub fn page<F>(&mut self, title: impl Into<String>, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let title = title.into();
+        let page_style = {
+            let Some(w) = self.ui.widgets.get_mut(&self.parent) else {
+                return WidgetId(0);
+            };
+            let Kind::Tabs { titles, style, .. } = &mut w.kind else {
+                return WidgetId(0);
+            };
+            titles.push(title);
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: (style.width - style.padding * 2.0).max(40.0),
+                height: (style.height - style.strip_height - style.padding * 2.0).max(40.0),
+                padding: style.padding,
+                gap: style.gap,
+                cross_align: style.cross_align,
+                background: None,
+            }
+        };
+        let id = self.ui.alloc_container(Kind::Column {
+            style: page_style,
+            children: Vec::new(),
+        });
+        if let Some(w) = self.ui.widgets.get_mut(&self.parent) {
+            if let Kind::Tabs { children, .. } = &mut w.kind {
+                children.push(id);
+            }
+        }
+        {
+            let mut b = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut b);
+        }
+        id
     }
 }
 
@@ -4697,7 +6489,7 @@ mod tests {
         let sb = scene.get(sash).unwrap().bounds;
         let cx = sb.x + sb.width * 0.5;
         let cy = sb.y + sb.height * 0.5;
-        assert!(ui.pointer_pressed(&scene, cx, cy));
+        assert!(ui.pointer_pressed(&mut scene, cx, cy));
         assert!(ui.pointer_moved(cx + 40.0, cy));
         ui.pointer_released();
         ui.sync(&mut scene);
@@ -4756,7 +6548,7 @@ mod tests {
 
         let inode = ui.widgets.get(&input).unwrap().node.unwrap();
         let b = scene.get(inode).unwrap().bounds;
-        assert!(ui.pointer_pressed(&scene, b.x + 4.0, b.y + 4.0));
+        assert!(ui.pointer_pressed(&mut scene, b.x + 4.0, b.y + 4.0));
         assert_eq!(ui.focused(), Some(input));
         assert!(ui.key_input(UiKey::Char('H')));
         assert!(ui.key_input(UiKey::Char('i')));
@@ -4767,18 +6559,18 @@ mod tests {
 
         let cnode = ui.widgets.get(&check).unwrap().node.unwrap();
         let cb = scene.get(cnode).unwrap().bounds;
-        assert!(ui.pointer_pressed(&scene, cb.x + 2.0, cb.y + 2.0));
+        assert!(ui.pointer_pressed(&mut scene, cb.x + 2.0, cb.y + 2.0));
         assert_eq!(ui.is_checked(check), Some(true));
 
         let rnode = ui.widgets.get(&radio_b).unwrap().node.unwrap();
         let rb = scene.get(rnode).unwrap().bounds;
-        assert!(ui.pointer_pressed(&scene, rb.x + 2.0, rb.y + 2.0));
+        assert!(ui.pointer_pressed(&mut scene, rb.x + 2.0, rb.y + 2.0));
         assert_eq!(ui.is_checked(radio_a), Some(false));
         assert_eq!(ui.is_checked(radio_b), Some(true));
 
         let snode = ui.widgets.get(&sw).unwrap().node.unwrap();
         let sb = scene.get(snode).unwrap().bounds;
-        assert!(ui.pointer_pressed(&scene, sb.x + 2.0, sb.y + 2.0));
+        assert!(ui.pointer_pressed(&mut scene, sb.x + 2.0, sb.y + 2.0));
         assert_eq!(ui.is_checked(sw), Some(true));
 
         let sarea = ui.widgets.get(&scroll).unwrap().node.unwrap();
@@ -4854,7 +6646,7 @@ mod tests {
 
         let lnode = ui.widgets.get(&list).unwrap().node.unwrap();
         let lb = scene.get(lnode).unwrap().bounds;
-        assert!(ui.pointer_pressed(&scene, lb.x + 8.0, lb.y + 8.0));
+        assert!(ui.pointer_pressed(&mut scene, lb.x + 8.0, lb.y + 8.0));
         assert_eq!(ui.list_selected(list), Some(0));
         assert_eq!(ui.focused(), Some(list));
         assert!(ui.key_input(UiKey::Down));
@@ -4862,7 +6654,7 @@ mod tests {
 
         let tnode = ui.widgets.get(&tree).unwrap().node.unwrap();
         let tb = scene.get(tnode).unwrap().bounds;
-        assert!(ui.pointer_pressed(&scene, tb.x + 20.0, tb.y + 8.0));
+        assert!(ui.pointer_pressed(&mut scene, tb.x + 20.0, tb.y + 8.0));
         assert_eq!(ui.tree_selected(tree), Some(1));
         ui.set_focus(Some(tree));
         assert!(ui.key_input(UiKey::Down));
@@ -4872,7 +6664,7 @@ mod tests {
         let tab = scene.get(tabn).unwrap().bounds;
         let style_h = 28.0; // header
         assert!(ui.pointer_pressed(
-            &scene,
+            &mut scene,
             tab.x + 10.0,
             tab.y + style_h + 8.0
         ));
@@ -4884,5 +6676,137 @@ mod tests {
         assert!(ui.pointer_scroll(&scene, lb.x + 10.0, lb.y + 10.0, 0.0, 40.0));
         ui.sync(&mut scene);
         assert!(scene.get(lnode).unwrap().clip.is_some());
+    }
+
+    #[test]
+    fn office_nav_menu_tabs_select_slider() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut menu = WidgetId(0);
+        let mut ctx = WidgetId(0);
+        let mut tabs = WidgetId(0);
+        let mut sel = WidgetId(0);
+        let mut slider = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 520.0,
+                height: 480.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.row(
+                    RowStyle {
+                        width: 480.0,
+                        height: 32.0,
+                        ..RowStyle::default()
+                    },
+                    |row| {
+                        menu = row.menu(
+                            "File",
+                            vec![
+                                MenuItem::new(1, "Open"),
+                                MenuItem::new(2, "Save"),
+                                MenuItem::disabled(3, "Export"),
+                            ],
+                            MenuStyle::default(),
+                        );
+                    },
+                );
+                ctx = col.context_menu(
+                    "Right-click me",
+                    vec![MenuItem::new(10, "Inspect"), MenuItem::new(11, "Delete")],
+                    ContextMenuStyle {
+                        width: 260.0,
+                        height: 80.0,
+                        ..ContextMenuStyle::default()
+                    },
+                    |c| {
+                        c.text_styled("Host area", Color::rgb(0xc0, 0xc4, 0xcc), 13.0);
+                    },
+                );
+                tabs = col.tabs(
+                    TabsStyle {
+                        width: 400.0,
+                        height: 140.0,
+                        ..TabsStyle::default()
+                    },
+                    |tb| {
+                        tb.page("General", |p| {
+                            p.text_styled("General page", Color::rgb(0xc0, 0xc4, 0xcc), 13.0);
+                        });
+                        tb.page("Alarms", |p| {
+                            p.text_styled("Alarms page", Color::rgb(0xc0, 0xc4, 0xcc), 13.0);
+                        });
+                    },
+                );
+                sel = col.select(
+                    ["Auto", "Manual", "Off"],
+                    Some(0),
+                    "Mode",
+                    SelectStyle::default(),
+                );
+                slider = col.slider(0.0, 100.0, 40.0, SliderStyle::default());
+            },
+        );
+        ui.sync(&mut scene);
+        assert!(ui.is_menu(menu));
+        assert!(ui.is_context_menu(ctx));
+        assert!(ui.is_tabs(tabs));
+        assert!(ui.is_select(sel));
+        assert!(ui.is_slider(slider));
+        assert_eq!(ui.tabs_selected(tabs), Some(0));
+        assert_eq!(ui.select_selected(sel), Some(0));
+        assert!((ui.slider_value(slider).unwrap() - 40.0).abs() < 0.01);
+
+        // Open menu and activate Save
+        let mnode = ui.widgets.get(&menu).unwrap().node.unwrap();
+        let mb = scene.get(mnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, mb.x + 4.0, mb.y + 4.0));
+        ui.sync(&mut scene);
+        let popup = ui.widgets.get(&menu).unwrap().aux[0];
+        let pb = scene.get(popup).unwrap().bounds;
+        assert!(scene.get(popup).unwrap().visible);
+        // second item (Save)
+        assert!(ui.pointer_press(&mut scene, pb.x + 8.0, pb.y + 28.0 + 8.0, false));
+        assert_eq!(ui.take_menu_action(), Some((menu, 2)));
+
+        // Tabs click second
+        let tnode = ui.widgets.get(&tabs).unwrap().node.unwrap();
+        let tb = scene.get(tnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, tb.x + tb.width * 0.75, tb.y + 8.0));
+        assert_eq!(ui.tabs_selected(tabs), Some(1));
+
+        // Select open + pick Manual
+        let snode = ui.widgets.get(&sel).unwrap().node.unwrap();
+        let sb = scene.get(snode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, sb.x + 4.0, sb.y + 4.0));
+        ui.sync(&mut scene);
+        let sp = ui.widgets.get(&sel).unwrap().aux[0];
+        let spb = scene.get(sp).unwrap().bounds;
+        assert!(ui.pointer_press(&mut scene, spb.x + 8.0, spb.y + 26.0 + 4.0, false));
+        assert_eq!(ui.select_selected(sel), Some(1));
+
+        // Context menu secondary
+        let cnode = ui.widgets.get(&ctx).unwrap().node.unwrap();
+        let cb = scene.get(cnode).unwrap().bounds;
+        assert!(ui.pointer_press(&mut scene, cb.x + 20.0, cb.y + 20.0, true));
+        ui.sync(&mut scene);
+        let cp = ui.widgets.get(&ctx).unwrap().aux[0];
+        assert!(scene.get(cp).unwrap().visible);
+        let cpb = scene.get(cp).unwrap().bounds;
+        assert!(ui.pointer_press(&mut scene, cpb.x + 8.0, cpb.y + 8.0, false));
+        assert_eq!(ui.take_menu_action(), Some((ctx, 10)));
+
+        // Slider drag toward max
+        let sln = ui.widgets.get(&slider).unwrap().node.unwrap();
+        let slb = scene.get(sln).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, slb.x + slb.width * 0.8, slb.y + slb.height * 0.5));
+        ui.pointer_released();
+        let v = ui.slider_value(slider).unwrap();
+        assert!(v > 50.0, "expected slider > 50 after click, got {v}");
+
+        ui.set_focus(Some(slider));
+        assert!(ui.key_input(UiKey::Right));
+        assert!(ui.slider_value(slider).unwrap() > v);
     }
 }
