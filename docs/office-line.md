@@ -18,7 +18,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 - Field/Office **Profile 配置 crate**（P4，已推迟）
 - Immediate 视口（P5）
-- 完整表单控件（TextInput / List / Tree）与 IME
+- 完整表单控件（TextInput / List / Tree）与 IME（下一切片）
 - 动画系统、图表控件
 
 ---
@@ -75,13 +75,23 @@ P3 示例 `p3_backend_toggle` 仍走此路径。
 | 能力 | 模块 | 说明 |
 |------|------|------|
 | `CrossAlign` | `layout` | Start / Center / End（交叉轴） |
-| `Row` | `ui` + `.ngui` | 横向 flex 容器（工具条） |
+| `Row` | `ui` + `.ngui` | 横向 flex 容器（工具条基础） |
 | `Spacer` | `ui` + `.ngui` | 固定宽高占位 |
 | `Separator` | `ui` + `.ngui` | 细分割线 |
+| `Icon` | `ui` | 内置命名字形（工具条/状态栏） |
+| `Toolbar` | `ui` | **一等公民**横向工具条 |
+| `Panel` | `ui` | **一等公民**带标题内容容器 |
+| `StatusBar` | `ui` | **一等公民**底栏分区 |
+| `Splitter` | `ui` | 左右/上下拖拽分隔（指针拖 sash） |
 | Soft 回退 | 示例 | GPU 失败或切换时仍可 Soft |
 | Native Surface | `render-gpu` + `platform` | Office 默认（有适配器时） |
 
-示例：`examples/office_panel`（工具条 Row + 内容区 + Soft/GPU 切换）。
+示例：
+
+- `examples/office_panel` — 早期 Row 工具条 + Soft/GPU 切换
+- `examples/office_shell` — **P0 shell**：Toolbar + Icon + Panel + Splitter + StatusBar
+
+Rust API 优先；复杂壳控件（Splitter 等）暂未进 `.ngui`（避免半成品 DSL）。下一切片：`ScrollArea` / `TextInput` / `Table` / `Tree`。
 
 ---
 

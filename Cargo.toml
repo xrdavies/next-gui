@@ -15,6 +15,7 @@ members = [
     "examples/p2_cjk_text",
     "examples/p3_backend_toggle",
     "examples/office_panel",
+    "examples/office_shell",
 ]
 
 [workspace.package]
