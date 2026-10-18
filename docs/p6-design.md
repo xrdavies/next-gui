@@ -1,6 +1,6 @@
 # P6 设计：工业打磨
 
-> **状态：P6a / P6b / P6c 已落地（触控合成 + DPI 契约 + Windows Soft 骨架）；P6d–P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)、[platform-windows.md](platform-windows.md)。
+> **状态：P6a / P6b / P6c / P6d 已落地（触控合成 + DPI 契约 + Windows Soft 骨架 + 无障碍基线）；P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)、[platform-windows.md](platform-windows.md)。
 >
 > 范围：触控 → 指针 HMI 映射、DPI / 缩放策略、Windows 后端骨架、无障碍基线、7×24 / 泄漏探测；macOS Office 工业打磨为跟进项，不挡 Linux 切片。
 >
@@ -42,7 +42,7 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 | **P6a** ✅ | 触控 → 指针 / 点击 HMI 映射 | Linux + macOS（共享 `touch_synth`） | 现有 `Event::Touch` + 主触点合成指针 |
 | **P6b** ✅ | DPI / scale 策略 | Linux + macOS（`scale_factor` + `dpi` 助手）；Retina 手工跟验 | P6a 坐标约定 |
 | **P6c** ✅ | Windows 后端骨架 | Windows Soft（`windows` feature；运行时手工跟验） | platform trait；对标 Linux P0 |
-| **P6d** | 无障碍基线 | 跨平台（先 Linux 演示） | 焦点链已存在于 ui |
+| **P6d** ✅ | 无障碍基线 | 跨平台（`accessible_name` + Tab 焦序；无 AT 总线） | 焦点链已存在于 ui |
 | **P6e** | 7×24 / 泄漏 / soak | 工具或文档 + 可选示例 | 任意；建议在 P6a–c 有窗口后再跑 |
 
 **推荐实施顺序：P6a → P6b → P6c → P6d → P6e。**
@@ -142,6 +142,15 @@ platform ─┼─ win_backend     （P6c）
 
 验收：文档 + 小示例或单测证明焦序与名称可查询；后续总线桥另开阶段。
 
+**实现（合入后）：** 见 [a11y-baseline.md](a11y-baseline.md)。
+
+| 项 | 说明 |
+|----|------|
+| `accessible_name` | `Widget` 可选覆盖；`Ui::set/clear/accessible_name`；Kind 标签/标题/占位回退 |
+| 焦序 | `focusable_widgets` DFS（roots 顺序）；`focus_next` / `focus_prev` 环绕 |
+| Tab | `UiKey::Tab` / `BackTab`；`key_input` 顶层移动焦点；Modal/Drawer 陷阱；文本框不插 Tab |
+| 非目标 | 无 AT-SPI / UIA / VoiceOver；Button 仍不进焦序（与指针一致） |
+
 ### 3.5 P6e — 7×24 / 泄漏 / soak
 
 - 文档：如何跑长时示例、关注 RSS / 句柄 / 纹理数量
@@ -181,7 +190,7 @@ winit Touch ──► Event::Touch (保留，原始)
 | P6a ✅ | 主触点合成指针；单测覆盖 Started/Moved/Ended/Cancelled + 次指不合成；linux/macos 已接；触屏手工验可选 |
 | P6b ✅ | `scale_factor` + `ScaleFactorChanged`（linux/macos）；`dpi` 助手与单测；契约成文；示例多用物理、逻辑换算可选 |
 | P6c ✅ | Windows Soft 骨架 + 指针/键盘；`windows` feature 可检；Linux/macOS 不回归；Windows 运行时手工跟验 |
-| P6d | 焦序与可访问名基线有文档/示例；不宣称完整读屏 |
+| P6d ✅ | 焦序 + `accessible_name`；单测 + [a11y-baseline.md](a11y-baseline.md)；无完整读屏 |
 | P6e | soak 步骤可重复；可选探针；CI 不强制长跑 |
 | 全局 | Field Soft 仍可无 GPU 启动；无满血 QML；Cascader / Office P2 / 自绘 IME 未混入本阶段必达 |
 
@@ -224,5 +233,6 @@ winit Touch ──► Event::Touch (保留，原始)
 | [p5-design.md](p5-design.md) | 前一阶段；Immediate 边界 |
 | [office-line.md](office-line.md) | Office 加厚；下一步指向 P6 |
 | [office-widget-catalog.md](office-widget-catalog.md) | P2 控件不在本阶段 |
+| [a11y-baseline.md](a11y-baseline.md) | P6d 焦序与可访问名 |
 
-下一步：**P6d**（无障碍基线）→ P6e。每切片合入后回写本节勾选状态。
+下一步：**P6e**（7×24 / soak）。每切片合入后回写本节勾选状态。

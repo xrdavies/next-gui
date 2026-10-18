@@ -7,6 +7,7 @@
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
+//! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order.
 
 #![deny(missing_docs)]
 
@@ -1899,6 +1900,22 @@ struct Widget {
     chrome_node: Option<NodeId>,
     /// Row/cell nodes for List / Tree / Table (bg + text pairs, etc.).
     aux: Vec<NodeId>,
+    /// Optional accessible name override (P6d). When `None`, [`Ui::accessible_name`]
+    /// falls back to kind-specific label/title/placeholder text.
+    accessible_name: Option<String>,
+}
+
+impl Widget {
+    fn new(kind: Kind) -> Self {
+        Self {
+            kind,
+            node: None,
+            label_node: None,
+            chrome_node: None,
+            aux: Vec::new(),
+            accessible_name: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2061,8 +2078,10 @@ pub enum UiKey {
     End,
     /// Enter.
     Enter,
-    /// Tab.
+    /// Tab (move focus forward).
     Tab,
+    /// Shift+Tab (move focus backward).
+    BackTab,
     /// Space (toggle focused checkbox/switch/radio).
     Space,
     /// Select-all in focused text input (Ctrl/Cmd+A).
@@ -2257,16 +2276,7 @@ impl Ui {
 
     fn alloc_container(&mut self, kind: Kind) -> WidgetId {
         let id = self.alloc();
-        self.widgets.insert(
-            id,
-            Widget {
-                kind,
-                node: None,
-                label_node: None,
-                chrome_node: None,
-            aux: Vec::new(),
-            },
-        );
+        self.widgets.insert(id, Widget::new(kind));
         id
     }
 
@@ -2743,6 +2753,231 @@ impl Ui {
     /// Set focus explicitly.
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
         self.focus = id;
+    }
+
+    /// Override the accessible name for `id` (P6d). Empty string clears to fallback.
+    pub fn set_accessible_name(&mut self, id: WidgetId, name: impl Into<String>) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            let s = name.into();
+            w.accessible_name = if s.is_empty() { None } else { Some(s) };
+        }
+    }
+
+    /// Clear the accessible name override so kind fallback applies.
+    pub fn clear_accessible_name(&mut self, id: WidgetId) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            w.accessible_name = None;
+        }
+    }
+
+    /// Accessible name: override if set, else best-effort fallback from Kind.
+    ///
+    /// Fallbacks (when non-empty): Button/Checkbox/Switch/Radio/Tag `label`;
+    /// Panel/Menu/Modal/Drawer/Card `title`; TextInput/TextArea/Select/TreeSelect
+    /// `placeholder` (or current value for TextInput/TextArea when non-empty);
+    /// Gauge `label`; Alert `message`; Empty `description`; Tabs selected title;
+    /// Segmented selected option. Other kinds may return `None`.
+    pub fn accessible_name(&self, id: WidgetId) -> Option<String> {
+        let w = self.widgets.get(&id)?;
+        if let Some(name) = &w.accessible_name {
+            return Some(name.clone());
+        }
+        match &w.kind {
+            Kind::Button { label, .. }
+            | Kind::Checkbox { label, .. }
+            | Kind::Switch { label, .. }
+            | Kind::Radio { label, .. }
+            | Kind::Tag { label, .. }
+            | Kind::Gauge { label, .. } => {
+                if label.is_empty() {
+                    None
+                } else {
+                    Some(label.clone())
+                }
+            }
+            Kind::Panel { title, .. }
+            | Kind::Menu { title, .. }
+            | Kind::Modal { title, .. }
+            | Kind::Drawer { title, .. }
+            | Kind::Card { title, .. } => {
+                if title.is_empty() {
+                    None
+                } else {
+                    Some(title.clone())
+                }
+            }
+            Kind::TextInput {
+                value,
+                placeholder,
+                ..
+            }
+            | Kind::TextArea {
+                value,
+                placeholder,
+                ..
+            } => {
+                if !value.is_empty() {
+                    Some(value.clone())
+                } else if !placeholder.is_empty() {
+                    Some(placeholder.clone())
+                } else {
+                    None
+                }
+            }
+            Kind::Select { placeholder, selected, options, .. } => {
+                if let Some(i) = *selected {
+                    options.get(i).cloned()
+                } else if !placeholder.is_empty() {
+                    Some(placeholder.clone())
+                } else {
+                    None
+                }
+            }
+            Kind::TreeSelect { placeholder, .. } => {
+                if placeholder.is_empty() {
+                    None
+                } else {
+                    Some(placeholder.clone())
+                }
+            }
+            Kind::Alert { message, .. } => {
+                if message.is_empty() {
+                    None
+                } else {
+                    Some(message.clone())
+                }
+            }
+            Kind::Empty { description, .. } => {
+                if description.is_empty() {
+                    None
+                } else {
+                    Some(description.clone())
+                }
+            }
+            Kind::Tabs { titles, selected, .. } => titles.get(*selected).cloned(),
+            Kind::Segmented { options, selected, .. } => options.get(*selected).cloned(),
+            Kind::Text { content, .. } => {
+                if content.is_empty() {
+                    None
+                } else {
+                    Some(content.clone())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this kind participates in Tab focus order (matches pointer focus).
+    fn kind_is_focusable(kind: &Kind) -> bool {
+        matches!(
+            kind,
+            Kind::TextInput { .. }
+                | Kind::TextArea { .. }
+                | Kind::InputNumber { .. }
+                | Kind::Checkbox { .. }
+                | Kind::Radio { .. }
+                | Kind::Switch { .. }
+                | Kind::List { .. }
+                | Kind::Tree { .. }
+                | Kind::Table { .. }
+                | Kind::Menu { .. }
+                | Kind::Tabs { .. }
+                | Kind::Select { .. }
+                | Kind::TreeSelect { .. }
+                | Kind::AlarmList { .. }
+                | Kind::Slider { .. }
+                | Kind::Segmented { .. }
+                | Kind::Pagination { .. }
+                | Kind::Collapse { .. }
+                | Kind::DateTime { .. }
+                | Kind::Transfer { .. }
+                | Kind::PropertyGrid { .. }
+                | Kind::TreeTable { .. }
+        )
+    }
+
+    fn widget_children_ids(kind: &Kind) -> &[WidgetId] {
+        match kind {
+            Kind::Column { children, .. }
+            | Kind::Row { children, .. }
+            | Kind::Toolbar { children, .. }
+            | Kind::Panel { children, .. }
+            | Kind::StatusBar { children, .. }
+            | Kind::Splitter { children, .. }
+            | Kind::ScrollArea { children, .. }
+            | Kind::ContextMenu { children, .. }
+            | Kind::Tabs { children, .. }
+            | Kind::Badge { children, .. }
+            | Kind::Tooltip { children, .. }
+            | Kind::Form { children, .. }
+            | Kind::Spin { children, .. } => children.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// Focusable widgets in stable DFS order over [`Ui`] roots (visual tree order).
+    ///
+    /// Includes kinds that pointer click already focuses (inputs, toggles, data/
+    /// nav/industrial interactives). Buttons are **not** included (pointer clears
+    /// focus on them). See `docs/a11y-baseline.md`.
+    pub fn focusable_widgets(&self) -> Vec<WidgetId> {
+        let mut out = Vec::new();
+        for &root in &self.roots {
+            self.collect_focusable_dfs(root, &mut out);
+        }
+        out
+    }
+
+    fn collect_focusable_dfs(&self, id: WidgetId, out: &mut Vec<WidgetId>) {
+        let Some(w) = self.widgets.get(&id) else {
+            return;
+        };
+        if Self::kind_is_focusable(&w.kind) {
+            out.push(id);
+        }
+        let kids: Vec<WidgetId> = Self::widget_children_ids(&w.kind).to_vec();
+        for child in kids {
+            self.collect_focusable_dfs(child, out);
+        }
+    }
+
+    /// Move focus to the next focusable widget (wraps). No focus → first.
+    /// Returns the new focus, or `None` if the focusable list is empty.
+    pub fn focus_next(&mut self) -> Option<WidgetId> {
+        let list = self.focusable_widgets();
+        if list.is_empty() {
+            return None;
+        }
+        let next = match self.focus.and_then(|f| list.iter().position(|&id| id == f)) {
+            Some(i) => list[(i + 1) % list.len()],
+            None => list[0],
+        };
+        self.focus = Some(next);
+        Some(next)
+    }
+
+    /// Move focus to the previous focusable widget (wraps). No focus → last.
+    pub fn focus_prev(&mut self) -> Option<WidgetId> {
+        let list = self.focusable_widgets();
+        if list.is_empty() {
+            return None;
+        }
+        let prev = match self.focus.and_then(|f| list.iter().position(|&id| id == f)) {
+            Some(i) => list[(i + list.len() - 1) % list.len()],
+            None => list[list.len() - 1],
+        };
+        self.focus = Some(prev);
+        Some(prev)
+    }
+
+    fn focus_trap_active(&self) -> bool {
+        let Some(id) = self.focus else {
+            return false;
+        };
+        matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Modal { open: true, .. }) | Some(Kind::Drawer { open: true, .. })
+        )
     }
 
 
@@ -3266,6 +3501,18 @@ impl Ui {
             }
             return self.close_popup_internal();
         }
+        // P6d: Tab / BackTab move focus at the top (before widget dispatch / focus
+        // requirement), so text fields do not swallow Tab. Modal/Drawer absorb.
+        if matches!(key, UiKey::Tab | UiKey::BackTab) {
+            if self.focus_trap_active() {
+                return true;
+            }
+            return match key {
+                UiKey::Tab => self.focus_next().is_some(),
+                UiKey::BackTab => self.focus_prev().is_some(),
+                _ => false,
+            };
+        }
         let Some(id) = self.focus else {
             return false;
         };
@@ -3325,14 +3572,14 @@ impl Ui {
                 }
                 true
             }
-            UiKey::Tab => true, // focus trap: absorb Tab while modal open
+            UiKey::Tab | UiKey::BackTab => true, // focus trap while modal open
             _ => false,
         }
     }
 
     fn key_drawer_overlay(&mut self, id: WidgetId, key: UiKey) -> bool {
         match key {
-            UiKey::Tab => true, // focus trap: absorb Tab while drawer open
+            UiKey::Tab | UiKey::BackTab => true, // focus trap while drawer open
             UiKey::Enter => {
                 // Enter does not dismiss; Esc / × / backdrop do.
                 let _ = id;
@@ -3564,7 +3811,7 @@ impl Ui {
                     false
                 }
             }
-            UiKey::Enter | UiKey::Tab | UiKey::Space | UiKey::Up | UiKey::Down | UiKey::Escape => false,
+            UiKey::Enter | UiKey::Tab | UiKey::BackTab | UiKey::Space | UiKey::Up | UiKey::Down | UiKey::Escape => false,
         }
     }
 
@@ -4629,6 +4876,7 @@ impl Ui {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.roots.push(id);
@@ -5760,6 +6008,7 @@ impl Ui {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.roots.push(id);
@@ -12385,6 +12634,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12423,6 +12673,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12447,6 +12698,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12474,6 +12726,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12491,6 +12744,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12529,6 +12783,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12720,6 +12975,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12751,6 +13007,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12784,6 +13041,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12815,6 +13073,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12844,6 +13103,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12866,6 +13126,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12895,6 +13156,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12922,6 +13184,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12956,6 +13219,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -12988,6 +13252,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13025,6 +13290,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13049,6 +13315,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13080,6 +13347,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13111,6 +13379,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13135,6 +13404,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13179,6 +13449,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13217,6 +13488,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13251,6 +13523,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13282,6 +13555,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13326,6 +13600,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13360,6 +13635,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13377,6 +13653,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13394,6 +13671,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13445,6 +13723,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13474,6 +13753,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13504,6 +13784,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13536,6 +13817,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13560,6 +13842,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13587,6 +13870,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13604,6 +13888,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13625,6 +13910,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13651,6 +13937,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13683,6 +13970,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13705,6 +13993,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13733,6 +14022,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13756,6 +14046,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13785,6 +14076,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13811,6 +14103,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -13839,6 +14132,7 @@ impl FlexBuilder<'_> {
                 label_node: None,
                 chrome_node: None,
                 aux: Vec::new(),
+                accessible_name: None,
             },
         );
         self.push_child(id);
@@ -15595,7 +15889,84 @@ mod tests {
         assert_ne!(mid, 0);
     }
 
+    #[test]
+    fn accessible_name_override_and_button_fallback() {
+        let mut ui = Ui::new();
+        let mut btn = WidgetId(0);
+        let mut input = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            btn = col.button("Save");
+            input = col.text_input("Name…");
+        });
+        assert_eq!(ui.accessible_name(btn).as_deref(), Some("Save"));
+        assert_eq!(ui.accessible_name(input).as_deref(), Some("Name…"));
+        ui.set_accessible_name(btn, "保存文件");
+        assert_eq!(ui.accessible_name(btn).as_deref(), Some("保存文件"));
+        ui.clear_accessible_name(btn);
+        assert_eq!(ui.accessible_name(btn).as_deref(), Some("Save"));
+        ui.set_text_input(input, "Alice");
+        assert_eq!(ui.accessible_name(input).as_deref(), Some("Alice"));
+    }
 
+    #[test]
+    fn focusable_order_and_tab_wrap() {
+        let mut ui = Ui::new();
+        let mut a = WidgetId(0);
+        let mut b = WidgetId(0);
+        let mut c = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            a = col.text_input("A");
+            col.button("skip"); // not focusable via pointer
+            b = col.checkbox("B", false);
+            c = col.switch("C", false);
+        });
+        let order = ui.focusable_widgets();
+        assert_eq!(order, vec![a, b, c], "DFS roots order; button excluded");
+        assert!(ui.focused().is_none());
+        assert_eq!(ui.focus_next(), Some(a));
+        assert_eq!(ui.focus_next(), Some(b));
+        assert_eq!(ui.focus_next(), Some(c));
+        assert_eq!(ui.focus_next(), Some(a), "wrap forward");
+        assert_eq!(ui.focus_prev(), Some(c), "wrap backward");
+        assert_eq!(ui.focus_prev(), Some(b));
+        ui.set_focus(None);
+        assert_eq!(ui.focus_prev(), Some(c), "no focus + prev → last");
+    }
 
+    #[test]
+    fn key_input_tab_moves_focus_without_prior_focus() {
+        let mut ui = Ui::new();
+        let mut a = WidgetId(0);
+        let mut b = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            a = col.text_input("one");
+            b = col.text_input("two");
+        });
+        assert!(ui.key_input(UiKey::Tab));
+        assert_eq!(ui.focused(), Some(a));
+        assert!(ui.key_input(UiKey::Tab));
+        assert_eq!(ui.focused(), Some(b));
+        assert!(ui.key_input(UiKey::BackTab));
+        assert_eq!(ui.focused(), Some(a));
+        // Tab while focused on text field must move focus, not insert tab.
+        assert!(ui.key_input(UiKey::Tab));
+        assert_eq!(ui.focused(), Some(b));
+        assert_eq!(ui.text_input_value(a).unwrap(), "");
+    }
 
+    #[test]
+    fn key_input_tab_absorbed_by_modal_trap() {
+        let mut ui = Ui::new();
+        let mut input = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            input = col.text_input("x");
+        });
+        let modal = ui.modal("Title", "Body", "OK", None, ModalStyle::default());
+        ui.set_modal_open(modal, true);
+        assert_eq!(ui.focused(), Some(modal));
+        assert!(ui.key_input(UiKey::Tab));
+        assert_eq!(ui.focused(), Some(modal), "trap keeps focus");
+        assert!(ui.key_input(UiKey::BackTab));
+        assert_eq!(ui.focused(), Some(modal));
+    }
 }

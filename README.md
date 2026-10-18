@@ -51,7 +51,8 @@
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
 | [docs/p4-design.md](docs/p4-design.md) | P4 双档 Profile（Field / Office） |
 | [docs/p5-design.md](docs/p5-design.md) | P5 Immediate 视口 |
-| [docs/p6-design.md](docs/p6-design.md) | P6 工业打磨（P6a/P6b/P6c 已通；a11y / 7×24） |
+| [docs/p6-design.md](docs/p6-design.md) | P6 工业打磨（P6a–P6d 已通；P6e 7×24） |
+| [docs/a11y-baseline.md](docs/a11y-baseline.md) | P6d 无障碍基线（焦序 / 可访问名） |
 | [docs/office-line.md](docs/office-line.md) | Office 线：布局/控件加厚、原生 Surface、P0/P1/Chart（P4/P5 已另文落地） |
 | [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 / P1 含 rest+deferred / Chart 已齐；Cascader 仍不进 P1） |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
@@ -60,7 +61,7 @@
 
 ## 状态
 
-**需求与架构已确认；P0–P5 已通（含 Office 加厚、P4 Profile、P5 Immediate）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；**P6c Windows Soft 骨架已通**；评测队列已清。下一步：**P6d** 无障碍基线（[docs/p6-design.md](docs/p6-design.md)；P6a/P6b/P6c 已通）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
+**需求与架构已确认；P0–P5 已通（含 Office 加厚、P4 Profile、P5 Immediate）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；**P6c Windows Soft 骨架已通**；**P6d 无障碍基线已通**；评测队列已清。下一步：**P6e** 7×24/soak（[docs/p6-design.md](docs/p6-design.md)；P6a–P6d 已通）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)、[docs/a11y-baseline.md](docs/a11y-baseline.md)。
 
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
