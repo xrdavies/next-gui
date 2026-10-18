@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）；实现侧 P0 / P1（含 rest + deferred）/ Chart / P4 Profile / **Office P2a–P2d** 已齐。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主。Cascader 仍不进 P1（见 §10）。下一步产品向见 [roadmap.md](roadmap.md)；Office P2e+ 为可选加厚。
+> **状态：已确认（2026-10-17）；实现侧 P0 / P1（含 rest + deferred）/ Chart / P4 Profile / **Office P2a–P2e** 已齐。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主。Cascader 仍可选（见 §10）。下一步产品向见 [roadmap.md](roadmap.md)。
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -281,8 +281,9 @@
 | 已实现（Office P2b） | `steps`，`statistic`，`result`（`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 已实现（Office P2c） | `popover`，`popconfirm`（`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 已实现（Office P2d） | `upload`，`color_picker`，`autocomplete`（`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
+| 已实现（Office P2e） | `grid`，`timeline`，`calendar`，`image`，`config_provider`（Ui API；`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 刻意不做 / P2 可选 | Cascader（不进 P1；层级选择仅 TreeSelect） |
-| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；Office P2e（`grid` / `timeline` / …，见 §6.2 / office-p2-design） |
+| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；可选 Cascader；控件进 `.ngui` |
 | 已实现但非控件目录项 | P4 `next-gui-profile`（见 §Profile）、P5 Immediate 视口（`e25`）；剪贴板 / 触控 stub 属 platform |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
@@ -330,3 +331,4 @@
 | 2026-10-19 | **Office P2b：** `steps` / `statistic` / `result` + `e26` 扩展；下一步 P2c（popover/popconfirm）。 |
 | 2026-10-19 | **Office P2c：** `popover` / `popconfirm` + `e26` 扩展；下一步 P2d。 |
 | 2026-10-19 | **Office P2d：** `upload` / `color_picker` / `autocomplete` + `e26` 扩展；下一步 P2e。 |
+| 2026-10-19 | **Office P2e：** `grid` / `timeline` / `calendar` / `image` / `config_provider`；**Office P2a–e 已齐**。 |

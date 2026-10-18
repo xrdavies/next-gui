@@ -7,7 +7,7 @@
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
-//! Office P2a–P2c (`button_group` / `link` / `space` / `steps` / `statistic` / `result` / `popover` / `popconfirm`): see `docs/office-p2-design.md`.
+//! Office P2a–P2e (`button_group` … `config_provider`): see `docs/office-p2-design.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
@@ -1969,6 +1969,33 @@ enum Kind {
         placeholder: String,
         style: AutocompleteStyle,
     },
+    /// Fixed-column grid container (Office P2e).
+    Grid {
+        columns: usize,
+        style: GridStyle,
+        children: Vec<WidgetId>,
+    },
+    /// Vertical event timeline (Office P2e).
+    Timeline {
+        items: Vec<TimelineItem>,
+        selected: Option<usize>,
+        style: TimelineStyle,
+    },
+    /// Month calendar (Office P2e); week starts Sunday.
+    Calendar {
+        year: i32,
+        month: u8,
+        selected_day: u8,
+        style: CalendarStyle,
+    },
+    /// Raster preview or placeholder (Office P2e).
+    Image {
+        px_w: u32,
+        px_h: u32,
+        pixels: Option<ImagePixels>,
+        caption: String,
+        style: ImageStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -2122,6 +2149,12 @@ pub struct Ui {
     pending_color_change: Option<(WidgetId, Color)>,
     /// Last Autocomplete commit; drained by [`Ui::take_autocomplete_change`].
     pending_autocomplete_change: Option<(WidgetId, String)>,
+    /// Last Timeline row select; drained by [`Ui::take_timeline_select`].
+    pending_timeline_select: Option<(WidgetId, usize)>,
+    /// Last Calendar date change; drained by [`Ui::take_calendar_change`].
+    pending_calendar_change: Option<(WidgetId, CalendarDate)>,
+    /// Ui-level theme/locale bag (Office P2e config_provider — not a Kind).
+    config: UiConfig,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2226,6 +2259,9 @@ impl Ui {
             pending_upload_clear: None,
             pending_color_change: None,
             pending_autocomplete_change: None,
+            pending_timeline_select: None,
+            pending_calendar_change: None,
+            config: UiConfig::default(),
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2251,6 +2287,16 @@ impl Ui {
     /// Set window size used for Modal scrim centering (call on resize).
     pub fn set_viewport(&mut self, width: f32, height: f32) {
         self.viewport = (width.max(1.0), height.max(1.0));
+    }
+
+    /// Office P2e `config_provider`: replace the Ui-level defaults bag.
+    pub fn set_config(&mut self, config: UiConfig) {
+        self.config = config;
+    }
+
+    /// Borrow the current [`UiConfig`] (locale / density / accent).
+    pub fn config(&self) -> &UiConfig {
+        &self.config
     }
 
     fn alloc(&mut self) -> WidgetId {
@@ -2327,6 +2373,25 @@ impl Ui {
                 self.column(col, build)
             }
         }
+    }
+
+    /// Top-level fixed-column grid (Office P2e). Children L→R, wrap by `columns`.
+    pub fn grid<F>(&mut self, columns: usize, style: GridStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let columns = columns.max(1);
+        let id = self.alloc_container(Kind::Grid {
+            columns,
+            style,
+            children: Vec::new(),
+        });
+        self.roots.push(id);
+        {
+            let mut builder = FlexBuilder { ui: self, parent: id };
+            build(&mut builder);
+        }
+        id
     }
 
     /// Declare a top-level toolbar.
@@ -2681,6 +2746,14 @@ impl Ui {
                 self.focus = Some(id);
                 self.pointer_color_picker(scene, id, x, y)
             }
+            Some(Kind::Timeline { style, .. }) if style.clickable => {
+                self.focus = Some(id);
+                self.pointer_timeline(scene, id, x, y)
+            }
+            Some(Kind::Calendar { .. }) => {
+                self.focus = Some(id);
+                self.pointer_calendar(scene, id, x, y)
+            }
             Some(Kind::TreeSelect { .. }) => {
                 self.focus = Some(id);
                 self.pointer_tree_select_toggle(scene, id)
@@ -2902,7 +2975,9 @@ impl Ui {
                     | Kind::Tabs { children, .. }
                     | Kind::Badge { children, .. }
                     | Kind::Tooltip { children, .. }
-                    | Kind::Form { children, .. } => children.as_slice(),
+                    | Kind::Form { children, .. }
+                    | Kind::Grid { children, .. }
+                    | Kind::Spin { children, .. } => children.as_slice(),
                     _ => &[],
                 };
                 if self.subtree_contains(*c, kids, target) {
@@ -3132,6 +3207,28 @@ impl Ui {
                     None
                 }
             }
+            Kind::Timeline { items, selected, .. } => {
+                if let Some(i) = selected {
+                    items.get(*i).map(|it| format!("{}: {}", it.time, it.content))
+                } else if let Some(it) = items.first() {
+                    Some(format!("{}: {}", it.time, it.content))
+                } else {
+                    Some("Timeline".into())
+                }
+            }
+            Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            } => Some(format!("{:04}-{:02}-{:02}", year, month, selected_day)),
+            Kind::Image { caption, px_w, px_h, .. } => {
+                if !caption.is_empty() {
+                    Some(caption.clone())
+                } else {
+                    Some(format!("Image {px_w}×{px_h}"))
+                }
+            }
             Kind::Text { content, .. } => {
                 if content.is_empty() {
                     None
@@ -3185,7 +3282,9 @@ impl Ui {
             | Kind::Popconfirm { .. }
             | Kind::Upload { .. }
             | Kind::ColorPicker { .. }
-            | Kind::Autocomplete { .. } => true,
+            | Kind::Autocomplete { .. }
+            | Kind::Calendar { .. } => true,
+            Kind::Timeline { style, .. } => style.clickable,
             _ => false,
         }
     }
@@ -3204,7 +3303,8 @@ impl Ui {
             | Kind::Badge { children, .. }
             | Kind::Tooltip { children, .. }
             | Kind::Form { children, .. }
-            | Kind::Spin { children, .. } => children.as_slice(),
+            | Kind::Spin { children, .. }
+            | Kind::Grid { children, .. } => children.as_slice(),
             _ => &[],
         }
     }
@@ -3879,6 +3979,7 @@ impl Ui {
                 true
             }
             Some(Kind::ColorPicker { .. }) => self.key_color_picker(id, key),
+            Some(Kind::Calendar { .. }) => self.key_calendar(id, key),
             Some(Kind::TreeSelect { .. }) => self.key_tree_select(id, key),
             Some(Kind::AlarmList { .. }) => self.key_alarm_list(id, key),
             Some(Kind::Slider { .. }) => self.key_slider(id, key),
@@ -5329,6 +5430,73 @@ impl Ui {
     /// Enter with a non-empty value.
     pub fn take_autocomplete_change(&mut self) -> Option<(WidgetId, String)> {
         self.pending_autocomplete_change.take()
+    }
+
+    /// Drain Timeline row select `(id, index)`.
+    pub fn take_timeline_select(&mut self) -> Option<(WidgetId, usize)> {
+        self.pending_timeline_select.take()
+    }
+
+    /// Selected timeline row index.
+    pub fn timeline_selected(&self, id: WidgetId) -> Option<Option<usize>> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Timeline { selected, .. }) => Some(*selected),
+            _ => None,
+        }
+    }
+
+    /// Set timeline selection without emitting.
+    pub fn set_timeline_selected(&mut self, id: WidgetId, selected: Option<usize>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Timeline {
+                items,
+                selected: s,
+                ..
+            } = &mut w.kind
+            {
+                *s = selected.and_then(|i| if i < items.len() { Some(i) } else { None });
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Drain Calendar date change `(id, date)`.
+    pub fn take_calendar_change(&mut self) -> Option<(WidgetId, CalendarDate)> {
+        self.pending_calendar_change.take()
+    }
+
+    /// Current calendar date.
+    pub fn calendar_date(&self, id: WidgetId) -> Option<CalendarDate> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            }) => Some(CalendarDate::new(*year, *month, *selected_day)),
+            _ => None,
+        }
+    }
+
+    /// Set calendar year/month/day (clamps day; does not emit).
+    pub fn set_calendar_date(&mut self, id: WidgetId, date: CalendarDate) -> bool {
+        let date = date.clamp();
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            } = &mut w.kind
+            {
+                *year = date.year;
+                *month = date.month;
+                *selected_day = date.day;
+                return true;
+            }
+        }
+        false
     }
 
     /// Current autocomplete text.
@@ -6890,6 +7058,7 @@ impl Ui {
                 | Kind::Badge { children, .. }
                 | Kind::Tooltip { children, .. }
                     | Kind::Form { children, .. }
+                    | Kind::Grid { children, .. }
                     | Kind::Spin { children, .. } => children.as_slice(),
                 _ => continue,
             };
@@ -7929,7 +8098,8 @@ impl Ui {
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
                 | Kind::Tooltip { children, .. }
-                    | Kind::Form { children, .. } => children.as_slice(),
+                    | Kind::Form { children, .. }
+                    | Kind::Grid { children, .. } => children.as_slice(),
                 _ => continue,
             };
             if kids.contains(&id) {
@@ -8221,6 +8391,13 @@ impl Ui {
                 Some(Kind::Upload { style, .. }) => (style.bg, true),
                 Some(Kind::ColorPicker { style, .. }) => (style.bg, style.bg.a > 0),
                 Some(Kind::Autocomplete { style, .. }) => (style.bg, true),
+                Some(Kind::Grid { style, .. }) => (
+                    style.background.unwrap_or(Color::rgba(0, 0, 0, 0)),
+                    style.background.is_some(),
+                ),
+                Some(Kind::Timeline { style, .. }) => (style.bg, true),
+                Some(Kind::Calendar { style, .. }) => (style.bg, true),
+                Some(Kind::Image { style, .. }) => (style.bg, true),
                 None => return,
             };
 
@@ -8308,6 +8485,9 @@ impl Ui {
                         w.label_node = Some(label);
                         w.chrome_node = Some(caret);
                     }
+                }
+                Some(Kind::Timeline { .. }) | Some(Kind::Calendar { .. }) | Some(Kind::Image { .. }) => {
+                    self.node_to_widget.insert(node, id);
                 }
                 Some(Kind::Panel { style, .. }) => {
                     let title_bg = style.title_bg;
@@ -8597,6 +8777,7 @@ impl Ui {
                     | Kind::Badge { children, .. }
                     | Kind::Tooltip { children, .. }
                     | Kind::Form { children, .. }
+                    | Kind::Grid { children, .. }
                     | Kind::Spin { children, .. },
                 node,
                 ..
@@ -8869,6 +9050,10 @@ impl Ui {
             Some(Kind::Upload { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::ColorPicker { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Autocomplete { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Grid { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Timeline { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Calendar { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Image { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::DateTime { style, .. }) => ChildMeasure::new(style.width, style.height),
@@ -8945,6 +9130,13 @@ impl Ui {
             Some(Kind::Badge { .. }) | Some(Kind::Tooltip { .. })
         ) {
             self.layout_host_child(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Grid { .. })
+        ) {
+            self.layout_grid(scene, id);
             return;
         }
 
@@ -9174,6 +9366,7 @@ impl Ui {
                     | Kind::Tooltip { .. }
                     | Kind::Form { .. }
                     | Kind::Spin { .. }
+                    | Kind::Grid { .. }
             )
         )
     }
@@ -9653,6 +9846,10 @@ impl Ui {
                     style.x = x;
                     style.y = y;
                 }
+                Kind::Grid { style, .. } => {
+                    style.x = x;
+                    style.y = y;
+                }
                 _ => {}
             }
         }
@@ -9701,6 +9898,10 @@ impl Ui {
                     style.width = width;
                     style.height = height;
                 }
+                Kind::Grid { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
                 _ => {}
             }
         }
@@ -9727,7 +9928,9 @@ impl Ui {
                 | Kind::Tabs { children, .. }
                 | Kind::Badge { children, .. }
                 | Kind::Tooltip { children, .. }
-                | Kind::Form { children, .. },
+                | Kind::Form { children, .. }
+                | Kind::Grid { children, .. }
+                | Kind::Spin { children, .. },
             ) => Some(children.clone()),
             _ => None,
         };
@@ -9944,6 +10147,27 @@ impl Ui {
             Some(Kind::Autocomplete { .. })
         ) {
             self.paint_autocomplete_field(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Timeline { .. })
+        ) {
+            self.paint_timeline(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Calendar { .. })
+        ) {
+            self.paint_calendar(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Image { .. })
+        ) {
+            self.paint_image(scene, id);
             return;
         }
         if matches!(
@@ -10436,7 +10660,11 @@ impl Ui {
             | Kind::Popconfirm { .. }
             | Kind::Upload { .. }
             | Kind::ColorPicker { .. }
-            | Kind::Autocomplete { .. } => {}
+            | Kind::Autocomplete { .. }
+            | Kind::Grid { .. }
+            | Kind::Timeline { .. }
+            | Kind::Calendar { .. }
+            | Kind::Image { .. } => {}
         }
     }
 
@@ -12485,6 +12713,644 @@ impl Ui {
 
         if let Some(h) = self.overlay_host {
             scene.raise(h);
+        }
+    }
+
+
+
+    fn layout_grid(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Grid {
+                columns,
+                style,
+                children,
+            },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let columns = (*columns).max(1);
+        let style = *style;
+        let children = children.clone();
+        let host = *node;
+        let (ox, oy) = if let Some(n) = host {
+            if self.roots.contains(&id) {
+                (style.x, style.y)
+            } else {
+                scene
+                    .get(n)
+                    .map(|nn| (nn.bounds.x, nn.bounds.y))
+                    .unwrap_or((style.x, style.y))
+            }
+        } else {
+            (style.x, style.y)
+        };
+        let (w, h) = if let Some(n) = host {
+            if self.roots.contains(&id) {
+                (style.width, style.height)
+            } else {
+                scene
+                    .get(n)
+                    .map(|nn| (nn.bounds.width.max(1.0), nn.bounds.height.max(1.0)))
+                    .unwrap_or((style.width, style.height))
+            }
+        } else {
+            (style.width, style.height)
+        };
+        if let Some(n) = host {
+            scene.set_bounds(n, Rect::new(ox, oy, w, h));
+            if style.background.is_some() {
+                scene.set_visible(n, true);
+            }
+        }
+        let pad = style.padding;
+        let gap = style.gap;
+        let inner_w = (w - pad * 2.0).max(0.0);
+        let col_w = if columns == 0 {
+            inner_w
+        } else {
+            (inner_w - gap * (columns.saturating_sub(1) as f32)).max(0.0) / columns as f32
+        };
+        let measures: Vec<_> = children.iter().map(|c| self.measure_widget(*c)).collect();
+        let mut row_heights: Vec<f32> = Vec::new();
+        for chunk in measures.chunks(columns) {
+            let rh = chunk.iter().map(|m| m.height).fold(0.0f32, f32::max);
+            row_heights.push(rh.max(1.0));
+        }
+        let mut cy = oy + pad;
+        for (row_i, chunk) in children.chunks(columns).enumerate() {
+            let rh = row_heights.get(row_i).copied().unwrap_or(1.0);
+            for (col, &child_id) in chunk.iter().enumerate() {
+                let cx = ox + pad + col as f32 * (col_w + gap);
+                let m = measures
+                    .get(row_i * columns + col)
+                    .copied()
+                    .unwrap_or(ChildMeasure::new(col_w, rh));
+                let rect = Rect::new(cx, cy, col_w.min(m.width.max(col_w)), rh.max(m.height));
+                // Prefer cell box so nested flex gets the column width.
+                let cell = Rect::new(cx, cy, col_w, rh);
+                self.place_child(scene, child_id, cell);
+                let _ = rect;
+            }
+            cy += rh + gap;
+        }
+    }
+
+    fn pointer_timeline(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let Some(Widget {
+            kind: Kind::Timeline { items, style, .. },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return false;
+        };
+        let Some(host) = *node else { return false };
+        let bounds = match scene.get(host) {
+            Some(n) => n.bounds,
+            None => return false,
+        };
+        let pad = style.padding;
+        let ih = style.item_height;
+        let rel_y = y - (bounds.y + pad);
+        if rel_y < 0.0 || x < bounds.x || x > bounds.x + bounds.width {
+            return false;
+        }
+        let idx = (rel_y / ih).floor() as isize;
+        if idx < 0 || idx as usize >= items.len() {
+            return false;
+        }
+        let idx = idx as usize;
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Timeline { selected, .. } = &mut w.kind {
+                *selected = Some(idx);
+            }
+        }
+        self.pending_timeline_select = Some((id, idx));
+        true
+    }
+
+    fn pointer_calendar(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let Some(Widget {
+            kind:
+                Kind::Calendar {
+                    year,
+                    month,
+                    style,
+                    ..
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return false;
+        };
+        let year = *year;
+        let month = *month;
+        let style = *style;
+        let Some(host) = *node else { return false };
+        let bounds = match scene.get(host) {
+            Some(n) => n.bounds,
+            None => return false,
+        };
+        let pad = style.padding;
+        let header_h = 28.0;
+        let weekday_h = 18.0;
+        // Prev / next hit zones in header
+        let prev = Rect::new(bounds.x + pad, bounds.y + pad, 28.0, header_h - 4.0);
+        let next = Rect::new(
+            bounds.x + bounds.width - pad - 28.0,
+            bounds.y + pad,
+            28.0,
+            header_h - 4.0,
+        );
+        if prev.contains(x, y) {
+            return self.calendar_shift_month(id, -1);
+        }
+        if next.contains(x, y) {
+            return self.calendar_shift_month(id, 1);
+        }
+        let grid_top = bounds.y + pad + header_h + weekday_h;
+        let cell = style.cell;
+        let dim = DateTimeValue::days_in_month(year, month) as u8;
+        let start = CalendarDate::weekday_sun0(year, month, 1) as usize;
+        for d in 1..=dim {
+            let slot = start + (d as usize - 1);
+            let col = (slot % 7) as f32;
+            let row = (slot / 7) as f32;
+            let r = Rect::new(
+                bounds.x + pad + col * cell,
+                grid_top + row * cell,
+                cell,
+                cell,
+            );
+            if r.contains(x, y) {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Calendar { selected_day, .. } = &mut w.kind {
+                        *selected_day = d;
+                    }
+                }
+                let date = CalendarDate::new(year, month, d);
+                self.pending_calendar_change = Some((id, date));
+                return true;
+            }
+        }
+        false
+    }
+
+    fn calendar_shift_month(&mut self, id: WidgetId, delta: i32) -> bool {
+        let Some(Widget {
+            kind: Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            },
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return false;
+        };
+        let mut y = *year;
+        let mut m = *month as i32 + delta;
+        while m < 1 {
+            m += 12;
+            y -= 1;
+        }
+        while m > 12 {
+            m -= 12;
+            y += 1;
+        }
+        let day = *selected_day;
+        let date = CalendarDate::new(y, m as u8, day);
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            } = &mut w.kind
+            {
+                *year = date.year;
+                *month = date.month;
+                *selected_day = date.day;
+            }
+        }
+        self.pending_calendar_change = Some((id, date));
+        true
+    }
+
+    fn key_calendar(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let Some(Widget {
+            kind: Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            },
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return false;
+        };
+        let mut date = CalendarDate::new(*year, *month, *selected_day);
+        let dim = DateTimeValue::days_in_month(date.year, date.month) as i32;
+        match key {
+            UiKey::Left => {
+                if date.day > 1 {
+                    date.day -= 1;
+                } else {
+                    return self.calendar_shift_month(id, -1);
+                }
+            }
+            UiKey::Right => {
+                if (date.day as i32) < dim {
+                    date.day += 1;
+                } else {
+                    return self.calendar_shift_month(id, 1);
+                }
+            }
+            UiKey::Up => {
+                let nd = date.day as i32 - 7;
+                if nd >= 1 {
+                    date.day = nd as u8;
+                } else {
+                    return self.calendar_shift_month(id, -1);
+                }
+            }
+            UiKey::Down => {
+                let nd = date.day as i32 + 7;
+                if nd <= dim {
+                    date.day = nd as u8;
+                } else {
+                    return self.calendar_shift_month(id, 1);
+                }
+            }
+            _ => return false,
+        }
+        date = date.clamp();
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Calendar {
+                year,
+                month,
+                selected_day,
+                ..
+            } = &mut w.kind
+            {
+                *year = date.year;
+                *month = date.month;
+                *selected_day = date.day;
+            }
+        }
+        self.pending_calendar_change = Some((id, date));
+        true
+    }
+
+    fn paint_timeline(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Timeline {
+                items,
+                selected,
+                style,
+            },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let items = items.clone();
+        let selected = *selected;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        // aux: per item [dot, time_lab, content_lab] + optional rail segments
+        let n = items.len();
+        self.ensure_aux_nodes(scene, host, id, n * 3 + 1);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let pad = style.padding;
+        let rail_x = bounds.x + pad + style.time_width + 6.0;
+        if let Some(&rail) = aux.first() {
+            let rh = (n as f32 * style.item_height).max(4.0);
+            scene.set_bounds(rail, Rect::new(rail_x, bounds.y + pad, 2.0, rh));
+            scene.set_fill(rail, style.rail);
+            scene.set_mask(rail, None);
+            scene.set_visible(rail, n > 0);
+        }
+        for (i, item) in items.iter().enumerate() {
+            let y = bounds.y + pad + i as f32 * style.item_height;
+            let dot_c = item
+                .color_rgb
+                .map(|rgb| Color::rgb(((rgb >> 16) & 0xff) as u8, ((rgb >> 8) & 0xff) as u8, (rgb & 0xff) as u8))
+                .unwrap_or(style.rail);
+            if let Some(&dot) = aux.get(1 + i * 3) {
+                scene.set_bounds(dot, Rect::new(rail_x - 3.0, y + style.item_height * 0.35, 8.0, 8.0));
+                scene.set_fill(dot, if selected == Some(i) {
+                    self.config.accent.unwrap_or(dot_c)
+                } else {
+                    dot_c
+                });
+                scene.set_mask(dot, None);
+                scene.set_visible(dot, true);
+            }
+            let (_, tm) = self.font.rasterize_text(&item.time, style.size, None);
+            if let Some(&lab) = aux.get(2 + i * 3) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        bounds.x + pad,
+                        y + ((style.item_height - tm.height as f32) * 0.5).max(0.0),
+                        tm.width as f32,
+                        tm.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.time_fg);
+                scene.set_mask(lab, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+                scene.set_visible(lab, true);
+            }
+            let (_, cm) = self.font.rasterize_text(&item.content, style.size, None);
+            if let Some(&lab) = aux.get(3 + i * 3) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        rail_x + 12.0,
+                        y + ((style.item_height - cm.height as f32) * 0.5).max(0.0),
+                        cm.width as f32,
+                        cm.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.content_fg);
+                scene.set_mask(lab, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_calendar(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Calendar {
+                    year,
+                    month,
+                    selected_day,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let year = *year;
+        let month = *month;
+        let selected_day = *selected_day;
+        let mut style = *style;
+        if let Some(a) = self.config.accent {
+            style.accent = a;
+        }
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        // aux: header_bg, prev, title, next, 7 weekday labels, 42 day cells (bg+lab pairs = 84) — keep lighter:
+        // 0 header_bg, 1 prev, 2 title, 3 next, 4..=10 weekday, 11..=52 day labels (42)
+        let needed = 4 + 7 + 42;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let pad = style.padding;
+        let header_h = 28.0;
+        let weekday_h = 18.0;
+        if let Some(&hb) = aux.first() {
+            scene.set_bounds(
+                hb,
+                Rect::new(bounds.x + pad, bounds.y + pad, bounds.width - pad * 2.0, header_h),
+            );
+            scene.set_fill(hb, style.header_bg);
+            scene.set_mask(hb, None);
+            scene.set_visible(hb, true);
+        }
+        let prev_s = "‹";
+        let (_, pm) = self.font.rasterize_text(prev_s, style.size + 2.0, None);
+        if let Some(&n) = aux.get(1) {
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    bounds.x + pad + 6.0,
+                    bounds.y + pad + ((header_h - pm.height as f32) * 0.5).max(0.0),
+                    pm.width as f32,
+                    pm.height as f32,
+                ),
+            );
+            scene.set_fill(n, style.fg);
+            scene.set_mask(n, Some(AlphaMask::new(pm.width, pm.height, pm.pixels)));
+            scene.set_visible(n, true);
+        }
+        let title = format!("{:04}-{:02}", year, month);
+        let (_, tm) = self.font.rasterize_text(&title, style.size, None);
+        if let Some(&n) = aux.get(2) {
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    bounds.x + ((bounds.width - tm.width as f32) * 0.5).max(0.0),
+                    bounds.y + pad + ((header_h - tm.height as f32) * 0.5).max(0.0),
+                    tm.width as f32,
+                    tm.height as f32,
+                ),
+            );
+            scene.set_fill(n, style.fg);
+            scene.set_mask(n, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+            scene.set_visible(n, true);
+        }
+        let next_s = "›";
+        let (_, nm) = self.font.rasterize_text(next_s, style.size + 2.0, None);
+        if let Some(&n) = aux.get(3) {
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    bounds.x + bounds.width - pad - 6.0 - nm.width as f32,
+                    bounds.y + pad + ((header_h - nm.height as f32) * 0.5).max(0.0),
+                    nm.width as f32,
+                    nm.height as f32,
+                ),
+            );
+            scene.set_fill(n, style.fg);
+            scene.set_mask(n, Some(AlphaMask::new(nm.width, nm.height, nm.pixels)));
+            scene.set_visible(n, true);
+        }
+        let weekdays = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+        let wd_top = bounds.y + pad + header_h;
+        for (i, wlab) in weekdays.iter().enumerate() {
+            let (_, wm) = self.font.rasterize_text(wlab, style.size - 1.0, None);
+            if let Some(&n) = aux.get(4 + i) {
+                let cx = bounds.x + pad + i as f32 * style.cell;
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        cx + ((style.cell - wm.width as f32) * 0.5).max(0.0),
+                        wd_top + ((weekday_h - wm.height as f32) * 0.5).max(0.0),
+                        wm.width as f32,
+                        wm.height as f32,
+                    ),
+                );
+                scene.set_fill(n, Color::rgb(0x90, 0x98, 0xa4));
+                scene.set_mask(n, Some(AlphaMask::new(wm.width, wm.height, wm.pixels)));
+                scene.set_visible(n, true);
+            }
+        }
+        let grid_top = wd_top + weekday_h;
+        let dim = DateTimeValue::days_in_month(year, month) as usize;
+        let start = CalendarDate::weekday_sun0(year, month, 1) as usize;
+        for slot in 0..42 {
+            let aux_i = 11 + slot;
+            let Some(&n) = aux.get(aux_i) else { continue };
+            if slot < start || slot >= start + dim {
+                scene.set_visible(n, false);
+                continue;
+            }
+            let d = (slot - start + 1) as u8;
+            let col = (slot % 7) as f32;
+            let row = (slot / 7) as f32;
+            let label = format!("{d}");
+            let (_, dm) = self.font.rasterize_text(&label, style.size, None);
+            let cx = bounds.x + pad + col * style.cell;
+            let cy = grid_top + row * style.cell;
+            scene.set_bounds(
+                n,
+                Rect::new(
+                    cx + ((style.cell - dm.width as f32) * 0.5).max(0.0),
+                    cy + ((style.cell - dm.height as f32) * 0.5).max(0.0),
+                    dm.width as f32,
+                    dm.height as f32,
+                ),
+            );
+            scene.set_fill(
+                n,
+                if d == selected_day {
+                    style.accent
+                } else {
+                    style.fg
+                },
+            );
+            scene.set_mask(n, Some(AlphaMask::new(dm.width, dm.height, dm.pixels)));
+            scene.set_visible(n, true);
+        }
+    }
+
+    fn paint_image(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Image {
+                    px_w,
+                    px_h,
+                    pixels,
+                    caption,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let px_w = *px_w;
+        let px_h = *px_h;
+        let pixels = pixels.clone();
+        let caption = caption.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let cap_h = if caption.is_empty() { 0.0 } else { 18.0 };
+        let mosaic_h = (bounds.height - cap_h).max(1.0);
+        let mosaic_w = bounds.width.max(1.0);
+        let max_side = style.mosaic_max.max(1) as f32;
+        let (cells_x, cells_y) = if pixels.is_some() && px_w > 0 && px_h > 0 {
+            let w = px_w;
+            let h = px_h;
+            if w >= h {
+                let cx = max_side.min(w as f32) as u32;
+                let cy = ((h as f32 / w as f32) * cx as f32).round().max(1.0) as u32;
+                (cx.max(1), cy.max(1))
+            } else {
+                let cy = max_side.min(h as f32) as u32;
+                let cx = ((w as f32 / h as f32) * cy as f32).round().max(1.0) as u32;
+                (cx.max(1), cy.max(1))
+            }
+        } else {
+            (0, 0)
+        };
+        let mosaic_n = (cells_x as usize).saturating_mul(cells_y as usize);
+        let needed = mosaic_n + 1; // + caption
+        self.ensure_aux_nodes(scene, host, id, needed.max(1));
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let (Some(px), true) = (pixels.as_ref(), mosaic_n > 0) {
+            let cell_w = mosaic_w / cells_x as f32;
+            let cell_h = mosaic_h / cells_y as f32;
+            for cy in 0..cells_y {
+                for cx in 0..cells_x {
+                    let i = (cy * cells_x + cx) as usize;
+                    // sample source
+                    let sx = ((cx as f32 + 0.5) / cells_x as f32 * px_w as f32) as u32;
+                    let sy = ((cy as f32 + 0.5) / cells_y as f32 * px_h as f32) as u32;
+                    let sx = sx.min(px_w.saturating_sub(1));
+                    let sy = sy.min(px_h.saturating_sub(1));
+                    let off = ((sy * px_w + sx) * 4) as usize;
+                    let color = if off + 3 < px.len() {
+                        Color::rgba(px[off], px[off + 1], px[off + 2], px[off + 3])
+                    } else {
+                        style.bg
+                    };
+                    if let Some(&n) = aux.get(i) {
+                        scene.set_bounds(
+                            n,
+                            Rect::new(
+                                bounds.x + cx as f32 * cell_w,
+                                bounds.y + cy as f32 * cell_h,
+                                cell_w.max(1.0),
+                                cell_h.max(1.0),
+                            ),
+                        );
+                        scene.set_fill(n, color);
+                        scene.set_mask(n, None);
+                        scene.set_visible(n, true);
+                    }
+                }
+            }
+        } else {
+            // placeholder: keep host fill only; hide mosaic slots
+            for i in 0..mosaic_n.min(aux.len()) {
+                if let Some(&n) = aux.get(i) {
+                    scene.set_visible(n, false);
+                }
+            }
+        }
+        let cap_idx = mosaic_n;
+        if !caption.is_empty() {
+            let (_, cm) = self.font.rasterize_text(&caption, style.caption_size, None);
+            if let Some(&n) = aux.get(cap_idx) {
+                scene.set_bounds(
+                    n,
+                    Rect::new(
+                        bounds.x + 4.0,
+                        bounds.y + mosaic_h + ((cap_h - cm.height as f32) * 0.5).max(0.0),
+                        cm.width as f32,
+                        cm.height as f32,
+                    ),
+                );
+                scene.set_fill(n, style.caption_fg);
+                scene.set_mask(n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+                scene.set_visible(n, true);
+            }
+        } else if let Some(&n) = aux.get(cap_idx) {
+            scene.set_visible(n, false);
         }
     }
 
@@ -16620,7 +17486,8 @@ impl FlexBuilder<'_> {
                 | Kind::Badge { children, .. }
                 | Kind::Tooltip { children, .. }
                 | Kind::Form { children, .. }
-                | Kind::Spin { children, .. } => {
+                | Kind::Spin { children, .. }
+                | Kind::Grid { children, .. } => {
                     children.push(child);
                 }
                 _ => {}
@@ -17322,6 +18189,158 @@ impl FlexBuilder<'_> {
                     open: false,
                     highlight: None,
                     placeholder: placeholder.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+
+    /// Fixed-column grid (Office P2e). Children left→right, wrap by `columns`.
+    pub fn grid<F>(&mut self, columns: usize, style: GridStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let columns = columns.max(1);
+        let id = self.ui.alloc_container(Kind::Grid {
+            columns,
+            style,
+            children: Vec::new(),
+        });
+        self.push_child(id);
+        {
+            let mut builder = FlexBuilder {
+                ui: self.ui,
+                parent: id,
+            };
+            build(&mut builder);
+        }
+        id
+    }
+
+    /// Vertical timeline (Office P2e).
+    pub fn timeline(
+        &mut self,
+        items: impl IntoIterator<Item = TimelineItem>,
+        style: TimelineStyle,
+    ) -> WidgetId {
+        let items: Vec<TimelineItem> = items.into_iter().collect();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Timeline {
+                    items,
+                    selected: None,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Month calendar (Office P2e); week starts Sunday.
+    pub fn calendar(
+        &mut self,
+        year: i32,
+        month: u8,
+        selected_day: u8,
+        style: CalendarStyle,
+    ) -> WidgetId {
+        let date = CalendarDate::new(year, month, selected_day);
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Calendar {
+                    year: date.year,
+                    month: date.month,
+                    selected_day: date.day,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// RGBA8 image mosaic preview (Office P2e). Soft paints a coarse color grid
+    /// (no scene RGBA texture yet).
+    pub fn image_rgba(
+        &mut self,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+        style: ImageStyle,
+    ) -> WidgetId {
+        self.image_rgba_caption(width, height, pixels, "", style)
+    }
+
+    /// RGBA8 image with caption.
+    pub fn image_rgba_caption(
+        &mut self,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+        caption: impl Into<String>,
+        style: ImageStyle,
+    ) -> WidgetId {
+        let pixels = image_pixels_rgba8(width, height, pixels);
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Image {
+                    px_w: width,
+                    px_h: height,
+                    pixels: Some(pixels),
+                    caption: caption.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Solid placeholder image with caption (no pixel buffer).
+    pub fn image_placeholder(
+        &mut self,
+        caption: impl Into<String>,
+        style: ImageStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Image {
+                    px_w: 0,
+                    px_h: 0,
+                    pixels: None,
+                    caption: caption.into(),
                     style,
                 },
                 node: None,
@@ -19953,5 +20972,209 @@ mod tests {
             ui.widgets.get(&ac).map(|w| &w.kind),
             Some(Kind::Autocomplete { open: false, .. })
         ));
+    }
+
+    #[test]
+    fn office_p2e_grid_lays_out_children() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(800.0, 600.0);
+        let mut ids = Vec::new();
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 200.0,
+                padding: 0.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.grid(
+                    2,
+                    GridStyle {
+                        width: 380.0,
+                        height: 120.0,
+                        padding: 4.0,
+                        gap: 8.0,
+                        background: Some(Color::rgb(0x20, 0x20, 0x24)),
+                        ..GridStyle::default()
+                    },
+                    |g| {
+                        ids.push(g.text_styled("A", Color::rgb(255, 255, 255), 14.0));
+                        ids.push(g.text_styled("B", Color::rgb(255, 255, 255), 14.0));
+                        ids.push(g.text_styled("C", Color::rgb(255, 255, 255), 14.0));
+                    },
+                );
+            },
+        );
+        ui.sync(&mut scene);
+        assert_eq!(ids.len(), 3);
+        let ba = scene
+            .get(ui.widgets.get(&ids[0]).unwrap().node.unwrap())
+            .unwrap()
+            .bounds;
+        let bb = scene
+            .get(ui.widgets.get(&ids[1]).unwrap().node.unwrap())
+            .unwrap()
+            .bounds;
+        let bc = scene
+            .get(ui.widgets.get(&ids[2]).unwrap().node.unwrap())
+            .unwrap()
+            .bounds;
+        assert!(bb.x > ba.x, "B should be right of A");
+        assert!(bc.y > ba.y, "C should wrap to next row");
+    }
+
+    #[test]
+    fn office_p2e_timeline_select() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut tl = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 200.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                tl = col.timeline(
+                    [
+                        TimelineItem::new("09:00", "Boot"),
+                        TimelineItem::new("09:05", "Ready").with_color(0x6ac08a),
+                    ],
+                    TimelineStyle::default(),
+                );
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&tl));
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&tl).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        let x = b.x + b.width * 0.5;
+        let y = b.y + TimelineStyle::default().padding + TimelineStyle::default().item_height * 1.4;
+        assert!(ui.pointer_pressed(&mut scene, x, y));
+        assert_eq!(ui.take_timeline_select(), Some((tl, 1)));
+        assert_eq!(ui.timeline_selected(tl), Some(Some(1)));
+    }
+
+    #[test]
+    fn office_p2e_calendar_day_and_arrows() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_config(UiConfig {
+            locale: "zh-CN".into(),
+            density: UiDensity::Compact,
+            accent: Some(Color::rgb(0xe0, 0x60, 0x60)),
+        });
+        assert_eq!(ui.config().locale, "zh-CN");
+        let mut cal = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 320.0,
+                height: 320.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                cal = col.calendar(2026, 10, 15, CalendarStyle::default());
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&cal));
+        assert_eq!(
+            ui.calendar_date(cal),
+            Some(CalendarDate::new(2026, 10, 15))
+        );
+        assert_eq!(ui.accessible_name(cal).as_deref(), Some("2026-10-15"));
+        ui.sync(&mut scene);
+        ui.set_focus(Some(cal));
+        assert!(ui.key_input(UiKey::Right));
+        assert_eq!(
+            ui.take_calendar_change(),
+            Some((cal, CalendarDate::new(2026, 10, 16)))
+        );
+        ui.sync(&mut scene);
+        let aux = ui.widgets.get(&cal).unwrap().aux.clone();
+        let start = CalendarDate::weekday_sun0(2026, 10, 1) as usize;
+        let day1 = aux.get(11 + start).copied().expect("day1 aux");
+        let db = scene.get(day1).unwrap().bounds;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            db.x + db.width * 0.5,
+            db.y + db.height * 0.5,
+        ));
+        assert_eq!(
+            ui.take_calendar_change(),
+            Some((cal, CalendarDate::new(2026, 10, 1)))
+        );
+    }
+
+    #[test]
+    fn office_p2e_image_rgba_and_placeholder() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut img = WidgetId(0);
+        let mut ph = WidgetId(0);
+        let px = [
+            255u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 240.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                img = col.image_rgba_caption(
+                    2,
+                    2,
+                    &px,
+                    "checker",
+                    ImageStyle {
+                        width: 80.0,
+                        height: 60.0,
+                        mosaic_max: 2,
+                        ..ImageStyle::default()
+                    },
+                );
+                ph = col.image_placeholder(
+                    "no pixels",
+                    ImageStyle {
+                        width: 80.0,
+                        height: 40.0,
+                        ..ImageStyle::default()
+                    },
+                );
+            },
+        );
+        assert!(!ui.focusable_widgets().contains(&img));
+        assert!(!ui.focusable_widgets().contains(&ph));
+        assert_eq!(ui.accessible_name(img).as_deref(), Some("checker"));
+        assert_eq!(ui.accessible_name(ph).as_deref(), Some("no pixels"));
+        ui.sync(&mut scene);
+        assert!(ui.widgets.get(&img).unwrap().node.is_some());
+        assert!(ui.widgets.get(&ph).unwrap().aux.len() >= 1);
+    }
+
+    #[test]
+    fn office_p2e_config_provider_bag() {
+        let mut ui = Ui::new();
+        assert_eq!(ui.config().density, UiDensity::Default);
+        ui.set_config(UiConfig {
+            locale: "en-US".into(),
+            density: UiDensity::Comfortable,
+            accent: Some(Color::rgb(0x2f, 0x5b, 0xa8)),
+        });
+        assert_eq!(ui.config().locale, "en-US");
+        assert_eq!(ui.config().density, UiDensity::Comfortable);
+        assert_eq!(ui.config().accent.unwrap().r, 0x2f);
     }
 }
