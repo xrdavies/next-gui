@@ -10,6 +10,8 @@ default = ["linux"]
 linux = ["dep:winit", "dep:softbuffer", "dep:arboard"]
 # Enables the macOS backend on any host for compile-check; the real windowing path is target_os = "macos".
 macos = ["dep:winit", "dep:softbuffer", "dep:arboard"]
+# Enables the Windows backend on any host for compile-check; the real windowing path is target_os = "windows".
+windows = ["dep:winit", "dep:softbuffer", "dep:arboard"]
 
 [dependencies]
 winit = { workspace = true, optional = true }

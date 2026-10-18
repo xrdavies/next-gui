@@ -10,7 +10,7 @@
 |------|----------|
 | Product profile | **Office desktop only** |
 | Field (industrial / embedded) | **Not required** on macOS |
-| OS order | Linux (done) → Windows (later) → **macOS (Office)** |
+| OS order | Linux (done) → Windows (P6c Soft) → **macOS (Office)** |
 | Input for first pass | Pointer + keyboard + IME (same as Linux); `Event::Touch` stub (winit macOS does not emit touch); full HMI touch is P6 |
 | Clipboard | UTF-8 text via `WindowCtx::clipboard_*` (`arboard`) |
 | Full windowing | **Implemented** with `winit` + optional softbuffer; `PresentBackend::GpuSurface` supported (same as Linux); do not block Linux demos |

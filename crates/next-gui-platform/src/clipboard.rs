@@ -4,6 +4,7 @@
 //! - **Text only** — no image / HTML.
 //! - **Linux:** works with X11; Wayland may need a compositor clipboard path
 //!   (`arboard`'s optional `wayland-data-control`) or may fail until then.
+//! - **Windows / macOS:** UTF-8 text via `arboard` (same thin API).
 //! - On Linux the clipboard is often hosted by the writing process — keep a
 //!   [`Clipboard`] alive (as [`crate::WindowCtx`] does via the host) so other
 //!   apps can still read after `set_text`.

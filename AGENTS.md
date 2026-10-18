@@ -17,9 +17,9 @@ Before changing anything:
 5. Read `docs/reviews/INDEX.md`.
 6. Read applicable `open`, `in_progress`, and `blocked` findings. Codex must also read
    all `fixed` findings, including those assigned to Grok, to verify their fixes.
-7. For platform work, read `docs/platform-macos.md` and the relevant design documents.
+7. For platform work, read `docs/platform-macos.md`, `docs/platform-windows.md`, and the relevant design documents.
    Clipboard text API is on `WindowCtx` (`clipboard_get_text` / `clipboard_set_text`);
-   touch forwards `Event::Touch`; P6a synthesizes primary finger into pointer; P6b exposes `scale_factor` + `dpi` helpers (events stay physical by default) ([docs/p6-design.md](docs/p6-design.md)).
+   touch forwards `Event::Touch`; P6a synthesizes primary finger into pointer; P6b exposes `scale_factor` + `dpi` helpers (events stay physical by default); P6c Windows Soft skeleton is behind feature `windows` ([docs/p6-design.md](docs/p6-design.md)).
 
 The launcher or task prompt states the current role explicitly. The Codex script has a
 fixed Codex prompt; Grok uses its own launcher. No role environment variable is needed.

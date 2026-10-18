@@ -1,8 +1,9 @@
 //! Windowing, input, and frame present abstraction for next-gui.
 //!
-//! P0 ships a Linux backend (`winit` + softbuffer) behind [`linux`]. That is an OS
-//! API thin layer, not a third-party UI runtime.
-//! [`run`] selects the native backend: macOS on a Mac, Linux with feature `linux`.
+//! OS backends (`winit` + softbuffer) live behind [`linux`], [`macos`], and [`windows`].
+//! That is an OS API thin layer, not a third-party UI runtime.
+//! [`run`] selects the native backend: Windows on `target_os = "windows"`, macOS on a
+//! Mac, otherwise Linux with feature `linux`.
 //!
 //! Present backends:
 //! - [`PresentBackend::Softbuffer`] — CPU pixels via softbuffer (Soft + GPU readback).
@@ -16,6 +17,8 @@
 //! DPI (P6b): events / present / [`WindowCtx::size`] stay in **physical** pixels.
 //! Read [`WindowCtx::scale_factor`] and use [`dpi`] helpers when layout wants logical
 //! coordinates. Scale changes arrive as [`Event::ScaleFactorChanged`].
+//!
+//! Windows (P6c): Softbuffer Soft path is required; see `docs/platform-windows.md`.
 
 #![deny(missing_docs)]
 
@@ -413,8 +416,8 @@ impl WindowCtx<'_> {
 
     /// Clone of the underlying winit window (for creating a `wgpu::Surface`).
     ///
-    /// Available on Linux / macOS backends built with winit.
-    #[cfg(any(feature = "linux", feature = "macos", target_os = "macos"))]
+    /// Available on Linux / macOS / Windows backends built with winit.
+    #[cfg(any(feature = "linux", feature = "macos", feature = "windows", target_os = "macos", target_os = "windows"))]
     pub fn winit_window(&self) -> std::sync::Arc<winit::window::Window> {
         self.inner.winit_window()
     }
@@ -433,7 +436,7 @@ pub(crate) trait WindowHost {
     fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64);
     fn clipboard_get_text(&mut self) -> Result<Option<String>, PlatformError>;
     fn clipboard_set_text(&mut self, text: &str) -> Result<(), PlatformError>;
-    #[cfg(any(feature = "linux", feature = "macos", target_os = "macos"))]
+    #[cfg(any(feature = "linux", feature = "macos", feature = "windows", target_os = "macos", target_os = "windows"))]
     fn winit_window(&self) -> std::sync::Arc<winit::window::Window>;
 }
 
@@ -454,17 +457,20 @@ pub mod touch_synth;
 pub mod dpi;
 
 /// OS text clipboard helpers (also used by [`WindowCtx`]).
-#[cfg(any(feature = "linux", feature = "macos"))]
+#[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
 pub mod clipboard;
 
 #[cfg(feature = "linux")]
 pub mod linux;
 
-#[cfg(all(feature = "linux", not(target_os = "macos")))]
+#[cfg(all(feature = "linux", not(target_os = "macos"), not(target_os = "windows")))]
 pub use linux::run;
 
 #[cfg(target_os = "macos")]
 pub use macos::run;
+
+#[cfg(target_os = "windows")]
+pub use windows::run;
 
 /// macOS Office-desktop backend.
 ///
@@ -472,6 +478,14 @@ pub use macos::run;
 /// See `docs/platform-macos.md`. Not a Field target.
 #[cfg(any(target_os = "macos", feature = "macos"))]
 pub mod macos;
+
+/// Windows Field/Office backend (P6c Soft skeleton).
+///
+/// Compiled on `target_os = "windows"` or with `--features windows` (cross-platform typecheck).
+/// Softbuffer Soft present is required; GPU Surface optional later.
+/// See `docs/platform-windows.md`.
+#[cfg(any(target_os = "windows", feature = "windows"))]
+pub mod windows;
 
 #[cfg(test)]
 mod tests {
@@ -523,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "linux", feature = "macos"))]
+    #[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
     fn clipboard_roundtrip_smoke() {
         // May fail without a display / clipboard provider — treat that as skip.
         let Ok(mut cb) = clipboard::Clipboard::open() else {

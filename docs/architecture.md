@@ -115,7 +115,7 @@ profile ──横切配置──→ 各层（开关与预算，不形成第二�
 | 顺序 | 目标 | 范围 |
 |------|------|------|
 | 1 | **Linux** | Field + Office（第一实现） |
-| 2 | **Windows** | Field + Office |
+| 2 | **Windows** | Field + Office；P6c Soft 骨架见 [platform-windows.md](platform-windows.md) |
 | 3 | **macOS** | **仅 Office 桌面**；Field 不要求；首版实现与缺口见 [platform-macos.md](platform-macos.md) |
 
 P0 输入范围：**指针 + 键盘**。触控以 `Event::Touch` / `TouchEvent` / `TouchPhase` 转发；**P6a** 将主触点合成进指针路径（`touch_synth`）。多指手势 / 完整工控键表仍属后续（见 [p6-design.md](p6-design.md)）。
@@ -126,7 +126,7 @@ P0 输入范围：**指针 + 键盘**。触控以 `Event::Touch` / `TouchEvent` 
 
 ```text
           ┌─ linux_backend   （先做）
-platform ─┼─ win_backend     （其次）
+platform ─┼─ win_backend     （P6c Soft 骨架；运行时跟验）
   trait   └─ macos_backend   （Office only；首版已实现）
 ```
 
