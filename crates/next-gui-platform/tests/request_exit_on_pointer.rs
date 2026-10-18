@@ -1,5 +1,10 @@
 //! Linux GUI: request_exit from pointer callback must end run without a key.
+//!
+//! Skips when no desktop / X11 / xdotool is available so headless `cargo test`
+//! does not panic. Wayland-only sessions are skipped (xdotool is X11-only).
 #![cfg(all(feature = "linux", target_os = "linux"))]
+
+mod common;
 
 use next_gui_platform::{linux, AppCallbacks, Event, WindowAttrs, WindowCtx};
 use std::sync::{Arc, Mutex};
@@ -28,6 +33,9 @@ impl AppCallbacks for QuitOnPointer {
 
 #[test]
 fn request_exit_from_pointer_ends_run() {
+    if common::skip_unless_x11_pointer("request_exit_on_pointer") {
+        return;
+    }
     let ready = Arc::new(Mutex::new(false));
     let ready_t = Arc::clone(&ready);
     let handle = std::thread::spawn(move || {
@@ -53,19 +61,6 @@ fn request_exit_from_pointer_ends_run() {
         .status()
         .expect("spawn xdotool");
     assert!(status.success(), "xdotool click failed");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if handle.is_finished() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(
-        handle.is_finished(),
-        "run did not exit within 5s after pointer request_exit"
-    );
-    handle
-        .join()
-        .expect("pointer worker panic")
+    common::join_probe(handle, Duration::from_secs(5), "pointer request_exit")
         .expect("pointer request_exit should end run");
 }

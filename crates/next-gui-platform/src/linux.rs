@@ -10,7 +10,10 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, TouchPhase as WinitTouchPhase, WindowEvent};
+use winit::event::{
+    ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, TouchPhase as WinitTouchPhase,
+    WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window as WinitWindow;
@@ -373,9 +376,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     }
                     WinitIme::Commit(text) => {
                         host.ime_composing = false;
-                        ImeEvent::Commit {
-                            text: text.clone(),
-                        }
+                        ImeEvent::Commit { text: text.clone() }
                     }
                     WinitIme::Disabled => {
                         host.ime_composing = false;
@@ -445,11 +446,16 @@ pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformErr
 /// Event loop for tests/probes that may not run on the process main thread.
 ///
 /// Prefer [`run`] for applications. Hidden from docs; used by Linux GUI regressions.
+///
+/// Requires a desktop session (`DISPLAY` and/or `WAYLAND_DISPLAY` /
+/// `WAYLAND_SOCKET`). Integration probes under `tests/request_exit_*.rs` skip
+/// when those are unset so headless `cargo test` does not panic; they still
+/// open a real window when a session is present.
 #[doc(hidden)]
 #[cfg(target_os = "linux")]
 pub fn run_any_thread(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
-    use winit::platform::x11::EventLoopBuilderExtX11;
     use winit::platform::wayland::EventLoopBuilderExtWayland;
+    use winit::platform::x11::EventLoopBuilderExtX11;
     let mut builder = EventLoop::builder();
     // Prefer X11 any-thread; Wayland builder ext is also applied for compositors that need it.
     EventLoopBuilderExtX11::with_any_thread(&mut builder, true);

@@ -155,6 +155,11 @@ If a headless environment blocks interactive run, say so in the commit message
 or handoff, list which examples were not visually checked, and do not imply
 visual QA passed.
 
+Linux GUI integration probes (`request_exit_on_*` in `next-gui-platform`) need a
+real desktop session. They skip (pass) when `DISPLAY` / `WAYLAND_DISPLAY` /
+`WAYLAND_SOCKET` are unset; the pointer probe also needs X11 `DISPLAY` and
+`xdotool`. Do not invent a headless fake GUI for them.
+
 ## Completion
 
 Before pushing:
