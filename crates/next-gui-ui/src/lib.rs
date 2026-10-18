@@ -7424,7 +7424,6 @@ impl Ui {
                     o.to_ascii_lowercase().contains(&needle)
                 }
             })
-            .map(|(i, o)| (i, o))
             .collect()
     }
 
@@ -12019,12 +12018,10 @@ impl Ui {
                 for (i, item) in items.iter().enumerate() {
                     let cx = bounds.x + pad + slot * (i as f32 + 0.5);
                     let my = bounds.y + pad;
-                    let (bg_c, fg_c) = if i < current {
-                        (style.done_bg, style.done_fg)
-                    } else if i == current {
-                        (style.process_bg, style.process_fg)
-                    } else {
-                        (style.wait_bg, style.wait_fg)
+                    let (bg_c, fg_c) = match i.cmp(&current) {
+                        std::cmp::Ordering::Less => (style.done_bg, style.done_fg),
+                        std::cmp::Ordering::Equal => (style.process_bg, style.process_fg),
+                        std::cmp::Ordering::Greater => (style.wait_bg, style.wait_fg),
                     };
                     let mx = cx - marker * 0.5;
                     if let Some(&mbg) = aux.get(i * 5) {
@@ -12125,12 +12122,10 @@ impl Ui {
                     let cy = bounds.y + pad + slot * (i as f32 + 0.5);
                     let mx = bounds.x + pad;
                     let my = cy - marker * 0.5;
-                    let (bg_c, fg_c) = if i < current {
-                        (style.done_bg, style.done_fg)
-                    } else if i == current {
-                        (style.process_bg, style.process_fg)
-                    } else {
-                        (style.wait_bg, style.wait_fg)
+                    let (bg_c, fg_c) = match i.cmp(&current) {
+                        std::cmp::Ordering::Less => (style.done_bg, style.done_fg),
+                        std::cmp::Ordering::Equal => (style.process_bg, style.process_fg),
+                        std::cmp::Ordering::Greater => (style.wait_bg, style.wait_fg),
                     };
                     if let Some(&mbg) = aux.get(i * 5) {
                         scene.set_bounds(mbg, Rect::new(mx, my, marker, marker));
@@ -12255,7 +12250,7 @@ impl Ui {
         let x = bounds.x + style.padding;
         let mut y = bounds.y + style.padding;
         let (_, tm) = self.font.rasterize_text(&title, style.title_size, None);
-        if let Some(&tn) = aux.get(0) {
+        if let Some(&tn) = aux.first() {
             scene.set_bounds(tn, Rect::new(x, y, tm.width as f32, tm.height as f32));
             scene.set_fill(tn, style.title_fg);
             scene.set_mask(tn, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
@@ -12326,7 +12321,7 @@ impl Ui {
         let mut y = bounds.y + style.padding;
         let status_lab = status.label();
         let (_, sm) = self.font.rasterize_text(status_lab, style.status_size, None);
-        if let Some(&sn) = aux.get(0) {
+        if let Some(&sn) = aux.first() {
             scene.set_bounds(
                 sn,
                 Rect::new(cx - sm.width as f32 * 0.5, y, sm.width as f32, sm.height as f32),
@@ -12874,7 +12869,7 @@ impl Ui {
         }
         let grid_top = bounds.y + pad + header_h + weekday_h;
         let cell = style.cell;
-        let dim = DateTimeValue::days_in_month(year, month) as u8;
+        let dim = DateTimeValue::days_in_month(year, month);
         let start = CalendarDate::weekday_sun0(year, month, 1) as usize;
         for d in 1..=dim {
             let slot = start + (d as usize - 1);
@@ -13411,7 +13406,7 @@ impl Ui {
         // aux: 0=browse bg, 1=browse label, 2=clear bg, 3=clear label
         self.ensure_aux_nodes(scene, host, id, 4);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if let Some(&bb) = aux.get(0) {
+        if let Some(&bb) = aux.first() {
             scene.set_bounds(bb, browse);
             scene.set_fill(bb, style.browse_bg);
             scene.set_mask(bb, None);
@@ -21161,7 +21156,7 @@ mod tests {
         assert_eq!(ui.accessible_name(ph).as_deref(), Some("no pixels"));
         ui.sync(&mut scene);
         assert!(ui.widgets.get(&img).unwrap().node.is_some());
-        assert!(ui.widgets.get(&ph).unwrap().aux.len() >= 1);
+        assert!(!ui.widgets.get(&ph).unwrap().aux.is_empty());
     }
 
     #[test]

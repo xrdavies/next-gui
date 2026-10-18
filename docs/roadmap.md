@@ -87,12 +87,14 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 
 ## P4 — 双档 Profile
 
-> **已完成骨架**（见 [p4-design.md](p4-design.md)、`examples/24_profile_dual`）。
+> **已完成**（见 [p4-design.md](p4-design.md)、`examples/24_profile_dual`）。含 Field Soft 裁剪 CI。
 
 - Field / Office 特性开关与性能预算（`next-gui-profile`）
 - 降级策略：`degrade` → 强制 soft、关 GPU/特效、降 fps
-- 打包意图：Cargo features `field` / `office` + 文档；运行时 `ProfileConfig` 为准
-- 验收：同一应用源两档配置；Field 不依赖 GPU 即可 Soft 稳跑
+- 打包：Cargo features `field` / `office`；`e24` 默认 `gpu`，Field Soft 用 `--no-default-features`
+- **Field Soft CI**：`./tools/ci/field-soft.sh`（`cargo tree` 断言无 wgpu / `next-gui-render-gpu`）+ CI workflow（`tools/ci/github-actions-ci.yml`）job **field-soft**
+- 全库 CI（同 workflow）：**workspace** / **platform-features** / **clippy**
+- 验收：同一应用源两档配置；Field 不依赖 GPU 即可 Soft 稳跑并可裁掉 GPU crate
 
 运行：
 
@@ -100,6 +102,8 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 cargo run -p e24_profile_dual
 NEXT_GUI_PROFILE=field cargo run -p e24_profile_dual
 NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual
+cargo run -p e24_profile_dual --no-default-features   # Field Soft packaging
+./tools/ci/field-soft.sh
 ```
 
 ## P5 — Immediate 视口

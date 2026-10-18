@@ -4,17 +4,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
+description = "P4 demo: Field / Office ProfileConfig dual; GPU optional for Field Soft packaging"
 
 [[bin]]
 name = "e24_profile_dual"
 path = "src/main.rs"
+
+[features]
+default = ["gpu"]
+# Office path: link next-gui-render-gpu / wgpu. Field Soft CI builds with --no-default-features.
+gpu = ["dep:next-gui-render-gpu"]
 
 [dependencies]
 next-gui-platform = { workspace = true }
 next-gui-scene = { workspace = true }
 next-gui-render = { workspace = true }
 next-gui-render-soft = { workspace = true }
-next-gui-render-gpu = { workspace = true }
+next-gui-render-gpu = { workspace = true, optional = true }
 next-gui-ui = { workspace = true }
 next-gui-text = { workspace = true }
 next-gui-layout = { workspace = true }
