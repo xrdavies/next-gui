@@ -1,6 +1,6 @@
 # macOS platform backend (Office desktop)
 
-> **Status: Office P0–P5 paths implemented; tracked macOS behavior findings verified.** Linux remains the behavioral reference. macOS uses the same platform contract, retained widgets, Profile configuration, and optional Immediate viewport. See the [latest fix verification](reviews/R-20261018-ded2d152ebca.md) for checks, the repaired macOS build regression and remaining Linux test feedback. Targeted checks do not constitute exhaustive GUI acceptance.
+> **Status: Office P0–P5 paths implemented; tracked macOS behavior findings verified.** Linux remains the behavioral reference. macOS uses the same platform contract, retained widgets, Profile configuration, and optional Immediate viewport. See the [latest fix verification](reviews/R-20261019-7aa661f2b219.md) for checks and remaining Linux test feedback; the [previous review](reviews/R-20261018-ded2d152ebca.md) records the repaired macOS build regression. Targeted checks do not constitute exhaustive GUI acceptance.
 
 ---
 
@@ -128,7 +128,7 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 - **IME** is wired (same contract as Linux). **Clipboard** thin text API is available on `WindowCtx`.
 - **Touch:** `Event::Touch` / `TouchEvent` stubs exist and are forwarded when winit emits them; macOS winit currently does not emit touch. Full industrial touch mapping is P6.
 - Multi-window management and accessibility remain future work shared with the other platforms.
-- Re-verification passed native GPU color agreement, DateTime overlay stacking and required clippy checks. Follow-up checks also verify e13 Escape exit (F03), TextArea wrapped carets in Soft/Metal (F07), and `request_exit` from startup/redraw/pointer callbacks without another key. Codex added Linux target guards to the new X11/Wayland probe runner and its callers, restoring default macOS builds. The remaining finding concerns default Linux tests requiring a desktop/xdotool; see the linked review.
+- Re-verification passed native GPU color agreement, DateTime overlay stacking and required clippy checks. Follow-up checks also verify e13 Escape exit (F03), TextArea wrapped carets in Soft/Metal (F07), and `request_exit` from startup/redraw/pointer callbacks without another key. Codex added Linux target guards to the new X11/Wayland probe runner and its callers, restoring default macOS builds. Grok's follow-up guards now skip unavailable desktop/tool prerequisites; the remaining Linux test finding concerns X11-only pointer injection when winit selects Wayland in a mixed session. Current macOS tests and all 17 example startup/Escape checks pass; see the linked review.
 - The macOS review used an Apple Silicon host and a 1× display; Retina and mixed-scale display transitions have not been accepted.
 - The backend intentionally keeps the Linux event and presentation behavior; platform-specific refinements can land without changing the upper-layer contract.
 
