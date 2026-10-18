@@ -170,7 +170,7 @@ fn main() {
     let demo = Demo::new(attrs.width, attrs.height);
     if let Err(e) = next_gui_platform::run(attrs, demo) {
         eprintln!("failed to run P1 .ngui window: {e}");
-        eprintln!("hint: need a graphical DISPLAY (X11/Wayland) on Linux");
+        eprintln!("hint: run from a graphical desktop session");
         std::process::exit(1);
     }
 }
