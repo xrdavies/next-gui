@@ -15,12 +15,12 @@ the first entries. Keep the status in this index and its report synchronized.
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
 
-| R-20261018-7c9427cf6006-F03 | fixed | P1 | grok | shared / macOS observed | P0 exit; a69e733 / 7c9427c contracts | platform Escape handler | Escape exits after popup/Immediate consumption | [F03](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f03) | 6ff7685e6f6f | — |
-| R-20261018-7c9427cf6006-F04 | fixed | P1 | grok | shared GPU / Metal observed | 69e6fb2 | render-gpu surface format/blit | Native Surface colors differ from softbuffer | [F04](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f04) | 6ff7685e6f6f | — |
-| R-20261018-7c9427cf6006-F06 | fixed | P1 | grok | shared UI / macOS observed | 454428e | UI paint_datetime_popup | Later widgets cover calendar days/actions | [F06](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f06) | 6ff7685e6f6f | — |
+| R-20261018-7c9427cf6006-F03 | fixed | P1 | grok | shared / macOS observed | P0 exit; a69e733 / 7c9427c contracts | platform Escape handler | Escape exits after popup/Immediate consumption | [F03](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f03) | 33700c4d0fe5 | — |
+| R-20261018-7c9427cf6006-F04 | fixed | P1 | grok | shared GPU / Metal observed | 69e6fb2 | render-gpu surface format/blit | Native Surface colors differ from softbuffer | [F04](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f04) | 33700c4d0fe5 | — |
+| R-20261018-7c9427cf6006-F06 | fixed | P1 | grok | shared UI / macOS observed | 454428e | UI paint_datetime_popup | Later widgets cover calendar days/actions | [F06](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f06) | 33700c4d0fe5 | — |
 | R-20261018-7c9427cf6006-F02 | verified | P1 | codex | macOS | bd296561 | platform root run export | macOS-only consumer lacked common entry point | [F02](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f02) | 847b4c4d1a1d | 847b4c4d1a1d |
-| R-20261018-7c9427cf6006-F05 | fixed | P2 | grok | shared | multiple (see report) | render/text/UI clippy; Drawer assertion | Required lint check fails; assertion always true | [F05](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f05) | 6ff7685e6f6f | — |
-| R-20261018-7c9427cf6006-F07 | fixed | P2 | grok | shared UI | 02f5656 | UI paint_text_area | Newlines flattened; editing caret never drawn | [F07](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f07) | 6ff7685e6f6f | — |
+| R-20261018-7c9427cf6006-F05 | fixed | P2 | grok | shared | multiple (see report) | render/text/UI clippy; Drawer assertion | Required lint check fails; assertion always true | [F05](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f05) | 33700c4d0fe5 | — |
+| R-20261018-7c9427cf6006-F07 | fixed | P2 | grok | shared UI | 02f5656 | UI paint_text_area | Newlines flattened; editing caret never drawn | [F07](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f07) | 33700c4d0fe5 | — |
 | R-20261018-7c9427cf6006-F01 | verified | P2 | codex | macOS / portable QA | 02f5656 and e22–e25 additions | UI raster tests; e21–e25 QA writers | QA images used Linux-only /workspace path | [F01](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f01) | 2eded00e6748 | 847b4c4d1a1d |
 
 ## Review runs
