@@ -1,6 +1,6 @@
 # P6 设计：工业打磨
 
-> **状态：设计已写，实现未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)。
+> **状态：P6a 已落地（主触点 → 指针合成）；P6b–P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)。
 >
 > 范围：触控 → 指针 HMI 映射、DPI / 缩放策略、Windows 后端骨架、无障碍基线、7×24 / 泄漏探测；macOS Office 工业打磨为跟进项，不挡 Linux 切片。
 >
@@ -39,7 +39,7 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 
 | 切片 | 主题 | 主战场 | 依赖 |
 |------|------|--------|------|
-| **P6a** | 触控 → 指针 / 点击 HMI 映射 | Linux（macOS 仅转发已有 winit Touch） | 现有 `Event::Touch` stub |
+| **P6a** ✅ | 触控 → 指针 / 点击 HMI 映射 | Linux + macOS（共享 `touch_synth`） | 现有 `Event::Touch` + 主触点合成指针 |
 | **P6b** | DPI / scale 策略 | Linux + 文档契约；macOS Retina 跟验 | P6a 坐标约定可并行起步 |
 | **P6c** | Windows 后端骨架 | Windows | platform trait；对标 Linux P0 |
 | **P6d** | 无障碍基线 | 跨平台（先 Linux 演示） | 焦点链已存在于 ui |
@@ -75,6 +75,8 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 4. **投放点：** 优先在 `platform` 后端（linux，必要时 macos）或薄适配层合成后仍走同一 `Event` 回调，使 `ui` / 示例零改或微改即可点按钮、拖滑条。
 5. **保留 `Event::Touch`：** 不删除；需要原始触点的应用仍可听。文档写明：默认 HMI 应消费合成指针，而非强制双处理。
 6. **工控键：** 预留 `KeyCode::Other` / 配置表扩展点；不在 P6a 做完整现场键谱。
+
+**实现（合入后）：** `next_gui_platform::touch_synth::TouchPointerSynth`；linux / macos 后端在转发 `Event::Touch` 后对主触点投递合成指针；主触点按下期间抑制 OS 镜像的 Left 鼠标，减轻双击。单测见该模块；无触屏 CI 不依赖硬件。
 
 **示例 / 验收线索：** Linux 触屏或触摸仿真下跑 `e01` / `e12` / `e20`：点按、拖动滚动可完成；无触屏机器用单测模拟 `Touch` → 期望的 Pointer 序列。
 
@@ -162,7 +164,7 @@ winit Touch ──► Event::Touch (保留，原始)
 
 | 切片 | 通过样子 |
 |------|----------|
-| P6a | 主触点可点击 Button / 拖动滚动；单测覆盖 Started/Moved/Ended/Cancelled；Linux 文档可跑 |
+| P6a ✅ | 主触点合成指针；单测覆盖 Started/Moved/Ended/Cancelled + 次指不合成；linux/macos 已接；触屏手工验可选 |
 | P6b | scale 契约成文；1×/2× Soft（及可得的 GpuSurface）布局尺度一致；命中与绘制同空间 |
 | P6c | Windows Soft 窗口 + 指针/键盘；`platform` feature 可检；Linux/macOS 不回归 |
 | P6d | 焦序与可访问名基线有文档/示例；不宣称完整读屏 |
@@ -209,4 +211,4 @@ winit Touch ──► Event::Touch (保留，原始)
 | [office-line.md](office-line.md) | Office 加厚；下一步指向 P6 |
 | [office-widget-catalog.md](office-widget-catalog.md) | P2 控件不在本阶段 |
 
-下一步：按 **P6a → P6b → P6c → P6d → P6e** 开实现；每切片单独设计补充可加 `docs/p6a-*.md` 等短文，或直接在实现 PR 中回写本节勾选状态。
+下一步：**P6b**（DPI / scale）→ P6c → P6d → P6e。每切片合入后回写本节勾选状态。

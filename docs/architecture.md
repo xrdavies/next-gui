@@ -118,7 +118,7 @@ profile ──横切配置──→ 各层（开关与预算，不形成第二�
 | 2 | **Windows** | Field + Office |
 | 3 | **macOS** | **仅 Office 桌面**；Field 不要求；首版实现与缺口见 [platform-macos.md](platform-macos.md) |
 
-P0 输入范围：**指针 + 键盘**。触控类型已以 `Event::Touch` / `TouchEvent` / `TouchPhase` 预留，并由 winit 在可用时转发；**完整工控触控映射 / 手势**属 P6（设计见 [p6-design.md](p6-design.md)）。
+P0 输入范围：**指针 + 键盘**。触控以 `Event::Touch` / `TouchEvent` / `TouchPhase` 转发；**P6a** 将主触点合成进指针路径（`touch_synth`）。多指手势 / 完整工控键表仍属后续（见 [p6-design.md](p6-design.md)）。
 
 剪贴板：`WindowCtx::clipboard_get_text` / `clipboard_set_text`（UTF-8 文本，`arboard`；Linux 优先 X11，Wayland 可能受限；见 `next_gui_platform::clipboard`）。
 
@@ -260,7 +260,7 @@ scene（脏区） → render 命令流
 | Rust + DSL | 实现语言与 `ui` 双写法 |
 | 弱机优先 | Field profile；P0 先 soft + 脏区 |
 | OS：Linux → Win → macOS Office | `platform` 统一抽象 + 按序后端 |
-| P0 指针+键盘；触控 stub 已有 | `Event::Touch`；完整映射见 [p6-design.md](p6-design.md) |
+| P0 指针+键盘；P6a 触控→指针 | `Event::Touch` + 主触点合成；见 [p6-design.md](p6-design.md) |
 | 剪贴板文本 API | `WindowCtx::clipboard_*`（platform） |
 
 本文已定稿；与 [requirements.md](requirements.md)、[roadmap.md](roadmap.md) 一并作为实现依据。

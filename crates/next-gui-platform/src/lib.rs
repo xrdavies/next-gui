@@ -10,8 +10,8 @@
 //!   (Office native GPU present). Soft apps must not use this mode for `present()`.
 //!
 //! Clipboard: thin UTF-8 text API on [`WindowCtx`] (see [`clipboard`]).
-//! Touch: [`Event::Touch`] / [`TouchEvent`] stubs forwarded from winit when present;
-//! full industrial touch / HMI mapping is P6.
+//! Touch: [`Event::Touch`] is always forwarded; P6a [`touch_synth`] maps the primary
+//! finger into [`Event::PointerMoved`] / [`Event::PointerButton`] for HMI.
 
 #![deny(missing_docs)]
 
@@ -133,12 +133,14 @@ pub enum KeyCode {
     /// Printable character from the keyboard path (typically Latin/ASCII).
     /// CJK composition arrives via [`Event::Ime`], not here.
     Char(char),
-    /// Catch-all scancode/other.
+    /// Catch-all scancode / other.
+    ///
+    /// P6a reserves this as the extension hook for industrial / HMI function keys;
+    /// a full field key map is out of scope for P6a.
     Other(u32),
 }
 
-
-/// Touch-screen contact phase (winit-compatible stub; full HMI mapping is P6).
+/// Touch-screen contact phase (winit-compatible; primary finger also synthesizes pointer via P6a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TouchPhase {
     /// Finger (or stylus) contacted the surface.
@@ -151,7 +153,7 @@ pub enum TouchPhase {
     Cancelled,
 }
 
-/// One touch point. Full multi-touch gestures / industrial key maps are P6.
+/// One touch point. Primary id synthesizes pointer (P6a); multi-touch gestures remain later.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TouchEvent {
     /// Stable id for this contact until [`TouchPhase::Ended`] / [`TouchPhase::Cancelled`].
@@ -240,10 +242,12 @@ pub enum Event {
         /// IME payload.
         ime: ImeEvent,
     },
-    /// Touch-screen contact (stub). Forwarded from winit when the OS emits it.
+    /// Touch-screen contact. Always forwarded when the OS emits it.
     ///
-    /// macOS winit currently does not emit touch; Linux/other backends may.
-    /// Apps may ignore until P6 industrial mapping.
+    /// P6a also synthesizes primary-finger [`Event::PointerMoved`] /
+    /// [`Event::PointerButton`] so retained UI works without handling Touch.
+    /// Prefer consuming the synthesized pointer for HMI; listen here only for
+    /// raw / multi-touch needs. macOS winit may not emit touch on all hardware.
     Touch {
         /// Window.
         window: WindowId,
@@ -342,7 +346,12 @@ impl WindowCtx<'_> {
     ///
     /// Only valid for [`PresentBackend::Softbuffer`]. On [`PresentBackend::GpuSurface`]
     /// this returns an error — use `GpuRenderer::try_new_native` + its present path.
-    pub fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError> {
+    pub fn present(
+        &mut self,
+        width: u32,
+        height: u32,
+        pixels: &[u32],
+    ) -> Result<(), PlatformError> {
         self.inner.present(width, height, pixels)
     }
 
@@ -359,7 +368,6 @@ impl WindowCtx<'_> {
     pub fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64) {
         self.inner.set_ime_cursor_area(x, y, width, height);
     }
-
 
     /// Read UTF-8 text from the OS clipboard.
     ///
@@ -407,6 +415,9 @@ pub trait AppCallbacks {
     /// Redraw: app should render and present (softbuffer or GPU surface).
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>);
 }
+
+/// P6a primary-finger touch → pointer synthesis (shared by OS backends).
+pub mod touch_synth;
 
 /// OS text clipboard helpers (also used by [`WindowCtx`]).
 #[cfg(any(feature = "linux", feature = "macos"))]
