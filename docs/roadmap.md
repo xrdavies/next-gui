@@ -6,6 +6,8 @@
 
 **macOS Office 首版已实现：** `next-gui-platform::macos` 复用 Linux 的窗口、输入与软渲染契约；实现细节与已知缺口见 [platform-macos.md](platform-macos.md)。校验：`cargo check -p next-gui-platform --features macos`。
 
+**Windows Soft 骨架（P6c）已实现：** `next-gui-platform::windows`；见 [platform-windows.md](platform-windows.md)。校验：`cargo check -p next-gui-platform --features windows`（Linux 宿主仅 typecheck；图形会话手工跟验）。
+
 ## P0 — 骨架
 
 > **已完成骨架**（见 [p0-design.md](p0-design.md)、`examples/01_soft_window`）。
@@ -116,16 +118,16 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 
 ## P6 — 工业打磨
 
-> **P6a / P6b 已通**（见 [p6-design.md](p6-design.md)）。切片：**P6a** ✅ 触控 HMI → **P6b** ✅ DPI → **P6c** Windows 骨架 → **P6d** a11y 基线 → **P6e** 7×24/soak；macOS Retina 手工跟验为跟进项。
+> **P6a / P6b / P6c 已通**（见 [p6-design.md](p6-design.md)）。切片：**P6a** ✅ 触控 HMI → **P6b** ✅ DPI → **P6c** ✅ Windows Soft 骨架 → **P6d** a11y 基线 → **P6e** 7×24/soak；Windows / macOS Retina 运行时手工跟验为跟进项。
 
 - **触控** HMI：`Event::Touch` 保留；P6a 主触点合成 `PointerMoved` / `PointerButton`（`touch_synth`）；工控完整键表后补（`KeyCode::Other` 为扩展钩）
 - 无障碍基线（P6d；克制范围）
 - 7×24 稳定性（泄漏、长时间运行；P6e）
 - 多分辨率 / DPI（P6b ✅：`scale_factor` + `dpi` 助手；契约默认物理）
-- **Windows** 平台后端（P6c）；macOS Office 首版已完成；DPI 契约已通，Retina 混缩手工验 / IME 打磨仍为跟进
+- **Windows** 平台后端（P6c ✅ Soft 骨架；运行时手工跟验）；macOS Office 首版已完成；DPI 契约已通，Retina 混缩手工验 / IME 打磨仍为跟进
 
 验收：面向现场与办公室的真实场景试点可长期运行；OS 按序补齐。各切片验收口径见 [p6-design.md](p6-design.md)。
 
 ## 建议顺序
 
-P0–P5 已通；**P6a / P6b** 已通 → 下一步 **P6c** Windows 骨架（见 [p6-design.md](p6-design.md)；Windows 运行时尚未验收）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行（非 P6 必达）：Office P2、控件进 `.ngui`、自绘 IME 候选。
+P0–P5 已通；**P6a / P6b / P6c** 已通 → 下一步 **P6d** 无障碍基线（见 [p6-design.md](p6-design.md)；Windows 图形会话运行时仍为手工跟验）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行（非 P6 必达）：Office P2、控件进 `.ngui`、自绘 IME 候选。

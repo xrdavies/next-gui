@@ -1,6 +1,6 @@
 # P6 设计：工业打磨
 
-> **状态：P6a / P6b 已落地（触控合成 + DPI 契约）；P6c–P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)。
+> **状态：P6a / P6b / P6c 已落地（触控合成 + DPI 契约 + Windows Soft 骨架）；P6d–P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)、[platform-windows.md](platform-windows.md)。
 >
 > 范围：触控 → 指针 HMI 映射、DPI / 缩放策略、Windows 后端骨架、无障碍基线、7×24 / 泄漏探测；macOS Office 工业打磨为跟进项，不挡 Linux 切片。
 >
@@ -41,7 +41,7 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 |------|------|--------|------|
 | **P6a** ✅ | 触控 → 指针 / 点击 HMI 映射 | Linux + macOS（共享 `touch_synth`） | 现有 `Event::Touch` + 主触点合成指针 |
 | **P6b** ✅ | DPI / scale 策略 | Linux + macOS（`scale_factor` + `dpi` 助手）；Retina 手工跟验 | P6a 坐标约定 |
-| **P6c** | Windows 后端骨架 | Windows | platform trait；对标 Linux P0 |
+| **P6c** ✅ | Windows 后端骨架 | Windows Soft（`windows` feature；运行时手工跟验） | platform trait；对标 Linux P0 |
 | **P6d** | 无障碍基线 | 跨平台（先 Linux 演示） | 焦点链已存在于 ui |
 | **P6e** | 7×24 / 泄漏 / soak | 工具或文档 + 可选示例 | 任意；建议在 P6a–c 有窗口后再跑 |
 
@@ -49,7 +49,7 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 
 - **P6a 优先：** stub 已有，Linux 触屏现场最刚需；映射进现有 Ui 指针路径，立刻提升可交互性。
 - **P6b 紧随：** 触控与 DPI 都碰「坐标空间」；先定逻辑/物理约定，避免 Windows / Retina 返工。
-- **P6c：** OS 顺序 Linux → **Windows** → macOS；Windows 运行时尚未验收。
+- **P6c：** OS 顺序 Linux → **Windows** → macOS；Soft 骨架已合入，Windows 图形会话运行时仍为手工跟验。
 - **P6d / P6e：** 基线与探针，不挡窗口/输入主路径；可与 P6c 尾部并行。
 - **macOS 工业跟进**（DPI / IME 打磨 / 触控若 winit 支持）：不阻塞 Linux P6a；在对应切片验收后再补 [platform-macos.md](platform-macos.md)。
 
@@ -130,6 +130,8 @@ platform ─┼─ win_backend     （P6c）
 
 验收：`cargo run` 至少一个 Soft 窗口示例在 Windows 图形会话下可交互；Linux/macOS 回归不破。Field Soft 兜底文档写明 Windows 同样适用。
 
+**实现（合入后）：** `next_gui_platform::windows`（自 `macos.rs` 改编，无 Wayland/X11）；feature `windows` 可在任意宿主 `cargo check`；`run` 在 `target_os = "windows"` 选出。含 Softbuffer present、指针/键盘/滚轮、IME 转发、P6a 触控合成、P6b `scale_factor`、剪贴板。Linux CI **不**宣称 Windows 图形会话验收 — 见 [platform-windows.md](platform-windows.md)。
+
 ### 3.4 P6d — 无障碍基线
 
 **克制范围：**
@@ -178,7 +180,7 @@ winit Touch ──► Event::Touch (保留，原始)
 |------|----------|
 | P6a ✅ | 主触点合成指针；单测覆盖 Started/Moved/Ended/Cancelled + 次指不合成；linux/macos 已接；触屏手工验可选 |
 | P6b ✅ | `scale_factor` + `ScaleFactorChanged`（linux/macos）；`dpi` 助手与单测；契约成文；示例多用物理、逻辑换算可选 |
-| P6c | Windows Soft 窗口 + 指针/键盘；`platform` feature 可检；Linux/macOS 不回归 |
+| P6c ✅ | Windows Soft 骨架 + 指针/键盘；`windows` feature 可检；Linux/macOS 不回归；Windows 运行时手工跟验 |
 | P6d | 焦序与可访问名基线有文档/示例；不宣称完整读屏 |
 | P6e | soak 步骤可重复；可选探针；CI 不强制长跑 |
 | 全局 | Field Soft 仍可无 GPU 启动；无满血 QML；Cascader / Office P2 / 自绘 IME 未混入本阶段必达 |
@@ -223,4 +225,4 @@ winit Touch ──► Event::Touch (保留，原始)
 | [office-line.md](office-line.md) | Office 加厚；下一步指向 P6 |
 | [office-widget-catalog.md](office-widget-catalog.md) | P2 控件不在本阶段 |
 
-下一步：**P6c**（Windows 后端骨架）→ P6d → P6e。每切片合入后回写本节勾选状态。
+下一步：**P6d**（无障碍基线）→ P6e。每切片合入后回写本节勾选状态。
