@@ -82,8 +82,8 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 - Soft 始终可回退；示例 `cargo run -p e10_office_panel`
 - 控件目录：[office-widget-catalog.md](office-widget-catalog.md)
 - **P0 / P1（含 rest + deferred）已齐**；Chart 多图 + 键盘打磨见 `e23_office_charts`。Cascader 仍不进 P1
-- **Office P2a–P2c** ✅（含 `popover` / `popconfirm`；[office-p2-design.md](office-p2-design.md)、`e26`）；下一步 P2d；Cascader 仍可选
-- 后续可选：Office P2d+、控件进 `.ngui`、自绘 IME 候选
+- **Office P2a–P2d** ✅（含 `upload` / `color_picker` / `autocomplete`；[office-p2-design.md](office-p2-design.md)、`e26`）；下一步 P2e；Cascader 仍可选
+- 后续可选：Office P2e+、控件进 `.ngui`、自绘 IME 候选
 
 ## P4 — 双档 Profile
 
@@ -131,4 +131,4 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 
 ## 建议顺序
 
-P0–P6 已通（**P6a–P6e**；见 [p6-design.md](p6-design.md)、[soak.md](soak.md)）。跟进：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验。**Button 进焦序** ✅（`take_button_activate`；见 [a11y-baseline.md](a11y-baseline.md)）。**Office P2a–P2c** ✅（见 [office-p2-design.md](office-p2-design.md)）；下一步 P2d。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行：Office P2d+、控件进 `.ngui`、自绘 IME 候选。
+P0–P6 已通（**P6a–P6e**；见 [p6-design.md](p6-design.md)、[soak.md](soak.md)）。跟进：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验。**Button 进焦序** ✅（`take_button_activate`；见 [a11y-baseline.md](a11y-baseline.md)）。**Office P2a–P2d** ✅（见 [office-p2-design.md](office-p2-design.md)）；下一步 P2e。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行：Office P2e+、控件进 `.ngui`、自绘 IME 候选。

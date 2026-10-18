@@ -1,7 +1,8 @@
 //! Office P2 styles: P2a (`button_group` / `link` / `space`), P2b
-//! (`steps` / `statistic` / `result`), and P2c (`popover` / `popconfirm`).
+//! (`steps` / `statistic` / `result`), P2c (`popover` / `popconfirm`), and
+//! P2d (`upload` / `color_picker` / `autocomplete`).
 //!
-//! See `docs/office-p2-design.md`. Cascader and P2d+ widgets stay out of this module.
+//! See `docs/office-p2-design.md`. Cascader and P2e+ widgets stay out of this module.
 
 use next_gui_layout::CrossAlign;
 use next_gui_scene::Color;
@@ -491,6 +492,194 @@ impl Default for PopconfirmStyle {
             ok_fg: Color::rgb(0xff, 0xff, 0xff),
             cancel_bg: Color::rgb(0x3a, 0x3a, 0x44),
             cancel_fg: Color::rgb(0xd0, 0xd4, 0xdc),
+        }
+    }
+}
+
+// ── P2d: upload / color_picker / autocomplete ────────────────────────────────
+
+/// Style for [`crate::FlexBuilder::upload`] (path + Browse; OS dialog is app-owned).
+#[derive(Debug, Clone, Copy)]
+pub struct UploadStyle {
+    /// Total width.
+    pub width: f32,
+    /// Height of the control.
+    pub height: f32,
+    /// Path / button font size.
+    pub size: f32,
+    /// Path text color.
+    pub fg: Color,
+    /// Placeholder when no path.
+    pub placeholder_fg: Color,
+    /// Field background.
+    pub bg: Color,
+    /// Browse button fill.
+    pub browse_bg: Color,
+    /// Browse button text.
+    pub browse_fg: Color,
+    /// Browse button width.
+    pub browse_width: f32,
+    /// Clear button fill.
+    pub clear_bg: Color,
+    /// Clear button text.
+    pub clear_fg: Color,
+    /// Clear button width.
+    pub clear_width: f32,
+    /// Inner padding of the path area.
+    pub padding: f32,
+    /// Gap between path and buttons.
+    pub gap: f32,
+    /// Show Clear when a path is set.
+    pub show_clear: bool,
+}
+
+impl Default for UploadStyle {
+    fn default() -> Self {
+        Self {
+            width: 360.0,
+            height: 32.0,
+            size: 13.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            placeholder_fg: Color::rgb(0x70, 0x74, 0x80),
+            bg: Color::rgb(0x2a, 0x2a, 0x32),
+            browse_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            browse_fg: Color::rgb(0xff, 0xff, 0xff),
+            browse_width: 72.0,
+            clear_bg: Color::rgb(0x3a, 0x3a, 0x44),
+            clear_fg: Color::rgb(0xd0, 0xd4, 0xdc),
+            clear_width: 56.0,
+            padding: 8.0,
+            gap: 6.0,
+            show_clear: true,
+        }
+    }
+}
+
+/// Style for [`crate::FlexBuilder::color_picker`] (preset swatches + hex field).
+#[derive(Debug, Clone, Copy)]
+pub struct ColorPickerStyle {
+    /// Total width budget.
+    pub width: f32,
+    /// Row height.
+    pub height: f32,
+    /// Swatch square size.
+    pub swatch_size: f32,
+    /// Gap between swatches.
+    pub swatch_gap: f32,
+    /// Hex text field width.
+    pub hex_width: f32,
+    /// Hex font size.
+    pub size: f32,
+    /// Hex text color.
+    pub fg: Color,
+    /// Hex field background.
+    pub hex_bg: Color,
+    /// Panel / host background.
+    pub bg: Color,
+    /// Selected swatch outline.
+    pub selected_border: Color,
+    /// Inner padding.
+    pub padding: f32,
+}
+
+impl Default for ColorPickerStyle {
+    fn default() -> Self {
+        Self {
+            width: 360.0,
+            height: 36.0,
+            swatch_size: 22.0,
+            swatch_gap: 4.0,
+            hex_width: 88.0,
+            size: 12.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            hex_bg: Color::rgb(0x1e, 0x1e, 0x22),
+            bg: Color::rgba(0, 0, 0, 0),
+            selected_border: Color::rgb(0xf0, 0xf2, 0xf6),
+            padding: 4.0,
+        }
+    }
+}
+
+/// Default Soft-friendly preset palette for [`crate::FlexBuilder::color_picker`].
+pub fn default_color_presets() -> Vec<Color> {
+    vec![
+        Color::rgb(0xe0, 0x60, 0x60),
+        Color::rgb(0xe0, 0xa0, 0x40),
+        Color::rgb(0xe0, 0xd0, 0x40),
+        Color::rgb(0x6a, 0xc0, 0x8a),
+        Color::rgb(0x40, 0xc0, 0xc0),
+        Color::rgb(0x6a, 0xb0, 0xf0),
+        Color::rgb(0x2f, 0x5b, 0xa8),
+        Color::rgb(0xa0, 0x70, 0xd0),
+        Color::rgb(0xf0, 0xf0, 0xf4),
+        Color::rgb(0x90, 0x98, 0xa4),
+        Color::rgb(0x2a, 0x2a, 0x32),
+        Color::rgb(0x10, 0x10, 0x14),
+    ]
+}
+
+/// Format `Color` as `#RRGGBB` (alpha ignored).
+pub fn color_to_hex(c: Color) -> String {
+    format!("#{:02X}{:02X}{:02X}", c.r, c.g, c.b)
+}
+
+/// Parse `#RRGGBB` / `RRGGBB` (case-insensitive). Returns `None` on failure.
+pub fn parse_hex_color(s: &str) -> Option<Color> {
+    let t = s.trim();
+    let hex = t.strip_prefix('#').unwrap_or(t);
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::rgb(r, g, b))
+}
+
+/// Style for [`crate::FlexBuilder::autocomplete`] (text field + filtered dropdown).
+#[derive(Debug, Clone, Copy)]
+pub struct AutocompleteStyle {
+    /// Closed field width.
+    pub width: f32,
+    /// Closed field height.
+    pub height: f32,
+    /// Dropdown max height.
+    pub popup_max_height: f32,
+    /// Suggestion row height.
+    pub item_height: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Font size.
+    pub size: f32,
+    /// Value text.
+    pub fg: Color,
+    /// Placeholder text.
+    pub placeholder_fg: Color,
+    /// Field background.
+    pub bg: Color,
+    /// Popup background.
+    pub popup_bg: Color,
+    /// Highlighted suggestion row.
+    pub selected_bg: Color,
+    /// Focus border hint.
+    pub focus_border: Color,
+}
+
+impl Default for AutocompleteStyle {
+    fn default() -> Self {
+        Self {
+            width: 240.0,
+            height: 30.0,
+            popup_max_height: 160.0,
+            item_height: 26.0,
+            padding: 8.0,
+            size: 13.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            placeholder_fg: Color::rgb(0x70, 0x74, 0x80),
+            bg: Color::rgb(0x2a, 0x2a, 0x32),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
+            selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            focus_border: Color::rgb(0x3b, 0x82, 0xf6),
         }
     }
 }
