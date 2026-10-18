@@ -136,3 +136,11 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 ## 建议顺序
 
 P0–P6 已通（**P6a–P6e**；见 [p6-design.md](p6-design.md)、[soak.md](soak.md)）。跟进：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验。**Button 进焦序** ✅（`take_button_activate`；见 [a11y-baseline.md](a11y-baseline.md)）。**Office P2a–P2e** ✅（见 [office-p2-design.md](office-p2-design.md)）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行：Cascader、自绘 IME 候选。**控件进 `.ngui`** ✅（[ngui-widgets.md](ngui-widgets.md)）。
+
+## Theme tokens（外观）
+
+> **进行中**（分支 `feat/theme-tokens`；见 [theme-tokens.md](theme-tokens.md)）。
+
+- Theme tokens → 现有 `XxxStyle` 默认值（light/dark + density）
+- `Ui::set_theme`；与 Profile（性能）/ `UiConfig`（locale·density·accent）分工
+- 不走 ImGui / 满血 CSS / Qt Style 引擎

@@ -947,8 +947,9 @@ pub enum UiDensity {
 
 /// Ui-level defaults bag (Office P2e `config_provider` — **not** a visual `Kind`).
 ///
-/// Set via [`crate::Ui::set_config`] / read via [`crate::Ui::config`]. Full design-token
-/// system is later; new P2 controls may read [`Self::accent`] when trivial.
+/// Set via [`crate::Ui::set_config`] / read via [`crate::Ui::config`].
+/// Appearance colors/type/spacing live in [`crate::Theme`] ([`crate::Ui::set_theme`]);
+/// this bag holds locale, density (scales theme spacing/fonts), and optional accent override.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UiConfig {
     /// Locale tag (BCP 47-ish string; display / formatting hint).
