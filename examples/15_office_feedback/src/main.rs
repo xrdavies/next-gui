@@ -367,6 +367,24 @@ impl Demo {
         self.needs_paint = true;
     }
 
+
+    fn apply_button(&mut self, id: next_gui_ui::WidgetId) -> bool {
+        if id == self.open_btn {
+            let _ = self.ui.set_modal_open(self.modal, true);
+            true
+        } else if id == self.bump_btn {
+            let v = self.ui.progress_value(self.progress).unwrap_or(0.0);
+            let _ = self.ui.set_progress_value(self.progress, (v + 0.1).min(1.0));
+            let _ = self.ui.set_badge_kind(
+                self.badge,
+                next_gui_ui::BadgeKind::Count(((v + 0.1) * 10.0) as u32),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
     fn handle_feedback_actions(&mut self) {
         if let Some(id) = self.ui.take_alert_dismiss() {
             self.ui.set_text(self.log, format!("Alert dismissed ({})", id.raw()));
@@ -531,15 +549,7 @@ impl AppCallbacks for Demo {
                 let yf = y as f32;
                 let mut handled = self.ui.pointer_press(&mut self.scene, xf, yf, false);
                 if let Some(hit) = self.ui.hit_widget(&self.scene, xf, yf) {
-                    if hit == self.open_btn {
-                        let _ = self.ui.set_modal_open(self.modal, true);
-                        handled = true;
-                    } else if hit == self.bump_btn {
-                        let v = self.ui.progress_value(self.progress).unwrap_or(0.0);
-                        let _ = self.ui.set_progress_value(self.progress, (v + 0.1).min(1.0));
-                        let _ = self.ui.set_badge_kind(self.badge, BadgeKind::Count(
-                            ((v + 0.1) * 10.0) as u32
-                        ));
+                    if self.apply_button(hit) {
                         handled = true;
                     }
                 }
@@ -607,6 +617,9 @@ impl AppCallbacks for Demo {
             } => {
                 if let Some(ui_key) = map_key(key, modifiers) {
                     if self.ui.key_input(ui_key) {
+                        if let Some(id) = self.ui.take_button_activate() {
+                            let _ = self.apply_button(id);
+                        }
                         self.handle_feedback_actions();
                         self.refresh_status();
                         ctx.request_redraw();

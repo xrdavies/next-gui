@@ -445,6 +445,19 @@ impl Demo {
         self.needs_paint = true;
     }
 
+
+    fn apply_button(&mut self, id: next_gui_ui::WidgetId) -> bool {
+        if id == self.open_btn {
+            let _ = self.ui.set_drawer_open(self.drawer, true);
+            true
+        } else if id == self.toast_btn {
+            self.ui.notify("Thresholds saved", next_gui_ui::NotificationTone::Success);
+            true
+        } else {
+            false
+        }
+    }
+
     fn handle_actions(&mut self) {
         if let Some((id, _)) = self.ui.take_drawer_action() {
             self.ui
@@ -594,11 +607,7 @@ impl AppCallbacks for Demo {
                 let yf = y as f32;
                 let mut handled = self.ui.pointer_press(&mut self.scene, xf, yf, false);
                 if let Some(hit) = self.ui.hit_widget(&self.scene, xf, yf) {
-                    if hit == self.open_btn {
-                        let _ = self.ui.set_drawer_open(self.drawer, true);
-                        handled = true;
-                    } else if hit == self.toast_btn {
-                        self.ui.notify("Thresholds saved", NotificationTone::Success);
+                    if self.apply_button(hit) {
                         handled = true;
                     }
                 }
@@ -668,6 +677,9 @@ impl AppCallbacks for Demo {
                         }
                     }
                     if self.ui.key_input(ui_key) {
+                        if let Some(id) = self.ui.take_button_activate() {
+                            let _ = self.apply_button(id);
+                        }
                         self.handle_actions();
                         self.refresh_status();
                         ctx.request_redraw();

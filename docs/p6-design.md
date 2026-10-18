@@ -149,7 +149,8 @@ platform ─┼─ win_backend     （P6c）
 | `accessible_name` | `Widget` 可选覆盖；`Ui::set/clear/accessible_name`；Kind 标签/标题/占位回退 |
 | 焦序 | `focusable_widgets` DFS（roots 顺序）；`focus_next` / `focus_prev` 环绕 |
 | Tab | `UiKey::Tab` / `BackTab`；`key_input` 顶层移动焦点；Modal/Drawer 陷阱；文本框不插 Tab |
-| 非目标 | 无 AT-SPI / UIA / VoiceOver；Button 仍不进焦序（与指针一致） |
+| 非目标 | 无 AT-SPI / UIA / VoiceOver |
+| Button 跟进 ✅ | 进焦序；指针设焦点仍 `hit_widget`；`Space`/`Enter` → `take_button_activate`（无独立 focus 边框） |
 
 ### 3.5 P6e — 7×24 / 泄漏 / soak
 
@@ -246,4 +247,4 @@ winit Touch ──► Event::Touch (保留，原始)
 | [a11y-baseline.md](a11y-baseline.md) | P6d 焦序与可访问名 |
 | [soak.md](soak.md) | P6e 7×24 / 泄漏探针 |
 
-下一步：**P6 切片已齐。** 跟进项（不挡合入）：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验、Button 进焦序（若产品需要）、Office P2 / `.ngui` 复杂控件 / 自绘 IME（可选并行）。每切片合入后回写本节勾选状态。
+下一步：**P6 切片已齐。** 跟进项（不挡合入）：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验；**Button 进焦序** ✅。可选并行：Office P2 / `.ngui` 复杂控件 / 自绘 IME。每切片合入后回写本节勾选状态。

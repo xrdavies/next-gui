@@ -439,6 +439,22 @@ impl Demo {
         }
     }
 
+
+    fn apply_button(&mut self, id: next_gui_ui::WidgetId) -> bool {
+        if id == self.validate_btn {
+            let ok = self.ui.validate_form(self.form);
+            let msg = if ok {
+                "Form OK — all rules passed."
+            } else {
+                "Form has errors — see red hints under fields."
+            };
+            self.ui.set_text(self.log, msg);
+            true
+        } else {
+            false
+        }
+    }
+
     fn refresh_status(&mut self) {
         let bay = self
             .ui
@@ -623,14 +639,7 @@ impl AppCallbacks for Demo {
             } => {
                 let handled = self.ui.pointer_press(&mut self.scene, x as f32, y as f32, false);
                 if let Some(hit) = self.ui.hit_widget(&self.scene, x as f32, y as f32) {
-                    if hit == self.validate_btn {
-                        let ok = self.ui.validate_form(self.form);
-                        let msg = if ok {
-                            "Form OK — all rules passed."
-                        } else {
-                            "Form has errors — see red hints under fields."
-                        };
-                        self.ui.set_text(self.log, msg);
+                    if self.apply_button(hit) {
                         self.ui.sync(&mut self.scene);
                         self.needs_paint = true;
                         ctx.request_redraw();
@@ -688,6 +697,9 @@ impl AppCallbacks for Demo {
             } => {
                 if let Some(ui_key) = map_key(key, modifiers) {
                     if self.ui.key_input(ui_key) {
+                        if let Some(id) = self.ui.take_button_activate() {
+                            let _ = self.apply_button(id);
+                        }
                         self.sync_ime(ctx);
                         self.refresh_status();
                         ctx.request_redraw();

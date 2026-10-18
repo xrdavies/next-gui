@@ -1,11 +1,11 @@
 //! Office P0 shell demo: Toolbar + Icon + Splitter + Panel + StatusBar.
 //!
 //! Drag the splitter sash to resize panes. Buttons log clicks. Escape / close to quit.
-//! Space toggles Soft ↔ GPU when available.
+//! Space toggles Soft ↔ GPU when no focus; Tab + Space/Enter activate tool buttons.
 
 use next_gui_layout::{Axis, CrossAlign};
 use next_gui_platform::{
-    AppCallbacks, Event, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
+    AppCallbacks, Event, KeyCode, Modifiers, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
 };
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
@@ -13,7 +13,8 @@ use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_text::load_default_cjk_font;
 use next_gui_ui::{
-    ColumnStyle, IconName, PanelStyle, SplitterStyle, StatusBarStyle, ToolbarStyle, Ui, WidgetId,
+    ColumnStyle, IconName, PanelStyle, SplitterStyle, StatusBarStyle, ToolbarStyle, Ui, UiKey,
+    WidgetId,
 };
 
 const CLEAR: Color = Color {
@@ -85,6 +86,23 @@ struct Demo {
     count: i32,
     needs_paint: bool,
     pending_native: bool,
+}
+
+
+fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
+    if matches!(key, KeyCode::Tab) {
+        return Some(if modifiers.shift {
+            UiKey::BackTab
+        } else {
+            UiKey::Tab
+        });
+    }
+    match key {
+        KeyCode::Enter => Some(UiKey::Enter),
+        KeyCode::Space => Some(UiKey::Space),
+        KeyCode::Escape => Some(UiKey::Escape),
+        _ => None,
+    }
 }
 
 impl Demo {
@@ -263,6 +281,22 @@ impl Demo {
         self.needs_paint = true;
     }
 
+    fn apply_button(&mut self, id: WidgetId) -> bool {
+        if id == self.btn_inc {
+            self.count = self.count.saturating_add(1);
+            self.refresh();
+            true
+        } else if id == self.btn_open {
+            eprintln!("Open clicked (stub)");
+            true
+        } else if id == self.btn_save {
+            eprintln!("Save clicked (stub)");
+            true
+        } else {
+            false
+        }
+    }
+
     fn toggle(&mut self, w: u32, h: u32) {
         match self.window_backend {
             PresentBackend::GpuSurface => {
@@ -431,14 +465,8 @@ impl AppCallbacks for Demo {
                     return;
                 }
                 if let Some(id) = self.ui.hit_widget(&self.scene, x as f32, y as f32) {
-                    if id == self.btn_inc {
-                        self.count = self.count.saturating_add(1);
-                        self.refresh();
+                    if self.apply_button(id) {
                         ctx.request_redraw();
-                    } else if id == self.btn_open {
-                        eprintln!("Open clicked (stub)");
-                    } else if id == self.btn_save {
-                        eprintln!("Save clicked (stub)");
                     }
                 }
             }
@@ -465,21 +493,35 @@ impl AppCallbacks for Demo {
                 }
             }
             Event::Key {
-                key: KeyCode::Space,
+                key,
                 pressed: true,
+                modifiers,
                 ..
             } => {
-                let (w, h) = ctx.size();
-                self.toggle(w, h);
-                ctx.set_title(&format!("next-gui Office shell — {}", self.backend.name()));
-                ctx.request_redraw();
-            }
-            Event::Key {
-                key: KeyCode::Escape,
-                pressed: true,
-                ..
-            } => {
-                ctx.request_exit();
+                if let Some(ui_key) = map_key(key, modifiers) {
+                    if self.ui.key_input(ui_key) {
+                        if let Some(id) = self.ui.take_button_activate() {
+                            let _ = self.apply_button(id);
+                        }
+                        self.ui.sync(&mut self.scene);
+                        self.needs_paint = true;
+                        ctx.request_redraw();
+                        return;
+                    }
+                    if matches!(ui_key, UiKey::Escape) {
+                        ctx.request_exit();
+                        return;
+                    }
+                    if matches!(ui_key, UiKey::Space) && self.ui.focused().is_none() {
+                        let (w, h) = ctx.size();
+                        self.toggle(w, h);
+                        ctx.set_title(&format!(
+                            "next-gui Office shell — {}",
+                            self.backend.name()
+                        ));
+                        ctx.request_redraw();
+                    }
+                }
             }
             Event::RedrawRequested { .. } => {
                 self.needs_paint = true;

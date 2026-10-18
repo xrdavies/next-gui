@@ -264,7 +264,7 @@ scene（脏区） → render 命令流
 | OS：Linux → Win → macOS Office | `platform` 统一抽象 + 按序后端 |
 | P0 指针+键盘；P6a 触控→指针 | `Event::Touch` + 主触点合成；见 [p6-design.md](p6-design.md) |
 | P6b DPI / scale | 默认物理；`scale_factor` + `dpi`；见 [p6-design.md](p6-design.md) §3.2 |
-| P6d a11y 基线 | 焦序 + `accessible_name`；无 AT 总线；见 [a11y-baseline.md](a11y-baseline.md) |
+| P6d a11y 基线 | 焦序（含 Button）+ `accessible_name` + `take_button_activate`；无 AT 总线；见 [a11y-baseline.md](a11y-baseline.md) |
 | P6e soak / 7×24 | `NEXT_GUI_SOAK` + [soak.md](soak.md)；CI 不强制长跑 |
 | 剪贴板文本 API | `WindowCtx::clipboard_*`（platform） |
 
