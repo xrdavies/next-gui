@@ -300,6 +300,11 @@
 
 ---
 
+
+## Profile（非控件）
+
+`next-gui-profile` 是 **Field / Office 配置层**（预算与能力开关），不是目录里的 widget。见 [p4-design.md](p4-design.md)、示例 `e24_profile_dual`。
+
 ## 11. 修订记录
 
 | 日期 | 说明 |
@@ -314,3 +319,4 @@
 | 2026-10-18 | **P1 rest 切片落地：** Drawer（+Backdrop）、VirtualList/Table、TextArea、InputNumber、Notification、Spin、Empty、Collapse、Descriptions、Card、Segmented、Breadcrumb、Pagination + `e21_office_p1_rest`；Datetime/Transfer/PropertyGrid/TreeTable 仍后置。 |
 | 2026-10-18 | **P1 deferred 切片落地：** DateTime / Transfer / PropertyGrid / TreeTable + `e22_office_p1_deferred`；Cascader 仍不进 P1。 |
 | 2026-10-18 | **Office 增强：** `chart` 多瓦片（Gauge+Trend 网格）+ P1 键盘/焦点打磨 + Soft AA；示例 `e23_office_charts`；Cascader/自绘 IME 候选仍后置。 |
+| 2026-10-18 | **P4 Profile：** `next-gui-profile` + `e24_profile_dual`；非控件配置层；Cascader/自绘 IME 仍后置。 |

@@ -93,4 +93,4 @@ gpu.backend_name() -> &str   // e.g. "Vulkan" / "Gl"
 | readback 延迟 | P3 可接受；真 Surface present 后续 |
 | 与 Soft 像素差 | 允许抗锯齿/混合舍入差；几何应对齐 |
 
-下一步：Office 线做厚（Surface present 缺口文档化；Row/工具条）；**P4 Profile 已推迟**。
+下一步：Office 线做厚已完成；**P4 Profile 已落地**（见 p4-design.md）。

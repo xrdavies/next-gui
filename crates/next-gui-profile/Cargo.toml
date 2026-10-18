@@ -1,0 +1,19 @@
+[package]
+name = "next-gui-profile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Field / Office profile config layer for next-gui (budgets & capability flags, not a second UI stack)"
+
+[features]
+default = []
+# Compile-time packaging hints. Apps may gate optional deps on these; the crate
+# itself stays dependency-light. Runtime ProfileConfig is the MVP source of truth.
+field = []
+office = []
+
+[dependencies]
+
+[dev-dependencies]

@@ -1,8 +1,8 @@
-# Office 线：在跳过 P4 的前提下做厚办公桌面能力
+# Office 线：办公桌面能力加厚（相对 Field Soft）
 
-> **状态：进行中。** P4（Field/Office `profile`）**暂缓**；先把 Office 体验做厚，Field 继续吃 Soft 路径。
+> **状态：首轮加厚已完成；P4 Profile 已落地**（见 [p4-design.md](p4-design.md)、`e24_profile_dual`）。
 >
-> 对应决策：跳过 P4 → 加强 GPU present / 布局 / 办公向控件；Soft 始终可回退。
+> 历史决策：曾跳过 P4 先做厚 Office（GPU present / 布局 / 办公控件）；Soft 始终可回退。现 Profile 配置层已抽出。
 
 ---
 
@@ -16,7 +16,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 
 非目标（本阶段）：
 
-- Field/Office **Profile 配置 crate**（P4，已推迟）
+- ~~Field/Office **Profile 配置 crate**~~ → **P4 已落地**（`next-gui-profile`）
 - Immediate 视口（P5）
 - P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地；TextInput IME/CJK 预编辑+提交已接（候选窗靠系统 IME）
 - 动画系统、图表控件
@@ -133,7 +133,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/22_office_p1_deferred` — **P1 deferred**：DateTime / Transfer / PropertyGrid / TreeTable
 - `examples/23_office_charts` — **增强**：多瓦片 Chart + 独立 Gauge/Trend
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 齐；Chart 多图增强已落地；IME/CJK 已接**。下一步：P1 打磨续 / P2 可选项，或 **P4 Profile**。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 齐；Chart 多图增强已落地；IME/CJK 已接；P4 Profile 已落地**。下一步：P5 Immediate，或 Office P2 / `.ngui` 进复杂控件。
 
 ---
 
@@ -150,13 +150,13 @@ Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 齐；Chart 多�
 ```text
 P0–P3 完成
     ↓
-【当前】Office 线加厚（本文）  ←── P4 推迟
+【已完成】Office 线加厚（本文） + P4 Profile
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
     · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
     · P0/P1 齐；Chart 多图增强 + P1 键盘打磨已落地；IME/CJK 已接
     ↓
-P4 Profile（Field/Office 配置）稍后抽
+P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
 P5 Immediate → P6 工业打磨
 ```
@@ -173,7 +173,7 @@ P5 Immediate → P6 工业打磨
 | Soft | Softbuffer 窗或 Surface blit 可跑 |
 | GPU native | 有适配器时 `present=NativeSurface`（见 stderr） |
 | GPU readback | Softbuffer 窗上 `try_new` 仍可用 |
-| 路线图 | P4 标明推迟；指向本文 |
+| 路线图 | P4 已完成（见 p4-design）；指向本文 |
 | **视觉自测** | 新控件/示例合入前须跑相关 example，核对照面布局与交互是否符合预期；有桌面时截图复查。仅编译/单测不算 UI 完成（见 [AGENTS.md](../AGENTS.md) Git Workflow / QA） |
 
 运行：`cargo run -p e10_office_panel`（需图形会话；CJK 字体同 P2）。
