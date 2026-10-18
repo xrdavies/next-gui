@@ -1943,6 +1943,32 @@ enum Kind {
         open: bool,
         style: PopconfirmStyle,
     },
+    /// File path field + Browse (Office P2d); OS dialog is app-stubbed.
+    Upload {
+        path: Option<String>,
+        placeholder: String,
+        browse_label: String,
+        clear_label: String,
+        style: UploadStyle,
+    },
+    /// Preset swatches + hex field (Office P2d).
+    ColorPicker {
+        value: Color,
+        hex: String,
+        selected_swatch: Option<usize>,
+        presets: Vec<Color>,
+        style: ColorPickerStyle,
+    },
+    /// Text field + filtered suggestion dropdown (Office P2d).
+    Autocomplete {
+        options: Vec<String>,
+        value: String,
+        caret: usize,
+        open: bool,
+        highlight: Option<usize>,
+        placeholder: String,
+        style: AutocompleteStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -2088,6 +2114,14 @@ pub struct Ui {
     pending_popover_open_change: Option<(WidgetId, bool)>,
     /// Last Popconfirm action; drained by [`Ui::take_popconfirm_action`].
     pending_popconfirm_action: Option<(WidgetId, PopconfirmAction)>,
+    /// Last Upload Browse click; drained by [`Ui::take_upload_browse`].
+    pending_upload_browse: Option<WidgetId>,
+    /// Last Upload Clear click; drained by [`Ui::take_upload_clear`].
+    pending_upload_clear: Option<WidgetId>,
+    /// Last ColorPicker value change; drained by [`Ui::take_color_change`].
+    pending_color_change: Option<(WidgetId, Color)>,
+    /// Last Autocomplete commit; drained by [`Ui::take_autocomplete_change`].
+    pending_autocomplete_change: Option<(WidgetId, String)>,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2188,6 +2222,10 @@ impl Ui {
             pending_result_action: None,
             pending_popover_open_change: None,
             pending_popconfirm_action: None,
+            pending_upload_browse: None,
+            pending_upload_clear: None,
+            pending_color_change: None,
+            pending_autocomplete_change: None,
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2631,6 +2669,18 @@ impl Ui {
                 self.focus = Some(id);
                 self.pointer_select_toggle(scene, id)
             }
+            Some(Kind::Autocomplete { .. }) => {
+                self.focus = Some(id);
+                self.pointer_autocomplete_focus(scene, id)
+            }
+            Some(Kind::Upload { .. }) => {
+                self.focus = Some(id);
+                self.pointer_upload(scene, id, x, y)
+            }
+            Some(Kind::ColorPicker { .. }) => {
+                self.focus = Some(id);
+                self.pointer_color_picker(scene, id, x, y)
+            }
             Some(Kind::TreeSelect { .. }) => {
                 self.focus = Some(id);
                 self.pointer_tree_select_toggle(scene, id)
@@ -3050,6 +3100,38 @@ impl Ui {
                     Some(trigger.clone())
                 }
             }
+            Kind::Upload { path, placeholder, .. } => {
+                if let Some(p) = path {
+                    if !p.is_empty() {
+                        return Some(p.clone());
+                    }
+                }
+                if placeholder.is_empty() {
+                    None
+                } else {
+                    Some(placeholder.clone())
+                }
+            }
+            Kind::ColorPicker { hex, .. } => {
+                if hex.is_empty() {
+                    None
+                } else {
+                    Some(hex.clone())
+                }
+            }
+            Kind::Autocomplete {
+                value,
+                placeholder,
+                ..
+            } => {
+                if !value.is_empty() {
+                    Some(value.clone())
+                } else if !placeholder.is_empty() {
+                    Some(placeholder.clone())
+                } else {
+                    None
+                }
+            }
             Kind::Text { content, .. } => {
                 if content.is_empty() {
                     None
@@ -3100,7 +3182,10 @@ impl Ui {
             | Kind::Link { .. }
             | Kind::Steps { .. }
             | Kind::Popover { .. }
-            | Kind::Popconfirm { .. } => true,
+            | Kind::Popconfirm { .. }
+            | Kind::Upload { .. }
+            | Kind::ColorPicker { .. }
+            | Kind::Autocomplete { .. } => true,
             _ => false,
         }
     }
@@ -3788,6 +3873,12 @@ impl Ui {
             Some(Kind::Table { .. }) => self.key_table(id, key),
             Some(Kind::Tabs { .. }) => self.key_tabs(id, key),
             Some(Kind::Select { .. }) => self.key_select(id, key),
+            Some(Kind::Autocomplete { .. }) => self.key_autocomplete(id, key),
+            Some(Kind::Upload { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+                self.pending_upload_browse = Some(id);
+                true
+            }
+            Some(Kind::ColorPicker { .. }) => self.key_color_picker(id, key),
             Some(Kind::TreeSelect { .. }) => self.key_tree_select(id, key),
             Some(Kind::AlarmList { .. }) => self.key_alarm_list(id, key),
             Some(Kind::Slider { .. }) => self.key_slider(id, key),
@@ -5008,7 +5099,8 @@ impl Ui {
                 | Kind::Drawer { open, .. }
                 | Kind::DateTime { open, .. }
                 | Kind::Popover { open, .. }
-                | Kind::Popconfirm { open, .. } => {
+                | Kind::Popconfirm { open, .. }
+                | Kind::Autocomplete { open, .. } => {
                     *open = false;
                 }
                 _ => {}
@@ -5163,6 +5255,113 @@ impl Ui {
             }
         }
         true
+    }
+
+    /// Drain Browse request from an Upload (`Space`/`Enter` or Browse hit).
+    ///
+    /// OS file dialog is **app responsibility** (or a future platform helper).
+    /// Demo apps stub a path via [`Ui::set_upload_path`].
+    pub fn take_upload_browse(&mut self) -> Option<WidgetId> {
+        self.pending_upload_browse.take()
+    }
+
+    /// Drain Clear request from an Upload.
+    pub fn take_upload_clear(&mut self) -> Option<WidgetId> {
+        self.pending_upload_clear.take()
+    }
+
+    /// Current upload path (`None` = empty / cleared).
+    pub fn upload_path(&self, id: WidgetId) -> Option<Option<&str>> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Upload { path, .. }) => Some(path.as_deref()),
+            _ => None,
+        }
+    }
+
+    /// Set or clear the upload path (does not emit browse/clear pending).
+    pub fn set_upload_path(&mut self, id: WidgetId, path: Option<impl Into<String>>) -> bool {
+        let path = path.map(|s| s.into());
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Upload { path: p, .. } = &mut w.kind {
+                *p = path;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Drain ColorPicker value change `(id, Color)`.
+    pub fn take_color_change(&mut self) -> Option<(WidgetId, Color)> {
+        self.pending_color_change.take()
+    }
+
+    /// Current ColorPicker value.
+    pub fn color_picker_value(&self, id: WidgetId) -> Option<Color> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ColorPicker { value, .. }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Set ColorPicker value (updates hex + matching swatch when possible).
+    pub fn set_color_picker_value(&mut self, id: WidgetId, color: Color) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::ColorPicker {
+                value,
+                hex,
+                selected_swatch,
+                presets,
+                ..
+            } = &mut w.kind
+            {
+                *value = color;
+                *hex = color_to_hex(color);
+                *selected_swatch = presets.iter().position(|c| {
+                    c.r == color.r && c.g == color.g && c.b == color.b
+                });
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Drain Autocomplete commit `(id, value)` after picking a suggestion or
+    /// Enter with a non-empty value.
+    pub fn take_autocomplete_change(&mut self) -> Option<(WidgetId, String)> {
+        self.pending_autocomplete_change.take()
+    }
+
+    /// Current autocomplete text.
+    pub fn autocomplete_value(&self, id: WidgetId) -> Option<&str> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Autocomplete { value, .. }) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Set autocomplete text (closes popup; does not emit change).
+    pub fn set_autocomplete_value(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
+        let value = value.into();
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Autocomplete {
+                value: v,
+                caret,
+                open,
+                highlight,
+                ..
+            } = &mut w.kind
+            {
+                *caret = value.chars().count();
+                *v = value;
+                *open = false;
+                *highlight = None;
+                if self.open_popup == Some(id) {
+                    self.open_popup = None;
+                }
+                return true;
+            }
+        }
+        false
     }
 
     /// Selected tab index.
@@ -6927,6 +7126,494 @@ impl Ui {
         false
     }
 
+
+    fn upload_button_rects(bounds: Rect, style: UploadStyle, has_path: bool) -> (Rect, Option<Rect>) {
+        let mut right = bounds.x + bounds.width - style.padding;
+        let browse = Rect::new(
+            right - style.browse_width,
+            bounds.y + 2.0,
+            style.browse_width,
+            (bounds.height - 4.0).max(1.0),
+        );
+        right = browse.x - style.gap;
+        let clear = if has_path && style.show_clear {
+            Some(Rect::new(
+                right - style.clear_width,
+                bounds.y + 2.0,
+                style.clear_width,
+                (bounds.height - 4.0).max(1.0),
+            ))
+        } else {
+            None
+        };
+        (browse, clear)
+    }
+
+    fn pointer_upload(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (style, path, node) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Upload { style, path, .. }) => {
+                let node = self.widgets.get(&id).and_then(|w| w.node);
+                (*style, path.clone(), node)
+            }
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let (browse, clear) = Self::upload_button_rects(bounds, style, path.is_some());
+        if let Some(cr) = clear {
+            if cr.contains(x, y) {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Upload { path, .. } = &mut w.kind {
+                        *path = None;
+                    }
+                }
+                self.pending_upload_clear = Some(id);
+                return true;
+            }
+        }
+        if browse.contains(x, y) {
+            self.pending_upload_browse = Some(id);
+            return true;
+        }
+        // Path area: focus only.
+        true
+    }
+
+    fn pointer_color_picker(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (presets, style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::ColorPicker { presets, style, .. },
+                node,
+                ..
+            }) => (presets.clone(), *style, *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let mut sx = bounds.x + style.padding;
+        let sy = bounds.y + ((bounds.height - style.swatch_size) * 0.5).max(0.0);
+        for (i, c) in presets.iter().enumerate() {
+            let r = Rect::new(sx, sy, style.swatch_size, style.swatch_size);
+            if r.contains(x, y) {
+                let color = *c;
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::ColorPicker {
+                        value,
+                        hex,
+                        selected_swatch,
+                        ..
+                    } = &mut w.kind
+                    {
+                        *value = color;
+                        *hex = color_to_hex(color);
+                        *selected_swatch = Some(i);
+                    }
+                }
+                self.pending_color_change = Some((id, color));
+                return true;
+            }
+            sx += style.swatch_size + style.swatch_gap;
+        }
+        true
+    }
+
+    fn pointer_autocomplete_focus(&mut self, _scene: &mut Scene, id: WidgetId) -> bool {
+        // Focus field; open filtered popup when there are matches.
+        let value = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Autocomplete { value, .. }) => value.clone(),
+            _ => return false,
+        };
+        let filtered = self.autocomplete_filtered(id);
+        if !value.is_empty() && !filtered.is_empty() {
+            self.close_popup_internal();
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Autocomplete { open, highlight, .. } = &mut w.kind {
+                    *open = true;
+                    *highlight = Some(0);
+                }
+            }
+            self.open_popup = Some(id);
+        }
+        true
+    }
+
+    fn autocomplete_filtered(&self, id: WidgetId) -> Vec<(usize, String)> {
+        let (options, value) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Autocomplete { options, value, .. }) => (options.clone(), value.clone()),
+            _ => return Vec::new(),
+        };
+        let needle = value.to_ascii_lowercase();
+        options
+            .into_iter()
+            .enumerate()
+            .filter(|(_, o)| {
+                if needle.is_empty() {
+                    true
+                } else {
+                    o.to_ascii_lowercase().contains(&needle)
+                }
+            })
+            .map(|(i, o)| (i, o))
+            .collect()
+    }
+
+    fn pointer_autocomplete_popup(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        // Host click while open: keep focus / caret, do not close.
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(node) = w.node {
+                if let Some(n) = scene.get(node) {
+                    if n.bounds.contains(x, y) {
+                        return true;
+                    }
+                }
+            }
+        }
+        let filtered = self.autocomplete_filtered(id);
+        let (style, aux) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Autocomplete { style, .. },
+                aux,
+                ..
+            }) => (*style, aux.clone()),
+            _ => return false,
+        };
+        let panel = aux
+            .first()
+            .and_then(|n| scene.get(*n))
+            .map(|n| n.bounds)
+            .unwrap_or_else(Rect::empty);
+        if panel.is_empty() || !panel.contains(x, y) {
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        let local_y = y - panel.y;
+        let idx = if style.item_height > 0.0 {
+            (local_y / style.item_height).floor() as isize
+        } else {
+            -1
+        };
+        if idx < 0 || (idx as usize) >= filtered.len() {
+            return true;
+        }
+        let chosen = filtered[idx as usize].1.clone();
+        self.commit_autocomplete(id, chosen);
+        self.hide_popup_aux_mut(scene, id);
+        true
+    }
+
+    fn commit_autocomplete(&mut self, id: WidgetId, value: String) {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Autocomplete {
+                value: v,
+                caret,
+                open,
+                highlight,
+                ..
+            } = &mut w.kind
+            {
+                *caret = value.chars().count();
+                *v = value.clone();
+                *open = false;
+                *highlight = None;
+            }
+        }
+        if self.open_popup == Some(id) {
+            self.open_popup = None;
+        }
+        self.pending_autocomplete_change = Some((id, value));
+    }
+
+    fn key_color_picker(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ColorPicker { presets, .. }) => presets.len(),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        match key {
+            UiKey::Left | UiKey::Right | UiKey::Up | UiKey::Down => {
+                let cur = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::ColorPicker { selected_swatch, .. }) => {
+                        selected_swatch.unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                let next = match key {
+                    UiKey::Right | UiKey::Down => (cur + 1) % n,
+                    UiKey::Left | UiKey::Up => {
+                        if cur == 0 {
+                            n - 1
+                        } else {
+                            cur - 1
+                        }
+                    }
+                    _ => return false,
+                };
+                let color = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::ColorPicker { presets, .. }) => presets[next],
+                    _ => return false,
+                };
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::ColorPicker {
+                        value,
+                        hex,
+                        selected_swatch,
+                        ..
+                    } = &mut w.kind
+                    {
+                        *value = color;
+                        *hex = color_to_hex(color);
+                        *selected_swatch = Some(next);
+                    }
+                }
+                self.pending_color_change = Some((id, color));
+                true
+            }
+            UiKey::Char(c) => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::ColorPicker { hex, .. } = &mut w.kind {
+                        if hex.len() >= 7 && c != '#' {
+                            // keep typing into a fresh draft starting with #
+                            if c.is_ascii_hexdigit() {
+                                *hex = format!("#{c}");
+                                return true;
+                            }
+                            return false;
+                        }
+                        if *hex == "#" && c == '#' {
+                            return true;
+                        }
+                        if hex.is_empty() && c == '#' {
+                            hex.push('#');
+                            return true;
+                        }
+                        if hex.is_empty() && c.is_ascii_hexdigit() {
+                            hex.push('#');
+                            hex.push(c.to_ascii_uppercase());
+                            return true;
+                        }
+                        if hex.starts_with('#') && hex.len() < 7 && c.is_ascii_hexdigit() {
+                            hex.push(c.to_ascii_uppercase());
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            UiKey::Backspace => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::ColorPicker { hex, .. } = &mut w.kind {
+                        if hex.len() > 1 {
+                            hex.pop();
+                            return true;
+                        }
+                        if hex.len() == 1 {
+                            hex.clear();
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            UiKey::Enter => {
+                let hex = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::ColorPicker { hex, .. }) => hex.clone(),
+                    _ => return false,
+                };
+                let Some(color) = parse_hex_color(&hex) else {
+                    return false;
+                };
+                let _ = self.set_color_picker_value(id, color);
+                self.pending_color_change = Some((id, color));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn key_autocomplete(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Autocomplete { open: true, .. })
+        );
+        match key {
+            UiKey::Escape if open => {
+                self.close_popup_internal();
+                true
+            }
+            UiKey::Down | UiKey::Up => {
+                let filtered = self.autocomplete_filtered(id);
+                if filtered.is_empty() {
+                    return false;
+                }
+                if !open {
+                    self.close_popup_internal();
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Autocomplete { open, highlight, .. } = &mut w.kind {
+                            *open = true;
+                            *highlight = Some(0);
+                        }
+                    }
+                    self.open_popup = Some(id);
+                    return true;
+                }
+                let cur = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Autocomplete { highlight, .. }) => highlight.unwrap_or(0),
+                    _ => 0,
+                };
+                let n = filtered.len();
+                let next = match key {
+                    UiKey::Down => (cur + 1) % n,
+                    UiKey::Up => {
+                        if cur == 0 {
+                            n - 1
+                        } else {
+                            cur - 1
+                        }
+                    }
+                    _ => return false,
+                };
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Autocomplete { highlight, .. } = &mut w.kind {
+                        *highlight = Some(next);
+                    }
+                }
+                true
+            }
+            UiKey::Enter => {
+                if open {
+                    let filtered = self.autocomplete_filtered(id);
+                    let hi = match self.widgets.get(&id).map(|w| &w.kind) {
+                        Some(Kind::Autocomplete { highlight, .. }) => highlight.unwrap_or(0),
+                        _ => 0,
+                    };
+                    if let Some((_, s)) = filtered.get(hi) {
+                        self.commit_autocomplete(id, s.clone());
+                        return true;
+                    }
+                }
+                let value = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Autocomplete { value, .. }) => value.clone(),
+                    _ => return false,
+                };
+                if value.is_empty() {
+                    return false;
+                }
+                self.pending_autocomplete_change = Some((id, value));
+                if open {
+                    self.close_popup_internal();
+                }
+                true
+            }
+            UiKey::Char(c) => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Autocomplete {
+                        value,
+                        caret,
+                        open,
+                        highlight,
+                        ..
+                    } = &mut w.kind
+                    {
+                        let mut chars: Vec<char> = value.chars().collect();
+                        let i = (*caret).min(chars.len());
+                        chars.insert(i, c);
+                        *value = chars.into_iter().collect();
+                        *caret = i + 1;
+                        *open = true;
+                        *highlight = Some(0);
+                    }
+                }
+                self.close_popup_internal();
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Autocomplete { open, .. } = &mut w.kind {
+                        *open = true;
+                    }
+                }
+                self.open_popup = Some(id);
+                // If filter empty, still leave open with no rows (or close).
+                if self.autocomplete_filtered(id).is_empty() {
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Autocomplete { open, highlight, .. } = &mut w.kind {
+                            *open = false;
+                            *highlight = None;
+                        }
+                    }
+                    self.open_popup = None;
+                }
+                true
+            }
+            UiKey::Backspace => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Autocomplete {
+                        value,
+                        caret,
+                        open,
+                        highlight,
+                        ..
+                    } = &mut w.kind
+                    {
+                        if *caret == 0 {
+                            return false;
+                        }
+                        let mut chars: Vec<char> = value.chars().collect();
+                        let i = *caret - 1;
+                        chars.remove(i);
+                        *value = chars.into_iter().collect();
+                        *caret = i;
+                        *highlight = Some(0);
+                        *open = !value.is_empty();
+                    }
+                }
+                let should_open = matches!(
+                    self.widgets.get(&id).map(|w| &w.kind),
+                    Some(Kind::Autocomplete { open: true, .. })
+                ) && !self.autocomplete_filtered(id).is_empty();
+                if should_open {
+                    self.close_popup_internal();
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Autocomplete { open, .. } = &mut w.kind {
+                            *open = true;
+                        }
+                    }
+                    self.open_popup = Some(id);
+                } else {
+                    self.close_popup_internal();
+                }
+                true
+            }
+            UiKey::Left => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Autocomplete { caret, .. } = &mut w.kind {
+                        if *caret > 0 {
+                            *caret -= 1;
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            UiKey::Right => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::Autocomplete { value, caret, .. } = &mut w.kind {
+                        let n = value.chars().count();
+                        if *caret < n {
+                            *caret += 1;
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+
     fn pointer_popconfirm_popup(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
         // Host click while open → dismiss.
         if let Some(w) = self.widgets.get(&id) {
@@ -7035,6 +7722,12 @@ impl Ui {
             Some(Kind::DateTime { .. })
         ) {
             return self.pointer_datetime_popup(scene, id, x, y);
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Autocomplete { .. })
+        ) {
+            return self.pointer_autocomplete_popup(scene, id, x, y);
         }
         // Click on title/host while open → toggle close (Menu/Select).
         if let Some(w) = self.widgets.get(&id) {
@@ -7525,6 +8218,9 @@ impl Ui {
                 Some(Kind::Result { style, .. }) => (style.bg, true),
                 Some(Kind::Popover { style, .. }) => (style.trigger_bg, true),
                 Some(Kind::Popconfirm { style, .. }) => (style.trigger_bg, true),
+                Some(Kind::Upload { style, .. }) => (style.bg, true),
+                Some(Kind::ColorPicker { style, .. }) => (style.bg, style.bg.a > 0),
+                Some(Kind::Autocomplete { style, .. }) => (style.bg, true),
                 None => return,
             };
 
@@ -7580,6 +8276,37 @@ impl Ui {
                         .expect("insert trigger label");
                     if let Some(w) = self.widgets.get_mut(&id) {
                         w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Upload { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert upload path label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::ColorPicker { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert color hex label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::Autocomplete { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
+                        .expect("insert autocomplete label");
+                    let caret = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(0x3b, 0x82, 0xf6))
+                        .expect("insert autocomplete caret");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(caret);
                     }
                 }
                 Some(Kind::Panel { style, .. }) => {
@@ -8139,6 +8866,9 @@ impl Ui {
             Some(Kind::Result { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Popover { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Popconfirm { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Upload { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::ColorPicker { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Autocomplete { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::DateTime { style, .. }) => ChildMeasure::new(style.width, style.height),
@@ -9197,6 +9927,27 @@ impl Ui {
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Upload { .. })
+        ) {
+            self.paint_upload(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ColorPicker { .. })
+        ) {
+            self.paint_color_picker(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Autocomplete { .. })
+        ) {
+            self.paint_autocomplete_field(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Breadcrumb { .. })
         ) {
             self.paint_breadcrumb(scene, id);
@@ -9682,7 +10433,10 @@ impl Ui {
             | Kind::Statistic { .. }
             | Kind::Result { .. }
             | Kind::Popover { .. }
-            | Kind::Popconfirm { .. } => {}
+            | Kind::Popconfirm { .. }
+            | Kind::Upload { .. }
+            | Kind::ColorPicker { .. }
+            | Kind::Autocomplete { .. } => {}
         }
     }
 
@@ -11734,6 +12488,338 @@ impl Ui {
         }
     }
 
+
+    fn paint_upload(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Upload {
+                    path,
+                    placeholder,
+                    browse_label,
+                    clear_label,
+                    style,
+                },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let path = path.clone();
+        let placeholder = placeholder.clone();
+        let browse_label = browse_label.clone();
+        let clear_label = clear_label.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+
+        let (browse, clear) = Self::upload_button_rects(bounds, style, path.is_some());
+        let path_right = clear
+            .map(|c| c.x - style.gap)
+            .unwrap_or(browse.x - style.gap);
+        let path_w = (path_right - bounds.x - style.padding).max(1.0);
+
+        let (text, fg) = match &path {
+            Some(p) if !p.is_empty() => (p.clone(), style.fg),
+            _ => (placeholder, style.placeholder_fg),
+        };
+        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
+        if let Some(lid) = label_node {
+            let lx = bounds.x + style.padding;
+            let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+            scene.set_bounds(
+                lid,
+                Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+            );
+            scene.set_fill(lid, fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+        let _ = path_w;
+
+        // aux: 0=browse bg, 1=browse label, 2=clear bg, 3=clear label
+        self.ensure_aux_nodes(scene, host, id, 4);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&bb) = aux.get(0) {
+            scene.set_bounds(bb, browse);
+            scene.set_fill(bb, style.browse_bg);
+            scene.set_mask(bb, None);
+            scene.set_visible(bb, true);
+            self.node_to_widget.insert(bb, id);
+        }
+        let (_, bm) = self.font.rasterize_text(&browse_label, style.size, None);
+        if let Some(&bl) = aux.get(1) {
+            scene.set_bounds(
+                bl,
+                Rect::new(
+                    browse.x + ((browse.width - bm.width as f32) * 0.5).max(0.0),
+                    browse.y + ((browse.height - bm.height as f32) * 0.5).max(0.0),
+                    bm.width as f32,
+                    bm.height as f32,
+                ),
+            );
+            scene.set_fill(bl, style.browse_fg);
+            scene.set_mask(bl, Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
+            scene.set_visible(bl, true);
+        }
+        if let Some(cr) = clear {
+            if let Some(&cb) = aux.get(2) {
+                scene.set_bounds(cb, cr);
+                scene.set_fill(cb, style.clear_bg);
+                scene.set_mask(cb, None);
+                scene.set_visible(cb, true);
+                self.node_to_widget.insert(cb, id);
+            }
+            let (_, cm) = self.font.rasterize_text(&clear_label, style.size, None);
+            if let Some(&cl) = aux.get(3) {
+                scene.set_bounds(
+                    cl,
+                    Rect::new(
+                        cr.x + ((cr.width - cm.width as f32) * 0.5).max(0.0),
+                        cr.y + ((cr.height - cm.height as f32) * 0.5).max(0.0),
+                        cm.width as f32,
+                        cm.height as f32,
+                    ),
+                );
+                scene.set_fill(cl, style.clear_fg);
+                scene.set_mask(cl, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+                scene.set_visible(cl, true);
+            }
+        } else {
+            for i in 2..4 {
+                if let Some(&n) = aux.get(i) {
+                    scene.set_visible(n, false);
+                }
+            }
+        }
+    }
+
+    fn paint_color_picker(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::ColorPicker {
+                    value: _,
+                    hex,
+                    selected_swatch,
+                    presets,
+                    style,
+                },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let hex = hex.clone();
+        let selected_swatch = *selected_swatch;
+        let presets = presets.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label_node = *label_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        if style.bg.a > 0 {
+            scene.set_fill(host, style.bg);
+            scene.set_mask(host, None);
+            scene.set_visible(host, true);
+        } else {
+            scene.set_fill(host, Color::rgba(0, 0, 0, 0));
+            scene.set_mask(host, Some(AlphaMask::empty()));
+            scene.set_visible(host, true);
+        }
+
+        // aux: one node per swatch + hex bg
+        let needed = presets.len() + 1;
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let mut sx = bounds.x + style.padding;
+        let sy = bounds.y + ((bounds.height - style.swatch_size) * 0.5).max(0.0);
+        for (i, c) in presets.iter().enumerate() {
+            if let Some(&n) = aux.get(i) {
+                let r = Rect::new(sx, sy, style.swatch_size, style.swatch_size);
+                scene.set_bounds(n, r);
+                scene.set_fill(n, *c);
+                scene.set_mask(n, None);
+                scene.set_visible(n, true);
+                self.node_to_widget.insert(n, id);
+                if selected_swatch == Some(i) {
+                    // draw selection as slightly inset darker — Soft-friendly: raise outline via smaller inset fill is hard;
+                    // use host chrome: leave as selected fill (border simulated by padding gap already).
+                    let _ = style.selected_border;
+                }
+            }
+            sx += style.swatch_size + style.swatch_gap;
+        }
+        let hex_x = sx + style.swatch_gap;
+        let hex_r = Rect::new(
+            hex_x,
+            bounds.y + 2.0,
+            style.hex_width.min((bounds.x + bounds.width - hex_x - style.padding).max(40.0)),
+            (bounds.height - 4.0).max(1.0),
+        );
+        if let Some(&hb) = aux.get(presets.len()) {
+            scene.set_bounds(hb, hex_r);
+            scene.set_fill(hb, style.hex_bg);
+            scene.set_mask(hb, None);
+            scene.set_visible(hb, true);
+            self.node_to_widget.insert(hb, id);
+        }
+        let display = if hex.is_empty() { "#------".to_string() } else { hex };
+        let (_, mask) = self.font.rasterize_text(&display, style.size, None);
+        if let Some(lid) = label_node {
+            scene.set_bounds(
+                lid,
+                Rect::new(
+                    hex_r.x + 6.0,
+                    hex_r.y + ((hex_r.height - mask.height as f32) * 0.5).max(0.0),
+                    mask.width as f32,
+                    mask.height as f32,
+                ),
+            );
+            scene.set_fill(lid, style.fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+    }
+
+    fn paint_autocomplete_field(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Autocomplete {
+                    value,
+                    caret,
+                    placeholder,
+                    open,
+                    style,
+                    ..
+                },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let value = value.clone();
+        let caret = *caret;
+        let placeholder = placeholder.clone();
+        let open = *open;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let label_node = *label_node;
+        let chrome_node = *chrome_node;
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, if open { style.selected_bg } else { style.bg });
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let focused = self.focus == Some(id);
+        let (text, fg) = if value.is_empty() {
+            (placeholder, style.placeholder_fg)
+        } else {
+            (value.clone(), style.fg)
+        };
+        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
+        let lx = bounds.x + style.padding;
+        let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+        if let Some(lid) = label_node {
+            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+            scene.set_fill(lid, fg);
+            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(lid, true);
+        }
+        if let Some(cid) = chrome_node {
+            if focused && !value.is_empty() {
+                let prefix: String = value.chars().take(caret).collect();
+                let (pw, _) = self.font.measure_line(&prefix, style.size);
+                scene.set_bounds(
+                    cid,
+                    Rect::new(lx + pw, ly, 2.0, mask.height as f32),
+                );
+                scene.set_fill(cid, style.focus_border);
+                scene.set_mask(cid, None);
+                scene.set_visible(cid, true);
+            } else if focused && value.is_empty() {
+                scene.set_bounds(cid, Rect::new(lx, ly, 2.0, style.size.max(12.0)));
+                scene.set_fill(cid, style.focus_border);
+                scene.set_mask(cid, None);
+                scene.set_visible(cid, true);
+            } else {
+                scene.set_visible(cid, false);
+            }
+        }
+    }
+
+    fn paint_autocomplete_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (filtered, highlight, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Autocomplete {
+                        open: true,
+                        highlight,
+                        style,
+                        ..
+                    },
+                node,
+                ..
+            }) => {
+                let b = node
+                    .and_then(|n| scene.get(n).map(|n| n.bounds))
+                    .unwrap_or_else(Rect::empty);
+                let filtered = self.autocomplete_filtered(id);
+                (filtered, *highlight, *style, b)
+            }
+            _ => return,
+        };
+        if filtered.is_empty() {
+            return;
+        }
+        let n = filtered.len();
+        let popup_h = (style.item_height * n as f32).min(style.popup_max_height);
+        let panel = Rect::new(
+            host_bounds.x,
+            host_bounds.y + host_bounds.height,
+            host_bounds.width.max(style.width),
+            popup_h,
+        );
+        self.ensure_overlay_aux(scene, id, 1 + n * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if let Some(&bg) = aux.first() {
+            scene.set_bounds(bg, panel);
+            scene.set_fill(bg, style.popup_bg);
+            scene.set_mask(bg, None);
+            scene.set_visible(bg, true);
+            self.node_to_widget.insert(bg, id);
+        }
+        for (i, (_, label)) in filtered.iter().enumerate() {
+            let y = panel.y + i as f32 * style.item_height;
+            let row = Rect::new(panel.x, y, panel.width, style.item_height);
+            let hi = highlight == Some(i);
+            if let Some(&rbg) = aux.get(1 + i * 2) {
+                scene.set_bounds(rbg, row);
+                scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
+                scene.set_mask(rbg, None);
+                scene.set_visible(rbg, true);
+                self.node_to_widget.insert(rbg, id);
+            }
+            let (_, mask) = self.font.rasterize_text(label, style.size, None);
+            if let Some(&lab) = aux.get(1 + i * 2 + 1) {
+                let lx = row.x + style.padding;
+                let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_fill(lab, style.fg);
+                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_visible(lab, true);
+            }
+        }
+    }
+
+
     fn paint_breadcrumb(&mut self, scene: &mut Scene, id: WidgetId) {
         let Some(Widget {
             kind: Kind::Breadcrumb { items, style },
@@ -12736,6 +13822,7 @@ impl Ui {
                         | Some(Kind::DateTime { open: false, .. })
                         | Some(Kind::Popover { open: false, .. })
                         | Some(Kind::Popconfirm { open: false, .. })
+                        | Some(Kind::Autocomplete { open: false, .. })
                 ) {
                     if let Some(w) = self.widgets.get(&wid) {
                         for &n in &w.aux {
@@ -12756,6 +13843,7 @@ impl Ui {
             Some(Kind::Drawer { .. }) => self.paint_drawer_popup(scene, id),
             Some(Kind::Popover { .. }) => self.paint_popover_popup(scene, id),
             Some(Kind::Popconfirm { .. }) => self.paint_popconfirm_popup(scene, id),
+            Some(Kind::Autocomplete { .. }) => self.paint_autocomplete_popup(scene, id),
             _ => {}
         }
     }
@@ -16120,6 +17208,133 @@ impl FlexBuilder<'_> {
         id
     }
 
+    /// Upload path field + Browse (Office P2d).
+    ///
+    /// Browse emits [`Ui::take_upload_browse`]; the app opens an OS dialog (or
+    /// stubs a path with [`Ui::set_upload_path`]). Clear emits
+    /// [`Ui::take_upload_clear`] when `UploadStyle::show_clear` and a path is set.
+    pub fn upload(
+        &mut self,
+        placeholder: impl Into<String>,
+        style: UploadStyle,
+    ) -> WidgetId {
+        self.upload_labeled(placeholder, "Browse", "Clear", None::<String>, style)
+    }
+
+    /// Upload with custom Browse / Clear labels and optional initial path.
+    pub fn upload_labeled(
+        &mut self,
+        placeholder: impl Into<String>,
+        browse_label: impl Into<String>,
+        clear_label: impl Into<String>,
+        path: Option<impl Into<String>>,
+        style: UploadStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Upload {
+                    path: path.map(|s| s.into()),
+                    placeholder: placeholder.into(),
+                    browse_label: browse_label.into(),
+                    clear_label: clear_label.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Color picker: preset swatches + hex field (Office P2d).
+    pub fn color_picker(&mut self, value: Color, style: ColorPickerStyle) -> WidgetId {
+        self.color_picker_with_presets(value, default_color_presets(), style)
+    }
+
+    /// Color picker with custom presets.
+    pub fn color_picker_with_presets(
+        &mut self,
+        value: Color,
+        presets: impl IntoIterator<Item = Color>,
+        style: ColorPickerStyle,
+    ) -> WidgetId {
+        let presets: Vec<Color> = presets.into_iter().collect();
+        let selected_swatch = presets.iter().position(|c| {
+            c.r == value.r && c.g == value.g && c.b == value.b
+        });
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::ColorPicker {
+                    value,
+                    hex: color_to_hex(value),
+                    selected_swatch,
+                    presets,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Autocomplete text field + filtered suggestions (Office P2d).
+    pub fn autocomplete(
+        &mut self,
+        options: impl IntoIterator<Item = impl Into<String>>,
+        value: impl Into<String>,
+        style: AutocompleteStyle,
+    ) -> WidgetId {
+        self.autocomplete_placeholder(options, value, "", style)
+    }
+
+    /// Autocomplete with placeholder.
+    pub fn autocomplete_placeholder(
+        &mut self,
+        options: impl IntoIterator<Item = impl Into<String>>,
+        value: impl Into<String>,
+        placeholder: impl Into<String>,
+        style: AutocompleteStyle,
+    ) -> WidgetId {
+        let options: Vec<String> = options.into_iter().map(|s| s.into()).collect();
+        let value = value.into();
+        let caret = value.chars().count();
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Autocomplete {
+                    options,
+                    value,
+                    caret,
+                    open: false,
+                    highlight: None,
+                    placeholder: placeholder.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     /// Breadcrumb path.
     pub fn breadcrumb(
         &mut self,
@@ -18579,5 +19794,164 @@ mod tests {
             ui.take_popconfirm_action(),
             Some((pc, PopconfirmAction::Dismiss))
         );
+    }
+
+    #[test]
+    fn office_p2d_upload_browse_clear_and_keyboard() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(800.0, 600.0);
+        let mut up = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 480.0,
+                height: 80.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                up = col.upload("Choose a file…", UploadStyle::default());
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&up));
+        assert_eq!(ui.upload_path(up), Some(None));
+        assert_eq!(ui.accessible_name(up).as_deref(), Some("Choose a file…"));
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&up).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        // Browse is on the right
+        let browse_x = b.x + b.width - UploadStyle::default().padding - 4.0;
+        let cy = b.y + b.height * 0.5;
+        assert!(ui.pointer_pressed(&mut scene, browse_x, cy));
+        assert_eq!(ui.take_upload_browse(), Some(up));
+        assert!(ui.take_upload_browse().is_none());
+        assert!(ui.set_upload_path(up, Some("/tmp/demo.csv")));
+        assert_eq!(ui.upload_path(up), Some(Some("/tmp/demo.csv")));
+        ui.sync(&mut scene);
+        // Clear button left of Browse
+        let clear_x = browse_x - UploadStyle::default().browse_width - 20.0;
+        assert!(ui.pointer_pressed(&mut scene, clear_x, cy));
+        assert_eq!(ui.take_upload_clear(), Some(up));
+        assert_eq!(ui.upload_path(up), Some(None));
+        ui.set_focus(Some(up));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.take_upload_browse(), Some(up));
+    }
+
+    #[test]
+    fn office_p2d_color_picker_swatch_and_hex() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(800.0, 600.0);
+        let mut cp = WidgetId(0);
+        let initial = Color::rgb(0xe0, 0x60, 0x60);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 480.0,
+                height: 80.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                cp = col.color_picker(initial, ColorPickerStyle::default());
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&cp));
+        assert_eq!(ui.color_picker_value(cp), Some(initial));
+        assert_eq!(ui.accessible_name(cp).as_deref(), Some("#E06060"));
+        ui.sync(&mut scene);
+        ui.set_focus(Some(cp));
+        assert!(ui.key_input(UiKey::Right));
+        let changed = ui.take_color_change().expect("color change");
+        assert_eq!(changed.0, cp);
+        assert_ne!(changed.1, initial);
+        // Hex commit
+        assert!(ui.set_color_picker_value(cp, Color::rgb(0x10, 0x20, 0x30)));
+        assert_eq!(ui.color_picker_value(cp).unwrap().r, 0x10);
+        // Type hex via keys after clearing through set
+        ui.set_focus(Some(cp));
+        // Replace hex by typing digits after backspaces — use set + Enter path
+        if let Some(w) = ui.widgets.get_mut(&cp) {
+            if let Kind::ColorPicker { hex, .. } = &mut w.kind {
+                *hex = "#AABBCC".into();
+            }
+        }
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(
+            ui.take_color_change(),
+            Some((cp, Color::rgb(0xaa, 0xbb, 0xcc)))
+        );
+        // Pointer on second swatch
+        ui.sync(&mut scene);
+        let aux = ui.widgets.get(&cp).unwrap().aux.clone();
+        assert!(aux.len() >= 2);
+        let sw = scene.get(aux[1]).unwrap().bounds;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            sw.x + sw.width * 0.5,
+            sw.y + sw.height * 0.5,
+        ));
+        let hit = ui.take_color_change().expect("swatch");
+        assert_eq!(hit.0, cp);
+    }
+
+    #[test]
+    fn office_p2d_autocomplete_filter_pick_and_escape() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(800.0, 600.0);
+        let mut ac = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 200.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                ac = col.autocomplete_placeholder(
+                    ["Apple", "Apricot", "Banana", "Cherry"],
+                    "",
+                    "Fruit…",
+                    AutocompleteStyle::default(),
+                );
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&ac));
+        assert_eq!(ui.autocomplete_value(ac), Some(""));
+        assert_eq!(ui.accessible_name(ac).as_deref(), Some("Fruit…"));
+        ui.sync(&mut scene);
+        ui.set_focus(Some(ac));
+        assert!(ui.key_input(UiKey::Char('a')));
+        assert_eq!(ui.autocomplete_value(ac), Some("a"));
+        // popup should be open with Apple/Apricot
+        assert!(matches!(
+            ui.widgets.get(&ac).map(|w| &w.kind),
+            Some(Kind::Autocomplete { open: true, .. })
+        ));
+        assert!(ui.key_input(UiKey::Down));
+        assert!(ui.key_input(UiKey::Enter));
+        let (id, val) = ui.take_autocomplete_change().expect("pick");
+        assert_eq!(id, ac);
+        assert!(val == "Apple" || val == "Apricot");
+        assert!(matches!(
+            ui.widgets.get(&ac).map(|w| &w.kind),
+            Some(Kind::Autocomplete { open: false, .. })
+        ));
+        // Type again, Escape closes
+        ui.set_focus(Some(ac));
+        assert!(ui.set_autocomplete_value(ac, ""));
+        assert!(ui.key_input(UiKey::Char('b')));
+        assert!(ui.key_input(UiKey::Escape));
+        assert!(matches!(
+            ui.widgets.get(&ac).map(|w| &w.kind),
+            Some(Kind::Autocomplete { open: false, .. })
+        ));
     }
 }

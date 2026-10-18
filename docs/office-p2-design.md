@@ -2,7 +2,7 @@
 
 > **勿与 [p2-design.md](p2-design.md)（路线图 P2：CJK / 文本引擎）混淆。** 本文仅覆盖 [office-widget-catalog.md](office-widget-catalog.md) §6.2 的 Office 低频控件。
 
-**状态：P2a ✅ · P2b ✅ · P2c ✅**（`button_group` / `link` / `space` / `steps` / `statistic` / `result` / `popover` / `popconfirm`；示例 `e26_office_p2`）。后续切片见下。
+**状态：P2a ✅ · P2b ✅ · P2c ✅ · P2d ✅**（`button_group` / `link` / `space` / `steps` / `statistic` / `result` / `popover` / `popconfirm` / `upload` / `color_picker` / `autocomplete`；示例 `e26_office_p2`）。后续切片见下。
 
 配套：[office-line.md](office-line.md)、[office-widget-catalog.md](office-widget-catalog.md)、[roadmap.md](roadmap.md)、[a11y-baseline.md](a11y-baseline.md)。
 
@@ -22,7 +22,7 @@
 | 动画系统 | 不引入通用动画 / transition |
 | AT 总线 | 不接读屏；沿用 P6d 焦序 + `accessible_name` |
 | Field Soft | 不削弱 Soft 兜底；P2 控件必须 Soft 可画 |
-| 上传系统对话框 / 完整栅格系统 | 留 P2d / P2e |
+| 原生系统文件对话框 / 完整栅格系统 | OS 对话框由应用 stub（P2d）；栅格等留 P2e |
 | 覆盖 `docs/p2-design.md` | 禁止 |
 
 ---
@@ -34,7 +34,7 @@
 | **P2a** ✅ | `button_group`、`link`、`space` | 薄、无弹出层 |
 | **P2b** ✅ | `steps`、`statistic`、`result` | 展示向；无文件/色板 |
 | **P2c** ✅ | `popover`、`popconfirm` | 轻量浮层（复用 `open_popup` / overlay） |
-| **P2d** | `upload`、`color_picker`、`autocomplete` | 录入增强；文件对话框可 stub |
+| **P2d** ✅ | `upload`、`color_picker`、`autocomplete` | 录入增强；文件对话框可 stub |
 | **P2e** | `grid`、`timeline`、`calendar`、`image`、`config_provider` | 布局/媒体/主题入口 |
 
 可微调切片边界，但保持「先薄、后弹出/文件」。
@@ -160,20 +160,65 @@
 | 示例 | `e26_office_p2` 含 P2c 区；`NEXT_GUI_P2C_QA=1` 可 dump；无 DISPLAY 不挂死 |
 | 文档 | 本文 + catalog §9 + office-line / roadmap / README 同步 |
 
+
 ---
 
-## 10. 实现落点
+## 10. P2d 契约
 
-- 样式 / `StepItem` / `ResultStatus` / `PopconfirmAction`：`crates/next-gui-ui/src/office_p2.rs`
-- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（含 `Popover`、`Popconfirm`）
+### 10.1 `upload`
+
+- **语义：** 路径/文件名展示 + Browse（可选 Clear）；**不内置原生文件对话框**。
+- **Browse：** 发出 `take_upload_browse() -> Option<WidgetId>`；应用打开系统对话框或 demo stub，再 `set_upload_path`。
+- **Clear：** 指针点 Clear 或 `take_upload_clear`；也可直接 `set_upload_path(None)`。
+- **焦点：** Tab 可达；Space / Enter → Browse。
+- **API：** `ui.upload(placeholder, UploadStyle)`；`upload_labeled(..., browse, clear, path, style)`；`upload_path` / `set_upload_path`。
+- **文档：** OS 对话框为应用责任（或未来 platform helper）。
+
+### 10.2 `color_picker`
+
+- **语义：** Soft 友好——**预设色板行 + `#RRGGBB` 文本**（无 RGB 滑条）。
+- **值：** `next_gui_scene::Color`；`take_color_change() -> Option<(WidgetId, Color)>`；`color_picker_value` / `set_color_picker_value`。
+- **焦点：** Tab 可达；Left/Right（兼 Up/Down）切换色板；可键入 hex，Enter 提交。
+- **API：** `ui.color_picker(value, ColorPickerStyle)`；`color_picker_with_presets(...)`；辅助 `color_to_hex` / `parse_hex_color` / `default_color_presets`。
+
+### 10.3 `autocomplete`
+
+- **语义：** 文本框 + 过滤建议下拉（复用 Select/`open_popup` 模式）。
+- **过滤：** 当前值对选项做**大小写不敏感子串**匹配；空值时下拉可含全部选项（打开条件见实现）。
+- **选取：** 点选 / Enter → 写入值、关闭、`take_autocomplete_change`；Escape 关闭。
+- **焦点：** Tab 可达；Up/Down 列表；键入走类 TextInput 路径。
+- **API：** `ui.autocomplete(options, value, AutocompleteStyle)`；`autocomplete_placeholder(...)`；`autocomplete_value` / `set_autocomplete_value`。
+
+---
+
+## 11. P2d 验收
+
+| 项 | 通过样子 |
+|----|----------|
+| API | `upload` / `color_picker` / `autocomplete` 可在 `FlexBuilder` 中声明 |
+| Upload | Browse → `take_upload_browse`；stub/`set_upload_path`；Clear → `take_upload_clear`；Space/Enter → Browse |
+| Color | 色板/键盘改色；`take_color_change`；hex Enter 提交 |
+| Autocomplete | 过滤；Up/Down/Enter/Esc；`take_autocomplete_change` |
+| 测试 | `office_p2d_*` 绿；不依赖 DISPLAY |
+| 示例 | `e26_office_p2` 含 P2d 区；`NEXT_GUI_P2D_QA=1` 可 dump；无 DISPLAY 不挂死 |
+| 文档 | 本文 + catalog §9 + office-line / roadmap / README 同步 |
+| 依赖 | 无 `rfd` 等重依赖；对话框 stub 可接受 |
+
+---
+
+## 12. 实现落点
+
+- 样式 / `StepItem` / `ResultStatus` / `PopconfirmAction` / Upload·Color·Autocomplete 样式：`crates/next-gui-ui/src/office_p2.rs`
+- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（含 `Upload`、`ColorPicker`、`Autocomplete`）
 - 示例：`examples/26_office_p2`
 
 ---
 
-## 11. 修订记录
+## 13. 修订记录
 
 | 日期 | 说明 |
 |------|------|
 | 2026-10-19 | 初稿 + **P2a 落地**：button_group / link / space + `e26_office_p2`。 |
 | 2026-10-19 | **P2b 落地**：steps / statistic / result；契约 §6–7；下一步 P2c。 |
 | 2026-10-19 | **P2c 落地**：popover / popconfirm；契约 §8–9；下一步 P2d。 |
+| 2026-10-19 | **P2d 落地**：upload / color_picker / autocomplete；契约 §10–11；下一步 P2e。 |

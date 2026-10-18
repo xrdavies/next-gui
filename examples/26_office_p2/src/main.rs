@@ -1,14 +1,16 @@
-//! Office P2a–P2c demo: `button_group` / `link` / `space` / `steps` /
-//! `statistic` / `result` / `popover` / `popconfirm`.
+//! Office P2a–P2d demo: `button_group` / `link` / `space` / `steps` /
+//! `statistic` / `result` / `popover` / `popconfirm` / `upload` /
+//! `color_picker` / `autocomplete`.
 //!
-//! Tab focuses group / links / steps / result / popover / popconfirm;
-//! ←/→ changes group or steps; Enter/Space on a link or result drains
-//! activate/action; Enter/Space on popover/popconfirm toggles open.
-//! Pointer uses the Button dual path for links (`hit_widget`).
+//! Tab focuses group / links / steps / result / popover / popconfirm /
+//! upload / color / autocomplete; ←/→ changes group, steps, or color swatch;
+//! Enter/Space on a link or result drains activate/action; Enter/Space on
+//! popover/popconfirm toggles open; Enter/Space on upload → Browse (demo
+//! stubs a path). Pointer uses the Button dual path for links (`hit_widget`).
 //! Space Soft↔GPU when nothing focused.
 //!
-//! `NEXT_GUI_P2A_QA=1`, `NEXT_GUI_P2B_QA=1`, or `NEXT_GUI_P2C_QA=1` dumps a
-//! Soft PPM after first paint (then exits — no hang without interaction).
+//! `NEXT_GUI_P2A_QA=1` … `NEXT_GUI_P2D_QA=1` dumps a Soft PPM after first
+//! paint (then exits — no hang without interaction).
 
 use std::io::Write;
 
@@ -21,9 +23,10 @@ use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_ui::{
-    ButtonGroupStyle, ColumnStyle, LinkStyle, PanelStyle, PopconfirmAction, PopconfirmStyle,
-    PopoverStyle, ResultAction, ResultStatus, ResultStyle, SpaceDirection, SpaceStyle,
-    StatisticStyle, StepItem, StepsStyle, StatusBarStyle, ToolbarStyle, Ui, UiKey, WidgetId,
+    AutocompleteStyle, ButtonGroupStyle, ColorPickerStyle, ColumnStyle, LinkStyle, PanelStyle,
+    PopconfirmAction, PopconfirmStyle, PopoverStyle, ResultAction, ResultStatus, ResultStyle,
+    SpaceDirection, SpaceStyle, StatisticStyle, StepItem, StepsStyle, StatusBarStyle, ToolbarStyle,
+    Ui, UiKey, UploadStyle, WidgetId,
 };
 
 const CLEAR: Color = Color {
@@ -93,6 +96,11 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
             UiKey::Tab
         });
     }
+    if let KeyCode::Char(_c) = key {
+        if modifiers.ctrl || modifiers.alt || modifiers.meta {
+            return None;
+        }
+    }
     Some(match key {
         KeyCode::Left => UiKey::Left,
         KeyCode::Right => UiKey::Right,
@@ -101,6 +109,9 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
         KeyCode::Enter => UiKey::Enter,
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,
+        KeyCode::Backspace => UiKey::Backspace,
+        KeyCode::Delete => UiKey::Delete,
+        KeyCode::Char(c) => UiKey::Char(c),
         _ => return None,
     })
 }
@@ -136,9 +147,13 @@ struct Demo {
     result: WidgetId,
     popover: WidgetId,
     popconfirm: WidgetId,
+    upload: WidgetId,
+    color: WidgetId,
+    autocomplete: WidgetId,
     clicks: u32,
     result_actions: u32,
     popconfirm_actions: u32,
+    upload_stubs: u32,
     qa_dumps: u32,
     qa_exit: bool,
 }
@@ -154,6 +169,9 @@ impl Demo {
         let mut result = WidgetId(0);
         let mut popover = WidgetId(0);
         let mut popconfirm = WidgetId(0);
+        let mut upload = WidgetId(0);
+        let mut color = WidgetId(0);
+        let mut autocomplete = WidgetId(0);
 
         ui.toolbar(
             ToolbarStyle {
@@ -162,7 +180,7 @@ impl Demo {
                 ..ToolbarStyle::default()
             },
             |bar| {
-                bar.text("Office P2a–P2c");
+                bar.text("Office P2a–P2d");
                 bar.spacer(12.0, 1.0);
                 bar.text_styled(
                     "Tab · ←/→ · Enter · Esc closes pop · Space Soft↔GPU",
@@ -313,6 +331,40 @@ impl Demo {
                         );
                     },
                 );
+                panel.spacer(1.0, 12.0);
+                panel.text("P2d — upload (Browse stubs path) / color_picker / autocomplete");
+                upload = panel.upload(
+                    "Choose a config file…",
+                    UploadStyle {
+                        width: width as f32 - 64.0,
+                        ..UploadStyle::default()
+                    },
+                );
+                panel.spacer(1.0, 8.0);
+                color = panel.color_picker(
+                    Color::rgb(0x6a, 0xb0, 0xf0),
+                    ColorPickerStyle {
+                        width: width as f32 - 64.0,
+                        ..ColorPickerStyle::default()
+                    },
+                );
+                panel.spacer(1.0, 8.0);
+                autocomplete = panel.autocomplete_placeholder(
+                    [
+                        "Shanghai",
+                        "Shenzhen",
+                        "Beijing",
+                        "Hangzhou",
+                        "Guangzhou",
+                        "Chengdu",
+                    ],
+                    "",
+                    "City…",
+                    AutocompleteStyle {
+                        width: 280.0,
+                        ..AutocompleteStyle::default()
+                    },
+                );
             },
         );
 
@@ -349,13 +401,18 @@ impl Demo {
             result,
             popover,
             popconfirm,
+            upload,
+            color,
+            autocomplete,
             clicks: 0,
             result_actions: 0,
             popconfirm_actions: 0,
+            upload_stubs: 0,
             qa_dumps: 0,
             qa_exit: std::env::var_os("NEXT_GUI_P2A_QA").is_some()
                 || std::env::var_os("NEXT_GUI_P2B_QA").is_some()
-                || std::env::var_os("NEXT_GUI_P2C_QA").is_some(),
+                || std::env::var_os("NEXT_GUI_P2C_QA").is_some()
+                || std::env::var_os("NEXT_GUI_P2D_QA").is_some(),
         }
     }
 
@@ -370,10 +427,11 @@ impl Demo {
         self.ui.set_text(
             self.status,
             format!(
-                "range={sel} · step={step} · links={} · result={} · pc={} · {} ({})",
+                "range={sel} · step={step} · links={} · result={} · pc={} · up={} · {} ({})",
                 self.clicks,
                 self.result_actions,
                 self.popconfirm_actions,
+                self.upload_stubs,
                 self.backend.name(),
                 self.backend.detail()
             ),
@@ -431,6 +489,30 @@ impl Demo {
                     PopconfirmAction::Dismiss => "dismiss",
                 };
                 eprintln!("popconfirm → {name}");
+            }
+        }
+        if let Some(id) = self.ui.take_upload_browse() {
+            if id == self.upload {
+                self.upload_stubs = self.upload_stubs.saturating_add(1);
+                let stub = format!("/tmp/office-p2d-stub-{}.csv", self.upload_stubs);
+                let _ = self.ui.set_upload_path(id, Some(stub.clone()));
+                eprintln!("upload browse → stub {stub}");
+            }
+        }
+        if let Some(id) = self.ui.take_upload_clear() {
+            if id == self.upload {
+                let _ = self.ui.set_upload_path(id, None::<String>);
+                eprintln!("upload clear");
+            }
+        }
+        if let Some((id, c)) = self.ui.take_color_change() {
+            if id == self.color {
+                eprintln!("color → #{:02X}{:02X}{:02X}", c.r, c.g, c.b);
+            }
+        }
+        if let Some((id, v)) = self.ui.take_autocomplete_change() {
+            if id == self.autocomplete {
+                eprintln!("autocomplete → {v}");
             }
         }
     }
@@ -613,7 +695,7 @@ impl AppCallbacks for Demo {
 }
 
 fn main() {
-    let attrs = WindowAttrs::new("next-gui Office P2", 720, 860);
+    let attrs = WindowAttrs::new("next-gui Office P2", 720, 1040);
     let demo = Demo::new(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
     let result = next_gui_platform::macos::run(attrs, demo);

@@ -20,7 +20,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 - ~~Immediate 视口（P5）~~ → **已落地**（`next-gui-immediate` / e25）
 - P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地；TextInput IME/CJK 预编辑+提交已接（候选窗靠系统 IME）
 - ~~图表控件~~ → **Chart 多瓦片已落地**（`e23_office_charts`；Gauge/Trend 共享软光栅）
-- 仍后置：动画系统、自绘 IME 候选窗、Office P2 低频控件、Cascader（不进 P1）
+- 仍后置：动画系统、自绘 IME 候选窗、Office P2e+ 低频控件、Cascader（不进 P1）
 
 ---
 
@@ -135,7 +135,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/23_office_charts` — **增强**：多瓦片 Chart + 独立 Gauge/Trend
 - `examples/24_profile_dual` — **P4**：Field/Office Profile 双档
 - `examples/25_immediate_viewport` — **P5**：retained 壳 + Immediate 工具面板
-- `examples/26_office_p2` — **Office P2a–P2c**：button_group / link / space / steps / statistic / result / popover / popconfirm
+- `examples/26_office_p2` — **Office P2a–P2d**：button_group / link / space / steps / statistic / result / popover / popconfirm / upload / color_picker / autocomplete
 
 Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P6b DPI 契约；P6c Windows Soft 骨架；P6d 无障碍基线；P6e soak；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：P6 切片已齐（含 [soak.md](soak.md)）；**Button 进焦序** ✅；可选 Office P2 / `.ngui` 进复杂控件；跟进 Windows 运行时 / Retina 手工验。
 
@@ -145,7 +145,7 @@ Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + def
 
 完整对照表与优先级见 **[office-widget-catalog.md](office-widget-catalog.md)**（Ant Design / Element Plus / MUI + 工业扩展；**2026-10-17 已拍板**）。
 
-**P0 目录控件（Rust API）已按 §4 / §10 落地。** P1 核心 / rest / deferred（含 Form 校验、`alarm_list` / `gauge` / `trend`、DateTime 等）均已落地；层级选择仅 `tree_select`（Cascader 仍不进 P1）。**Office P2a–P2c**（含 `popover` / `popconfirm`）已落地，见 [office-p2-design.md](office-p2-design.md)；下一步 P2d。
+**P0 目录控件（Rust API）已按 §4 / §10 落地。** P1 核心 / rest / deferred（含 Form 校验、`alarm_list` / `gauge` / `trend`、DateTime 等）均已落地；层级选择仅 `tree_select`（Cascader 仍不进 P1）。**Office P2a–P2d**（含 `upload` / `color_picker` / `autocomplete`）已落地，见 [office-p2-design.md](office-p2-design.md)；下一步 P2e。
 
 ---
 
@@ -164,7 +164,7 @@ P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
 P5 Immediate 已落地；**P6a–P6e** 已通（[p6-design.md](p6-design.md)、[soak.md](soak.md)）
     ↓
-Office **P2a–P2c** 已落地（含 `popover` / `popconfirm`；[office-p2-design.md](office-p2-design.md)、`e26`）；下一步 **P2d**
+Office **P2a–P2d** 已落地（含 `upload` / `color_picker` / `autocomplete`；[office-p2-design.md](office-p2-design.md)、`e26`）；下一步 **P2e**
 ```
 
 ---
@@ -184,4 +184,4 @@ Office **P2a–P2c** 已落地（含 `popover` / `popconfirm`；[office-p2-desig
 
 运行：`cargo run -p e10_office_panel`（需图形会话；CJK 字体同 P2）。
 有适配器时应看到：`native Surface ready (…, present=NativeSurface)`。
-Office / 后续示例：`e11`–`e15`（P0）、`e20`–`e22`（P1）、`e23`（Chart）、`e24`（Profile）、`e25`（Immediate）、`e26`（Office P2a–P2c）。
+Office / 后续示例：`e11`–`e15`（P0）、`e20`–`e22`（P1）、`e23`（Chart）、`e24`（Profile）、`e25`（Immediate）、`e26`（Office P2a–P2d）。
