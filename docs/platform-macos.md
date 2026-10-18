@@ -85,8 +85,8 @@ crates/next-gui-platform/
 ### 4.5 Remaining scope
 
 - Field / embedded profile
-- Full HMI touch mapping and gestures (the `Event::Touch` stub is present; P6 owns the mapping)
-- Explicit DPI policy, accessibility, and long-running industrial acceptance (P6)
+- Full HMI touch mapping and gestures (the `Event::Touch` stub is present; P6 owns the mapping — see [p6-design.md](p6-design.md))
+- Explicit DPI policy, accessibility, and long-running industrial acceptance (P6 slices; macOS follow-on after Linux)
 - Replacing Linux backend or renaming traits
 
 ---

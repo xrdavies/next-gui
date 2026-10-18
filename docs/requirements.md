@@ -152,7 +152,7 @@ OS 窗口 / 输入 / 显卡驱动 API；字体 shaping 等可作为阶段性基�
 | P3 GPU | 同一 UI 树可在软渲染 / GPU 间切换，视觉大体一致；GPU 用于观感与动态内容 |
 | P4 双档 | 同一源打出 Field / Office；Field 在约定最低机型上稳定 |
 | P5 Immediate | retained 主界面可嵌局部 Immediate，事件与裁剪不互相抢 — **已落地**（`next-gui-immediate` / e25） |
-| P6 工业 | **触控** / 长时运行 / DPI 等试点可 7×24 方向验证；Windows（及后续 macOS Office）按序补齐 |
+| P6 工业 | **触控** / 长时运行 / DPI 等试点可 7×24 方向验证；Windows（及后续 macOS Office）按序补齐；设计见 [p6-design.md](p6-design.md) |
 
 ### 5.3 产品级（试点）
 

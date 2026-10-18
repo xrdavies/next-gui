@@ -47,6 +47,9 @@
 | [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
 | [docs/p2-design.md](docs/p2-design.md) | P2 文本引擎 / CJK / 软渲染字形 |
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
+| [docs/p4-design.md](docs/p4-design.md) | P4 双档 Profile（Field / Office） |
+| [docs/p5-design.md](docs/p5-design.md) | P5 Immediate 视口 |
+| [docs/p6-design.md](docs/p6-design.md) | P6 工业打磨（触控 / DPI / Windows / a11y / 7×24；设计已写） |
 | [docs/office-line.md](docs/office-line.md) | Office 线：布局/控件加厚、原生 Surface、P0/P1/Chart（P4/P5 已另文落地） |
 | [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 / P1 含 rest+deferred / Chart 已齐；Cascader 仍不进 P1） |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
@@ -54,7 +57,7 @@
 
 ## 状态
 
-**需求与架构已确认；P0–P5 已通（含 Office 加厚、P4 Profile、P5 Immediate）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；评测队列已清。下一步见路线图 **P6 工业打磨**（完整触控映射、无障碍、7×24、DPI、Windows 后端）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
+**需求与架构已确认；P0–P5 已通（含 Office 加厚、P4 Profile、P5 Immediate）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；评测队列已清。下一步：**P6 工业打磨**（设计见 [docs/p6-design.md](docs/p6-design.md)；推荐 P6a 触控 → P6b DPI → P6c Windows → P6d a11y → P6e soak）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
 
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
