@@ -85,6 +85,14 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
             }
         }
     }
+    // P6d: Shift+Tab → BackTab (focus_prev).
+    if matches!(key, KeyCode::Tab) {
+        return Some(if modifiers.shift {
+            UiKey::BackTab
+        } else {
+            UiKey::Tab
+        });
+    }
     Some(match key {
         KeyCode::Backspace => UiKey::Backspace,
         KeyCode::Delete => UiKey::Delete,
@@ -95,11 +103,11 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
         KeyCode::Home => UiKey::Home,
         KeyCode::End => UiKey::End,
         KeyCode::Enter => UiKey::Enter,
-        KeyCode::Tab => UiKey::Tab,
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,
         KeyCode::Char(c) => UiKey::Char(c),
         KeyCode::Other(_) => return None,
+        KeyCode::Tab => unreachable!("Tab mapped above"),
     })
 }
 
