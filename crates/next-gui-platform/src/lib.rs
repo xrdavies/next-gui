@@ -2,6 +2,7 @@
 //!
 //! P0 ships a Linux backend (`winit` + softbuffer) behind [`linux`]. That is an OS
 //! API thin layer, not a third-party UI runtime.
+//! [`run`] selects the native backend: macOS on a Mac, Linux with feature `linux`.
 //!
 //! Present backends:
 //! - [`PresentBackend::Softbuffer`] — CPU pixels via softbuffer (Soft + GPU readback).
@@ -343,8 +344,11 @@ pub trait AppCallbacks {
 #[cfg(feature = "linux")]
 pub mod linux;
 
-#[cfg(feature = "linux")]
+#[cfg(all(feature = "linux", not(target_os = "macos")))]
 pub use linux::run;
+
+#[cfg(target_os = "macos")]
+pub use macos::run;
 
 /// macOS Office-desktop backend.
 ///
