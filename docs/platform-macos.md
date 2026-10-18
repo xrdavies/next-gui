@@ -1,6 +1,6 @@
 # macOS platform backend (Office desktop)
 
-> **Status: Office P0–P5 paths implemented; acceptance has shared issues.** Linux remains the behavioral reference. macOS uses the same platform contract, retained widgets, Profile configuration, and optional Immediate viewport. See the [2026-10-18 review](reviews/R-20261018-7c9427cf6006.md) for actual checks and remaining defects.
+> **Status: Office P0–P5 paths implemented; acceptance has shared issues.** Linux remains the behavioral reference. macOS uses the same platform contract, retained widgets, Profile configuration, and optional Immediate viewport. See the [2026-10-18 re-verification](reviews/R-20261018-0e892e6f7b78.md) for actual checks and remaining defects.
 
 ---
 
@@ -128,7 +128,7 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 - **IME** is wired (same contract as Linux). **Clipboard** thin text API is available on `WindowCtx`.
 - **Touch:** `Event::Touch` / `TouchEvent` stubs exist and are forwarded when winit emits them; macOS winit currently does not emit touch. Full industrial touch mapping is P6.
 - Multi-window management and accessibility remain future work shared with the other platforms.
-- The shared backends still exit on Escape even after a popup or Immediate viewport consumes it; native GPU presentation has a color mismatch, DateTime popups can be obscured, and TextArea multiline/caret painting is incomplete. These are open Grok findings in the linked review, not missing macOS modules. The required clippy check also has existing failures.
+- Re-verification passed native GPU color agreement, DateTime overlay stacking and required clippy checks. Consumed Escape now dismisses/blurs without exiting, but e13 still drops Escape before its quit branch (F03). TextArea explicit newlines and short-line carets work; automatic wrapping still clips the caret (F07). The new `request_exit` API also waits for a keyboard event when requested from other callbacks. These shared findings remain assigned to Grok in the linked review.
 - The macOS review used an Apple Silicon host and a 1× display; Retina and mixed-scale display transitions have not been accepted.
 - The backend intentionally keeps the Linux event and presentation behavior; platform-specific refinements can land without changing the upper-layer contract.
 
