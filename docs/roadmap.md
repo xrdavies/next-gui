@@ -70,29 +70,33 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 
 运行：`cargo run -p e05_backend_toggle`（需图形会话；有 GPU 时 Space 切换 Soft/GPU）。
 
-## Office 线（P3 之后、P4 之前）— **进行中**
+## Office 线（P3 之后、P4 之前）— **已完成首轮加厚**
 
-> 决策：**暂时跳过 P4**，先做厚 Office 桌面能力。设计见 [office-line.md](office-line.md)。
+> 曾跳过 P4 先做厚 Office；设计见 [office-line.md](office-line.md)。**P4 Profile 现已落地**（见下）。
 
 - 布局：`CrossAlign`；控件：`Row` / `Spacer` / `Separator`（工具条）
 - GPU：**原生 `wgpu::Surface` present 已落地**（`PresentBackend::GpuSurface` + `GpuRenderer::try_new_native`）；Softbuffer/readback 仍保留
 - Soft 始终可回退；示例 `cargo run -p e10_office_panel`
-- **不**引入 `profile` crate（留给 P4）
-- 控件目录已确认：[office-widget-catalog.md](office-widget-catalog.md)（P0 含 TextInput/Table/Tree；Toolbar/StatusBar/Panel 一等公民）
-- **P0 目录控件（Rust API）已齐**（shell/inputs/data/nav/feedback 五切片 + 对应 `office_*` 示例）
-- **P1 核心 + rest + deferred 已落地**（含 Drawer、虚表、录入/反馈/结构、DateTime/Transfer/PropertyGrid/TreeTable；见 `e20`/`e21`/`e22`）。Cascader 仍不进 P1
-- **Office 增强：** 多瓦片 `Chart`（共享 Gauge/Trend 光栅；`e23_office_charts`）+ P1 键盘/焦点打磨（Modal/Drawer Tab 陷阱、TextArea 行导航、InputNumber Home/End、PropertyGrid 可见性）
-- 下一步：P1/P2 打磨续，或 **P4 Profile**
+- 控件目录：[office-widget-catalog.md](office-widget-catalog.md)
+- **P0 / P1（含 rest + deferred）已齐**；Chart 多图 + 键盘打磨见 `e23_office_charts`。Cascader 仍不进 P1
+- 后续可选：Office P2、控件进 `.ngui`、自绘 IME 候选
 
 ## P4 — 双档 Profile
 
-> **已推迟（deferred）。** 等 Office 线与 Field Soft 路径都更稳后再抽配置层。
+> **已完成骨架**（见 [p4-design.md](p4-design.md)、`examples/24_profile_dual`）。
 
-- Field / Office 特性开关与性能预算（`profile`）
-- 最低机型清单与降级策略（停帧、降 fps、关特效、强制 soft、关 GPU）
-- 打包与依赖裁剪差异
+- Field / Office 特性开关与性能预算（`next-gui-profile`）
+- 降级策略：`degrade` → 强制 soft、关 GPU/特效、降 fps
+- 打包意图：Cargo features `field` / `office` + 文档；运行时 `ProfileConfig` 为准
+- 验收：同一应用源两档配置；Field 不依赖 GPU 即可 Soft 稳跑
 
-验收：同一应用源可打出两档配置，Field 档在约定弱机上稳定。
+运行：
+
+```bash
+cargo run -p e24_profile_dual
+NEXT_GUI_PROFILE=field cargo run -p e24_profile_dual
+NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual
+```
 
 ## P5 — Immediate 视口
 
@@ -114,4 +118,4 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 
 ## 建议顺序
 
-P0–P3 已通 → **当前做厚 Office 线**（跳过 P4）→ 稍后 P4 Profile → P5 Immediate → P6 工业打磨。不要先做满血 GPU Surface demo 再回头补弱机 Soft；也不要第一天做满血 QML 式语言。
+P0–P3 + Office 加厚 + **P4 Profile** 已通 → 下一步 **P5 Immediate** → P6 工业打磨。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。

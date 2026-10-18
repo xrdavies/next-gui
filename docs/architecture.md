@@ -146,6 +146,8 @@ platform ─┼─ win_backend     （其次）
 
 `profile` 模块负责：特性开关、性能预算、最低机型与降级策略（关特效、降帧、强制 soft、关 GPU）。应用源码与 DSL **不**按场景分叉成两套产品。
 
+**实现（P4）：** crate `next-gui-profile`（`ProfileConfig::{field,office,from_env}`）；设计见 [p4-design.md](p4-design.md)；演示 `cargo run -p e24_profile_dual`。
+
 **GPU 在架构中的定位：** 提升观感与动态内容绘制质量（流畅重绘、动画、图表），不是「炫技层」。Field 档可关闭而不改变声明式 / retained 语义。
 
 ---
