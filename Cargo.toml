@@ -50,3 +50,4 @@ next-gui-profile = { path = "crates/next-gui-profile" }
 next-gui-immediate = { path = "crates/next-gui-immediate" }
 winit = { version = "0.30", default-features = true }
 softbuffer = "0.4"
+arboard = { version = "3", default-features = false }

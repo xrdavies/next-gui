@@ -1,15 +1,16 @@
 //! macOS Office window backend using winit (+ optional softbuffer).
 
 use crate::{
-    AppCallbacks, Event, ImeEvent, KeyCode, Modifiers, PlatformError, PointerButton, PresentBackend,
-    WindowAttrs, WindowCtx, WindowHost, WindowId,
+    clipboard::Clipboard, AppCallbacks, Event, ImeEvent, KeyCode, Modifiers, PlatformError,
+    PointerButton, PresentBackend, TouchEvent, TouchPhase, WindowAttrs, WindowCtx, WindowHost,
+    WindowId,
 };
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, TouchPhase as WinitTouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window as WinitWindow;
@@ -25,6 +26,8 @@ struct Host {
     modifiers: Modifiers,
     /// True while a non-empty IME preedit is active (suppress Key::Character).
     ime_composing: bool,
+    /// Lazily opened OS clipboard (kept alive so Linux peers can read after set).
+    clipboard: Option<Clipboard>,
 }
 
 impl WindowHost for Host {
@@ -94,6 +97,26 @@ impl WindowHost for Host {
         );
     }
 
+    fn clipboard_get_text(&mut self) -> Result<Option<String>, PlatformError> {
+        if self.clipboard.is_none() {
+            self.clipboard = Some(Clipboard::open()?);
+        }
+        self.clipboard
+            .as_mut()
+            .expect("clipboard just opened")
+            .get_text()
+    }
+
+    fn clipboard_set_text(&mut self, text: &str) -> Result<(), PlatformError> {
+        if self.clipboard.is_none() {
+            self.clipboard = Some(Clipboard::open()?);
+        }
+        self.clipboard
+            .as_mut()
+            .expect("clipboard just opened")
+            .set_text(text)
+    }
+
     fn winit_window(&self) -> Arc<WinitWindow> {
         self.window.clone()
     }
@@ -158,6 +181,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             cursor: (0.0, 0.0),
             modifiers: Modifiers::default(),
             ime_composing: false,
+            clipboard: None,
         });
     }
 
@@ -361,6 +385,27 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     Event::Ime {
                         window: WindowId(1),
                         ime: mapped,
+                    },
+                );
+            }
+            WindowEvent::Touch(t) => {
+                let phase = match t.phase {
+                    WinitTouchPhase::Started => TouchPhase::Started,
+                    WinitTouchPhase::Moved => TouchPhase::Moved,
+                    WinitTouchPhase::Ended => TouchPhase::Ended,
+                    WinitTouchPhase::Cancelled => TouchPhase::Cancelled,
+                };
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(
+                    &mut ctx,
+                    Event::Touch {
+                        window: WindowId(1),
+                        touch: TouchEvent {
+                            id: t.id,
+                            phase,
+                            x: t.location.x,
+                            y: t.location.y,
+                        },
                     },
                 );
             }
