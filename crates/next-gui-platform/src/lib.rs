@@ -19,6 +19,8 @@
 //! coordinates. Scale changes arrive as [`Event::ScaleFactorChanged`].
 //!
 //! Windows (P6c): Softbuffer Soft path is required; see `docs/platform-windows.md`.
+//!
+//! Soak (P6e): optional [`soak`] helpers + `NEXT_GUI_SOAK=1` periodic redraw wakes; see `docs/soak.md`.
 
 #![deny(missing_docs)]
 
@@ -455,6 +457,9 @@ pub mod touch_synth;
 
 /// P6b physical ↔ logical DPI helpers ([`dpi`]).
 pub mod dpi;
+
+/// P6e soak / leak probe env helpers ([`soak`]); backends honor `NEXT_GUI_SOAK`.
+pub mod soak;
 
 /// OS text clipboard helpers (also used by [`WindowCtx`]).
 #[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
