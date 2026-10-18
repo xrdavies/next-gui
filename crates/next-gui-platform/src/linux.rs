@@ -29,6 +29,8 @@ struct Host {
     ime_composing: bool,
     /// Lazily opened OS clipboard (kept alive so Linux peers can read after set).
     clipboard: Option<Clipboard>,
+    /// Set by [`WindowCtx::request_exit`]; checked after app callbacks.
+    exit_requested: bool,
 }
 
 impl WindowHost for Host {
@@ -50,6 +52,10 @@ impl WindowHost for Host {
 
     fn request_redraw(&mut self) {
         self.window.request_redraw();
+    }
+
+    fn request_exit(&mut self) {
+        self.exit_requested = true;
     }
 
     fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError> {
@@ -186,6 +192,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             modifiers: Modifiers::default(),
             ime_composing: false,
             clipboard: None,
+            exit_requested: false,
         });
     }
 
@@ -347,18 +354,19 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                 if !deliver {
                     return;
                 }
-                let ime_composing = host.ime_composing;
-                let mut ctx = WindowCtx { inner: host };
-                self.app.on_event(
-                    &mut ctx,
-                    Event::Key {
-                        window: WindowId(1),
-                        key,
-                        pressed,
-                        modifiers,
-                    },
-                );
-                if matches!(key, KeyCode::Escape) && pressed && !ime_composing {
+                {
+                    let mut ctx = WindowCtx { inner: host };
+                    self.app.on_event(
+                        &mut ctx,
+                        Event::Key {
+                            window: WindowId(1),
+                            key,
+                            pressed,
+                            modifiers,
+                        },
+                    );
+                }
+                if host.exit_requested {
                     event_loop.exit();
                 }
             }

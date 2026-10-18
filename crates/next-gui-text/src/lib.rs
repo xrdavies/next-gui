@@ -244,16 +244,16 @@ impl Font {
         let h = (max_y + pad_y).max(1) as u32;
         let mut buf = vec![0u8; (w as usize).saturating_mul(h as usize)];
         for (ox, oy, gw, gh, bitmap) in parts {
-            blit_alpha(
-                &mut buf,
-                w,
-                h,
-                ox + pad_x,
-                oy + pad_y,
-                gw,
-                gh,
-                &bitmap,
-            );
+            blit_alpha(AlphaBlit {
+                dest: &mut buf,
+                dest_w: w,
+                dest_h: h,
+                x: ox + pad_x,
+                y: oy + pad_y,
+                src_w: gw,
+                src_h: gh,
+                src: &bitmap,
+            });
         }
         AlphaMask {
             width: w,
@@ -296,31 +296,33 @@ pub struct TextLayout {
     pub glyphs: Vec<PlacedGlyph>,
 }
 
-fn blit_alpha(
-    dest: &mut [u8],
+struct AlphaBlit<'a> {
+    dest: &'a mut [u8],
     dest_w: u32,
     dest_h: u32,
     x: i32,
     y: i32,
     src_w: u32,
     src_h: u32,
-    src: &[u8],
-) {
-    for row in 0..src_h as i32 {
-        let dy = y + row;
-        if dy < 0 || dy >= dest_h as i32 {
+    src: &'a [u8],
+}
+
+fn blit_alpha(b: AlphaBlit<'_>) {
+    for row in 0..b.src_h as i32 {
+        let dy = b.y + row;
+        if dy < 0 || dy >= b.dest_h as i32 {
             continue;
         }
-        for col in 0..src_w as i32 {
-            let dx = x + col;
-            if dx < 0 || dx >= dest_w as i32 {
+        for col in 0..b.src_w as i32 {
+            let dx = b.x + col;
+            if dx < 0 || dx >= b.dest_w as i32 {
                 continue;
             }
-            let s = src[(row as u32 * src_w + col as u32) as usize];
-            let di = (dy as u32 * dest_w + dx as u32) as usize;
+            let s = b.src[(row as u32 * b.src_w + col as u32) as usize];
+            let di = (dy as u32 * b.dest_w + dx as u32) as usize;
             // max blend for overlapping coverage
-            if s > dest[di] {
-                dest[di] = s;
+            if s > b.dest[di] {
+                b.dest[di] = s;
             }
         }
     }

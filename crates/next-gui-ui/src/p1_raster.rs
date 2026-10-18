@@ -188,6 +188,7 @@ pub(crate) fn rasterize_trend(
     AlphaMask::new(width, height, Arc::<[u8]>::from(px))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_line(px: &mut [u8], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32, cov: u8) {
     let dx = x1 - x0;
     let dy = y1 - y0;

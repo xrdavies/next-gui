@@ -630,6 +630,10 @@ impl AppCallbacks for Demo {
                         ctx.request_redraw();
                         return;
                     }
+                    if matches!(ui_key, UiKey::Escape) {
+                        ctx.request_exit();
+                        return;
+                    }
                     if matches!(ui_key, UiKey::Space) && self.ui.focused().is_none() {
                         let (w, h) = ctx.size();
                         self.toggle(w, h);

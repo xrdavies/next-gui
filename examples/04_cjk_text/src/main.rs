@@ -154,7 +154,9 @@ impl AppCallbacks for Demo {
                 key: KeyCode::Escape,
                 pressed: true,
                 ..
-            } => {}
+            } => {
+                ctx.request_exit();
+            }
             Event::RedrawRequested { .. } => {
                 self.needs_paint = true;
             }

@@ -589,23 +589,21 @@ impl AppCallbacks for Demo {
                             ctx.request_redraw();
                         }
                     }
-                } else {
-                    if self.viewport.pointer_released(x, y) {
-                        if let Some(id) = self.viewport.take_clicked() {
-                            if Some(id) == self.imm_btn_tick {
-                                self.imm_ticks = self.imm_ticks.wrapping_add(1);
-                                self.animate_spark();
-                                eprintln!("immediate +1 → {}", self.imm_ticks);
-                            } else if Some(id) == self.imm_btn_reset {
-                                self.imm_ticks = 0;
-                                self.spark = vec![0.2, 0.4, 0.35, 0.6];
-                                eprintln!("immediate reset");
-                            }
+                } else if self.viewport.pointer_released(x, y) {
+                    if let Some(id) = self.viewport.take_clicked() {
+                        if Some(id) == self.imm_btn_tick {
+                            self.imm_ticks = self.imm_ticks.wrapping_add(1);
+                            self.animate_spark();
+                            eprintln!("immediate +1 → {}", self.imm_ticks);
+                        } else if Some(id) == self.imm_btn_reset {
+                            self.imm_ticks = 0;
+                            self.spark = vec![0.2, 0.4, 0.35, 0.6];
+                            eprintln!("immediate reset");
                         }
-                        self.scene.mark_dirty(self.viewport.bounds());
-                        self.needs_paint = true;
-                        ctx.request_redraw();
                     }
+                    self.scene.mark_dirty(self.viewport.bounds());
+                    self.needs_paint = true;
+                    ctx.request_redraw();
                 }
             }
             Event::Key {
@@ -619,6 +617,8 @@ impl AppCallbacks for Demo {
                     self.scene.mark_dirty(self.viewport.bounds());
                     self.needs_paint = true;
                     ctx.request_redraw();
+                } else {
+                    ctx.request_exit();
                 }
             }
             Event::Key {

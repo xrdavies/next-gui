@@ -51,6 +51,7 @@ impl SoftRenderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn blit_alpha_clipped(
         &mut self,
         x: i32,

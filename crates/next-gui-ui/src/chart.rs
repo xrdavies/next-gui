@@ -124,7 +124,7 @@ pub(crate) fn chart_tile_rects(
     if n == 0 {
         return Vec::new();
     }
-    let rows = (n + cols - 1) / cols;
+    let rows = n.div_ceil(cols);
     let inner_w = (style.width - style.padding * 2.0).max(8.0);
     let inner_h = (style.height - style.padding * 2.0).max(8.0);
     let cell_w = if cols > 1 {

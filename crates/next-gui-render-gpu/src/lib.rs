@@ -215,7 +215,6 @@ impl GpuRenderer {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
             backend_options: Default::default(),
-            ..Default::default()
         });
 
         let surface = if let Some(window) = window {
@@ -385,6 +384,9 @@ impl GpuRenderer {
             if caps.formats.is_empty() {
                 return Err(GpuInitError::new("surface has no supported formats"));
             }
+            // Prefer non-sRGB Unorm so surface presentation matches the offscreen
+            // Rgba8Unorm pipeline and softbuffer readback (F04). sRGB swapchains apply
+            // an extra encode and wash out Office colors.
             let format = caps
                 .formats
                 .iter()
@@ -392,11 +394,17 @@ impl GpuRenderer {
                 .find(|f| {
                     matches!(
                         f,
-                        wgpu::TextureFormat::Bgra8Unorm
-                            | wgpu::TextureFormat::Rgba8Unorm
-                            | wgpu::TextureFormat::Bgra8UnormSrgb
-                            | wgpu::TextureFormat::Rgba8UnormSrgb
+                        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
                     )
+                })
+                .or_else(|| {
+                    caps.formats.iter().copied().find(|f| {
+                        matches!(
+                            f,
+                            wgpu::TextureFormat::Bgra8UnormSrgb
+                                | wgpu::TextureFormat::Rgba8UnormSrgb
+                        )
+                    })
                 })
                 .unwrap_or(caps.formats[0]);
 
@@ -649,7 +657,7 @@ impl GpuRenderer {
         let staging = if self.native.is_none() {
             let unpadded_bytes_per_row = self.width * 4;
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+            let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
             let staging_size = padded_bytes_per_row as u64 * self.height as u64;
             Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gpu-staging"),
@@ -777,7 +785,7 @@ impl GpuRenderer {
 
         let unpadded = self.width * 4;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded = (unpadded + align - 1) / align * align;
+        let padded = unpadded.div_ceil(align) * align;
 
         let mut encoder = self
             .device
