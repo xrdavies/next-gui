@@ -296,6 +296,34 @@ pub struct TextLayout {
     pub glyphs: Vec<PlacedGlyph>,
 }
 
+impl TextLayout {
+    /// Top-left of the insertion caret for a Unicode scalar index into `text`.
+    ///
+    /// `text` must be the same string passed to [`Font::layout`] / [`Font::rasterize_text`]
+    /// that produced this layout (including the same wrap width). Explicit newlines and
+    /// automatic wraps both advance the caret onto the next visual line.
+    pub fn caret_top_left(&self, text: &str, caret: usize, ascent: f32) -> (f32, f32) {
+        let mut glyph_i = 0usize;
+        let mut x = 0.0f32;
+        let mut y = 0.0f32;
+        for (char_i, ch) in text.chars().enumerate() {
+            if char_i == caret {
+                return (x, y);
+            }
+            if ch == '\n' {
+                y += self.line_height;
+                x = 0.0;
+            } else if glyph_i < self.glyphs.len() {
+                let g = &self.glyphs[glyph_i];
+                x = g.x + g.advance;
+                y = (g.baseline_y - ascent).max(0.0);
+                glyph_i += 1;
+            }
+        }
+        (x, y)
+    }
+}
+
 struct AlphaBlit<'a> {
     dest: &'a mut [u8],
     dest_w: u32,
@@ -415,6 +443,35 @@ mod tests {
         assert!(w1 <= 80.0 + 1.0);
         assert!(h1 >= h0);
         assert!(w1 < w0 || h1 > h0);
+    }
+
+    #[test]
+    fn caret_follows_wrapped_layout() {
+        let font = test_font();
+        let px = 20.0;
+        let max_w = 80.0;
+        let text = "W".repeat(40);
+        let layout = font.layout(&text, px, Some(max_w));
+        assert!(layout.height > layout.line_height * 1.5, "expected wrap");
+        let m = font.metrics(px);
+        let end = text.chars().count();
+        let (cx, cy) = layout.caret_top_left(&text, end, m.ascent);
+        assert!(
+            cx <= max_w + 1.0,
+            "wrapped end caret x={cx} should stay within wrap width {max_w}"
+        );
+        assert!(
+            cy >= layout.line_height * 0.5,
+            "wrapped end caret y={cy} should be on a wrapped line"
+        );
+        let (x0, y0) = layout.caret_top_left(&text, 0, m.ascent);
+        assert_eq!((x0, y0), (0.0, 0.0));
+        // Explicit newline still advances a visual line.
+        let nl = "ab\nc";
+        let layout_nl = font.layout(nl, px, Some(max_w));
+        let (cx_nl, cy_nl) = layout_nl.caret_top_left(nl, 3, m.ascent); // after '\n'
+        assert!(cy_nl >= layout_nl.line_height * 0.9, "caret after newline y={cy_nl}");
+        assert!(cx_nl < 1.0, "caret after newline should be at line start, x={cx_nl}");
     }
 
     /// Regression: glyphs must sit on the baseline (not be pushed below it and

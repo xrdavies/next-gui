@@ -330,8 +330,10 @@ impl WindowCtx<'_> {
 
     /// Ask the platform to leave the event loop after this callback returns.
     ///
-    /// Escape no longer exits by itself; apps call this when they want to quit
-    /// (for example after a popup or Immediate viewport has already consumed Escape).
+    /// Honored after any app callback (`on_start`, `on_event`, `on_redraw`), not only
+    /// keyboard handlers — so a Quit button or startup shutdown works without waiting
+    /// for an unrelated key. Escape no longer exits by itself; apps call this when they
+    /// want to quit (for example after a popup has already consumed Escape).
     pub fn request_exit(&mut self) {
         self.inner.request_exit();
     }
