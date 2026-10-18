@@ -9,7 +9,7 @@
 ## 1. 目的与用法
 
 1. 对照主流 Web 前端组件库的**官方组件总览**，收敛出 next-gui **Office 档**建议支持的控件清单。
-2. 用稳定英文 id 作为未来 `.ngui` / Rust API 名；中文名为产品侧称呼。
+2. 用稳定英文 id 作为 `.ngui` / Rust API 名；中文名为产品侧称呼。
 3. 按 **P0 / P1 / P2 / 范围外** 分层，方便一次确认 MVP，再分期实现。
 4. 明确裁掉偏 Web 营销/滚动页的控件；补上工业 Office（SCADA/HMI 侧配置、监控、规划桌面）常用但三库偏弱的能力。
 
@@ -283,7 +283,7 @@
 | 已实现（Office P2d） | `upload`，`color_picker`，`autocomplete`（`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 已实现（Office P2e） | `grid`，`timeline`，`calendar`，`image`，`config_provider`（Ui API；`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 刻意不做 / P2 可选 | Cascader（不进 P1；层级选择仅 TreeSelect） |
-| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；可选 Cascader；控件进 `.ngui` |
+| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；可选 Cascader（**控件进 `.ngui`** ✅ 见 [ngui-widgets.md](ngui-widgets.md)） |
 | 已实现但非控件目录项 | P4 `next-gui-profile`（见 §Profile）、P5 Immediate 视口（`e25`）；剪贴板 / 触控 stub 属 platform |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。

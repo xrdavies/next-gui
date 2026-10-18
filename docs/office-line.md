@@ -20,7 +20,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 - ~~Immediate 视口（P5）~~ → **已落地**（`next-gui-immediate` / e25）
 - P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地；TextInput IME/CJK 预编辑+提交已接（候选窗靠系统 IME）
 - ~~图表控件~~ → **Chart 多瓦片已落地**（`e23_office_charts`；Gauge/Trend 共享软光栅）
-- 仍后置：动画系统、自绘 IME 候选窗、可选 Cascader、控件进 `.ngui`
+- 仍后置：动画系统、自绘 IME 候选窗、可选 Cascader（**控件进 `.ngui`** ✅）
 
 ---
 
@@ -137,7 +137,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/25_immediate_viewport` — **P5**：retained 壳 + Immediate 工具面板
 - `examples/26_office_p2` — **Office P2a–P2e**：+ grid / timeline / calendar / image / config_provider
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P6b DPI 契约；P6c Windows Soft 骨架；P6d 无障碍基线；P6e soak；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：P6 切片已齐（含 [soak.md](soak.md)）；**Button 进焦序** ✅；可选 Office P2 / `.ngui` 进复杂控件；跟进 Windows 运行时 / Retina 手工验。
+Rust API 与 `.ngui` 控件面对齐（[ngui-widgets.md](ngui-widgets.md)；`ImageRgba` 除外）。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P6b DPI 契约；P6c Windows Soft 骨架；P6d 无障碍基线；P6e soak；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：P6 切片已齐（含 [soak.md](soak.md)）；**Button 进焦序** ✅；可选 Office P2 / `.ngui` 进复杂控件；跟进 Windows 运行时 / Retina 手工验。
 
 ---
 
@@ -164,7 +164,7 @@ P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
 P5 Immediate 已落地；**P6a–P6e** 已通（[p6-design.md](p6-design.md)、[soak.md](soak.md)）
     ↓
-Office **P2a–P2e** 已齐（[office-p2-design.md](office-p2-design.md)、`e26`）；可选 Cascader / `.ngui`
+Office **P2a–P2e** 已齐（[office-p2-design.md](office-p2-design.md)、`e26`）；可选 Cascader（`.ngui` 控件面已齐）
 ```
 
 ---

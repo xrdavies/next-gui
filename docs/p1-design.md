@@ -145,6 +145,8 @@ ui.sync(&mut scene);
 
 Rust API 与 `.ngui` **语义对齐**：后者只是前者的文件前端，不另起运行时。
 
+> **控件面（2026-10-19）：** 现有 FlexBuilder 控件均可在 `.ngui` 中声明（`ImageRgba` 除外）。关键字与字面量见 [ngui-widgets.md](ngui-widgets.md)；全量冒烟 fixture：`crates/next-gui-ui/tests/fixtures/all_widgets.ngui`。
+
 ### 4.3 控件
 
 | 控件 | scene 表现 | 交互 |
