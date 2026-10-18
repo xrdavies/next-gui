@@ -2,7 +2,9 @@
 //!
 //! - `NEXT_GUI_PROFILE=field|office` selects the startup preset (default Office).
 //! - Space or the toggle button flips presets: Field forces Soft; Office tries GPU
-//!   (native Surface when the window was opened that way, else readback).
+//!   when built with the `gpu` feature (default).
+//! - Field Soft packaging: `cargo run -p e24_profile_dual --no-default-features`
+//!   omits `next-gui-render-gpu` / wgpu; Softbuffer + Soft only.
 //! - `NEXT_GUI_PROFILE_QA=1` dumps a Soft-path PPM after first paint.
 //!
 //! Escape / close to quit.
@@ -13,15 +15,19 @@ use next_gui_layout::CrossAlign;
 use next_gui_platform::{
     AppCallbacks, Event, KeyCode, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
 };
-use next_gui_profile::{GuiProfile, ProfileConfig, SuggestedPresent};
+use next_gui_profile::{GuiProfile, ProfileConfig};
+#[cfg(feature = "gpu")]
+use next_gui_profile::SuggestedPresent;
 use next_gui_render::{encode_scene, Renderer};
-use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_text::load_default_cjk_font;
 use next_gui_ui::{
     ColumnStyle, PanelStyle, RowStyle, StatusBarStyle, Ui, WidgetId,
 };
+
+#[cfg(feature = "gpu")]
+use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 
 const CLEAR: Color = Color {
     r: 0x1a,
@@ -32,6 +38,7 @@ const CLEAR: Color = Color {
 
 enum Backend {
     Soft(SoftRenderer),
+    #[cfg(feature = "gpu")]
     Gpu(GpuRenderer),
 }
 
@@ -39,6 +46,7 @@ impl Backend {
     fn name(&self) -> &str {
         match self {
             Backend::Soft(_) => "Soft",
+            #[cfg(feature = "gpu")]
             Backend::Gpu(_) => "GPU",
         }
     }
@@ -46,6 +54,7 @@ impl Backend {
     fn detail(&self) -> String {
         match self {
             Backend::Soft(_) => "CPU soft".into(),
+            #[cfg(feature = "gpu")]
             Backend::Gpu(g) => {
                 let path = match g.present_path() {
                     GpuPresentPath::ReadbackSoftbuffer => "readback→softbuffer",
@@ -59,6 +68,7 @@ impl Backend {
     fn resize(&mut self, w: u32, h: u32) {
         match self {
             Backend::Soft(s) => s.resize(w, h),
+            #[cfg(feature = "gpu")]
             Backend::Gpu(g) => g.resize(w, h),
         }
     }
@@ -70,6 +80,7 @@ impl Backend {
     ) {
         match self {
             Backend::Soft(s) => s.render(cmds, dirty),
+            #[cfg(feature = "gpu")]
             Backend::Gpu(g) => g.render(cmds, dirty),
         }
     }
@@ -77,6 +88,7 @@ impl Backend {
     fn frame_pixels(&self) -> Option<(&[u32], u32, u32)> {
         match self {
             Backend::Soft(s) => s.frame_pixels(),
+            #[cfg(feature = "gpu")]
             Backend::Gpu(g) => g.frame_pixels(),
         }
     }
@@ -102,7 +114,9 @@ struct Demo {
     scene: Scene,
     ui: Ui,
     backend: Backend,
+    #[cfg(feature = "gpu")]
     gpu_stash: Option<GpuRenderer>,
+    #[cfg(feature = "gpu")]
     surface_gpu: Option<GpuRenderer>,
     using_gpu: bool,
     window_backend: PresentBackend,
@@ -116,6 +130,7 @@ struct Demo {
     btn_tick: WidgetId,
     tick: u32,
     needs_paint: bool,
+    #[cfg(feature = "gpu")]
     pending_native: bool,
     last_chart: Instant,
     qa_dumps: u32,
@@ -214,12 +229,16 @@ impl Demo {
         ui.sync(&mut scene);
         scene.mark_full_dirty(width as f32, height as f32);
 
+        #[cfg(feature = "gpu")]
         let pending_native = window_backend == PresentBackend::GpuSurface;
+
         Self {
             scene,
             ui,
             backend: Backend::Soft(SoftRenderer::new(width, height, CLEAR)),
+            #[cfg(feature = "gpu")]
             gpu_stash: None,
+            #[cfg(feature = "gpu")]
             surface_gpu: None,
             using_gpu: false,
             window_backend,
@@ -233,6 +252,7 @@ impl Demo {
             btn_tick,
             tick: 0,
             needs_paint: true,
+            #[cfg(feature = "gpu")]
             pending_native,
             last_chart: Instant::now(),
             qa_dumps: 0,
@@ -253,7 +273,7 @@ impl Demo {
             self.budget,
             format!(
                 "max_fps={}  chart={}Hz  effects={}  force_soft={}  allow_gpu={}\n\
-                 prefer_surface={}  anim={:?}  suggested={:?}",
+                 prefer_surface={}  anim={:?}  suggested={:?}  build={}",
                 self.profile.max_fps,
                 if self.profile.chart_refresh_hz == 0 {
                     self.profile.max_fps
@@ -266,6 +286,7 @@ impl Demo {
                 self.profile.prefer_native_surface,
                 self.profile.animation_budget,
                 self.profile.suggested_present(),
+                build_label(),
             ),
         );
         self.ui.set_text(
@@ -280,13 +301,19 @@ impl Demo {
         );
         let hint = match self.profile.profile {
             GuiProfile::Field => {
-                "Field: Soft only · Space → Office (GPU if available)"
+                if cfg!(feature = "gpu") {
+                    "Field: Soft only · Space → Office (GPU if available)"
+                } else {
+                    "Field Soft build: no wgpu linked · Space → Office budgets (stay Soft)"
+                }
             }
             GuiProfile::Office => {
                 if self.using_gpu {
                     "Office: GPU active · Space → Field (force Soft)"
-                } else {
+                } else if cfg!(feature = "gpu") {
                     "Office: Soft fallback · Space → Field"
+                } else {
+                    "Office budgets (Field Soft build — Soft only, no GPU crate)"
                 }
             }
         };
@@ -296,16 +323,25 @@ impl Demo {
     }
 
     fn apply_profile_to_backend(&mut self, w: u32, h: u32) {
-        if self.profile.should_try_gpu() {
-            self.ensure_gpu(w, h);
-        } else {
-            self.ensure_soft(w, h);
+        #[cfg(feature = "gpu")]
+        {
+            if self.profile.should_try_gpu() {
+                self.ensure_gpu(w, h);
+            } else {
+                self.ensure_soft(w, h);
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            let _ = (w, h);
+            // Soft-only packaging: profile budgets still toggle; renderer stays Soft.
         }
         self.refresh_labels();
         self.scene.mark_full_dirty(w as f32, h as f32);
         self.needs_paint = true;
     }
 
+    #[cfg(feature = "gpu")]
     fn ensure_soft(&mut self, w: u32, h: u32) {
         if !self.using_gpu {
             return;
@@ -331,6 +367,7 @@ impl Demo {
         self.using_gpu = false;
     }
 
+    #[cfg(feature = "gpu")]
     fn ensure_gpu(&mut self, w: u32, h: u32) {
         if self.using_gpu {
             return;
@@ -376,6 +413,7 @@ impl Demo {
 
     fn present_frame(&mut self, ctx: &mut WindowCtx<'_>) {
         match &mut self.backend {
+            #[cfg(feature = "gpu")]
             Backend::Gpu(g) => {
                 if g.present_path() == GpuPresentPath::NativeSurface {
                     return;
@@ -398,12 +436,20 @@ impl Demo {
                         }
                     }
                     PresentBackend::GpuSurface => {
-                        if let Some(gpu) = self.surface_gpu.as_mut() {
-                            if let Err(e) = gpu.present_xrgb_frame(w, h, &pixels) {
-                                eprintln!("surface soft blit error: {e}");
+                        #[cfg(feature = "gpu")]
+                        {
+                            if let Some(gpu) = self.surface_gpu.as_mut() {
+                                if let Err(e) = gpu.present_xrgb_frame(w, h, &pixels) {
+                                    eprintln!("surface soft blit error: {e}");
+                                }
+                            } else {
+                                eprintln!("Soft on GpuSurface but no surface_gpu for blit");
                             }
-                        } else {
-                            eprintln!("Soft on GpuSurface but no surface_gpu for blit");
+                        }
+                        #[cfg(not(feature = "gpu"))]
+                        {
+                            let _ = (w, h, &pixels);
+                            eprintln!("Soft on GpuSurface without gpu feature — cannot present");
                         }
                     }
                 }
@@ -444,62 +490,83 @@ impl Demo {
     }
 }
 
+fn build_label() -> &'static str {
+    if cfg!(feature = "gpu") {
+        "gpu"
+    } else {
+        "field-soft"
+    }
+}
+
 impl AppCallbacks for Demo {
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>) {
         let (w, h) = ctx.size();
-        if self.pending_native {
-            self.pending_native = false;
-            let window = ctx.winit_window();
-            match GpuRenderer::try_new_native(window, w, h, CLEAR) {
-                Ok(gpu) => {
-                    eprintln!(
-                        "e24: native Surface ready ({}, {:?})",
-                        gpu.backend_name(),
-                        gpu.present_path()
-                    );
-                    if self.profile.should_try_gpu() {
-                        self.backend = Backend::Gpu(gpu);
-                        self.using_gpu = true;
-                    } else {
-                        self.surface_gpu = Some(gpu);
-                        self.using_gpu = false;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("e24: native Surface failed ({e})");
-                    std::process::exit(1);
-                }
-            }
-        } else if matches!(self.window_backend, PresentBackend::Softbuffer) {
-            if self.profile.should_try_gpu() {
-                match GpuRenderer::try_new(w, h, CLEAR) {
+
+        #[cfg(feature = "gpu")]
+        {
+            if self.pending_native {
+                self.pending_native = false;
+                let window = ctx.winit_window();
+                match GpuRenderer::try_new_native(window, w, h, CLEAR) {
                     Ok(gpu) => {
                         eprintln!(
-                            "e24: GPU readback ready ({})",
-                            gpu.backend_name()
+                            "e24: native Surface ready ({}, {:?})",
+                            gpu.backend_name(),
+                            gpu.present_path()
                         );
-                        self.backend = Backend::Gpu(gpu);
-                        self.using_gpu = true;
+                        if self.profile.should_try_gpu() {
+                            self.backend = Backend::Gpu(gpu);
+                            self.using_gpu = true;
+                        } else {
+                            self.surface_gpu = Some(gpu);
+                            self.using_gpu = false;
+                        }
                     }
                     Err(e) => {
-                        eprintln!("e24: GPU unavailable ({e}); Soft only");
-                        self.profile
-                            .degrade(next_gui_profile::DegradationReason::NoGpu);
+                        eprintln!("e24: native Surface failed ({e})");
+                        std::process::exit(1);
                     }
                 }
-            } else {
-                eprintln!("e24: Field / force_soft — Soft only (GPU not attempted)");
+            } else if matches!(self.window_backend, PresentBackend::Softbuffer) {
+                if self.profile.should_try_gpu() {
+                    match GpuRenderer::try_new(w, h, CLEAR) {
+                        Ok(gpu) => {
+                            eprintln!(
+                                "e24: GPU readback ready ({})",
+                                gpu.backend_name()
+                            );
+                            self.backend = Backend::Gpu(gpu);
+                            self.using_gpu = true;
+                        }
+                        Err(e) => {
+                            eprintln!("e24: GPU unavailable ({e}); Soft only");
+                            self.profile
+                                .degrade(next_gui_profile::DegradationReason::NoGpu);
+                        }
+                    }
+                } else {
+                    eprintln!("e24: Field / force_soft — Soft only (GPU not attempted)");
+                }
             }
+        }
+
+        #[cfg(not(feature = "gpu"))]
+        {
+            eprintln!(
+                "e24: Field Soft packaging (no gpu feature) — Soft only ({})",
+                self.profile.summary()
+            );
         }
 
         self.refresh_labels();
         self.scene.mark_full_dirty(w as f32, h as f32);
         ctx.set_title(&format!(
-            "next-gui Profile — {} / {}",
+            "next-gui Profile — {} / {} [{}]",
             self.profile.name(),
-            self.backend.name()
+            self.backend.name(),
+            build_label()
         ));
-        eprintln!("e24 ready {}", self.profile.summary());
+        eprintln!("e24 ready {} [{}]", self.profile.summary(), build_label());
         ctx.request_redraw();
     }
 
@@ -507,11 +574,14 @@ impl AppCallbacks for Demo {
         match event {
             Event::Resized { width, height, .. } => {
                 self.backend.resize(width, height);
-                if let Some(g) = self.gpu_stash.as_mut() {
-                    g.resize(width, height);
-                }
-                if let Some(g) = self.surface_gpu.as_mut() {
-                    g.resize(width, height);
+                #[cfg(feature = "gpu")]
+                {
+                    if let Some(g) = self.gpu_stash.as_mut() {
+                        g.resize(width, height);
+                    }
+                    if let Some(g) = self.surface_gpu.as_mut() {
+                        g.resize(width, height);
+                    }
                 }
                 self.ui.sync(&mut self.scene);
                 self.scene.mark_full_dirty(width as f32, height as f32);
@@ -530,9 +600,10 @@ impl AppCallbacks for Demo {
                     if id == self.btn_toggle {
                         self.toggle_profile(w, h);
                         ctx.set_title(&format!(
-                            "next-gui Profile — {} / {}",
+                            "next-gui Profile — {} / {} [{}]",
                             self.profile.name(),
-                            self.backend.name()
+                            self.backend.name(),
+                            build_label()
                         ));
                         ctx.request_redraw();
                     } else if id == self.btn_tick {
@@ -552,9 +623,10 @@ impl AppCallbacks for Demo {
                 let (w, h) = ctx.size();
                 self.toggle_profile(w, h);
                 ctx.set_title(&format!(
-                    "next-gui Profile — {} / {}",
+                    "next-gui Profile — {} / {} [{}]",
                     self.profile.name(),
-                    self.backend.name()
+                    self.backend.name(),
+                    build_label()
                 ));
                 ctx.request_redraw();
             }
@@ -593,6 +665,11 @@ impl AppCallbacks for Demo {
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
+        // QA: exit after Soft PPM so CI / headless smoke can finish.
+        if std::env::var_os("NEXT_GUI_PROFILE_QA").is_some() && self.qa_dumps >= 1 {
+            ctx.request_exit();
+            return;
+        }
         ctx.request_redraw();
     }
 }
@@ -600,19 +677,30 @@ impl AppCallbacks for Demo {
 fn window_attrs_for(profile: &ProfileConfig) -> WindowAttrs {
     let title = format!("next-gui Profile — {}", profile.name());
     let base = WindowAttrs::new(title, 880, 560);
-    match profile.suggested_present() {
-        SuggestedPresent::GpuSurface if GpuRenderer::adapter_available() => {
-            eprintln!("e24: Office + adapter → PresentBackend::GpuSurface");
-            base.with_gpu_surface()
+
+    #[cfg(feature = "gpu")]
+    {
+        match profile.suggested_present() {
+            SuggestedPresent::GpuSurface if GpuRenderer::adapter_available() => {
+                eprintln!("e24: Office + adapter → PresentBackend::GpuSurface");
+                base.with_gpu_surface()
+            }
+            SuggestedPresent::GpuSurface => {
+                eprintln!("e24: Office wants GpuSurface but no adapter → Softbuffer");
+                base
+            }
+            SuggestedPresent::Softbuffer => {
+                eprintln!("e24: Field / Softbuffer window");
+                base
+            }
         }
-        SuggestedPresent::GpuSurface => {
-            eprintln!("e24: Office wants GpuSurface but no adapter → Softbuffer");
-            base
-        }
-        SuggestedPresent::Softbuffer => {
-            eprintln!("e24: Field / Softbuffer window");
-            base
-        }
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = profile;
+        eprintln!("e24: Field Soft packaging — Softbuffer window (gpu feature off)");
+        base
     }
 }
 

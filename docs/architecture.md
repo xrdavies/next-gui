@@ -150,7 +150,7 @@ platform ─┼─ win_backend     （P6c Soft 骨架；运行时跟验）
 
 `profile` 模块负责：特性开关、性能预算、最低机型与降级策略（关特效、降帧、强制 soft、关 GPU）。应用源码与 DSL **不**按场景分叉成两套产品。
 
-**实现（P4）：** crate `next-gui-profile`（`ProfileConfig::{field,office,from_env}`）；设计见 [p4-design.md](p4-design.md)；演示 `cargo run -p e24_profile_dual`。
+**实现（P4）：** crate `next-gui-profile`（`ProfileConfig::{field,office,from_env}`）；设计见 [p4-design.md](p4-design.md)；演示 `cargo run -p e24_profile_dual`。Field Soft 裁剪：`./tools/ci/field-soft.sh` 与 CI job **field-soft** 证明 Soft 子集不链 `next-gui-render-gpu` / wgpu；`e24` 以 feature `gpu`（默认开）可选链接 GPU。
 
 **GPU 在架构中的定位：** 提升观感与动态内容绘制质量（流畅重绘、动画、图表），不是「炫技层」。Field 档可关闭而不改变声明式 / retained 语义。
 

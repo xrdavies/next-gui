@@ -101,7 +101,7 @@ cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 
 `e23_office_charts`：多瓦片 Chart + 独立 Gauge/Trend；无焦点 **Space** 切 Soft↔GPU。
 
-`e24_profile_dual`：Field / Office `ProfileConfig` 双档（可用 `NEXT_GUI_PROFILE=field`）。
+`e24_profile_dual`：Field / Office `ProfileConfig` 双档（可用 `NEXT_GUI_PROFILE=field`）。默认带 `gpu`；Field Soft 打包：`cargo run -p e24_profile_dual --no-default-features`。
 
 `e25_immediate_viewport`：retained 壳 + 局部 Immediate 工具面板；**Esc** 先退 Immediate 焦点。
 
@@ -141,6 +141,19 @@ cargo run -p e01_soft_window
 操作：左键点击色块换色；`Space` 轮换全部色块；`Esc` 退出。stderr 会打印每帧脏区面积。
 
 系统依赖（Debian/Ubuntu）：`libxkbcommon-x11-0`（以及可用的 X11/Wayland DISPLAY）。Rust **1.86+**（见 `rust-toolchain.toml`）。
+
+## CI
+
+CI workflow 定义在 [`tools/ci/github-actions-ci.yml`](tools/ci/github-actions-ci.yml)（复制到 `.github/workflows/ci.yml` 即可启用 Actions）。并行 job：
+
+| Job | 内容 |
+|-----|------|
+| **field-soft** | `./tools/ci/field-soft.sh` — Soft 包 + `e24 --no-default-features`，断言无 wgpu |
+| **workspace** | `cargo check` / `cargo test --workspace`（含 GPU；无 DISPLAY 时 GUI 测跳过） |
+| **platform-features** | `next-gui-platform` 的 `macos` / `windows` feature 类型检查 |
+| **clippy** | workspace clippy |
+
+本地 Field Soft 门控：`./tools/ci/field-soft.sh`。详见 [docs/p4-design.md](docs/p4-design.md) §5。
 
 ## 仓库
 

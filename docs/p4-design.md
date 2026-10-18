@@ -1,8 +1,8 @@
 # P4 设计：双档 Profile（Field / Office）
 
-> **状态：P4 完成骨架。** 对应 [roadmap.md](roadmap.md) P4；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §6。
+> **状态：P4 已完成（含 Field Soft CI 矩阵）。** 对应 [roadmap.md](roadmap.md) P4；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §6。
 >
-> 范围：`next-gui-profile` 配置层（特性开关 + 性能预算 + 降级）、示例 `e24_profile_dual` 同一 UI 在 Field ↔ Office 间切换；**不**分叉 `ui` / `scene` / `DrawCommand`。不含 Immediate（P5）、Windows / 触控（P6）、完整打包矩阵 CI。
+> 范围：`next-gui-profile` 配置层（特性开关 + 性能预算 + 降级）、示例 `e24_profile_dual` 同一 UI 在 Field ↔ Office 间切换；**不**分叉 `ui` / `scene` / `DrawCommand`。Field Soft 裁剪依赖由 `./tools/ci/field-soft.sh` 与 CI workflow（见 `tools/ci/github-actions-ci.yml`，启用后为 `.github/workflows/ci.yml`）**field-soft** job 门控。不含 Immediate（P5）、Windows / 触控（P6）实现细节（见各自文档）。
 
 ---
 
@@ -25,15 +25,15 @@
 | 降级 | `degrade(NoGpu)` → force Soft、关特效 |
 | 示例 | Space / 按钮切换档位；StatusBar 显示预算；Field 不尝试 GPU |
 | 测试 | `cargo test -p next-gui-profile` |
-| 编译 | `cargo build -p e24_profile_dual` |
+| 编译 | `cargo build -p e24_profile_dual`（默认 gpu）与 `--no-default-features`（Field Soft） |
+| Field Soft CI | `./tools/ci/field-soft.sh` 通过；树中无 wgpu |
 
 ### 1.3 本阶段明确不做
 
 - Immediate 视口（P5）
 - Windows 后端 / 触控映射（P6）
 - Cascader、自绘 IME 候选
-- 完整「Field 裁剪依赖」CI 矩阵（仅 Cargo features 意图 + 文档）
-- 把所有 Office 示例强制接 profile（轻接入：新示例 + 文档）
+- 把所有 Office 示例强制接 profile（轻接入：新示例 + 文档；Office 示例可继续硬依赖 GPU）
 
 ---
 
@@ -99,18 +99,49 @@ frame_interval() / chart_interval() / degrade() / toggle() / summary()
 cargo run -p e24_profile_dual
 NEXT_GUI_PROFILE=field cargo run -p e24_profile_dual
 NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual
+# Field Soft packaging (no wgpu):
+cargo run -p e24_profile_dual --no-default-features
+NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual --no-default-features
+./tools/ci/field-soft.sh
 ```
 
 ---
 
-## 5. 打包意图（文档级）
+## 5. Field Soft 打包与 CI 矩阵
 
 | 档 | 依赖意图 |
 |----|----------|
-| Field | 可 omit `next-gui-render-gpu` / wgpu；仅 Soft + platform Softbuffer |
+| Field | **omit** `next-gui-render-gpu` / wgpu；仅 Soft + platform Softbuffer |
 | Office | 带 `render-gpu`；启动时按 profile 试 native Surface |
 
-MVP 不强制 feature 门控所有示例；后续可将 Office 示例的 gpu 依赖标 optional。
+### 5.1 本地门控
+
+```bash
+./tools/ci/field-soft.sh
+```
+
+脚本会：
+
+1. 对 Field Soft 包集合（`profile` / `scene` / `layout` / `ui` / `text` / `render` / `render-soft` / `platform` / `immediate` + `e01`–`e04`）跑 `cargo tree`，断言树中 **无** `wgpu` / `next-gui-render-gpu`
+2. 对 `e24_profile_dual --no-default-features` 同样断言
+3. `cargo test` 上述 Soft 包；`cargo build -p e24_profile_dual --no-default-features`；并 `cargo check` 默认（含 gpu）路径
+
+### 5.2 `e24` 可选 GPU
+
+- 默认 features 含 `gpu` → 链接 `next-gui-render-gpu`（Office 演示不变）
+- Field Soft：`cargo run -p e24_profile_dual --no-default-features`（仅 Softbuffer + Soft）
+- QA：`NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual --no-default-features`（dump PPM 后退出）
+
+### 5.3 GitHub Actions（定义见 `tools/ci/github-actions-ci.yml`）
+
+| Job | 作用 |
+|-----|------|
+| **field-soft** | 跑 `./tools/ci/field-soft.sh` |
+| **workspace** | `cargo check` + `cargo test --workspace`（含 GPU；无 DISPLAY 时 GUI 测跳过） |
+| **platform-features** | `cargo check -p next-gui-platform --features macos` / `--features windows` |
+| **clippy** | `cargo clippy --workspace --all-targets` |
+
+Office 示例（`e05`、`e10`–`e26` 等）**不**强制去 GPU；矩阵只证明 Soft 子集 + 可选 e24 可裁剪。
 
 ---
 
