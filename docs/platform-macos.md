@@ -11,7 +11,8 @@
 | Product profile | **Office desktop only** |
 | Field (industrial / embedded) | **Not required** on macOS |
 | OS order | Linux (done) → Windows (later) → **macOS (Office)** |
-| Input for first pass | Pointer + keyboard (same as Linux P0); touch later |
+| Input for first pass | Pointer + keyboard + IME (same as Linux); `Event::Touch` stub (winit macOS does not emit touch); full HMI touch is P6 |
+| Clipboard | UTF-8 text via `WindowCtx::clipboard_*` (`arboard`) |
 | Full windowing | **Implemented** with `winit` + optional softbuffer; `PresentBackend::GpuSurface` supported (same as Linux); do not block Linux demos |
 
 macOS must implement the **same public platform contract** as Linux (`AppCallbacks`, `WindowAttrs`, `WindowCtx`, `Event`, `present` of XRGB8888). Upper layers (`scene` / `ui` / soft render) must not grow macOS-specific branches.
@@ -54,7 +55,7 @@ crates/next-gui-platform/
 ### 4.1 Contract (must match Linux)
 
 - [x] `pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError>`
-- [x] Deliver `Event::{CloseRequested, Resized, RedrawRequested, PointerMoved, PointerButton, PointerScroll, Key, Ime}`
+- [x] Deliver `Event::{CloseRequested, Resized, RedrawRequested, PointerMoved, PointerButton, PointerScroll, Key, Ime}` plus the `Event::Touch` stub
 - [x] Map mouse buttons, wheel/trackpad deltas, editing keys, characters, and modifiers like Linux (including Command for select-all)
 - [x] Enable system IME for focused TextInput; forward preedit/commit and caret coordinates
 - [x] `WindowCtx::present(width, height, &[u32] /* XRGB8888 */)` shows soft-rendered frames
@@ -79,11 +80,12 @@ crates/next-gui-platform/
 - [x] P0/P1 Office widgets and Chart use the shared retained UI and draw commands
 - [x] P4 Profile configuration and P5 optional Immediate viewport run without macOS-specific UI branches
 - [x] QA image output uses the ignored workspace `tmp/demo-shots` directory rather than a Linux-only absolute path
+- [x] UTF-8 clipboard text is available through `WindowCtx::clipboard_get_text` / `clipboard_set_text`
 
 ### 4.5 Remaining scope
 
 - Field / embedded profile
-- Touch
+- Full HMI touch mapping and gestures (the `Event::Touch` stub is present; P6 owns the mapping)
 - Explicit DPI policy, accessibility, and long-running industrial acceptance (P6)
 - Replacing Linux backend or renaming traits
 
@@ -123,7 +125,9 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 ## 6. Known gaps
 
 - Retina scale is currently handled as winit physical-pixel events; there is no explicit DPI policy yet.
-- Touch, clipboard, multi-window management, and accessibility remain future work shared with the other platforms.
+- **IME** is wired (same contract as Linux). **Clipboard** thin text API is available on `WindowCtx`.
+- **Touch:** `Event::Touch` / `TouchEvent` stubs exist and are forwarded when winit emits them; macOS winit currently does not emit touch. Full industrial touch mapping is P6.
+- Multi-window management and accessibility remain future work shared with the other platforms.
 - The shared backends still exit on Escape even after a popup or Immediate viewport consumes it; native GPU presentation has a color mismatch, DateTime popups can be obscured, and TextArea multiline/caret painting is incomplete. These are open Grok findings in the linked review, not missing macOS modules. The required clippy check also has existing failures.
 - The macOS review used an Apple Silicon host and a 1× display; Retina and mixed-scale display transitions have not been accepted.
 - The backend intentionally keeps the Linux event and presentation behavior; platform-specific refinements can land without changing the upper-layer contract.

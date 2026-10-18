@@ -133,7 +133,7 @@ pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformErr
 - 业务与 `scene` 只依赖上述 `Platform` trait，不直接依赖 winit 类型。  
 - Windows / macOS：同 trait，P0 可不实现（编译 feature `linux` 默认）。
 
-触控相关事件类型可在枚举中预留注释或 `#[non_exhaustive]`，P0 不产生。
+触控：`Event::Touch` / `TouchEvent` / `TouchPhase` 已预留；P0/当前阶段由 winit 转发但不做 HMI 映射（P6）。
 
 ---
 

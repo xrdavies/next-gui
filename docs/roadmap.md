@@ -11,7 +11,8 @@
 > **已完成骨架**（见 [p0-design.md](p0-design.md)、`examples/01_soft_window`）。
 
 - 窗口创建与基础生命周期（`platform`）；**先做 Linux 后端**
-- 输入：**指针 + 键盘**（触控接口预留，实现后补）
+- 输入：**指针 + 键盘**；触控为 `Event::Touch` stub（完整映射 P6）
+- 剪贴板：UTF-8 文本 API（`WindowCtx::clipboard_get_text` / `clipboard_set_text`）
 - retained 矩形树（最小 `scene` 节点模型）
 - CPU **软渲染**路径（`render` + `render-soft`）
 - **脏区**重绘（非每帧全屏无脑刷）
@@ -115,7 +116,7 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 
 ## P6 — 工业打磨
 
-- **触控**与工控按键映射（P0 未做，本阶段补齐）
+- **触控**与工控按键映射（`Event::Touch` stub 已有；本阶段补齐完整 HMI 映射）
 - 无障碍基线
 - 7×24 稳定性（泄漏、长时间运行）
 - 多分辨率 / DPI

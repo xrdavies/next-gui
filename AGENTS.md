@@ -18,6 +18,8 @@ Before changing anything:
 6. Read applicable `open`, `in_progress`, and `blocked` findings. Codex must also read
    all `fixed` findings, including those assigned to Grok, to verify their fixes.
 7. For platform work, read `docs/platform-macos.md` and the relevant design documents.
+   Clipboard text API is on `WindowCtx` (`clipboard_get_text` / `clipboard_set_text`);
+   touch is `Event::Touch` stubs only until P6 HMI mapping.
 
 The launcher or task prompt states the current role explicitly. The Codex script has a
 fixed Codex prompt; Grok uses its own launcher. No role environment variable is needed.
