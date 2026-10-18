@@ -2,6 +2,7 @@
 //!
 //! Controls:
 //! - Click **Increment** / **Reset** to update count (state → Text).
+//! - Tab / Shift+Tab: focus order (buttons included); Space / Enter: activate focused button.
 //! - Escape / close: quit.
 //!
 //! Stderr logs dirty area when a frame paints.
@@ -20,12 +21,12 @@
 //! to the interactive demo.
 
 use next_gui_platform::{
-    soak, AppCallbacks, Event, KeyCode, PointerButton, WindowAttrs, WindowCtx,
+    soak, AppCallbacks, Event, KeyCode, Modifiers, PointerButton, WindowAttrs, WindowCtx,
 };
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
-use next_gui_ui::{ColumnStyle, Ui, WidgetId};
+use next_gui_ui::{ColumnStyle, Ui, UiKey, WidgetId};
 use std::time::{Duration, Instant};
 
 const CLEAR: Color = Color {
@@ -50,6 +51,23 @@ struct Demo {
     soak_interval: Duration,
     last_soak_tick: Instant,
     last_rss_log: Instant,
+}
+
+
+fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
+    if matches!(key, KeyCode::Tab) {
+        return Some(if modifiers.shift {
+            UiKey::BackTab
+        } else {
+            UiKey::Tab
+        });
+    }
+    match key {
+        KeyCode::Enter => Some(UiKey::Enter),
+        KeyCode::Space => Some(UiKey::Space),
+        KeyCode::Escape => Some(UiKey::Escape),
+        _ => None,
+    }
 }
 
 impl Demo {
@@ -113,6 +131,21 @@ impl Demo {
         self.needs_paint = true;
     }
 
+    /// Shared by pointer `hit_widget` and keyboard `take_button_activate`.
+    fn apply_button(&mut self, id: WidgetId) -> bool {
+        if id == self.btn_inc {
+            self.count = self.count.saturating_add(1);
+            self.refresh_label();
+            true
+        } else if id == self.btn_reset {
+            self.count = 0;
+            self.refresh_label();
+            true
+        } else {
+            false
+        }
+    }
+
     fn soak_tick(&mut self) {
         if !self.soak {
             return;
@@ -163,7 +196,7 @@ impl AppCallbacks for Demo {
             ));
         } else {
             eprintln!(
-                "next-gui P1 counter ready ({}x{}). Click Increment/Reset; Esc quits.",
+                "next-gui P1 counter ready ({}x{}). Click or Tab+Space/Enter; Esc quits.",
                 w, h
             );
             ctx.set_title(&format!("next-gui P1 counter — {w}x{h}"));
@@ -188,24 +221,36 @@ impl AppCallbacks for Demo {
                 y,
                 ..
             } => {
-                if let Some(id) = self.ui.hit_widget(&self.scene, x as f32, y as f32) {
-                    if id == self.btn_inc {
-                        self.count = self.count.saturating_add(1);
-                        self.refresh_label();
-                        ctx.request_redraw();
-                    } else if id == self.btn_reset {
-                        self.count = 0;
-                        self.refresh_label();
+                let xf = x as f32;
+                let yf = y as f32;
+                // Focus button on press (returns false); click semantics stay on hit_widget.
+                let _ = self.ui.pointer_pressed(&mut self.scene, xf, yf);
+                if let Some(id) = self.ui.hit_widget(&self.scene, xf, yf) {
+                    if self.apply_button(id) {
                         ctx.request_redraw();
                     }
                 }
             }
             Event::Key {
-                key: KeyCode::Escape,
+                key,
                 pressed: true,
+                modifiers,
                 ..
             } => {
-                ctx.request_exit();
+                if let Some(ui_key) = map_key(key, modifiers) {
+                    if self.ui.key_input(ui_key) {
+                        if let Some(id) = self.ui.take_button_activate() {
+                            let _ = self.apply_button(id);
+                        }
+                        self.ui.sync(&mut self.scene);
+                        self.needs_paint = true;
+                        ctx.request_redraw();
+                        return;
+                    }
+                    if matches!(ui_key, UiKey::Escape) {
+                        ctx.request_exit();
+                    }
+                }
             }
             Event::RedrawRequested { .. } => {
                 self.soak_tick();

@@ -7,7 +7,8 @@
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
-//! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order.
+//! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
+//! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
 #![deny(missing_docs)]
 
@@ -2018,6 +2019,8 @@ pub struct Ui {
     open_popup: Option<WidgetId>,
     /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
     pending_menu_action: Option<(WidgetId, u64)>,
+    /// Last keyboard-activated Button; drained by [`Ui::take_button_activate`].
+    pending_button_activate: Option<WidgetId>,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2082,7 +2085,7 @@ pub enum UiKey {
     Tab,
     /// Shift+Tab (move focus backward).
     BackTab,
-    /// Space (toggle focused checkbox/switch/radio).
+    /// Space (toggle focused checkbox/switch/radio; activate focused Button).
     Space,
     /// Select-all in focused text input (Ctrl/Cmd+A).
     SelectAll,
@@ -2111,6 +2114,7 @@ impl Ui {
             focus: None,
             open_popup: None,
             pending_menu_action: None,
+            pending_button_activate: None,
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2582,8 +2586,10 @@ impl Ui {
                 self.pointer_tree_table(scene, id, x, y)
             }
             Some(Kind::Button { .. }) => {
-                self.focus = None;
-                false// let app handle button clicks via hit_widget
+                // Dual path: focus for Tab/Space/Enter; apps still activate via
+                // `hit_widget` on pointer (this returns false so click semantics stay).
+                self.focus = Some(id);
+                false
             }
             _ => {
                 self.focus = None;
@@ -2871,7 +2877,8 @@ impl Ui {
     fn kind_is_focusable(kind: &Kind) -> bool {
         matches!(
             kind,
-            Kind::TextInput { .. }
+            Kind::Button { .. }
+                | Kind::TextInput { .. }
                 | Kind::TextArea { .. }
                 | Kind::InputNumber { .. }
                 | Kind::Checkbox { .. }
@@ -2917,9 +2924,9 @@ impl Ui {
 
     /// Focusable widgets in stable DFS order over [`Ui`] roots (visual tree order).
     ///
-    /// Includes kinds that pointer click already focuses (inputs, toggles, data/
-    /// nav/industrial interactives). Buttons are **not** included (pointer clears
-    /// focus on them). See `docs/a11y-baseline.md`.
+    /// Includes Button (`tool_button` shares [`Kind::Button`]) plus kinds that
+    /// pointer click focuses (inputs, toggles, data/nav/industrial). See
+    /// `docs/a11y-baseline.md`.
     pub fn focusable_widgets(&self) -> Vec<WidgetId> {
         let mut out = Vec::new();
         for &root in &self.roots {
@@ -3526,6 +3533,10 @@ impl Ui {
             Some(Kind::Transfer { .. }) => self.key_transfer(id, key),
             Some(Kind::PropertyGrid { .. }) => self.key_property_grid(id, key),
             Some(Kind::TreeTable { .. }) => self.key_tree_table(id, key),
+            Some(Kind::Button { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+                self.pending_button_activate = Some(id);
+                true
+            }
             Some(Kind::Checkbox { .. }) if matches!(key, UiKey::Space) => {
                 if let Some(w) = self.widgets.get_mut(&id) {
                     if let Kind::Checkbox { checked, .. } = &mut w.kind {
@@ -4580,6 +4591,14 @@ impl Ui {
     /// Drain the last activated menu / context-menu item `(owner, item_id)`.
     pub fn take_menu_action(&mut self) -> Option<(WidgetId, u64)> {
         self.pending_menu_action.take()
+    }
+
+    /// Drain the last keyboard-activated Button (`Space` / `Enter` while focused).
+    ///
+    /// Pointer clicks are unchanged: apps keep using [`Ui::hit_widget`] after
+    /// [`Ui::pointer_pressed`] returns `false` for buttons.
+    pub fn take_button_activate(&mut self) -> Option<WidgetId> {
+        self.pending_button_activate.take()
     }
 
     /// Selected tab index.
@@ -15912,18 +15931,20 @@ mod tests {
     fn focusable_order_and_tab_wrap() {
         let mut ui = Ui::new();
         let mut a = WidgetId(0);
+        let mut btn = WidgetId(0);
         let mut b = WidgetId(0);
         let mut c = WidgetId(0);
         ui.column(ColumnStyle::default(), |col| {
             a = col.text_input("A");
-            col.button("skip"); // not focusable via pointer
+            btn = col.button("Go"); // Button participates in Tab order
             b = col.checkbox("B", false);
             c = col.switch("C", false);
         });
         let order = ui.focusable_widgets();
-        assert_eq!(order, vec![a, b, c], "DFS roots order; button excluded");
+        assert_eq!(order, vec![a, btn, b, c], "DFS roots order; button included");
         assert!(ui.focused().is_none());
         assert_eq!(ui.focus_next(), Some(a));
+        assert_eq!(ui.focus_next(), Some(btn));
         assert_eq!(ui.focus_next(), Some(b));
         assert_eq!(ui.focus_next(), Some(c));
         assert_eq!(ui.focus_next(), Some(a), "wrap forward");
@@ -15931,6 +15952,52 @@ mod tests {
         assert_eq!(ui.focus_prev(), Some(b));
         ui.set_focus(None);
         assert_eq!(ui.focus_prev(), Some(c), "no focus + prev → last");
+    }
+
+    #[test]
+    fn button_tab_reach_and_keyboard_activate() {
+        let mut ui = Ui::new();
+        let mut input = WidgetId(0);
+        let mut btn = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            input = col.text_input("x");
+            btn = col.button("Do it");
+        });
+        assert!(ui.key_input(UiKey::Tab));
+        assert_eq!(ui.focused(), Some(input));
+        assert!(ui.key_input(UiKey::Tab));
+        assert_eq!(ui.focused(), Some(btn));
+        assert!(ui.take_button_activate().is_none());
+        assert!(ui.key_input(UiKey::Space));
+        assert_eq!(ui.take_button_activate(), Some(btn));
+        assert!(ui.take_button_activate().is_none(), "drain once");
+        assert_eq!(ui.focused(), Some(btn));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.take_button_activate(), Some(btn));
+    }
+
+    #[test]
+    fn pointer_on_button_sets_focus_but_returns_false() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut btn = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 80.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                btn = col.button("Click");
+            },
+        );
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&btn).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        assert!(!ui.pointer_pressed(&mut scene, b.x + 4.0, b.y + 4.0));
+        assert_eq!(ui.focused(), Some(btn));
     }
 
     #[test]

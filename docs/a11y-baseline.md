@@ -7,13 +7,23 @@
 
 - **查询：** `Ui::focusable_widgets() -> Vec<WidgetId>`  
   稳定顺序：按 `Ui` **roots 声明顺序**，对每个根做 **DFS（先序）** 走容器 `children`（Column / Row / Toolbar / Panel / StatusBar / Splitter / ScrollArea / ContextMenu / Tabs / Badge / Tooltip / Form / Spin）。
-- **参与种类：** 与指针按下已会 `set_focus` 的种类一致：  
-  TextInput / TextArea / InputNumber / Checkbox / Radio / Switch / List / Tree / Table / Menu / Tabs / Select / TreeSelect / AlarmList / Slider / Segmented / Pagination / Collapse / DateTime / Transfer / PropertyGrid / TreeTable。  
-  **不含** Button（指针点击会清焦点）、Tag / Alert / Breadcrumb / ScrollArea 等。
+- **参与种类：** 与指针按下已会 `set_focus` 的种类一致，并含 **Button**（`tool_button` 同为 `Kind::Button`）：  
+  **Button** / TextInput / TextArea / InputNumber / Checkbox / Radio / Switch / List / Tree / Table / Menu / Tabs / Select / TreeSelect / AlarmList / Slider / Segmented / Pagination / Collapse / DateTime / Transfer / PropertyGrid / TreeTable。  
+  **不含** Tag / Alert / Breadcrumb / ScrollArea 等。
 - **移动：** `focus_next` / `focus_prev`（环绕；无焦点时 next→首、prev→末）。
 - **键盘：** `UiKey::Tab` / `UiKey::BackTab`（Shift+Tab）在 `key_input` **顶层**处理——不要求事先已有焦点；文本框不插入 Tab 字符。打开的 Modal / Drawer 在焦点落在其上时 **吸收** Tab/BackTab（焦点陷阱）。
 
 示例映射（见 `examples/12_office_inputs` 等）：`KeyCode::Tab` + `modifiers.shift` → `UiKey::BackTab`。
+
+### 1.1 Button：焦序 + 双路径激活
+
+| 路径 | 行为 |
+|------|------|
+| **指针** | `pointer_pressed` 在 Button 上 **设焦点** 并返回 `false`；应用仍用 `hit_widget` 处理点击语义（与改前一致）。 |
+| **键盘** | 焦点在 Button 时 `Space` / `Enter` → `key_input` 返回 true，并记下待激活 id；应用调用 `Ui::take_button_activate() -> Option<WidgetId>`（一次性 drain，类似 `take_menu_action`）。 |
+| **视觉** | Button 绘制暂无独立 focus 边框（避免重 chrome）；焦点仍参与焦序与键盘激活。 |
+
+`examples/02_counter`（及同类 Soft demo）在 `key_input` 之后 drain `take_button_activate`，与 `hit_widget` 点击共用同一套按钮逻辑。
 
 ## 2. 可访问名
 
@@ -30,16 +40,20 @@
 ## 3. 验收与单测
 
 - `accessible_name_override_and_button_fallback`
-- `focusable_order_and_tab_wrap`
+- `focusable_order_and_tab_wrap`（含 Button）
+- `button_tab_reach_and_keyboard_activate`
+- `pointer_on_button_sets_focus_but_returns_false`
 - `key_input_tab_moves_focus_without_prior_focus`
 - `key_input_tab_absorbed_by_modal_trap`
 
 ```bash
 cargo test -p next-gui-ui --lib accessible_name_override
 cargo test -p next-gui-ui --lib focusable_order
+cargo test -p next-gui-ui --lib button_tab_reach
+cargo test -p next-gui-ui --lib pointer_on_button
 cargo test -p next-gui-ui --lib key_input_tab
 ```
 
 ## 4. 后续（非 P6d）
 
-完整读屏遍历、平台 a11y 树同步、Button 纳入焦序（若产品需要与指针行为解耦）→ 另开阶段。
+完整读屏遍历、平台 a11y 树同步 → 另开阶段。Button 进焦序与键盘激活已在本基线上完成（见上 §1.1）。

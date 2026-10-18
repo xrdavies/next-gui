@@ -121,7 +121,7 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 > **P6a–P6e 已通**（见 [p6-design.md](p6-design.md)、[a11y-baseline.md](a11y-baseline.md)、[soak.md](soak.md)）。切片：**P6a** ✅ 触控 HMI → **P6b** ✅ DPI → **P6c** ✅ Windows Soft 骨架 → **P6d** ✅ a11y 基线 → **P6e** ✅ 7×24/soak；Windows / macOS Retina 运行时手工跟验为跟进项。
 
 - **触控** HMI：`Event::Touch` 保留；P6a 主触点合成 `PointerMoved` / `PointerButton`（`touch_synth`）；工控完整键表后补（`KeyCode::Other` 为扩展钩）
-- 无障碍基线（P6d ✅：焦序 + `accessible_name`；无 AT 总线）
+- 无障碍基线（P6d ✅：焦序 + `accessible_name`；Button 进焦序 + `take_button_activate`；无 AT 总线）
 - 7×24 稳定性（泄漏、长时间运行；P6e ✅：`NEXT_GUI_SOAK` + [soak.md](soak.md)）
 - 多分辨率 / DPI（P6b ✅：`scale_factor` + `dpi` 助手；契约默认物理）
 - **Windows** 平台后端（P6c ✅ Soft 骨架；运行时手工跟验）；macOS Office 首版已完成；DPI 契约已通，Retina 混缩手工验 / IME 打磨仍为跟进
@@ -130,4 +130,4 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 
 ## 建议顺序
 
-P0–P6 已通（**P6a–P6e**；见 [p6-design.md](p6-design.md)、[soak.md](soak.md)）。跟进：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验、Button 进焦序（可选）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行（非 P6 必达）：Office P2、控件进 `.ngui`、自绘 IME 候选。
+P0–P6 已通（**P6a–P6e**；见 [p6-design.md](p6-design.md)、[soak.md](soak.md)）。跟进：Windows 图形会话运行时 GUI 验、macOS Retina 混缩手工验。**Button 进焦序** ✅（`take_button_activate`；见 [a11y-baseline.md](a11y-baseline.md)）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行（非 P6 必达）：Office P2、控件进 `.ngui`、自绘 IME 候选。

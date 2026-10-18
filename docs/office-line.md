@@ -136,7 +136,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/24_profile_dual` — **P4**：Field/Office Profile 双档
 - `examples/25_immediate_viewport` — **P5**：retained 壳 + Immediate 工具面板
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P6b DPI 契约；P6c Windows Soft 骨架；P6d 无障碍基线；P6e soak；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：P6 切片已齐（含 [soak.md](soak.md)）；可选 Office P2 / `.ngui` 进复杂控件；跟进 Windows 运行时 / Retina 手工验。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P6b DPI 契约；P6c Windows Soft 骨架；P6d 无障碍基线；P6e soak；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：P6 切片已齐（含 [soak.md](soak.md)）；**Button 进焦序** ✅；可选 Office P2 / `.ngui` 进复杂控件；跟进 Windows 运行时 / Retina 手工验。
 
 ---
 
