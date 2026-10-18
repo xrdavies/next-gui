@@ -1,13 +1,14 @@
-//! Office P2a + P2b demo: `button_group` / `link` / `space` / `steps` /
-//! `statistic` / `result`.
+//! Office P2a–P2c demo: `button_group` / `link` / `space` / `steps` /
+//! `statistic` / `result` / `popover` / `popconfirm`.
 //!
-//! Tab focuses group / links / steps / result (when it has actions);
+//! Tab focuses group / links / steps / result / popover / popconfirm;
 //! ←/→ changes group or steps; Enter/Space on a link or result drains
-//! activate/action. Pointer uses the Button dual path for links
-//! (`hit_widget`). Space Soft↔GPU when nothing focused.
+//! activate/action; Enter/Space on popover/popconfirm toggles open.
+//! Pointer uses the Button dual path for links (`hit_widget`).
+//! Space Soft↔GPU when nothing focused.
 //!
-//! `NEXT_GUI_P2A_QA=1` or `NEXT_GUI_P2B_QA=1` dumps a Soft PPM after first
-//! paint (then exits — no hang without interaction).
+//! `NEXT_GUI_P2A_QA=1`, `NEXT_GUI_P2B_QA=1`, or `NEXT_GUI_P2C_QA=1` dumps a
+//! Soft PPM after first paint (then exits — no hang without interaction).
 
 use std::io::Write;
 
@@ -20,9 +21,9 @@ use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_ui::{
-    ButtonGroupStyle, ColumnStyle, LinkStyle, PanelStyle, ResultAction, ResultStatus, ResultStyle,
-    SpaceDirection, SpaceStyle, StatisticStyle, StepItem, StepsStyle, StatusBarStyle, ToolbarStyle,
-    Ui, UiKey, WidgetId,
+    ButtonGroupStyle, ColumnStyle, LinkStyle, PanelStyle, PopconfirmAction, PopconfirmStyle,
+    PopoverStyle, ResultAction, ResultStatus, ResultStyle, SpaceDirection, SpaceStyle,
+    StatisticStyle, StepItem, StepsStyle, StatusBarStyle, ToolbarStyle, Ui, UiKey, WidgetId,
 };
 
 const CLEAR: Color = Color {
@@ -133,8 +134,11 @@ struct Demo {
     link_help: WidgetId,
     steps: WidgetId,
     result: WidgetId,
+    popover: WidgetId,
+    popconfirm: WidgetId,
     clicks: u32,
     result_actions: u32,
+    popconfirm_actions: u32,
     qa_dumps: u32,
     qa_exit: bool,
 }
@@ -148,6 +152,8 @@ impl Demo {
         let mut link_help = WidgetId(0);
         let mut steps = WidgetId(0);
         let mut result = WidgetId(0);
+        let mut popover = WidgetId(0);
+        let mut popconfirm = WidgetId(0);
 
         ui.toolbar(
             ToolbarStyle {
@@ -156,10 +162,10 @@ impl Demo {
                 ..ToolbarStyle::default()
             },
             |bar| {
-                bar.text("Office P2a+P2b");
+                bar.text("Office P2a–P2c");
                 bar.spacer(12.0, 1.0);
                 bar.text_styled(
-                    "Tab · ←/→ group/steps · Enter link/result · Space Soft↔GPU",
+                    "Tab · ←/→ · Enter · Esc closes pop · Space Soft↔GPU",
                     Color::rgb(0x90, 0x98, 0xa4),
                     12.0,
                 );
@@ -278,8 +284,33 @@ impl Demo {
                     Some("View order"),
                     ResultStyle {
                         width: width as f32 - 64.0,
-                        height: 160.0,
+                        height: 140.0,
                         ..ResultStyle::default()
+                    },
+                );
+                panel.spacer(1.0, 12.0);
+                panel.text("P2c — popover / popconfirm (click trigger; Esc closes)");
+                panel.space(
+                    SpaceStyle {
+                        direction: SpaceDirection::Horizontal,
+                        gap: 16.0,
+                        width: width as f32 - 64.0,
+                        height: 40.0,
+                        cross_align: CrossAlign::Center,
+                        ..SpaceStyle::default()
+                    },
+                    |row| {
+                        popover = row.popover_titled(
+                            "Details",
+                            Some("Popover"),
+                            "Click-toggle bubble · below host",
+                            PopoverStyle::default(),
+                        );
+                        popconfirm = row.popconfirm(
+                            "Delete",
+                            "Remove this row permanently?",
+                            PopconfirmStyle::default(),
+                        );
                     },
                 );
             },
@@ -316,11 +347,15 @@ impl Demo {
             link_help,
             steps,
             result,
+            popover,
+            popconfirm,
             clicks: 0,
             result_actions: 0,
+            popconfirm_actions: 0,
             qa_dumps: 0,
             qa_exit: std::env::var_os("NEXT_GUI_P2A_QA").is_some()
-                || std::env::var_os("NEXT_GUI_P2B_QA").is_some(),
+                || std::env::var_os("NEXT_GUI_P2B_QA").is_some()
+                || std::env::var_os("NEXT_GUI_P2C_QA").is_some(),
         }
     }
 
@@ -335,9 +370,10 @@ impl Demo {
         self.ui.set_text(
             self.status,
             format!(
-                "range={sel} · step={step} · links={} · result={} · {} ({})",
+                "range={sel} · step={step} · links={} · result={} · pc={} · {} ({})",
                 self.clicks,
                 self.result_actions,
+                self.popconfirm_actions,
                 self.backend.name(),
                 self.backend.detail()
             ),
@@ -379,6 +415,22 @@ impl Demo {
                     ResultAction::Secondary => "secondary",
                 };
                 eprintln!("result → {name}");
+            }
+        }
+        if let Some((id, open)) = self.ui.take_popover_open_change() {
+            if id == self.popover {
+                eprintln!("popover open → {open}");
+            }
+        }
+        if let Some((id, action)) = self.ui.take_popconfirm_action() {
+            if id == self.popconfirm {
+                self.popconfirm_actions = self.popconfirm_actions.saturating_add(1);
+                let name = match action {
+                    PopconfirmAction::Confirm => "confirm",
+                    PopconfirmAction::Cancel => "cancel",
+                    PopconfirmAction::Dismiss => "dismiss",
+                };
+                eprintln!("popconfirm → {name}");
             }
         }
     }
@@ -456,6 +508,7 @@ impl Demo {
 impl AppCallbacks for Demo {
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>) {
         let (w, h) = ctx.size();
+        self.ui.set_viewport(w as f32, h as f32);
         let _ = self.window_backend;
         let _ = GpuRenderer::try_new(w, h, CLEAR).map(|gpu| {
             self.gpu_stash = Some(gpu);
@@ -469,6 +522,7 @@ impl AppCallbacks for Demo {
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event) {
         match event {
             Event::Resized { width, height, .. } => {
+                self.ui.set_viewport(width as f32, height as f32);
                 self.backend.resize(width, height);
                 if let Some(g) = self.gpu_stash.as_mut() {
                     g.resize(width, height);
@@ -559,7 +613,7 @@ impl AppCallbacks for Demo {
 }
 
 fn main() {
-    let attrs = WindowAttrs::new("next-gui Office P2", 720, 720);
+    let attrs = WindowAttrs::new("next-gui Office P2", 720, 860);
     let demo = Demo::new(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
     let result = next_gui_platform::macos::run(attrs, demo);

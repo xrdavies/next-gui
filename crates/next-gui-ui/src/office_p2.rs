@@ -1,7 +1,7 @@
-//! Office P2 styles: P2a (`button_group` / `link` / `space`) and P2b
-//! (`steps` / `statistic` / `result`).
+//! Office P2 styles: P2a (`button_group` / `link` / `space`), P2b
+//! (`steps` / `statistic` / `result`), and P2c (`popover` / `popconfirm`).
 //!
-//! See `docs/office-p2-design.md`. Cascader and P2c+ widgets stay out of this module.
+//! See `docs/office-p2-design.md`. Cascader and P2d+ widgets stay out of this module.
 
 use next_gui_layout::CrossAlign;
 use next_gui_scene::Color;
@@ -367,6 +367,130 @@ impl ResultStatus {
             Self::Success => Color::rgb(0x6a, 0xc0, 0x8a),
             Self::Warning => Color::rgb(0xe0, 0xb0, 0x40),
             Self::Error => Color::rgb(0xe0, 0x60, 0x60),
+        }
+    }
+}
+
+// ── P2c: popover / popconfirm ────────────────────────────────────────────────
+
+/// Style for [`crate::FlexBuilder::popover`] (click-toggle bubble below host).
+#[derive(Debug, Clone, Copy)]
+pub struct PopoverStyle {
+    /// Trigger button width.
+    pub width: f32,
+    /// Trigger button height.
+    pub height: f32,
+    /// Trigger label font size.
+    pub size: f32,
+    /// Popup title font size.
+    pub title_size: f32,
+    /// Popup body font size.
+    pub body_size: f32,
+    /// Max popup width (text not wrapped in MVP).
+    pub max_width: f32,
+    /// Inner padding of the popup panel.
+    pub padding: f32,
+    /// Gap between host bottom and popup top.
+    pub gap: f32,
+    /// Trigger text color.
+    pub trigger_fg: Color,
+    /// Trigger fill.
+    pub trigger_bg: Color,
+    /// Popup panel fill.
+    pub popup_bg: Color,
+    /// Title text color.
+    pub title_fg: Color,
+    /// Body text color.
+    pub body_fg: Color,
+}
+
+impl Default for PopoverStyle {
+    fn default() -> Self {
+        Self {
+            width: 120.0,
+            height: 32.0,
+            size: 13.0,
+            title_size: 13.0,
+            body_size: 12.0,
+            max_width: 280.0,
+            padding: 10.0,
+            gap: 6.0,
+            trigger_fg: Color::rgb(0xe8, 0xec, 0xf0),
+            trigger_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x34),
+            title_fg: Color::rgb(0xf0, 0xf2, 0xf6),
+            body_fg: Color::rgb(0xc0, 0xc4, 0xcc),
+        }
+    }
+}
+
+/// Which action closed a [`crate::FlexBuilder::popconfirm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopconfirmAction {
+    /// OK / Confirm button.
+    Confirm,
+    /// Cancel button.
+    Cancel,
+    /// Escape, outside click, or host toggle-close while open.
+    Dismiss,
+}
+
+/// Style for [`crate::FlexBuilder::popconfirm`] (confirm bubble below host).
+#[derive(Debug, Clone, Copy)]
+pub struct PopconfirmStyle {
+    /// Trigger button width.
+    pub width: f32,
+    /// Trigger button height.
+    pub height: f32,
+    /// Trigger / message / button font size.
+    pub size: f32,
+    /// Max popup width.
+    pub max_width: f32,
+    /// Inner padding of the popup panel.
+    pub padding: f32,
+    /// Gap between host bottom and popup top.
+    pub gap: f32,
+    /// Action button height.
+    pub action_height: f32,
+    /// Gap between OK and Cancel.
+    pub action_gap: f32,
+    /// Trigger text color.
+    pub trigger_fg: Color,
+    /// Trigger fill.
+    pub trigger_bg: Color,
+    /// Popup panel fill.
+    pub popup_bg: Color,
+    /// Message text color.
+    pub message_fg: Color,
+    /// Confirm button fill.
+    pub ok_bg: Color,
+    /// Confirm button text.
+    pub ok_fg: Color,
+    /// Cancel button fill.
+    pub cancel_bg: Color,
+    /// Cancel button text.
+    pub cancel_fg: Color,
+}
+
+impl Default for PopconfirmStyle {
+    fn default() -> Self {
+        Self {
+            width: 120.0,
+            height: 32.0,
+            size: 13.0,
+            max_width: 280.0,
+            padding: 12.0,
+            gap: 6.0,
+            action_height: 28.0,
+            action_gap: 8.0,
+            trigger_fg: Color::rgb(0xe8, 0xec, 0xf0),
+            trigger_bg: Color::rgb(0xa0, 0x40, 0x40),
+            popup_bg: Color::rgb(0x2a, 0x2a, 0x34),
+            message_fg: Color::rgb(0xe0, 0xe4, 0xec),
+            ok_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            ok_fg: Color::rgb(0xff, 0xff, 0xff),
+            cancel_bg: Color::rgb(0x3a, 0x3a, 0x44),
+            cancel_fg: Color::rgb(0xd0, 0xd4, 0xdc),
         }
     }
 }

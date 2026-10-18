@@ -55,15 +55,15 @@
 | [docs/a11y-baseline.md](docs/a11y-baseline.md) | P6d 无障碍基线（焦序 / 可访问名） |
 | [docs/soak.md](docs/soak.md) | P6e 7×24 / 泄漏 / soak 探针 |
 | [docs/office-line.md](docs/office-line.md) | Office 线：布局/控件加厚、原生 Surface、P0/P1/Chart（P4/P5 已另文落地） |
-| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 / P1 / Chart 已齐；**P2a/P2b** 已落地；Cascader 仍不进 P1） |
-| [docs/office-p2-design.md](docs/office-p2-design.md) | Office P2 控件切片（≠ 路线图 P2 CJK）；P2a/P2b 已通 |
+| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 / P1 / Chart 已齐；**P2a–P2c** 已落地；Cascader 仍不进 P1） |
+| [docs/office-p2-design.md](docs/office-p2-design.md) | Office P2 控件切片（≠ 路线图 P2 CJK）；P2a–P2c 已通 |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 | [docs/platform-windows.md](docs/platform-windows.md) | Windows Soft 骨架（P6c）与已知缺口 |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Grok/Codex 跨机器交接、review 协议与 macOS 定时任务 |
 
 ## 状态
 
-**需求与架构已确认；P0–P6 已通（含 Office 加厚、P4 Profile、P5 Immediate、P6 工业打磨）。** Office P0 / P1（rest + deferred）与 Chart 已齐；**Office P2a/P2b**（含 `steps` / `statistic` / `result`）已通（[docs/office-p2-design.md](docs/office-p2-design.md)、`e26`）；macOS Office 平台首版已通；**P6c–P6e** 已通。跟进：Office P2c、Windows 运行时 GUI 验、Retina 手工验等。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
+**需求与架构已确认；P0–P6 已通（含 Office 加厚、P4 Profile、P5 Immediate、P6 工业打磨）。** Office P0 / P1（rest + deferred）与 Chart 已齐；**Office P2a–P2c**（含 `popover` / `popconfirm`）已通（[docs/office-p2-design.md](docs/office-p2-design.md)、`e26`）；macOS Office 平台首版已通；**P6c–P6e** 已通。跟进：Office P2d、Windows 运行时 GUI 验、Retina 手工验等。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
 
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
@@ -79,7 +79,7 @@ cargo run -p e22_office_p1_deferred                        # P1 deferred: DateTi
 cargo run -p e23_office_charts                             # 增强: 多瓦片 Chart + Gauge/Trend
 cargo run -p e24_profile_dual                              # P4: Field/Office Profile
 cargo run -p e25_immediate_viewport                        # P5: retained 壳 + Immediate 视口
-cargo run -p e26_office_p2                                 # Office P2a+P2b: group/link/space + steps/statistic/result
+cargo run -p e26_office_p2                                 # Office P2a–P2c: + popover/popconfirm
 cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 ```
 

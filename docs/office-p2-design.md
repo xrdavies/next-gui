@@ -2,7 +2,7 @@
 
 > **勿与 [p2-design.md](p2-design.md)（路线图 P2：CJK / 文本引擎）混淆。** 本文仅覆盖 [office-widget-catalog.md](office-widget-catalog.md) §6.2 的 Office 低频控件。
 
-**状态：P2a ✅ · P2b ✅**（`button_group` / `link` / `space` / `steps` / `statistic` / `result`；示例 `e26_office_p2`）。后续切片见下。
+**状态：P2a ✅ · P2b ✅ · P2c ✅**（`button_group` / `link` / `space` / `steps` / `statistic` / `result` / `popover` / `popconfirm`；示例 `e26_office_p2`）。后续切片见下。
 
 配套：[office-line.md](office-line.md)、[office-widget-catalog.md](office-widget-catalog.md)、[roadmap.md](roadmap.md)、[a11y-baseline.md](a11y-baseline.md)。
 
@@ -33,7 +33,7 @@
 |------|------|------|
 | **P2a** ✅ | `button_group`、`link`、`space` | 薄、无弹出层 |
 | **P2b** ✅ | `steps`、`statistic`、`result` | 展示向；无文件/色板 |
-| **P2c** | `popover`、`popconfirm` | 轻量浮层（复用 overlay 约定） |
+| **P2c** ✅ | `popover`、`popconfirm` | 轻量浮层（复用 `open_popup` / overlay） |
 | **P2d** | `upload`、`color_picker`、`autocomplete` | 录入增强；文件对话框可 stub |
 | **P2e** | `grid`、`timeline`、`calendar`、`image`、`config_provider` | 布局/媒体/主题入口 |
 
@@ -123,17 +123,57 @@
 
 ---
 
-## 8. 实现落点
+## 8. P2c 契约
 
-- 样式 / 方向 / `StepItem` / `ResultStatus`：`crates/next-gui-ui/src/office_p2.rs`
-- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（`ButtonGroup`、`Link`、`Steps`、`Statistic`、`Result`）
+### 8.1 `popover`
+
+- **语义：** 宿主触发器 + 下方气泡（可选标题 + 正文）；**点击切换**开合（Tooltip 已覆盖悬停）。
+- **关闭：** 再点宿主、点外侧、Escape；走既有 `open_popup` / overlay。
+- **放置：** 默认宿主底边下方（`gap`）；右溢出时向左夹紧到 viewport。
+- **焦点：** 宿主进 Tab 序；Space/Enter 切换开合；**无**完整 focus trap。
+- **状态：** `popover_is_open` / `set_popover_open`；`take_popover_open_change() -> Option<(WidgetId, bool)>`。
+- **API：** `ui.popover(trigger, body, PopoverStyle)`；`popover_titled(trigger, title, body, style)`。
+- **内容：** MVP 纯文本；无富 HTML / 任意 children builder。
+
+### 8.2 `popconfirm`
+
+- **语义：** 确认气泡——触发器 + 文案 + OK / Cancel。
+- **动作：**
+  - Confirm（OK）→ `take_popconfirm_action(Confirm)` 并关闭；
+  - Cancel 按钮 → `Cancel` 并关闭；
+  - Escape / 外侧点击 / 宿主再点关闭 → `Dismiss` 并关闭。
+- **焦点：** 宿主进 Tab 序；Space/Enter 切换开合。
+- **API：** `ui.popconfirm(trigger, message, PopconfirmStyle)`（默认 OK/Cancel）；`popconfirm_labeled(..., ok, cancel, style)`。
+- **状态：** `popconfirm_is_open` / `set_popconfirm_open`；`take_popconfirm_action() -> Option<(WidgetId, PopconfirmAction)>`。
+
+---
+
+## 9. P2c 验收
+
+| 项 | 通过样子 |
+|----|----------|
+| API | `popover` / `popover_titled` / `popconfirm` / `popconfirm_labeled` 可在 `FlexBuilder` 中声明 |
+| Popover | 点击切换；外侧 / Esc 关闭；`take_popover_open_change` 可排空 |
+| Popconfirm | OK→Confirm、Cancel→Cancel、Esc/外侧→Dismiss；`take_popconfirm_action` 可排空 |
+| Overlay | 复用 `ensure_overlay_host` / `open_popup`；不另起浮层系统 |
+| 测试 | `office_p2c_*` 绿；不依赖 DISPLAY |
+| 示例 | `e26_office_p2` 含 P2c 区；`NEXT_GUI_P2C_QA=1` 可 dump；无 DISPLAY 不挂死 |
+| 文档 | 本文 + catalog §9 + office-line / roadmap / README 同步 |
+
+---
+
+## 10. 实现落点
+
+- 样式 / `StepItem` / `ResultStatus` / `PopconfirmAction`：`crates/next-gui-ui/src/office_p2.rs`
+- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（含 `Popover`、`Popconfirm`）
 - 示例：`examples/26_office_p2`
 
 ---
 
-## 9. 修订记录
+## 11. 修订记录
 
 | 日期 | 说明 |
 |------|------|
 | 2026-10-19 | 初稿 + **P2a 落地**：button_group / link / space + `e26_office_p2`。 |
 | 2026-10-19 | **P2b 落地**：steps / statistic / result；契约 §6–7；下一步 P2c。 |
+| 2026-10-19 | **P2c 落地**：popover / popconfirm；契约 §8–9；下一步 P2d。 |
