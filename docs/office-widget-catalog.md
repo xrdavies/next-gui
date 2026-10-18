@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）；实现侧 P0 / P1（含 rest + deferred）/ Chart / P4 Profile 已齐（2026-10-19 文档同步）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主。Cascader 仍不进 P1（见 §10）。下一步产品向见 [roadmap.md](roadmap.md) **P6**；Office P2 为可选加厚。
+> **状态：已确认（2026-10-17）；实现侧 P0 / P1（含 rest + deferred）/ Chart / P4 Profile / **Office P2a+P2b** 已齐。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主。Cascader 仍不进 P1（见 §10）。下一步产品向见 [roadmap.md](roadmap.md)；Office P2c+ 为可选加厚。
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -137,7 +137,7 @@
 | `tabs` | 标签页 | Y | Y | Y | **P0** | 多文档/多配置页 |
 | `breadcrumb` | 面包屑 | Y | Y | Y | P1 | 厂站路径导航 |
 | `pagination` | 分页 | Y | Y | Y | P1 | 大表；可与虚拟化二选一策略 |
-| `steps` | 步骤条 | Y | Y | Y | P2 | 向导式配置 |
+| `steps` | 步骤条 | Y | Y | Y | **P2b·已有** | 向导式配置；见 office-p2-design |
 | `anchor` | 页内锚点 | Y | Y | - | **范围外** | 长文档 Web 页 |
 | `bottom_nav` | 底部导航 | - | - | Y | **范围外** | 移动端 |
 | `speed_dial` | 速度拨号 | - | - | Y | **范围外** | 同 FAB |
@@ -181,7 +181,7 @@
 | `empty` | 空状态 | Y | Y | - | P1 | |
 | `collapse` | 折叠面板 | Y | Y | Y(Accord.) | P1 | 属性分组 |
 | `descriptions` | 描述列表 | Y | Y | - | P1 | 只读详情；近 property_grid |
-| `statistic` | 统计数值 | Y | Y | - | P2 | KPI 卡片 |
+| `statistic` | 统计数值 | Y | Y | - | **P2b·已有** | KPI 卡片；见 office-p2-design |
 | `timeline` | 时间轴 | Y | Y | Y | P2 | 事件流；告警可专用控件 |
 | `calendar` | 日历 | Y | Y | ~(X) | P2 | |
 | `image` | 图片 | Y | Y | ~ | P2 | 示意图/快照 |
@@ -200,7 +200,7 @@
 | `drawer` | 抽屉 | Y | Y | Y | P1 | 侧滑配置 |
 | `notification` / `message` | 通知/消息 | Y | Y | Y(Snack) | P1 | 全局队列；勿滥动画 |
 | `popconfirm` | 气泡确认 | Y | Y | - | P2 | 可用 modal 替代 |
-| `result` | 结果页 | Y | Y | - | P2 | |
+| `result` | 结果页 | Y | Y | - | **P2b·已有** | 见 office-p2-design |
 | `spin` / `loading` | 加载中 | Y | Y | Y | P1 | 局部遮罩 |
 | `skeleton` | 骨架屏 | Y | Y | Y | **范围外** | Web 首屏占位；本地应用次要 |
 | `watermark` | 水印 | Y | Y | - | **范围外** | 合规场景极少且可用层叠自行做 |
@@ -278,8 +278,9 @@
 | 已实现（P1 deferred 切片） | `datetime`，`transfer`，`property_grid`，`tree_table`（`examples/22_office_p1_deferred`） |
 | 已实现（Office 增强） | `chart` 多瓦片面板（共享 Gauge/Trend 光栅；`examples/23_office_charts`） |
 | 已实现（Office P2a） | `button_group`，`link`，`space`（Row/Column 糖衣；`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
+| 已实现（Office P2b） | `steps`，`statistic`，`result`（`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 刻意不做 / P2 可选 | Cascader（不进 P1；层级选择仅 TreeSelect） |
-| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；Office P2b+（`steps` / `statistic` / …，见 §6.2 / office-p2-design） |
+| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；Office P2c+（`popover` / `popconfirm` / …，见 §6.2 / office-p2-design） |
 | 已实现但非控件目录项 | P4 `next-gui-profile`（见 §Profile）、P5 Immediate 视口（`e25`）；剪贴板 / 触控 stub 属 platform |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
@@ -324,3 +325,4 @@
 | 2026-10-18 | **P4 Profile：** `next-gui-profile` + `e24_profile_dual`；非控件配置层；Cascader/自绘 IME 仍后置。 |
 | 2026-10-19 | **文档同步：** §9 去掉已落地的 Immediate/Profile「未实现」表述；状态栏对齐 P0–P5 / Chart 已齐；Cascader 仍不进 P1。 |
 | 2026-10-19 | **Office P2a：** `button_group` / `link` / `space` + `e26_office_p2`；设计 [office-p2-design.md](office-p2-design.md)；不覆盖路线图 P2（CJK）。 |
+| 2026-10-19 | **Office P2b：** `steps` / `statistic` / `result` + `e26` 扩展；下一步 P2c（popover/popconfirm）。 |

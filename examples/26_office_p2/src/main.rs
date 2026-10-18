@@ -1,11 +1,13 @@
-//! Office P2a demo: `button_group`, `link`, `space`.
+//! Office P2a + P2b demo: `button_group` / `link` / `space` / `steps` /
+//! `statistic` / `result`.
 //!
-//! Tab focuses the group / links; ←/→ changes group selection; Enter/Space on a
-//! link drains `take_link_activate`. Pointer uses the Button dual path for links
+//! Tab focuses group / links / steps / result (when it has actions);
+//! ←/→ changes group or steps; Enter/Space on a link or result drains
+//! activate/action. Pointer uses the Button dual path for links
 //! (`hit_widget`). Space Soft↔GPU when nothing focused.
 //!
-//! `NEXT_GUI_P2A_QA=1` dumps a Soft PPM after first paint (then exits via
-//! request_exit after dump — no hang without interaction).
+//! `NEXT_GUI_P2A_QA=1` or `NEXT_GUI_P2B_QA=1` dumps a Soft PPM after first
+//! paint (then exits — no hang without interaction).
 
 use std::io::Write;
 
@@ -18,8 +20,9 @@ use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_ui::{
-    ButtonGroupStyle, ColumnStyle, LinkStyle, PanelStyle, SpaceDirection, SpaceStyle,
-    StatusBarStyle, ToolbarStyle, Ui, UiKey, WidgetId,
+    ButtonGroupStyle, ColumnStyle, LinkStyle, PanelStyle, ResultAction, ResultStatus, ResultStyle,
+    SpaceDirection, SpaceStyle, StatisticStyle, StepItem, StepsStyle, StatusBarStyle, ToolbarStyle,
+    Ui, UiKey, WidgetId,
 };
 
 const CLEAR: Color = Color {
@@ -128,7 +131,10 @@ struct Demo {
     group: WidgetId,
     link_docs: WidgetId,
     link_help: WidgetId,
+    steps: WidgetId,
+    result: WidgetId,
     clicks: u32,
+    result_actions: u32,
     qa_dumps: u32,
     qa_exit: bool,
 }
@@ -140,6 +146,8 @@ impl Demo {
         let mut group = WidgetId(0);
         let mut link_docs = WidgetId(0);
         let mut link_help = WidgetId(0);
+        let mut steps = WidgetId(0);
+        let mut result = WidgetId(0);
 
         ui.toolbar(
             ToolbarStyle {
@@ -148,10 +156,10 @@ impl Demo {
                 ..ToolbarStyle::default()
             },
             |bar| {
-                bar.text("Office P2a");
+                bar.text("Office P2a+P2b");
                 bar.spacer(12.0, 1.0);
                 bar.text_styled(
-                    "Tab · ←/→ group · Enter link · Space Soft↔GPU",
+                    "Tab · ←/→ group/steps · Enter link/result · Space Soft↔GPU",
                     Color::rgb(0x90, 0x98, 0xa4),
                     12.0,
                 );
@@ -159,7 +167,7 @@ impl Demo {
         );
 
         ui.panel(
-            "P2a widgets",
+            "P2 widgets",
             PanelStyle {
                 x: 16.0,
                 y: 56.0,
@@ -168,14 +176,13 @@ impl Demo {
                 ..PanelStyle::default()
             },
             |panel| {
-                panel.text("button_group (exclusive, one focus)");
+                panel.text("P2a — button_group / link / space");
                 group = panel.button_group(
                     ["Day", "Week", "Month"],
                     Some(0),
                     ButtonGroupStyle::default(),
                 );
-                panel.spacer(1.0, 12.0);
-                panel.text("space (horizontal gap sugar over Row)");
+                panel.spacer(1.0, 8.0);
                 panel.space(
                     SpaceStyle {
                         direction: SpaceDirection::Horizontal,
@@ -199,20 +206,80 @@ impl Demo {
                     },
                 );
                 panel.spacer(1.0, 12.0);
-                panel.text("space (vertical sugar over Column)");
+                panel.text("P2b — steps");
+                steps = panel.steps(
+                    [
+                        StepItem::new("Plan"),
+                        StepItem::with_description("Build", "implement"),
+                        StepItem::new("Ship"),
+                    ],
+                    1,
+                    StepsStyle {
+                        width: width as f32 - 64.0,
+                        height: 64.0,
+                        clickable: true,
+                        ..StepsStyle::default()
+                    },
+                );
+                panel.spacer(1.0, 12.0);
+                panel.text("P2b — statistic (not focusable)");
                 panel.space(
                     SpaceStyle {
-                        direction: SpaceDirection::Vertical,
-                        gap: 8.0,
+                        direction: SpaceDirection::Horizontal,
+                        gap: 12.0,
                         width: width as f32 - 64.0,
-                        height: 100.0,
+                        height: 96.0,
                         cross_align: CrossAlign::Start,
                         ..SpaceStyle::default()
                     },
-                    |col| {
-                        col.text("Stacked with gap=8");
-                        col.text("Second line");
-                        col.link("Nested link");
+                    |row| {
+                        row.statistic_full(
+                            "Users",
+                            "1,280",
+                            None::<&str>,
+                            None::<&str>,
+                            Some("+12% MoM"),
+                            StatisticStyle {
+                                width: 140.0,
+                                height: 88.0,
+                                ..StatisticStyle::default()
+                            },
+                        );
+                        row.statistic_full(
+                            "Revenue",
+                            "42",
+                            Some("¥"),
+                            Some("k"),
+                            Some("+3.1%"),
+                            StatisticStyle {
+                                width: 140.0,
+                                height: 88.0,
+                                ..StatisticStyle::default()
+                            },
+                        );
+                        row.statistic(
+                            "Latency",
+                            "18ms",
+                            StatisticStyle {
+                                width: 140.0,
+                                height: 88.0,
+                                ..StatisticStyle::default()
+                            },
+                        );
+                    },
+                );
+                panel.spacer(1.0, 12.0);
+                panel.text("P2b — result");
+                result = panel.result(
+                    ResultStatus::Success,
+                    "Order placed",
+                    Some("Confirmation sent to your inbox."),
+                    Some("Back home"),
+                    Some("View order"),
+                    ResultStyle {
+                        width: width as f32 - 64.0,
+                        height: 160.0,
+                        ..ResultStyle::default()
                     },
                 );
             },
@@ -247,9 +314,13 @@ impl Demo {
             group,
             link_docs,
             link_help,
+            steps,
+            result,
             clicks: 0,
+            result_actions: 0,
             qa_dumps: 0,
-            qa_exit: std::env::var_os("NEXT_GUI_P2A_QA").is_some(),
+            qa_exit: std::env::var_os("NEXT_GUI_P2A_QA").is_some()
+                || std::env::var_os("NEXT_GUI_P2B_QA").is_some(),
         }
     }
 
@@ -260,11 +331,13 @@ impl Demo {
             .flatten()
             .map(|i| ["Day", "Week", "Month"][i])
             .unwrap_or("(none)");
+        let step = self.ui.steps_current(self.steps).unwrap_or(0);
         self.ui.set_text(
             self.status,
             format!(
-                "range={sel} · links={} · {} ({})",
+                "range={sel} · step={step} · links={} · result={} · {} ({})",
                 self.clicks,
+                self.result_actions,
                 self.backend.name(),
                 self.backend.detail()
             ),
@@ -292,6 +365,21 @@ impl Demo {
         if let Some(id) = self.ui.take_link_activate() {
             self.clicks = self.clicks.saturating_add(1);
             eprintln!("link activate → {}", id.raw());
+        }
+        if let Some((id, cur)) = self.ui.take_steps_change() {
+            if id == self.steps {
+                eprintln!("steps → {cur}");
+            }
+        }
+        if let Some((id, action)) = self.ui.take_result_action() {
+            if id == self.result {
+                self.result_actions = self.result_actions.saturating_add(1);
+                let name = match action {
+                    ResultAction::Primary => "primary",
+                    ResultAction::Secondary => "secondary",
+                };
+                eprintln!("result → {name}");
+            }
         }
     }
 
@@ -374,7 +462,7 @@ impl AppCallbacks for Demo {
         });
         self.refresh_status();
         self.scene.mark_full_dirty(w as f32, h as f32);
-        ctx.set_title(&format!("next-gui Office P2a — {}", self.backend.name()));
+        ctx.set_title(&format!("next-gui Office P2 — {}", self.backend.name()));
         ctx.request_redraw();
     }
 
@@ -439,7 +527,7 @@ impl AppCallbacks for Demo {
                         let (w, h) = ctx.size();
                         self.toggle(w, h);
                         ctx.set_title(&format!(
-                            "next-gui Office P2a — {}",
+                            "next-gui Office P2 — {}",
                             self.backend.name()
                         ));
                         ctx.request_redraw();
@@ -471,7 +559,7 @@ impl AppCallbacks for Demo {
 }
 
 fn main() {
-    let attrs = WindowAttrs::new("next-gui Office P2a", 720, 520);
+    let attrs = WindowAttrs::new("next-gui Office P2", 720, 720);
     let demo = Demo::new(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
     let result = next_gui_platform::macos::run(attrs, demo);

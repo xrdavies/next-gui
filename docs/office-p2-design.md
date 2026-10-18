@@ -2,7 +2,7 @@
 
 > **勿与 [p2-design.md](p2-design.md)（路线图 P2：CJK / 文本引擎）混淆。** 本文仅覆盖 [office-widget-catalog.md](office-widget-catalog.md) §6.2 的 Office 低频控件。
 
-**状态：P2a 已落地**（`button_group` / `link` / `space`；示例 `e26_office_p2`）。后续切片见下。
+**状态：P2a ✅ · P2b ✅**（`button_group` / `link` / `space` / `steps` / `statistic` / `result`；示例 `e26_office_p2`）。后续切片见下。
 
 配套：[office-line.md](office-line.md)、[office-widget-catalog.md](office-widget-catalog.md)、[roadmap.md](roadmap.md)、[a11y-baseline.md](a11y-baseline.md)。
 
@@ -31,8 +31,8 @@
 
 | 切片 | 控件 | 说明 |
 |------|------|------|
-| **P2a** ✅ | `button_group`、`link`、`space` | 薄、无弹出层；本切片 |
-| **P2b** | `steps`、`statistic`、`result` | 展示向；无文件/色板 |
+| **P2a** ✅ | `button_group`、`link`、`space` | 薄、无弹出层 |
+| **P2b** ✅ | `steps`、`statistic`、`result` | 展示向；无文件/色板 |
 | **P2c** | `popover`、`popconfirm` | 轻量浮层（复用 overlay 约定） |
 | **P2d** | `upload`、`color_picker`、`autocomplete` | 录入增强；文件对话框可 stub |
 | **P2e** | `grid`、`timeline`、`calendar`、`image`、`config_provider` | 布局/媒体/主题入口 |
@@ -80,16 +80,60 @@
 
 ---
 
-## 6. 实现落点
+## 6. P2b 契约
 
-- 样式 / 方向：`crates/next-gui-ui/src/office_p2.rs`
-- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（`ButtonGroup`、`Link`）
+### 6.1 `steps`
+
+- **语义：** 向导步骤条；标题 + 可选短描述；`current: usize`（0-based）。
+- **状态色：** `i < current` = done，`i == current` = process，其后 = wait。
+- **方向：** `StepsDirection::Horizontal`（默认）或 `Vertical`。
+- **焦点：** 整条一个 Tab 停点；水平 Left/Right（兼 Up/Down），垂直 Up/Down（兼 Left/Right）改 `current`。
+- **指针：** `StepsStyle::clickable`（默认 true）时点标记/槽位改选；`take_steps_change() -> Option<(WidgetId, usize)>`。
+- **API：** `ui.steps(items, current, StepsStyle) -> WidgetId`；`items` 为 `StepItem`（`title` + `Option<description>`）；`steps_current` / `set_steps_current`。
+
+### 6.2 `statistic`
+
+- **语义：** KPI 块——标题 + 数值字符串；可选 prefix / suffix / hint（delta）。
+- **焦点：** **不进 Tab 序**（纯展示）。
+- **API：** `ui.statistic(title, value, StatisticStyle)`；`statistic_full(..., prefix, suffix, hint, style)`。
+- **a11y：** `accessible_name` 回落为 `"title: value"`（或其一非空时的单侧）。
+
+### 6.3 `result`
+
+- **语义：** 结果页块——`ResultStatus`（Success / Info / Warning / Error）+ 标题 + 可选副标题 + 可选主/次操作文案。
+- **焦点：** **有任一操作文案时** Result 本身进 Tab 序（操作是宿主上的 hit 区，无独立子 Widget）；无操作时不进焦序。
+- **键盘：** 聚焦时 Space/Enter → Primary（若无 Primary 则 Secondary）；`take_result_action() -> Option<(WidgetId, ResultAction)>`。
+- **指针：** 点主/次按钮矩形 → 对应 `ResultAction`。
+- **外观：** Soft 友好（状态字标 + 居中标题/副标题 + 右下操作钮；复用 Empty/Alert 色调）。
+- **API：** `ui.result(status, title, subtitle, primary_action, secondary_action, ResultStyle)`。
+
+---
+
+## 7. P2b 验收
+
+| 项 | 通过样子 |
+|----|----------|
+| API | `steps` / `statistic` / `statistic_full` / `result` 可在 `FlexBuilder` 中声明 |
+| Steps | 键盘与（clickable）指针改 `current`；`take_steps_change` 可排空 |
+| Statistic | 挂载可画；不在 `focusable_widgets` |
+| Result | 有操作时 Tab 可达；Space/Enter → Primary；指针分主/次；`take_result_action` 可排空 |
+| 测试 | `office_p2b_*` 绿；不依赖 DISPLAY |
+| 示例 | `e26_office_p2` 含 P2b 区；`NEXT_GUI_P2B_QA=1` 可 dump；无 DISPLAY 不挂死 |
+| 文档 | 本文 + catalog §9 + office-line / roadmap / README 同步 |
+
+---
+
+## 8. 实现落点
+
+- 样式 / 方向 / `StepItem` / `ResultStatus`：`crates/next-gui-ui/src/office_p2.rs`
+- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（`ButtonGroup`、`Link`、`Steps`、`Statistic`、`Result`）
 - 示例：`examples/26_office_p2`
 
 ---
 
-## 7. 修订记录
+## 9. 修订记录
 
 | 日期 | 说明 |
 |------|------|
 | 2026-10-19 | 初稿 + **P2a 落地**：button_group / link / space + `e26_office_p2`。 |
+| 2026-10-19 | **P2b 落地**：steps / statistic / result；契约 §6–7；下一步 P2c。 |

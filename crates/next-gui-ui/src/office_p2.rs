@@ -1,6 +1,7 @@
-//! Office P2a styles: `button_group`, `link`, `space`.
+//! Office P2 styles: P2a (`button_group` / `link` / `space`) and P2b
+//! (`steps` / `statistic` / `result`).
 //!
-//! See `docs/office-p2-design.md`. Cascader and P2b+ widgets stay out of this module.
+//! See `docs/office-p2-design.md`. Cascader and P2c+ widgets stay out of this module.
 
 use next_gui_layout::CrossAlign;
 use next_gui_scene::Color;
@@ -117,6 +118,255 @@ impl Default for LinkStyle {
             size: 14.0,
             fg: Color::rgb(0x6a, 0xb0, 0xf0),
             underline: true,
+        }
+    }
+}
+
+// ── P2b: steps / statistic / result ──────────────────────────────────────────
+
+/// One step in [`crate::FlexBuilder::steps`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepItem {
+    /// Short title shown beside the marker.
+    pub title: String,
+    /// Optional secondary line under the title.
+    pub description: Option<String>,
+}
+
+impl StepItem {
+    /// Title-only step.
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            description: None,
+        }
+    }
+
+    /// Title + description.
+    pub fn with_description(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            description: Some(description.into()),
+        }
+    }
+}
+
+/// Layout axis for [`StepsStyle`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StepsDirection {
+    /// Left-to-right markers + titles (default).
+    #[default]
+    Horizontal,
+    /// Top-to-bottom stack.
+    Vertical,
+}
+
+/// Style for [`crate::FlexBuilder::steps`].
+#[derive(Debug, Clone, Copy)]
+pub struct StepsStyle {
+    /// Total width budget.
+    pub width: f32,
+    /// Total height budget.
+    pub height: f32,
+    /// Horizontal or vertical layout.
+    pub direction: StepsDirection,
+    /// When true, pointer on a step title/marker changes `current`.
+    pub clickable: bool,
+    /// Title font size.
+    pub size: f32,
+    /// Description font size.
+    pub desc_size: f32,
+    /// Marker diameter.
+    pub marker: f32,
+    /// Wait (future) text color.
+    pub wait_fg: Color,
+    /// Current (process) text color.
+    pub process_fg: Color,
+    /// Done text color.
+    pub done_fg: Color,
+    /// Wait marker fill.
+    pub wait_bg: Color,
+    /// Process marker fill.
+    pub process_bg: Color,
+    /// Done marker fill.
+    pub done_bg: Color,
+    /// Connector line between markers.
+    pub connector: Color,
+    /// Panel background.
+    pub bg: Color,
+    /// Inner padding.
+    pub padding: f32,
+    /// Gap between steps (vertical) or extra slack (horizontal).
+    pub gap: f32,
+}
+
+impl Default for StepsStyle {
+    fn default() -> Self {
+        Self {
+            width: 480.0,
+            height: 72.0,
+            direction: StepsDirection::Horizontal,
+            clickable: true,
+            size: 12.0,
+            desc_size: 11.0,
+            marker: 22.0,
+            wait_fg: Color::rgb(0x90, 0x98, 0xa4),
+            process_fg: Color::rgb(0xe8, 0xec, 0xf0),
+            done_fg: Color::rgb(0xb0, 0xb8, 0xc4),
+            wait_bg: Color::rgb(0x3a, 0x3a, 0x44),
+            process_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            done_bg: Color::rgb(0x3d, 0x8b, 0x5a),
+            connector: Color::rgb(0x4a, 0x4a, 0x54),
+            bg: Color::rgba(0, 0, 0, 0),
+            padding: 8.0,
+            gap: 12.0,
+        }
+    }
+}
+
+/// Style for [`crate::FlexBuilder::statistic`] (KPI block).
+#[derive(Debug, Clone, Copy)]
+pub struct StatisticStyle {
+    /// Width.
+    pub width: f32,
+    /// Height.
+    pub height: f32,
+    /// Title font size.
+    pub title_size: f32,
+    /// Value font size.
+    pub value_size: f32,
+    /// Hint / delta font size.
+    pub hint_size: f32,
+    /// Title color.
+    pub title_fg: Color,
+    /// Value color.
+    pub value_fg: Color,
+    /// Hint color.
+    pub hint_fg: Color,
+    /// Background.
+    pub bg: Color,
+    /// Inner padding.
+    pub padding: f32,
+}
+
+impl Default for StatisticStyle {
+    fn default() -> Self {
+        Self {
+            width: 160.0,
+            height: 88.0,
+            title_size: 12.0,
+            value_size: 28.0,
+            hint_size: 11.0,
+            title_fg: Color::rgb(0x90, 0x98, 0xa4),
+            value_fg: Color::rgb(0xe8, 0xec, 0xf0),
+            hint_fg: Color::rgb(0x6a, 0xc0, 0x8a),
+            bg: Color::rgb(0x22, 0x22, 0x28),
+            padding: 12.0,
+        }
+    }
+}
+
+/// Status glyph / tone for [`crate::FlexBuilder::result`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResultStatus {
+    /// Neutral / informational.
+    #[default]
+    Info,
+    /// Success / OK.
+    Success,
+    /// Warning.
+    Warning,
+    /// Error / fault.
+    Error,
+}
+
+/// Which action button fired on a Result block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultAction {
+    /// Primary CTA.
+    Primary,
+    /// Secondary CTA.
+    Secondary,
+}
+
+/// Style for [`crate::FlexBuilder::result`].
+#[derive(Debug, Clone, Copy)]
+pub struct ResultStyle {
+    /// Width.
+    pub width: f32,
+    /// Height.
+    pub height: f32,
+    /// Title font size.
+    pub title_size: f32,
+    /// Subtitle font size.
+    pub subtitle_size: f32,
+    /// Status label font size (glyph substitute).
+    pub status_size: f32,
+    /// Action button font size.
+    pub action_size: f32,
+    /// Action button height.
+    pub action_height: f32,
+    /// Title color.
+    pub title_fg: Color,
+    /// Subtitle color.
+    pub subtitle_fg: Color,
+    /// Background.
+    pub bg: Color,
+    /// Primary button fill.
+    pub primary_bg: Color,
+    /// Primary button text.
+    pub primary_fg: Color,
+    /// Secondary button fill.
+    pub secondary_bg: Color,
+    /// Secondary button text.
+    pub secondary_fg: Color,
+    /// Inner padding.
+    pub padding: f32,
+    /// Gap between action buttons.
+    pub gap: f32,
+}
+
+impl Default for ResultStyle {
+    fn default() -> Self {
+        Self {
+            width: 360.0,
+            height: 200.0,
+            title_size: 18.0,
+            subtitle_size: 13.0,
+            status_size: 14.0,
+            action_size: 13.0,
+            action_height: 32.0,
+            title_fg: Color::rgb(0xe8, 0xec, 0xf0),
+            subtitle_fg: Color::rgb(0x90, 0x98, 0xa4),
+            bg: Color::rgb(0x22, 0x22, 0x28),
+            primary_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            primary_fg: Color::rgb(0xff, 0xff, 0xff),
+            secondary_bg: Color::rgb(0x3a, 0x3a, 0x44),
+            secondary_fg: Color::rgb(0xd0, 0xd4, 0xdc),
+            padding: 20.0,
+            gap: 12.0,
+        }
+    }
+}
+
+impl ResultStatus {
+    /// Short Soft-friendly label drawn above the title.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Info => "INFO",
+            Self::Success => "SUCCESS",
+            Self::Warning => "WARNING",
+            Self::Error => "ERROR",
+        }
+    }
+
+    /// Accent color for the status label.
+    pub fn color(self) -> Color {
+        match self {
+            Self::Info => Color::rgb(0x6a, 0xb0, 0xf0),
+            Self::Success => Color::rgb(0x6a, 0xc0, 0x8a),
+            Self::Warning => Color::rgb(0xe0, 0xb0, 0x40),
+            Self::Error => Color::rgb(0xe0, 0x60, 0x60),
         }
     }
 }
