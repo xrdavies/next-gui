@@ -2,6 +2,8 @@
 //!
 //! Skips when no desktop / X11 / xdotool is available so headless `cargo test`
 //! does not panic. Wayland-only sessions are skipped (xdotool is X11-only).
+//! Mixed Wayland+XWayland sessions force the X11 backend so `xdotool` can
+//! address the window (default winit prefers Wayland when both are set).
 #![cfg(all(feature = "linux", target_os = "linux"))]
 
 mod common;
@@ -39,7 +41,9 @@ fn request_exit_from_pointer_ends_run() {
     let ready = Arc::new(Mutex::new(false));
     let ready_t = Arc::clone(&ready);
     let handle = std::thread::spawn(move || {
-        linux::run_any_thread(
+        // Force X11: on mixed Wayland+XWayland desktops, default run_any_thread
+        // would prefer Wayland and xdotool could not find the window.
+        linux::run_any_thread_x11(
             WindowAttrs::new("quit-on-pointer", 320, 120),
             QuitOnPointer { ready: ready_t },
         )

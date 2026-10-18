@@ -3,7 +3,9 @@
 //! These probes open a real window. They need a desktop session. When
 //! `DISPLAY` / `WAYLAND_DISPLAY` / `WAYLAND_SOCKET` are all unset, callers
 //! skip (pass) instead of panicking on event-loop creation. The pointer
-//! probe additionally needs X11 `DISPLAY` and `xdotool` on `PATH`.
+//! probe additionally needs X11 `DISPLAY` and `xdotool` on `PATH`, and must
+//! open the window with [`next_gui_platform::linux::run_any_thread_x11`] so a
+//! mixed Wayland+XWayland session still yields an X11 window for `xdotool`.
 
 #![allow(dead_code)] // each integration binary uses a subset of these helpers
 
@@ -52,6 +54,10 @@ pub fn skip_unless_display(probe: &str) -> bool {
 }
 
 /// Pointer probe: needs a display session, X11 DISPLAY, and xdotool.
+///
+/// Mixed Wayland+XWayland (`WAYLAND_DISPLAY` and `DISPLAY` both set) is allowed:
+/// the probe must force X11 via `linux::run_any_thread_x11` so `xdotool` can see
+/// the window. Wayland-only sessions (no `DISPLAY`) still skip here.
 pub fn skip_unless_x11_pointer(probe: &str) -> bool {
     if skip_unless_display(probe) {
         return true;

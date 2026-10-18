@@ -451,15 +451,45 @@ pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformErr
 /// `WAYLAND_SOCKET`). Integration probes under `tests/request_exit_*.rs` skip
 /// when those are unset so headless `cargo test` does not panic; they still
 /// open a real window when a session is present.
+///
+/// Backend selection follows winit 0.30 defaults (Wayland preferred when
+/// `WAYLAND_DISPLAY` / `WAYLAND_SOCKET` is set). Pointer probes that inject via
+/// X11-only `xdotool` must use [`run_any_thread_x11`] instead.
 #[doc(hidden)]
 #[cfg(target_os = "linux")]
 pub fn run_any_thread(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
     use winit::platform::wayland::EventLoopBuilderExtWayland;
     use winit::platform::x11::EventLoopBuilderExtX11;
     let mut builder = EventLoop::builder();
-    // Prefer X11 any-thread; Wayland builder ext is also applied for compositors that need it.
+    // any-thread for both backends; do not force a backend (Wayland may win on mixed sessions).
     EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
     EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    run_with_builder(builder, attrs, app)
+}
+
+/// Like [`run_any_thread`], but forces the X11 backend.
+///
+/// On mixed Wayland+XWayland desktops both `WAYLAND_DISPLAY` and `DISPLAY` are
+/// often set; winit 0.30 then prefers Wayland. X11-only injectors (`xdotool`)
+/// cannot find that native Wayland window. The pointer `request_exit` probe
+/// uses this entry so the window stays on the X11 tree whenever `DISPLAY` is
+/// usable.
+#[doc(hidden)]
+#[cfg(target_os = "linux")]
+pub fn run_any_thread_x11(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+    let mut builder = EventLoop::builder();
+    EventLoopBuilderExtX11::with_x11(&mut builder);
+    EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
+    run_with_builder(builder, attrs, app)
+}
+
+#[cfg(target_os = "linux")]
+fn run_with_builder(
+    mut builder: winit::event_loop::EventLoopBuilder<()>,
+    attrs: WindowAttrs,
+    app: impl AppCallbacks,
+) -> Result<(), PlatformError> {
     let event_loop = builder
         .build()
         .map_err(|e| PlatformError::new(format!("event loop: {e}")))?;
