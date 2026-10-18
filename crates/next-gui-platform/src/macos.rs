@@ -1,9 +1,9 @@
 //! macOS Office window backend using winit (+ optional softbuffer).
 
 use crate::{
-    clipboard::Clipboard, touch_synth::TouchPointerSynth, AppCallbacks, Event, ImeEvent, KeyCode,
-    Modifiers, PlatformError, PointerButton, PresentBackend, TouchEvent, TouchPhase, WindowAttrs,
-    WindowCtx, WindowHost, WindowId,
+    clipboard::Clipboard, soak::SoakDriver, touch_synth::TouchPointerSynth, AppCallbacks, Event,
+    ImeEvent, KeyCode, Modifiers, PlatformError, PointerButton, PresentBackend, TouchEvent,
+    TouchPhase, WindowAttrs, WindowCtx, WindowHost, WindowId,
 };
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
@@ -144,6 +144,8 @@ struct Runner<A: AppCallbacks> {
     started: bool,
     /// P6a: primary touch → pointer synthesis state.
     touch_synth: TouchPointerSynth,
+    /// P6e: optional periodic redraw wakes (`NEXT_GUI_SOAK`).
+    soak: SoakDriver,
 }
 
 impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
@@ -203,6 +205,16 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             clipboard: None,
             exit_requested: false,
         });
+    }
+
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // P6e: when NEXT_GUI_SOAK is set, WaitUntil + request_redraw so Soft probes tick idle.
+        if self.soak.about_to_wait(event_loop) {
+            if let Some(host) = self.host.as_mut() {
+                host.window.request_redraw();
+            }
+        }
     }
 
     fn window_event(
@@ -471,6 +483,7 @@ pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformErr
         host: None,
         started: false,
         touch_synth: TouchPointerSynth::new(),
+        soak: SoakDriver::from_env(),
     };
     event_loop
         .run_app(&mut runner)

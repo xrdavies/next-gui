@@ -51,8 +51,9 @@
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
 | [docs/p4-design.md](docs/p4-design.md) | P4 双档 Profile（Field / Office） |
 | [docs/p5-design.md](docs/p5-design.md) | P5 Immediate 视口 |
-| [docs/p6-design.md](docs/p6-design.md) | P6 工业打磨（P6a–P6d 已通；P6e 7×24） |
+| [docs/p6-design.md](docs/p6-design.md) | P6 工业打磨（P6a–P6e 已通） |
 | [docs/a11y-baseline.md](docs/a11y-baseline.md) | P6d 无障碍基线（焦序 / 可访问名） |
+| [docs/soak.md](docs/soak.md) | P6e 7×24 / 泄漏 / soak 探针 |
 | [docs/office-line.md](docs/office-line.md) | Office 线：布局/控件加厚、原生 Surface、P0/P1/Chart（P4/P5 已另文落地） |
 | [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 / P1 含 rest+deferred / Chart 已齐；Cascader 仍不进 P1） |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
@@ -61,7 +62,7 @@
 
 ## 状态
 
-**需求与架构已确认；P0–P5 已通（含 Office 加厚、P4 Profile、P5 Immediate）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；**P6c Windows Soft 骨架已通**；**P6d 无障碍基线已通**；评测队列已清。下一步：**P6e** 7×24/soak（[docs/p6-design.md](docs/p6-design.md)；P6a–P6d 已通）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)、[docs/a11y-baseline.md](docs/a11y-baseline.md)。
+**需求与架构已确认；P0–P6 已通（含 Office 加厚、P4 Profile、P5 Immediate、P6 工业打磨）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；**P6c Windows Soft 骨架已通**；**P6d 无障碍基线已通**；**P6e soak 文档与探针已通**；评测队列已清。跟进：Windows 运行时 GUI 验、Retina 手工验等（[docs/p6-design.md](docs/p6-design.md)、[docs/soak.md](docs/soak.md)）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)、[docs/a11y-baseline.md](docs/a11y-baseline.md)。
 
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
@@ -127,7 +128,7 @@ cargo run -p e02_counter          # Rust builder API
 cargo run -p e03_ngui_counter     # load examples/03_ngui_counter/ui/counter.ngui
 ```
 
-操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。`.ngui` 语法见 [docs/p1-design.md](docs/p1-design.md)。
+操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。`.ngui` 语法见 [docs/p1-design.md](docs/p1-design.md)。长时探针：`NEXT_GUI_SOAK=1 cargo run -p e02_counter`（见 [docs/soak.md](docs/soak.md)）。
 
 ### 试跑 P0（Linux/macOS，需要图形桌面会话）
 

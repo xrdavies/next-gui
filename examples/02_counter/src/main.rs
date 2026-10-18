@@ -5,12 +5,28 @@
 //! - Escape / close: quit.
 //!
 //! Stderr logs dirty area when a frame paints.
+//!
+//! # Soak (P6e)
+//!
+//! ```bash
+//! NEXT_GUI_SOAK=1 cargo run -p e02_counter
+//! # optional interval (ms, default 1000):
+//! NEXT_GUI_SOAK=1 NEXT_GUI_SOAK_MS=2000 cargo run -p e02_counter
+//! ```
+//!
+//! When set, the platform wakes on a timer and this example auto-increments
+//! the counter each soak tick (exercises dirty + Soft present). Linux logs
+//! `VmRSS` from `/proc/self/status`. See `docs/soak.md`. Env unset → identical
+//! to the interactive demo.
 
-use next_gui_platform::{AppCallbacks, Event, KeyCode, PointerButton, WindowAttrs, WindowCtx};
+use next_gui_platform::{
+    soak, AppCallbacks, Event, KeyCode, PointerButton, WindowAttrs, WindowCtx,
+};
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_ui::{ColumnStyle, Ui, WidgetId};
+use std::time::{Duration, Instant};
 
 const CLEAR: Color = Color {
     r: 0x20,
@@ -29,6 +45,11 @@ struct Demo {
     count: i32,
     needs_paint: bool,
     frame: u64,
+    /// P6e: when `NEXT_GUI_SOAK` is set at start.
+    soak: bool,
+    soak_interval: Duration,
+    last_soak_tick: Instant,
+    last_rss_log: Instant,
 }
 
 impl Demo {
@@ -48,7 +69,7 @@ impl Demo {
                 padding: 20.0,
                 gap: 14.0,
                 background: Some(Color::rgb(0x2a, 0x2a, 0x2e)),
-                            ..ColumnStyle::default()
+                ..ColumnStyle::default()
             },
             |col| {
                 label = col.text("Count: 0");
@@ -64,6 +85,10 @@ impl Demo {
         ui.sync(&mut scene);
         scene.mark_full_dirty(width as f32, height as f32);
 
+        let soak = soak::enabled();
+        let soak_interval = soak::interval();
+        let now = Instant::now();
+
         Self {
             scene,
             soft: SoftRenderer::new(width, height, CLEAR),
@@ -74,6 +99,10 @@ impl Demo {
             count: 0,
             needs_paint: true,
             frame: 0,
+            soak,
+            soak_interval,
+            last_soak_tick: now,
+            last_rss_log: now,
         }
     }
 
@@ -83,16 +112,62 @@ impl Demo {
         self.ui.sync(&mut self.scene);
         self.needs_paint = true;
     }
+
+    fn soak_tick(&mut self) {
+        if !self.soak {
+            return;
+        }
+        let now = Instant::now();
+        if now.duration_since(self.last_soak_tick) < self.soak_interval {
+            return;
+        }
+        self.last_soak_tick = now;
+        // Cheap retained mutation so dirty + Soft present stay warm for hours.
+        self.count = self.count.wrapping_add(1);
+        self.refresh_label();
+
+        // Heartbeat RSS log (~every 5s or each tick if interval is slower).
+        let log_every = self.soak_interval.max(Duration::from_secs(5));
+        if now.duration_since(self.last_rss_log) >= log_every {
+            self.last_rss_log = now;
+            match soak::linux_vm_rss_kb() {
+                Some(kb) => eprintln!(
+                    "soak: count={} frame={} VmRSS={} kB (~{:.1} MiB)",
+                    self.count,
+                    self.frame,
+                    kb,
+                    kb as f64 / 1024.0
+                ),
+                None => eprintln!(
+                    "soak: count={} frame={} (VmRSS n/a on this OS)",
+                    self.count, self.frame
+                ),
+            }
+        }
+    }
 }
 
 impl AppCallbacks for Demo {
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>) {
         let (w, h) = ctx.size();
-        eprintln!(
-            "next-gui P1 counter ready ({}x{}). Click Increment/Reset; Esc quits.",
-            w, h
-        );
-        ctx.set_title(&format!("next-gui P1 counter — {w}x{h}"));
+        if self.soak {
+            eprintln!(
+                "next-gui P1 counter SOAK mode ({}x{}, interval {} ms). Esc quits.",
+                w,
+                h,
+                self.soak_interval.as_millis()
+            );
+            ctx.set_title(&format!(
+                "next-gui soak — {w}x{h} — {}ms",
+                self.soak_interval.as_millis()
+            ));
+        } else {
+            eprintln!(
+                "next-gui P1 counter ready ({}x{}). Click Increment/Reset; Esc quits.",
+                w, h
+            );
+            ctx.set_title(&format!("next-gui P1 counter — {w}x{h}"));
+        }
         self.needs_paint = true;
         ctx.request_redraw();
     }
@@ -133,6 +208,7 @@ impl AppCallbacks for Demo {
                 ctx.request_exit();
             }
             Event::RedrawRequested { .. } => {
+                self.soak_tick();
                 self.needs_paint = true;
             }
             _ => {}
@@ -151,24 +227,33 @@ impl AppCallbacks for Demo {
         let cmds = encode_scene(&self.scene, &dirty);
         self.soft.render(&cmds, &dirty);
         self.frame += 1;
-        eprintln!(
-            "frame {}: dirty_rects={} approx_area={:.0} cmds={} count={}",
-            self.frame,
-            dirty.rects.len(),
-            dirty.approx_area(),
-            cmds.len(),
-            self.count
-        );
+        if !self.soak {
+            eprintln!(
+                "frame {}: dirty_rects={} approx_area={:.0} cmds={} count={}",
+                self.frame,
+                dirty.rects.len(),
+                dirty.approx_area(),
+                cmds.len(),
+                self.count
+            );
+        }
         if let Some((pixels, w, h)) = self.soft.frame_pixels() {
             if let Err(e) = ctx.present(w, h, pixels) {
                 eprintln!("present error: {e}");
             }
-            ctx.set_title(&format!(
-                "next-gui P1 — count {} — frame {} — dirty {:.0}px²",
-                self.count,
-                self.frame,
-                dirty.approx_area()
-            ));
+            if self.soak {
+                ctx.set_title(&format!(
+                    "next-gui soak — count {} — frame {}",
+                    self.count, self.frame
+                ));
+            } else {
+                ctx.set_title(&format!(
+                    "next-gui P1 — count {} — frame {} — dirty {:.0}px²",
+                    self.count,
+                    self.frame,
+                    dirty.approx_area()
+                ));
+            }
         }
         self.needs_paint = false;
     }
