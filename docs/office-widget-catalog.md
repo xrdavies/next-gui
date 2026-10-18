@@ -277,8 +277,9 @@
 | P0 缺口 | **无**（目录 §4 名单已覆盖；IME/列宽拖拽等为增强，见各切片备注） |
 | 已实现（P1 deferred 切片） | `datetime`，`transfer`，`property_grid`，`tree_table`（`examples/22_office_p1_deferred`） |
 | 已实现（Office 增强） | `chart` 多瓦片面板（共享 Gauge/Trend 光栅；`examples/23_office_charts`） |
+| 已实现（Office P2a） | `button_group`，`link`，`space`（Row/Column 糖衣；`examples/26_office_p2`；见 [office-p2-design.md](office-p2-design.md)） |
 | 刻意不做 / P2 可选 | Cascader（不进 P1；层级选择仅 TreeSelect） |
-| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；Office P2 低频控件（见 §6.2） |
+| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；Office P2b+（`steps` / `statistic` / …，见 §6.2 / office-p2-design） |
 | 已实现但非控件目录项 | P4 `next-gui-profile`（见 §Profile）、P5 Immediate 视口（`e25`）；剪贴板 / 触控 stub 属 platform |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
@@ -322,3 +323,4 @@
 | 2026-10-18 | **Office 增强：** `chart` 多瓦片（Gauge+Trend 网格）+ P1 键盘/焦点打磨 + Soft AA；示例 `e23_office_charts`；Cascader/自绘 IME 候选仍后置。 |
 | 2026-10-18 | **P4 Profile：** `next-gui-profile` + `e24_profile_dual`；非控件配置层；Cascader/自绘 IME 仍后置。 |
 | 2026-10-19 | **文档同步：** §9 去掉已落地的 Immediate/Profile「未实现」表述；状态栏对齐 P0–P5 / Chart 已齐；Cascader 仍不进 P1。 |
+| 2026-10-19 | **Office P2a：** `button_group` / `link` / `space` + `e26_office_p2`；设计 [office-p2-design.md](office-p2-design.md)；不覆盖路线图 P2（CJK）。 |

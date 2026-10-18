@@ -28,6 +28,7 @@ members = [
     "crates/next-gui-immediate",
     "examples/24_profile_dual",
     "examples/25_immediate_viewport",
+    "examples/26_office_p2",
 ]
 
 [workspace.package]
