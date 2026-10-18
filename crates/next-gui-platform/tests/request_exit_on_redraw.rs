@@ -1,5 +1,5 @@
 //! Linux GUI: request_exit from on_redraw must end run without a key.
-#![cfg(all(feature = "linux", not(target_os = "macos")))]
+#![cfg(all(feature = "linux", target_os = "linux"))]
 
 use next_gui_platform::{linux, AppCallbacks, Event, WindowAttrs, WindowCtx};
 

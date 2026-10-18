@@ -446,6 +446,7 @@ pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformErr
 ///
 /// Prefer [`run`] for applications. Hidden from docs; used by Linux GUI regressions.
 #[doc(hidden)]
+#[cfg(target_os = "linux")]
 pub fn run_any_thread(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
     use winit::platform::x11::EventLoopBuilderExtX11;
     use winit::platform::wayland::EventLoopBuilderExtWayland;
