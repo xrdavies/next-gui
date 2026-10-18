@@ -8,6 +8,7 @@
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
 //! Office P2a–P2e (`button_group` … `config_provider`): see `docs/office-p2-design.md`.
+//! Theme tokens (MVP): [`Theme`] / [`Ui::set_theme`]; see `docs/theme-tokens.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
@@ -20,6 +21,7 @@ mod chart;
 mod p1_raster;
 mod p1_rest;
 mod office_p2;
+mod theme;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
@@ -27,6 +29,7 @@ pub use chart::{ChartKind, ChartStyle, ChartTile};
 pub use p1_deferred::*;
 pub use p1_rest::*;
 pub use office_p2::*;
+pub use theme::{Theme, ThemeColors, ThemeMode, ThemeRadii, ThemeSpacing, ThemeTypography};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -2155,6 +2158,8 @@ pub struct Ui {
     pending_calendar_change: Option<(WidgetId, CalendarDate)>,
     /// Ui-level theme/locale bag (Office P2e config_provider — not a Kind).
     config: UiConfig,
+    /// Appearance tokens (light/dark + scales). Profile stays separate.
+    theme: Theme,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2262,6 +2267,7 @@ impl Ui {
             pending_timeline_select: None,
             pending_calendar_change: None,
             config: UiConfig::default(),
+            theme: Theme::dark(),
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2297,6 +2303,65 @@ impl Ui {
     /// Borrow the current [`UiConfig`] (locale / density / accent).
     pub fn config(&self) -> &UiConfig {
         &self.config
+    }
+
+    /// Replace the active [`Theme`] (colors / type / spacing / radii).
+    ///
+    /// Does not rebuild existing widgets; new `*_style()` helpers and unstyled
+    /// `text` / `button` / `text_input` / `link` pick up the theme. Pass an
+    /// explicit [`XxxStyle`] to override.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
+
+    /// Borrow the active [`Theme`].
+    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    /// Effective accent: [`UiConfig::accent`] if set, else theme accent.
+    pub fn resolve_accent(&self) -> Color {
+        self.config.accent.unwrap_or(self.theme.colors.accent)
+    }
+
+    /// [`ColumnStyle`] from current theme + density.
+    pub fn column_style(&self) -> ColumnStyle {
+        ColumnStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`RowStyle`] from current theme + density.
+    pub fn row_style(&self) -> RowStyle {
+        RowStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ToolbarStyle`] from current theme + density.
+    pub fn toolbar_style(&self) -> ToolbarStyle {
+        ToolbarStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PanelStyle`] from current theme + density.
+    pub fn panel_style(&self) -> PanelStyle {
+        PanelStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`StatusBarStyle`] from current theme + density.
+    pub fn status_bar_style(&self) -> StatusBarStyle {
+        StatusBarStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TextInputStyle`] from current theme + density.
+    pub fn text_input_style(&self) -> TextInputStyle {
+        TextInputStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`LinkStyle`] from current theme + density.
+    pub fn link_style(&self) -> LinkStyle {
+        LinkStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CalendarStyle`] from current theme + density (accent still overridable via config at paint).
+    pub fn calendar_style(&self) -> CalendarStyle {
+        CalendarStyle::from_theme_with_density(&self.theme, self.config.density)
     }
 
     fn alloc(&mut self) -> WidgetId {
@@ -16398,8 +16463,14 @@ pub struct FlexBuilder<'a> {
 
 impl FlexBuilder<'_> {
     /// Add a text label; returns its [`WidgetId`].
+    ///
+    /// Uses the active [`Theme`] text color and body size (density-scaled).
     pub fn text(&mut self, content: impl Into<String>) -> WidgetId {
-        self.text_styled(content, Color::rgb(0xe5, 0xe5, 0xe5), 22.0)
+        let theme = self.ui.theme;
+        let size = (theme.typography.body * self.ui.config.density.font_scale())
+            .round()
+            .max(1.0);
+        self.text_styled(content, theme.colors.text_primary, size)
     }
 
     /// Add a text label with explicit color/size (px).
@@ -16430,21 +16501,23 @@ impl FlexBuilder<'_> {
     }
 
     /// Add a button; returns its [`WidgetId`] for hit-testing.
+    ///
+    /// Uses the active [`Theme`] button colors and density-scaled sizes.
     pub fn button(&mut self, label: impl Into<String>) -> WidgetId {
-        self.button_styled(
-            label,
-            Color::rgb(0x3b, 0x82, 0xf6),
-            Color::rgb(0xff, 0xff, 0xff),
-        )
+        let theme = self.ui.theme;
+        self.button_styled(label, theme.colors.button_bg, theme.colors.button_fg)
     }
 
-    /// Button with custom colors.
+    /// Button with custom colors (sizes still follow the active theme + density).
     pub fn button_styled(
         &mut self,
         label: impl Into<String>,
         bg: Color,
         fg: Color,
     ) -> WidgetId {
+        let theme = self.ui.theme;
+        let s = self.ui.config.density.spacing_scale();
+        let f = self.ui.config.density.font_scale();
         let id = self.ui.alloc();
         self.ui.widgets.insert(
             id,
@@ -16453,9 +16526,9 @@ impl FlexBuilder<'_> {
                     label: label.into(),
                     bg,
                     fg,
-                    size: 18.0,
-                    min_width: 88.0,
-                    height: 36.0,
+                    size: (theme.typography.button * f).round().max(1.0),
+                    min_width: (88.0 * s).round().max(1.0),
+                    height: (36.0 * s).round().max(1.0),
                 },
                 node: None,
                 label_node: None,
@@ -16468,19 +16541,22 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Compact toolbar button (smaller height).
+    /// Compact toolbar button (smaller height; theme colors + density).
     pub fn tool_button(&mut self, label: impl Into<String>) -> WidgetId {
+        let theme = self.ui.theme;
+        let s = self.ui.config.density.spacing_scale();
+        let f = self.ui.config.density.font_scale();
         let id = self.ui.alloc();
         self.ui.widgets.insert(
             id,
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
-                    bg: Color::rgb(0x3b, 0x82, 0xf6),
-                    fg: Color::rgb(0xff, 0xff, 0xff),
-                    size: 14.0,
-                    min_width: 64.0,
-                    height: 28.0,
+                    bg: theme.colors.button_bg,
+                    fg: theme.colors.button_fg,
+                    size: (theme.typography.button_sm * f).round().max(1.0),
+                    min_width: (64.0 * s).round().max(1.0),
+                    height: (28.0 * s).round().max(1.0),
                 },
                 node: None,
                 label_node: None,
@@ -16493,9 +16569,13 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Built-in icon glyph.
+    /// Built-in icon glyph (theme secondary text color).
     pub fn icon(&mut self, name: IconName) -> WidgetId {
-        self.icon_styled(name, 18.0, Color::rgb(0xd0, 0xd4, 0xdc))
+        let theme = self.ui.theme;
+        let size = (theme.typography.button * self.ui.config.density.font_scale())
+            .round()
+            .max(1.0);
+        self.icon_styled(name, size, theme.colors.text_secondary)
     }
 
     /// Icon from a stable name string (`"save"`, …).
@@ -16733,8 +16813,10 @@ impl FlexBuilder<'_> {
     }
 
     /// Single-line text field with optional placeholder.
+    ///
+    /// Style comes from the active [`Theme`] + density.
     pub fn text_input(&mut self, placeholder: impl Into<String>) -> WidgetId {
-        self.text_input_styled("", placeholder, TextInputStyle::default())
+        self.text_input_styled("", placeholder, self.ui.text_input_style())
     }
 
     /// TextInput with initial value and style.
@@ -17800,9 +17882,9 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Text link (Office P2a) with default accent + underline.
+    /// Text link (Office P2a) with theme link color + underline.
     pub fn link(&mut self, label: impl Into<String>) -> WidgetId {
-        self.link_styled(label, LinkStyle::default())
+        self.link_styled(label, self.ui.link_style())
     }
 
     /// Text link with custom style.
@@ -21171,5 +21253,68 @@ mod tests {
         assert_eq!(ui.config().locale, "en-US");
         assert_eq!(ui.config().density, UiDensity::Comfortable);
         assert_eq!(ui.config().accent.unwrap().r, 0x2f);
+    }
+
+    #[test]
+    fn theme_defaults_follow_set_theme() {
+        let mut ui = Ui::new();
+        assert_eq!(ui.theme().mode, ThemeMode::Dark);
+        assert_eq!(
+            ui.column_style().background,
+            Some(Theme::dark().colors.surface)
+        );
+
+        ui.set_theme(Theme::light());
+        assert_eq!(ui.theme().mode, ThemeMode::Light);
+        let col = ui.column_style();
+        assert_eq!(col.background, Some(Theme::light().colors.surface));
+        let panel = ui.panel_style();
+        assert_eq!(panel.title_fg, Theme::light().colors.text_primary);
+        assert_eq!(panel.background, Some(Theme::light().colors.panel));
+
+        // Density from UiConfig scales padding.
+        ui.set_config(UiConfig {
+            locale: "en".into(),
+            density: UiDensity::Compact,
+            accent: None,
+        });
+        let compact = ui.column_style();
+        assert!(compact.padding < ColumnStyle::from_theme(&Theme::light()).padding);
+
+        // Accent: config overrides theme.
+        assert_eq!(ui.resolve_accent(), Theme::light().colors.accent);
+        ui.set_config(UiConfig {
+            locale: "en".into(),
+            density: UiDensity::Default,
+            accent: Some(Color::rgb(0xe0, 0x60, 0x60)),
+        });
+        assert_eq!(ui.resolve_accent().r, 0xe0);
+    }
+
+    #[test]
+    fn unstyled_text_and_button_use_theme() {
+        let mut ui = Ui::new();
+        ui.set_theme(Theme::light());
+        let mut text_id = WidgetId(0);
+        let mut btn_id = WidgetId(0);
+        let style = ui.column_style();
+        ui.column(style, |col| {
+            text_id = col.text("hello");
+            btn_id = col.button("Go");
+        });
+        match &ui.widgets.get(&text_id).unwrap().kind {
+            Kind::Text { color, size, .. } => {
+                assert_eq!(*color, Theme::light().colors.text_primary);
+                assert!((*size - Theme::light().typography.body).abs() < 0.01);
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+        match &ui.widgets.get(&btn_id).unwrap().kind {
+            Kind::Button { bg, fg, .. } => {
+                assert_eq!(*bg, Theme::light().colors.button_bg);
+                assert_eq!(*fg, Theme::light().colors.button_fg);
+            }
+            other => panic!("expected Button, got {other:?}"),
+        }
     }
 }
