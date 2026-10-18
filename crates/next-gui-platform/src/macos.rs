@@ -28,7 +28,7 @@ struct Host {
     ime_composing: bool,
     /// Lazily opened OS clipboard (kept alive so Linux peers can read after set).
     clipboard: Option<Clipboard>,
-    /// Set by [`WindowCtx::request_exit`]; checked after app callbacks.
+    /// Set by [`WindowCtx::request_exit`]; checked after every `window_event` callback path.
     exit_requested: bool,
 }
 
@@ -280,14 +280,12 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             }
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
-                if let Some(host) = self.host.as_mut() {
-                    host.modifiers = Modifiers {
-                        ctrl: state.control_key(),
-                        shift: state.shift_key(),
-                        alt: state.alt_key(),
-                        meta: state.super_key(),
-                    };
-                }
+                host.modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
@@ -341,16 +339,12 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     }
                     _ => KeyCode::Other(0),
                 };
-                if matches!(key, KeyCode::Other(_)) {
-                    return;
-                }
                 // Deliver presses for editing keys; Space/Escape also on release for legacy demos.
-                let deliver = pressed
-                    || matches!(key, KeyCode::Escape | KeyCode::Space);
-                if !deliver {
-                    return;
-                }
-                {
+                // Skip Other / non-deliver keys without returning from window_event so the
+                // shared exit_requested check below still runs after earlier callbacks.
+                let deliver = !matches!(key, KeyCode::Other(_))
+                    && (pressed || matches!(key, KeyCode::Escape | KeyCode::Space));
+                if deliver {
                     let mut ctx = WindowCtx { inner: host };
                     self.app.on_event(
                         &mut ctx,
@@ -361,9 +355,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                             modifiers,
                         },
                     );
-                }
-                if host.exit_requested {
-                    event_loop.exit();
                 }
             }
             WindowEvent::Ime(ime) => {
@@ -418,6 +409,11 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                 );
             }
             _ => {}
+        }
+        // Honor request_exit after every callback path (start/redraw/pointer/key/ime/touch),
+        // not only KeyboardInput — otherwise Quit buttons and on_start exit never leave.
+        if host.exit_requested {
+            event_loop.exit();
         }
     }
 }

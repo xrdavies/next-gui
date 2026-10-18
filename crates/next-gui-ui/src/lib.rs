@@ -9379,13 +9379,11 @@ impl Ui {
         if let Some(chrome) = chrome {
             if focused {
                 let metrics = self.font.metrics(style.size);
-                let prefix: String = value.chars().take(caret).collect();
-                let lines_before = prefix.matches('\n').count() as f32;
-                let line_text = prefix.rsplit('\n').next().unwrap_or("");
-                let (cw, _) = self.font.measure_line(line_text, style.size);
-                let cx = bounds.x + style.padding_x + cw;
-                let cy = bounds.y + style.padding_y - scroll_y
-                    + lines_before * layout.line_height;
+                // Caret must use the same wrapped layout as the mask, not only explicit
+                // newlines + unwrapped measure_line (which clips past the host).
+                let (ox, oy) = layout.caret_top_left(&value, caret, metrics.ascent);
+                let cx = bounds.x + style.padding_x + ox;
+                let cy = bounds.y + style.padding_y - scroll_y + oy;
                 let ch = metrics.ascent.max(style.size * 0.8);
                 scene.set_bounds(chrome, Rect::new(cx, cy, 2.0, ch));
                 scene.set_fill(chrome, style.focus_border);
@@ -15070,9 +15068,41 @@ mod tests {
             .unwrap_or(0);
         assert!(mask_h > 20, "multiline textarea mask height={mask_h}");
         let chrome = ui.widgets.get(&area).unwrap().chrome_node.expect("textarea chrome");
+        let host = ui.widgets.get(&area).unwrap().node.expect("textarea host");
+        let host_bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        let caret_bounds = scene.get(chrome).map(|n| n.bounds).unwrap_or_else(Rect::empty);
         assert!(
             scene.get(chrome).map(|n| n.visible).unwrap_or(false),
             "textarea caret chrome visible"
+        );
+        assert!(
+            host_bounds.intersects(&caret_bounds) && !caret_bounds.is_empty(),
+            "short multiline caret bounds {caret_bounds:?} must intersect host {host_bounds:?}"
+        );
+        // Auto-wrap: long run with no newlines must keep caret inside the host clip.
+        let wrapped: String = format!("line1\nline2{}", "W".repeat(44));
+        assert!(ui.set_text_area_value(area, wrapped));
+        ui.set_focus(Some(area));
+        ui.sync(&mut scene);
+        let caret_bounds = scene.get(chrome).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        let host_bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        assert!(
+            scene.get(chrome).map(|n| n.visible).unwrap_or(false),
+            "wrapped textarea caret chrome visible"
+        );
+        assert!(
+            !caret_bounds.is_empty(),
+            "wrapped caret should have non-empty bounds"
+        );
+        assert!(
+            caret_bounds.x >= host_bounds.x - 0.5
+                && caret_bounds.x + caret_bounds.width <= host_bounds.x + host_bounds.width + 0.5,
+            "wrapped caret x clipped: caret={caret_bounds:?} host={host_bounds:?}"
+        );
+        assert!(
+            caret_bounds.y + caret_bounds.height > host_bounds.y
+                && caret_bounds.y < host_bounds.y + host_bounds.height,
+            "wrapped caret y offscreen: caret={caret_bounds:?} host={host_bounds:?}"
         );
         assert_eq!(ui.pagination_page(page), Some(1));
         assert!(ui.set_pagination_page(page, 2));

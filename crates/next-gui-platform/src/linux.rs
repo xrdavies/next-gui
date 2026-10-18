@@ -29,7 +29,7 @@ struct Host {
     ime_composing: bool,
     /// Lazily opened OS clipboard (kept alive so Linux peers can read after set).
     clipboard: Option<Clipboard>,
-    /// Set by [`WindowCtx::request_exit`]; checked after app callbacks.
+    /// Set by [`WindowCtx::request_exit`]; checked after every `window_event` callback path.
     exit_requested: bool,
 }
 
@@ -284,14 +284,12 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             }
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
-                if let Some(host) = self.host.as_mut() {
-                    host.modifiers = Modifiers {
-                        ctrl: state.control_key(),
-                        shift: state.shift_key(),
-                        alt: state.alt_key(),
-                        meta: state.super_key(),
-                    };
-                }
+                host.modifiers = Modifiers {
+                    ctrl: state.control_key(),
+                    shift: state.shift_key(),
+                    alt: state.alt_key(),
+                    meta: state.super_key(),
+                };
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
@@ -345,16 +343,12 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     }
                     _ => KeyCode::Other(0),
                 };
-                if matches!(key, KeyCode::Other(_)) {
-                    return;
-                }
                 // Deliver presses for editing keys; Space/Escape also on release for legacy demos.
-                let deliver = pressed
-                    || matches!(key, KeyCode::Escape | KeyCode::Space);
-                if !deliver {
-                    return;
-                }
-                {
+                // Skip Other / non-deliver keys without returning from window_event so the
+                // shared exit_requested check below still runs after earlier callbacks.
+                let deliver = !matches!(key, KeyCode::Other(_))
+                    && (pressed || matches!(key, KeyCode::Escape | KeyCode::Space));
+                if deliver {
                     let mut ctx = WindowCtx { inner: host };
                     self.app.on_event(
                         &mut ctx,
@@ -365,9 +359,6 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                             modifiers,
                         },
                     );
-                }
-                if host.exit_requested {
-                    event_loop.exit();
                 }
             }
             WindowEvent::Ime(ime) => {
@@ -423,6 +414,11 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             }
             _ => {}
         }
+        // Honor request_exit after every callback path (start/redraw/pointer/key/ime/touch),
+        // not only KeyboardInput — otherwise Quit buttons and on_start exit never leave.
+        if host.exit_requested {
+            event_loop.exit();
+        }
     }
 }
 
@@ -433,6 +429,33 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
 pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
     let event_loop =
         EventLoop::new().map_err(|e| PlatformError::new(format!("event loop: {e}")))?;
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let mut runner = Runner {
+        attrs,
+        app,
+        host: None,
+        started: false,
+    };
+    event_loop
+        .run_app(&mut runner)
+        .map_err(|e| PlatformError::new(format!("run_app: {e}")))?;
+    Ok(())
+}
+
+/// Event loop for tests/probes that may not run on the process main thread.
+///
+/// Prefer [`run`] for applications. Hidden from docs; used by Linux GUI regressions.
+#[doc(hidden)]
+pub fn run_any_thread(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError> {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+    use winit::platform::wayland::EventLoopBuilderExtWayland;
+    let mut builder = EventLoop::builder();
+    // Prefer X11 any-thread; Wayland builder ext is also applied for compositors that need it.
+    EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
+    EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    let event_loop = builder
+        .build()
+        .map_err(|e| PlatformError::new(format!("event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut runner = Runner {
         attrs,
