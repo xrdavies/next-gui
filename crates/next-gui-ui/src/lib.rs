@@ -2278,7 +2278,7 @@ impl Ui {
             pending_pagination_change: None,
             notifications: Vec::new(),
             next_notification_id: 1,
-            notification_style: NotificationStyle::default(),
+            notification_style: NotificationStyle::from_theme(&Theme::dark()),
             notification_aux: Vec::new(),
             viewport: (800.0, 600.0),
             last_pointer: None,
@@ -2298,6 +2298,8 @@ impl Ui {
     /// Office P2e `config_provider`: replace the Ui-level defaults bag.
     pub fn set_config(&mut self, config: UiConfig) {
         self.config = config;
+        self.notification_style =
+            NotificationStyle::from_theme_with_density(&self.theme, self.config.density);
     }
 
     /// Borrow the current [`UiConfig`] (locale / density / accent).
@@ -2308,10 +2310,11 @@ impl Ui {
     /// Replace the active [`Theme`] (colors / type / spacing / radii).
     ///
     /// Does not rebuild existing widgets; new `*_style()` helpers and unstyled
-    /// `text` / `button` / `text_input` / `link` pick up the theme. Pass an
-    /// explicit [`XxxStyle`] to override.
+    /// constructors pick up the theme. Pass an explicit Style to override.
     pub fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
+        self.notification_style =
+            NotificationStyle::from_theme_with_density(&theme, self.config.density);
     }
 
     /// Borrow the active [`Theme`].
@@ -2349,9 +2352,229 @@ impl Ui {
         StatusBarStyle::from_theme_with_density(&self.theme, self.config.density)
     }
 
+    /// [`SplitterStyle`] from current theme + density.
+    pub fn splitter_style(&self) -> SplitterStyle {
+        SplitterStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ScrollAreaStyle`] from current theme + density.
+    pub fn scroll_area_style(&self) -> ScrollAreaStyle {
+        ScrollAreaStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
     /// [`TextInputStyle`] from current theme + density.
     pub fn text_input_style(&self) -> TextInputStyle {
         TextInputStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CheckboxStyle`] from current theme + density.
+    pub fn checkbox_style(&self) -> CheckboxStyle {
+        CheckboxStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`RadioStyle`] from current theme + density.
+    pub fn radio_style(&self) -> RadioStyle {
+        RadioStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SwitchStyle`] from current theme + density.
+    pub fn switch_style(&self) -> SwitchStyle {
+        SwitchStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ListStyle`] from current theme + density.
+    pub fn list_style(&self) -> ListStyle {
+        ListStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TreeStyle`] from current theme + density.
+    pub fn tree_style(&self) -> TreeStyle {
+        TreeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TableStyle`] from current theme + density.
+    pub fn table_style(&self) -> TableStyle {
+        TableStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`MenuStyle`] from current theme + density.
+    pub fn menu_style(&self) -> MenuStyle {
+        MenuStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ContextMenuStyle`] from current theme + density.
+    pub fn context_menu_style(&self) -> ContextMenuStyle {
+        ContextMenuStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TabsStyle`] from current theme + density.
+    pub fn tabs_style(&self) -> TabsStyle {
+        TabsStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SelectStyle`] from current theme + density.
+    pub fn select_style(&self) -> SelectStyle {
+        SelectStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SliderStyle`] from current theme + density.
+    pub fn slider_style(&self) -> SliderStyle {
+        SliderStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TagStyle`] from current theme + density.
+    pub fn tag_style(&self) -> TagStyle {
+        TagStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`BadgeStyle`] from current theme + density.
+    pub fn badge_style(&self) -> BadgeStyle {
+        BadgeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TooltipStyle`] from current theme + density.
+    pub fn tooltip_style(&self) -> TooltipStyle {
+        TooltipStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ModalStyle`] from current theme + density.
+    pub fn modal_style(&self) -> ModalStyle {
+        ModalStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ProgressStyle`] from current theme + density.
+    pub fn progress_style(&self) -> ProgressStyle {
+        ProgressStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`AlertStyle`] from current theme + density.
+    pub fn alert_style(&self) -> AlertStyle {
+        AlertStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`FormStyle`] from current theme + density.
+    pub fn form_style(&self) -> FormStyle {
+        FormStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TreeSelectStyle`] from current theme + density.
+    pub fn tree_select_style(&self) -> TreeSelectStyle {
+        TreeSelectStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`AlarmListStyle`] from current theme + density.
+    pub fn alarm_list_style(&self) -> AlarmListStyle {
+        AlarmListStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`GaugeStyle`] from current theme + density.
+    pub fn gauge_style(&self) -> GaugeStyle {
+        GaugeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TrendStyle`] from current theme + density.
+    pub fn trend_style(&self) -> TrendStyle {
+        TrendStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ChartStyle`] from current theme + density.
+    pub fn chart_style(&self) -> ChartStyle {
+        ChartStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`BackdropStyle`] from current theme + density.
+    pub fn backdrop_style(&self) -> BackdropStyle {
+        BackdropStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`DrawerStyle`] from current theme + density.
+    pub fn drawer_style(&self) -> DrawerStyle {
+        DrawerStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TextAreaStyle`] from current theme + density.
+    pub fn text_area_style(&self) -> TextAreaStyle {
+        TextAreaStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`InputNumberStyle`] from current theme + density.
+    pub fn input_number_style(&self) -> InputNumberStyle {
+        InputNumberStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`NotificationStyle`] from current theme + density.
+    pub fn notification_toast_style(&self) -> NotificationStyle {
+        NotificationStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SpinStyle`] from current theme + density.
+    pub fn spin_style(&self) -> SpinStyle {
+        SpinStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`EmptyStyle`] from current theme + density.
+    pub fn empty_style(&self) -> EmptyStyle {
+        EmptyStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CollapseStyle`] from current theme + density.
+    pub fn collapse_style(&self) -> CollapseStyle {
+        CollapseStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`DescriptionsStyle`] from current theme + density.
+    pub fn descriptions_style(&self) -> DescriptionsStyle {
+        DescriptionsStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CardStyle`] from current theme + density.
+    pub fn card_style(&self) -> CardStyle {
+        CardStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SegmentedStyle`] from current theme + density.
+    pub fn segmented_style(&self) -> SegmentedStyle {
+        SegmentedStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`BreadcrumbStyle`] from current theme + density.
+    pub fn breadcrumb_style(&self) -> BreadcrumbStyle {
+        BreadcrumbStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PaginationStyle`] from current theme + density.
+    pub fn pagination_style(&self) -> PaginationStyle {
+        PaginationStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`DateTimeStyle`] from current theme + density.
+    pub fn datetime_style(&self) -> DateTimeStyle {
+        DateTimeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TransferStyle`] from current theme + density.
+    pub fn transfer_style(&self) -> TransferStyle {
+        TransferStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PropertyGridStyle`] from current theme + density.
+    pub fn property_grid_style(&self) -> PropertyGridStyle {
+        PropertyGridStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TreeTableStyle`] from current theme + density.
+    pub fn tree_table_style(&self) -> TreeTableStyle {
+        TreeTableStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SpaceStyle`] from current theme + density.
+    pub fn space_style(&self) -> SpaceStyle {
+        SpaceStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ButtonGroupStyle`] from current theme + density.
+    pub fn button_group_style(&self) -> ButtonGroupStyle {
+        ButtonGroupStyle::from_theme_with_density(&self.theme, self.config.density)
     }
 
     /// [`LinkStyle`] from current theme + density.
@@ -2359,9 +2582,64 @@ impl Ui {
         LinkStyle::from_theme_with_density(&self.theme, self.config.density)
     }
 
-    /// [`CalendarStyle`] from current theme + density (accent still overridable via config at paint).
+    /// [`StepsStyle`] from current theme + density.
+    pub fn steps_style(&self) -> StepsStyle {
+        StepsStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`StatisticStyle`] from current theme + density.
+    pub fn statistic_style(&self) -> StatisticStyle {
+        StatisticStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ResultStyle`] from current theme + density.
+    pub fn result_style(&self) -> ResultStyle {
+        ResultStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PopoverStyle`] from current theme + density.
+    pub fn popover_style(&self) -> PopoverStyle {
+        PopoverStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PopconfirmStyle`] from current theme + density.
+    pub fn popconfirm_style(&self) -> PopconfirmStyle {
+        PopconfirmStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`UploadStyle`] from current theme + density.
+    pub fn upload_style(&self) -> UploadStyle {
+        UploadStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ColorPickerStyle`] from current theme + density.
+    pub fn color_picker_style(&self) -> ColorPickerStyle {
+        ColorPickerStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`AutocompleteStyle`] from current theme + density.
+    pub fn autocomplete_style(&self) -> AutocompleteStyle {
+        AutocompleteStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`GridStyle`] from current theme + density.
+    pub fn grid_style(&self) -> GridStyle {
+        GridStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TimelineStyle`] from current theme + density.
+    pub fn timeline_style(&self) -> TimelineStyle {
+        TimelineStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CalendarStyle`] from current theme + density.
     pub fn calendar_style(&self) -> CalendarStyle {
         CalendarStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ImageStyle`] from current theme + density.
+    pub fn image_style(&self) -> ImageStyle {
+        ImageStyle::from_theme_with_density(&self.theme, self.config.density)
     }
 
     fn alloc(&mut self) -> WidgetId {
@@ -16854,7 +17132,7 @@ impl FlexBuilder<'_> {
 
     /// Checkbox with label.
     pub fn checkbox(&mut self, label: impl Into<String>, checked: bool) -> WidgetId {
-        self.checkbox_styled(label, checked, CheckboxStyle::default())
+        self.checkbox_styled(label, checked, self.ui.checkbox_style())
     }
 
     /// Checkbox with style.
@@ -16886,7 +17164,7 @@ impl FlexBuilder<'_> {
 
     /// Radio button in `group` (mutually exclusive within the group).
     pub fn radio(&mut self, group: u64, label: impl Into<String>, selected: bool) -> WidgetId {
-        self.radio_styled(group, label, selected, RadioStyle::default())
+        self.radio_styled(group, label, selected, self.ui.radio_style())
     }
 
     /// Radio with style.
@@ -16920,7 +17198,7 @@ impl FlexBuilder<'_> {
 
     /// On/off switch with label.
     pub fn switch(&mut self, label: impl Into<String>, on: bool) -> WidgetId {
-        self.switch_styled(label, on, SwitchStyle::default())
+        self.switch_styled(label, on, self.ui.switch_style())
     }
 
     /// Switch with style.
@@ -17194,7 +17472,7 @@ impl FlexBuilder<'_> {
 
     /// Compact status Tag chip.
     pub fn tag(&mut self, label: impl Into<String>) -> WidgetId {
-        self.tag_styled(label, false, TagStyle::default())
+        self.tag_styled(label, false, self.ui.tag_style())
     }
 
     /// Tag with optional close affordance and style.
@@ -17226,12 +17504,12 @@ impl FlexBuilder<'_> {
 
     /// Standalone count Badge pill.
     pub fn badge_count(&mut self, count: u32) -> WidgetId {
-        self.badge_styled(BadgeKind::Count(count), BadgeStyle::default())
+        self.badge_styled(BadgeKind::Count(count), self.ui.badge_style())
     }
 
     /// Standalone Badge dot.
     pub fn badge_dot(&mut self) -> WidgetId {
-        self.badge_styled(BadgeKind::Dot, BadgeStyle::default())
+        self.badge_styled(BadgeKind::Dot, self.ui.badge_style())
     }
 
     /// Badge with style (standalone).
@@ -17293,7 +17571,7 @@ impl FlexBuilder<'_> {
     where
         F: FnOnce(&mut FlexBuilder<'_>),
     {
-        self.tooltip_styled(text, TooltipStyle::default(), build)
+        self.tooltip_styled(text, self.ui.tooltip_style(), build)
     }
 
     /// Tooltip with style.
@@ -17335,7 +17613,7 @@ impl FlexBuilder<'_> {
 
     /// Determinate Progress bar (`value` in 0..=1).
     pub fn progress(&mut self, value: f32) -> WidgetId {
-        self.progress_styled(value, false, ProgressStyle::default())
+        self.progress_styled(value, false, self.ui.progress_style())
     }
 
     /// Progress with style; `indeterminate` paints a stub partial fill.
@@ -17367,7 +17645,7 @@ impl FlexBuilder<'_> {
 
     /// Inline Alert banner.
     pub fn alert(&mut self, tone: AlertTone, message: impl Into<String>) -> WidgetId {
-        self.alert_styled(tone, message, true, AlertStyle::default())
+        self.alert_styled(tone, message, true, self.ui.alert_style())
     }
 
     /// Alert with dismissibility and style.
