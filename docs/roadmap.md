@@ -116,16 +116,16 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 
 ## P6 — 工业打磨
 
-> **P6a 已通**（见 [p6-design.md](p6-design.md)）。切片：**P6a** ✅ 触控 HMI → **P6b** DPI → **P6c** Windows 骨架 → **P6d** a11y 基线 → **P6e** 7×24/soak；macOS 工业打磨为跟进项。
+> **P6a / P6b 已通**（见 [p6-design.md](p6-design.md)）。切片：**P6a** ✅ 触控 HMI → **P6b** ✅ DPI → **P6c** Windows 骨架 → **P6d** a11y 基线 → **P6e** 7×24/soak；macOS Retina 手工跟验为跟进项。
 
 - **触控** HMI：`Event::Touch` 保留；P6a 主触点合成 `PointerMoved` / `PointerButton`（`touch_synth`）；工控完整键表后补（`KeyCode::Other` 为扩展钩）
 - 无障碍基线（P6d；克制范围）
 - 7×24 稳定性（泄漏、长时间运行；P6e）
-- 多分辨率 / DPI（P6b）
-- **Windows** 平台后端（P6c）；macOS Office 首版已完成，后续补齐 DPI、IME、触控等工业打磨
+- 多分辨率 / DPI（P6b ✅：`scale_factor` + `dpi` 助手；契约默认物理）
+- **Windows** 平台后端（P6c）；macOS Office 首版已完成；DPI 契约已通，Retina 混缩手工验 / IME 打磨仍为跟进
 
 验收：面向现场与办公室的真实场景试点可长期运行；OS 按序补齐。各切片验收口径见 [p6-design.md](p6-design.md)。
 
 ## 建议顺序
 
-P0–P5 已通；**P6a** 已通 → 下一步 **P6b** DPI（见 [p6-design.md](p6-design.md)；Windows 运行时尚未验收）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行（非 P6 必达）：Office P2、控件进 `.ngui`、自绘 IME 候选。
+P0–P5 已通；**P6a / P6b** 已通 → 下一步 **P6c** Windows 骨架（见 [p6-design.md](p6-design.md)；Windows 运行时尚未验收）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行（非 P6 必达）：Office P2、控件进 `.ngui`、自绘 IME 候选。

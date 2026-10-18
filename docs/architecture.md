@@ -120,6 +120,8 @@ profile ──横切配置──→ 各层（开关与预算，不形成第二�
 
 P0 输入范围：**指针 + 键盘**。触控以 `Event::Touch` / `TouchEvent` / `TouchPhase` 转发；**P6a** 将主触点合成进指针路径（`touch_synth`）。多指手势 / 完整工控键表仍属后续（见 [p6-design.md](p6-design.md)）。
 
+**DPI（P6b）：** 事件坐标、`Resized`、`present` / `size()` 默认 **物理像素**；`WindowCtx::scale_factor()` 与 `Event::ScaleFactorChanged` 暴露 OS 缩放；逻辑布局经 `next_gui_platform::dpi` 换算。触控合成与指针命中须用同一换算。不强制改写全部 widget。
+
 剪贴板：`WindowCtx::clipboard_get_text` / `clipboard_set_text`（UTF-8 文本，`arboard`；Linux 优先 X11，Wayland 可能受限；见 `next_gui_platform::clipboard`）。
 
 ```text
@@ -261,6 +263,7 @@ scene（脏区） → render 命令流
 | 弱机优先 | Field profile；P0 先 soft + 脏区 |
 | OS：Linux → Win → macOS Office | `platform` 统一抽象 + 按序后端 |
 | P0 指针+键盘；P6a 触控→指针 | `Event::Touch` + 主触点合成；见 [p6-design.md](p6-design.md) |
+| P6b DPI / scale | 默认物理；`scale_factor` + `dpi`；见 [p6-design.md](p6-design.md) §3.2 |
 | 剪贴板文本 API | `WindowCtx::clipboard_*`（platform） |
 
 本文已定稿；与 [requirements.md](requirements.md)、[roadmap.md](roadmap.md) 一并作为实现依据。

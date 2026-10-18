@@ -136,7 +136,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/24_profile_dual` — **P4**：Field/Office Profile 双档
 - `examples/25_immediate_viewport` — **P5**：retained 壳 + Immediate 工具面板
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：**P6b DPI** 起（[p6-design.md](p6-design.md)）；可选 Office P2 / `.ngui` 进复杂控件。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；P6a 触控→指针；P6b DPI 契约；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：**P6c Windows** 起（[p6-design.md](p6-design.md)）；可选 Office P2 / `.ngui` 进复杂控件。
 
 ---
 
@@ -161,7 +161,7 @@ P0–P3 完成
     ↓
 P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
-P5 Immediate 已落地；**P6a** 已通 → **P6b DPI**（[p6-design.md](p6-design.md)）
+P5 Immediate 已落地；**P6a / P6b** 已通 → **P6c Windows**（[p6-design.md](p6-design.md)）
 ```
 
 ---

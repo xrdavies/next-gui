@@ -55,7 +55,7 @@ crates/next-gui-platform/
 ### 4.1 Contract (must match Linux)
 
 - [x] `pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError>`
-- [x] Deliver `Event::{CloseRequested, Resized, RedrawRequested, PointerMoved, PointerButton, PointerScroll, Key, Ime}` plus the `Event::Touch` stub
+- [x] Deliver `Event::{CloseRequested, Resized, ScaleFactorChanged, RedrawRequested, PointerMoved, PointerButton, PointerScroll, Key, Ime}` plus the `Event::Touch` stub (P6a synth; P6b scale)
 - [x] Map mouse buttons, wheel/trackpad deltas, editing keys, characters, and modifiers like Linux (including Command for select-all)
 - [x] Enable system IME for focused TextInput; forward preedit/commit and caret coordinates
 - [x] `WindowCtx::present(width, height, &[u32] /* XRGB8888 */)` shows soft-rendered frames
@@ -85,8 +85,9 @@ crates/next-gui-platform/
 ### 4.5 Remaining scope
 
 - Field / embedded profile
-- Full HMI touch mapping and gestures (the `Event::Touch` stub is present; P6 owns the mapping — see [p6-design.md](p6-design.md))
-- Explicit DPI policy, accessibility, and long-running industrial acceptance (P6 slices; macOS follow-on after Linux)
+- Full multi-touch gestures (P6a primary-finger → pointer is wired; multi-finger gestures remain later — see [p6-design.md](p6-design.md))
+- Retina / mixed-scale **manual** acceptance (P6b contract + `scale_factor` / `dpi` are landed; hardware follow-on)
+- Accessibility and long-running industrial acceptance (P6d / P6e; macOS follow-on after Linux)
 - Replacing Linux backend or renaming traits
 
 ---
@@ -124,9 +125,9 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 
 ## 6. Known gaps
 
-- Retina scale is currently handled as winit physical-pixel events; there is no explicit DPI policy yet.
+- **DPI (P6b):** `WindowCtx::scale_factor`, `Event::ScaleFactorChanged`, and `next_gui_platform::dpi` helpers are available; events remain physical by default. Retina / mixed-scale display transitions still need manual acceptance on hardware.
 - **IME** is wired (same contract as Linux). **Clipboard** thin text API is available on `WindowCtx`.
-- **Touch:** `Event::Touch` / `TouchEvent` stubs exist and are forwarded when winit emits them; macOS winit currently does not emit touch. Full industrial touch mapping is P6.
+- **Touch:** `Event::Touch` forwarded when winit emits it; P6a primary-finger pointer synth is shared with Linux. macOS winit often does not emit touch on trackpads.
 - Multi-window management and accessibility remain future work shared with the other platforms.
 - Re-verification passed native GPU color agreement, DateTime overlay stacking and required clippy checks. Follow-up checks also verify e13 Escape exit (F03), TextArea wrapped carets in Soft/Metal (F07), and `request_exit` from startup/redraw/pointer callbacks without another key. Codex added Linux target guards to the new X11/Wayland probe runner and its callers, restoring default macOS builds. Grok's Linux probes now skip unavailable desktop/tool prerequisites and force X11 for pointer injection; F02 is verified with source inspection, Linux compile/headless checks and Grok's desktop evidence. Current macOS tests and all 17 example startup/Escape checks pass; see the linked review.
 - The macOS review used an Apple Silicon host and a 1× display; Retina and mixed-scale display transitions have not been accepted.
