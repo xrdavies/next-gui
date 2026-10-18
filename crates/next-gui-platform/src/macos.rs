@@ -1,16 +1,19 @@
 //! macOS Office window backend using winit (+ optional softbuffer).
 
 use crate::{
-    clipboard::Clipboard, AppCallbacks, Event, ImeEvent, KeyCode, Modifiers, PlatformError,
-    PointerButton, PresentBackend, TouchEvent, TouchPhase, WindowAttrs, WindowCtx, WindowHost,
-    WindowId,
+    clipboard::Clipboard, touch_synth::TouchPointerSynth, AppCallbacks, Event, ImeEvent, KeyCode,
+    Modifiers, PlatformError, PointerButton, PresentBackend, TouchEvent, TouchPhase, WindowAttrs,
+    WindowCtx, WindowHost, WindowId,
 };
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, TouchPhase as WinitTouchPhase, WindowEvent};
+use winit::event::{
+    ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, TouchPhase as WinitTouchPhase,
+    WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window as WinitWindow;
@@ -133,6 +136,8 @@ struct Runner<A: AppCallbacks> {
     app: A,
     host: Option<Host>,
     started: bool,
+    /// P6a: primary touch → pointer synthesis state.
+    touch_synth: TouchPointerSynth,
 }
 
 impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
@@ -244,16 +249,20 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 host.cursor = (position.x, position.y);
-                let (x, y) = host.cursor;
-                let mut ctx = WindowCtx { inner: host };
-                self.app.on_event(
-                    &mut ctx,
-                    Event::PointerMoved {
-                        window: WindowId(1),
-                        x,
-                        y,
-                    },
-                );
+                // While a primary finger is down, OS often mirrors touch as mouse —
+                // skip to avoid double PointerMoved (see touch_synth module docs).
+                if !self.touch_synth.has_primary() {
+                    let (x, y) = host.cursor;
+                    let mut ctx = WindowCtx { inner: host };
+                    self.app.on_event(
+                        &mut ctx,
+                        Event::PointerMoved {
+                            window: WindowId(1),
+                            x,
+                            y,
+                        },
+                    );
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = *state == ElementState::Pressed;
@@ -265,18 +274,21 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         PointerButton::Other(0)
                     }
                 };
-                let (x, y) = host.cursor;
-                let mut ctx = WindowCtx { inner: host };
-                self.app.on_event(
-                    &mut ctx,
-                    Event::PointerButton {
-                        window: WindowId(1),
-                        button,
-                        pressed,
-                        x,
-                        y,
-                    },
-                );
+                // Suppress OS-mirrored left clicks while primary touch is active.
+                if !(button == PointerButton::Left && self.touch_synth.has_primary()) {
+                    let (x, y) = host.cursor;
+                    let mut ctx = WindowCtx { inner: host };
+                    self.app.on_event(
+                        &mut ctx,
+                        Event::PointerButton {
+                            window: WindowId(1),
+                            button,
+                            pressed,
+                            x,
+                            y,
+                        },
+                    );
+                }
             }
             WindowEvent::ModifiersChanged(mods) => {
                 let state = mods.state();
@@ -369,9 +381,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     }
                     WinitIme::Commit(text) => {
                         host.ime_composing = false;
-                        ImeEvent::Commit {
-                            text: text.clone(),
-                        }
+                        ImeEvent::Commit { text: text.clone() }
                     }
                     WinitIme::Disabled => {
                         host.ime_composing = false;
@@ -394,19 +404,26 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     WinitTouchPhase::Ended => TouchPhase::Ended,
                     WinitTouchPhase::Cancelled => TouchPhase::Cancelled,
                 };
+                let touch = TouchEvent {
+                    id: t.id,
+                    phase,
+                    x: t.location.x,
+                    y: t.location.y,
+                };
+                host.cursor = (touch.x, touch.y);
+                let synth = self.touch_synth.synthesize(WindowId(1), touch);
                 let mut ctx = WindowCtx { inner: host };
+                // Always forward raw Touch first; then primary-finger pointer synth (P6a).
                 self.app.on_event(
                     &mut ctx,
                     Event::Touch {
                         window: WindowId(1),
-                        touch: TouchEvent {
-                            id: t.id,
-                            phase,
-                            x: t.location.x,
-                            y: t.location.y,
-                        },
+                        touch,
                     },
                 );
+                for ev in synth {
+                    self.app.on_event(&mut ctx, ev);
+                }
             }
             _ => {}
         }
@@ -431,6 +448,7 @@ pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformErr
         app,
         host: None,
         started: false,
+        touch_synth: TouchPointerSynth::new(),
     };
     event_loop
         .run_app(&mut runner)

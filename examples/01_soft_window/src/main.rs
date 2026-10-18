@@ -2,6 +2,7 @@
 //!
 //! Controls:
 //! - Left click a colored block to cycle its color (dirty region updates).
+//! - Touch (primary finger) synthesizes the same left-click path (P6a).
 //! - Space: cycle all blocks' colors.
 //! - Escape / close: quit.
 //!
