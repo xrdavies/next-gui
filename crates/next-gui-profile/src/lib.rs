@@ -88,6 +88,9 @@ pub struct ProfileConfig {
     /// Suggested chart / trend refresh rate (Hz). `0` = follow `max_fps`.
     pub chart_refresh_hz: u32,
     pub animation_budget: AnimationBudget,
+    /// Apps may mount an Immediate viewport. Field default **false**; Office **true**.
+    /// Enabling still requires an explicit `ImmediateViewport` in app code.
+    pub allow_immediate: bool,
 }
 
 impl ProfileConfig {
@@ -102,6 +105,7 @@ impl ProfileConfig {
             force_soft: true,
             chart_refresh_hz: 4,
             animation_budget: AnimationBudget::Minimal,
+            allow_immediate: false,
         }
     }
 
@@ -116,6 +120,7 @@ impl ProfileConfig {
             force_soft: false,
             chart_refresh_hz: 15,
             animation_budget: AnimationBudget::Full,
+            allow_immediate: true,
         }
     }
 
@@ -209,7 +214,7 @@ impl ProfileConfig {
     /// One-line summary for StatusBar / stderr.
     pub fn summary(&self) -> String {
         format!(
-            "{} | gpu={} force_soft={} surface={:?} max_fps={} effects={} charts={}Hz anim={:?}",
+            "{} | gpu={} force_soft={} surface={:?} max_fps={} effects={} charts={}Hz anim={:?} immediate={}",
             self.name(),
             self.allow_gpu,
             self.force_soft,
@@ -222,6 +227,7 @@ impl ProfileConfig {
                 self.chart_refresh_hz
             },
             self.animation_budget,
+            self.allow_immediate,
         )
     }
 }
@@ -242,6 +248,7 @@ mod tests {
         assert!(!p.effects_enabled);
         assert_eq!(p.animation_budget, AnimationBudget::Minimal);
         assert!(p.max_fps <= 30);
+        assert!(!p.allow_immediate);
     }
 
     #[test]
@@ -256,6 +263,7 @@ mod tests {
         assert!(p.effects_enabled);
         assert_eq!(p.animation_budget, AnimationBudget::Full);
         assert!(p.max_fps >= 60);
+        assert!(p.allow_immediate);
     }
 
     #[test]
