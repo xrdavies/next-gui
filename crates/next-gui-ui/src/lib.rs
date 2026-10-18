@@ -7,6 +7,7 @@
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
+//! Office P2a (`button_group` / `link` / `space`): see `docs/office-p2-design.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
@@ -18,12 +19,14 @@ mod p1_deferred;
 mod chart;
 mod p1_raster;
 mod p1_rest;
+mod office_p2;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
 pub use chart::{ChartKind, ChartStyle, ChartTile};
 pub use p1_deferred::*;
 pub use p1_rest::*;
+pub use office_p2::*;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1888,6 +1891,17 @@ enum Kind {
         scroll_y: f32,
         style: TreeTableStyle,
     },
+    /// Exclusive button group (Office P2a); one focusable unit like Segmented.
+    ButtonGroup {
+        labels: Vec<String>,
+        selected: Option<usize>,
+        style: ButtonGroupStyle,
+    },
+    /// Text-styled hyperlink (Office P2a).
+    Link {
+        label: String,
+        style: LinkStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -2021,6 +2035,10 @@ pub struct Ui {
     pending_menu_action: Option<(WidgetId, u64)>,
     /// Last keyboard-activated Button; drained by [`Ui::take_button_activate`].
     pending_button_activate: Option<WidgetId>,
+    /// Last ButtonGroup selection change; drained by [`Ui::take_button_group_change`].
+    pending_button_group_change: Option<(WidgetId, Option<usize>)>,
+    /// Last keyboard-activated Link; drained by [`Ui::take_link_activate`].
+    pending_link_activate: Option<WidgetId>,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2115,6 +2133,8 @@ impl Ui {
             open_popup: None,
             pending_menu_action: None,
             pending_button_activate: None,
+            pending_button_group_change: None,
+            pending_link_activate: None,
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2180,6 +2200,42 @@ impl Ui {
             build(&mut builder);
         }
         id
+    }
+
+
+    /// Top-level spacing container (Office P2a sugar over row/column).
+    pub fn space<F>(&mut self, style: SpaceStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        match style.direction {
+            SpaceDirection::Horizontal => {
+                let row = RowStyle {
+                    x: style.x,
+                    y: style.y,
+                    width: style.width,
+                    height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                    background: style.background,
+                };
+                self.row(row, build)
+            }
+            SpaceDirection::Vertical => {
+                let col = ColumnStyle {
+                    x: style.x,
+                    y: style.y,
+                    width: style.width,
+                    height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                    background: style.background,
+                };
+                self.column(col, build)
+            }
+        }
     }
 
     /// Declare a top-level toolbar.
@@ -2591,6 +2647,15 @@ impl Ui {
                 self.focus = Some(id);
                 false
             }
+            Some(Kind::ButtonGroup { .. }) => {
+                self.focus = Some(id);
+                self.pointer_button_group(scene, id, x, y)
+            }
+            Some(Kind::Link { .. }) => {
+                // Same dual path as Button.
+                self.focus = Some(id);
+                false
+            }
             _ => {
                 self.focus = None;
                 false
@@ -2862,6 +2927,16 @@ impl Ui {
             }
             Kind::Tabs { titles, selected, .. } => titles.get(*selected).cloned(),
             Kind::Segmented { options, selected, .. } => options.get(*selected).cloned(),
+            Kind::ButtonGroup { labels, selected, .. } => {
+                selected.and_then(|i| labels.get(i).cloned())
+            }
+            Kind::Link { label, .. } => {
+                if label.is_empty() {
+                    None
+                } else {
+                    Some(label.clone())
+                }
+            }
             Kind::Text { content, .. } => {
                 if content.is_empty() {
                     None
@@ -2900,6 +2975,8 @@ impl Ui {
                 | Kind::Transfer { .. }
                 | Kind::PropertyGrid { .. }
                 | Kind::TreeTable { .. }
+                | Kind::ButtonGroup { .. }
+                | Kind::Link { .. }
         )
     }
 
@@ -3528,6 +3605,11 @@ impl Ui {
             Some(Kind::TextArea { .. }) => self.key_text_area(id, key),
             Some(Kind::InputNumber { .. }) => self.key_input_number(id, key),
             Some(Kind::Segmented { .. }) => self.key_segmented(id, key),
+            Some(Kind::ButtonGroup { .. }) => self.key_button_group(id, key),
+            Some(Kind::Link { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+                self.pending_link_activate = Some(id);
+                true
+            }
             Some(Kind::Pagination { .. }) => self.key_pagination(id, key),
             Some(Kind::DateTime { .. }) => self.key_datetime(id, key),
             Some(Kind::Transfer { .. }) => self.key_transfer(id, key),
@@ -4165,6 +4247,66 @@ impl Ui {
         }
     }
 
+    fn key_button_group(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let (sel, n) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ButtonGroup {
+                selected, labels, ..
+            }) => (*selected, labels.len()),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        match key {
+            UiKey::Left | UiKey::Up => {
+                let next = match sel {
+                    None => n - 1,
+                    Some(0) => n - 1,
+                    Some(s) => s - 1,
+                };
+                self.set_button_group_selected(id, Some(next))
+            }
+            UiKey::Right | UiKey::Down => {
+                let next = match sel {
+                    None => 0,
+                    Some(s) => (s + 1) % n,
+                };
+                self.set_button_group_selected(id, Some(next))
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_button_group(&mut self, scene: &Scene, id: WidgetId, x: f32, _y: f32) -> bool {
+        let (n, style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::ButtonGroup { labels, style, .. },
+                node,
+                ..
+            }) => (labels.len(), *style, *node),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|nid| scene.get(nid).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        if n == 0 {
+            return false;
+        }
+        let gaps = style.gap * (n.saturating_sub(1) as f32);
+        let inner_w = (bounds.width - style.padding * 2.0 - gaps).max(1.0);
+        let btn_w = inner_w / n as f32;
+        let step = btn_w + style.gap;
+        let local = x - bounds.x - style.padding;
+        if local < 0.0 || local > inner_w + gaps {
+            return false;
+        }
+        let idx = (local / step).floor() as isize;
+        if idx >= 0 && (idx as usize) < n {
+            return self.set_button_group_selected(id, Some(idx as usize));
+        }
+        false
+    }
+
     fn key_pagination(&mut self, id: WidgetId, key: UiKey) -> bool {
         let page = self.pagination_page(id).unwrap_or(1);
         match key {
@@ -4601,6 +4743,19 @@ impl Ui {
         self.pending_button_activate.take()
     }
 
+    /// Drain the last ButtonGroup selection change `(id, selected)`.
+    pub fn take_button_group_change(&mut self) -> Option<(WidgetId, Option<usize>)> {
+        self.pending_button_group_change.take()
+    }
+
+    /// Drain the last keyboard-activated Link (`Space` / `Enter` while focused).
+    ///
+    /// Pointer clicks: apps keep using [`Ui::hit_widget`] after [`Ui::pointer_pressed`]
+    /// returns `false` for links (same dual path as Button).
+    pub fn take_link_activate(&mut self) -> Option<WidgetId> {
+        self.pending_link_activate.take()
+    }
+
     /// Selected tab index.
     pub fn tabs_selected(&self, id: WidgetId) -> Option<usize> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -5019,6 +5174,45 @@ impl Ui {
             }
         }
         false
+    }
+
+    /// ButtonGroup selected index (`None` if unset or wrong kind).
+    pub fn button_group_selected(&self, id: WidgetId) -> Option<Option<usize>> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ButtonGroup { selected, .. }) => Some(*selected),
+            _ => None,
+        }
+    }
+
+    /// Set ButtonGroup selected index (`None` clears). Returns true if changed.
+    pub fn set_button_group_selected(&mut self, id: WidgetId, index: Option<usize>) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::ButtonGroup { labels, .. }) => labels.len(),
+            _ => return false,
+        };
+        if let Some(i) = index {
+            if n == 0 || i >= n {
+                return false;
+            }
+        }
+        let changed = if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::ButtonGroup { selected, .. } = &mut w.kind {
+                if *selected == index {
+                    false
+                } else {
+                    *selected = index;
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if changed {
+            self.pending_button_group_change = Some((id, index));
+        }
+        changed
     }
 
     /// Pagination current page (1-based).
@@ -6666,6 +6860,8 @@ impl Ui {
                 Some(Kind::Transfer { style, .. }) => (style.bg, true),
                 Some(Kind::PropertyGrid { style, .. }) => (style.bg, true),
                 Some(Kind::TreeTable { style, .. }) => (style.bg, true),
+                Some(Kind::ButtonGroup { style, .. }) => (style.bg, true),
+                Some(Kind::Link { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 None => return,
             };
 
@@ -6687,6 +6883,23 @@ impl Ui {
                         .expect("insert label node");
                     if let Some(w) = self.widgets.get_mut(&id) {
                         w.label_node = Some(label);
+                    }
+                }
+                Some(Kind::ButtonGroup { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                }
+                Some(Kind::Link { style, .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), style.fg)
+                        .expect("insert link label");
+                    let underline = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), style.fg)
+                        .expect("insert link underline");
+                    scene.set_visible(underline, false);
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                        w.chrome_node = Some(underline);
                     }
                 }
                 Some(Kind::Panel { style, .. }) => {
@@ -7235,6 +7448,12 @@ impl Ui {
             ),
             Some(Kind::Card { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Segmented { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::ButtonGroup { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Link { label, style, .. }) => {
+                let (w, h) = self.font.measure_line(label, style.size);
+                let uh = if style.underline { 3.0 } else { 0.0 };
+                ChildMeasure::new(w, h + uh + 4.0)
+            },
             Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::DateTime { style, .. }) => ChildMeasure::new(style.width, style.height),
@@ -8244,6 +8463,20 @@ impl Ui {
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::ButtonGroup { .. })
+        ) {
+            self.paint_button_group(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Link { .. })
+        ) {
+            self.paint_link(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Breadcrumb { .. })
         ) {
             self.paint_breadcrumb(scene, id);
@@ -8722,7 +8955,9 @@ impl Ui {
             | Kind::DateTime { .. }
             | Kind::Transfer { .. }
             | Kind::PropertyGrid { .. }
-            | Kind::TreeTable { .. } => {}
+            | Kind::TreeTable { .. }
+            | Kind::ButtonGroup { .. }
+            | Kind::Link { .. } => {}
         }
     }
 
@@ -9914,6 +10149,125 @@ impl Ui {
                 scene.set_fill(lab, if is_sel { style.selected_fg } else { style.fg });
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
                 scene.set_visible(lab, true);
+            }
+        }
+    }
+
+    fn paint_button_group(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::ButtonGroup {
+                    labels,
+                    selected,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let labels = labels.clone();
+        let selected = *selected;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let n = labels.len().max(1);
+        let gaps = style.gap * (n.saturating_sub(1) as f32);
+        let inner_w = (bounds.width - style.padding * 2.0 - gaps).max(1.0);
+        let btn_w = inner_w / n as f32;
+        let btn_h = (bounds.height - style.padding * 2.0).max(1.0);
+        // aux: per button [bg, label]
+        self.ensure_aux_nodes(scene, host, id, n * 2);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        for (i, lab) in labels.iter().enumerate() {
+            let x = bounds.x + style.padding + i as f32 * (btn_w + style.gap);
+            let y = bounds.y + style.padding;
+            let is_sel = selected == Some(i);
+            if let Some(&bg) = aux.get(i * 2) {
+                scene.set_bounds(bg, Rect::new(x, y, btn_w, btn_h));
+                scene.set_fill(
+                    bg,
+                    if is_sel {
+                        style.selected_bg
+                    } else {
+                        style.border
+                    },
+                );
+                scene.set_mask(bg, None);
+                scene.set_visible(bg, true);
+            }
+            let (_, mask) = self.font.rasterize_text(lab, style.size, None);
+            if let Some(&lab_n) = aux.get(i * 2 + 1) {
+                scene.set_bounds(
+                    lab_n,
+                    Rect::new(
+                        x + ((btn_w - mask.width as f32) * 0.5).max(0.0),
+                        y + ((btn_h - mask.height as f32) * 0.5).max(0.0),
+                        mask.width as f32,
+                        mask.height as f32,
+                    ),
+                );
+                scene.set_fill(
+                    lab_n,
+                    if is_sel {
+                        style.selected_fg
+                    } else {
+                        style.fg
+                    },
+                );
+                scene.set_mask(
+                    lab_n,
+                    Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                );
+                scene.set_visible(lab_n, true);
+            }
+        }
+    }
+
+    fn paint_link(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Link { label, style },
+            node,
+            label_node,
+            chrome_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let label = label.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let Some(lab_n) = *label_node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, Color::rgba(0, 0, 0, 0));
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let (_, mask) = self.font.rasterize_text(&label, style.size, None);
+        let lx = bounds.x;
+        let ly = bounds.y + ((bounds.height - mask.height as f32 - if style.underline { 3.0 } else { 0.0 }) * 0.5).max(0.0);
+        scene.set_bounds(
+            lab_n,
+            Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+        );
+        scene.set_fill(lab_n, style.fg);
+        scene.set_mask(lab_n, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+        scene.set_visible(lab_n, true);
+        if let Some(under) = *chrome_node {
+            if style.underline {
+                scene.set_bounds(
+                    under,
+                    Rect::new(lx, ly + mask.height as f32 + 1.0, mask.width as f32, 1.0),
+                );
+                scene.set_fill(under, style.fg);
+                scene.set_mask(under, None);
+                scene.set_visible(under, true);
+            } else {
+                scene.set_visible(under, false);
             }
         }
     }
@@ -13996,6 +14350,103 @@ impl FlexBuilder<'_> {
         id
     }
 
+
+    /// Exclusive button group (Office P2a). One Tab stop; Left/Right changes selection.
+    pub fn button_group(
+        &mut self,
+        labels: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<usize>,
+        style: ButtonGroupStyle,
+    ) -> WidgetId {
+        let labels: Vec<String> = labels.into_iter().map(|s| s.into()).collect();
+        let selected = match selected {
+            Some(i) if !labels.is_empty() => Some(i.min(labels.len() - 1)),
+            Some(_) => None,
+            None => None,
+        };
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::ButtonGroup {
+                    labels,
+                    selected,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Text link (Office P2a) with default accent + underline.
+    pub fn link(&mut self, label: impl Into<String>) -> WidgetId {
+        self.link_styled(label, LinkStyle::default())
+    }
+
+    /// Text link with custom style.
+    pub fn link_styled(&mut self, label: impl Into<String>, style: LinkStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Link {
+                    label: label.into(),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Spacing container (Office P2a): sugar over [`Self::row`] / [`Self::column`].
+    ///
+    /// No separate retained `Kind` — see `docs/office-p2-design.md`.
+    pub fn space<F>(&mut self, style: SpaceStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        match style.direction {
+            SpaceDirection::Horizontal => {
+                let row = RowStyle {
+                    x: style.x,
+                    y: style.y,
+                    width: style.width,
+                    height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                    background: style.background,
+                };
+                self.row(row, build)
+            }
+            SpaceDirection::Vertical => {
+                let col = ColumnStyle {
+                    x: style.x,
+                    y: style.y,
+                    width: style.width,
+                    height: style.height,
+                    padding: style.padding,
+                    gap: style.gap,
+                    cross_align: style.cross_align,
+                    background: style.background,
+                };
+                self.column(col, build)
+            }
+        }
+    }
+
     /// Breadcrumb path.
     pub fn breadcrumb(
         &mut self,
@@ -16035,5 +16486,131 @@ mod tests {
         assert_eq!(ui.focused(), Some(modal), "trap keeps focus");
         assert!(ui.key_input(UiKey::BackTab));
         assert_eq!(ui.focused(), Some(modal));
+    }
+
+    #[test]
+    fn office_p2a_button_group_select_and_keyboard() {
+        let mut ui = Ui::new();
+        let mut bg = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            bg = col.button_group(["A", "B", "C"], Some(0), ButtonGroupStyle::default());
+        });
+        assert_eq!(ui.button_group_selected(bg), Some(Some(0)));
+        assert!(ui.focusable_widgets().contains(&bg));
+        ui.set_focus(Some(bg));
+        assert!(ui.take_button_group_change().is_none());
+        assert!(ui.key_input(UiKey::Right));
+        assert_eq!(ui.button_group_selected(bg), Some(Some(1)));
+        assert_eq!(ui.take_button_group_change(), Some((bg, Some(1))));
+        assert!(ui.take_button_group_change().is_none(), "drain once");
+        assert!(ui.key_input(UiKey::Left));
+        assert_eq!(ui.button_group_selected(bg), Some(Some(0)));
+        assert!(ui.set_button_group_selected(bg, None));
+        assert_eq!(ui.button_group_selected(bg), Some(None));
+        assert_eq!(ui.take_button_group_change(), Some((bg, None)));
+        assert!(!ui.set_button_group_selected(bg, Some(9)), "oob");
+    }
+
+    #[test]
+    fn office_p2a_link_focus_and_activate() {
+        let mut ui = Ui::new();
+        let mut link = WidgetId(0);
+        let mut btn = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            link = col.link("Docs");
+            btn = col.button("Go");
+        });
+        let order = ui.focusable_widgets();
+        assert!(order.contains(&link), "link focusable");
+        assert_eq!(ui.accessible_name(link).as_deref(), Some("Docs"));
+        ui.set_focus(Some(link));
+        assert!(ui.take_link_activate().is_none());
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.take_link_activate(), Some(link));
+        assert!(ui.take_link_activate().is_none());
+        assert!(ui.key_input(UiKey::Space));
+        assert_eq!(ui.take_link_activate(), Some(link));
+        let _ = btn;
+    }
+
+    #[test]
+    fn office_p2a_space_sugar_row_column() {
+        let mut ui = Ui::new();
+        let mut inner_btn = WidgetId(0);
+        let space_id = ui.space(
+            SpaceStyle {
+                direction: SpaceDirection::Horizontal,
+                gap: 16.0,
+                width: 300.0,
+                height: 40.0,
+                ..SpaceStyle::default()
+            },
+            |row| {
+                inner_btn = row.button("X");
+                row.link("Y");
+            },
+        );
+        // Space is sugar → Kind::Row
+        assert!(matches!(
+            ui.widgets.get(&space_id).map(|w| &w.kind),
+            Some(Kind::Row { .. })
+        ));
+        assert!(ui.focusable_widgets().contains(&inner_btn));
+
+        let mut vert_child = WidgetId(0);
+        let col_id = ui.space(
+            SpaceStyle {
+                direction: SpaceDirection::Vertical,
+                gap: 8.0,
+                ..SpaceStyle::default()
+            },
+            |col| {
+                vert_child = col.link("Z");
+            },
+        );
+        assert!(matches!(
+            ui.widgets.get(&col_id).map(|w| &w.kind),
+            Some(Kind::Column { .. })
+        ));
+        assert!(ui.focusable_widgets().contains(&vert_child));
+    }
+
+    #[test]
+    fn office_p2a_button_group_pointer_selects() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut bg = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 320.0,
+                height: 80.0,
+                padding: 8.0,
+                gap: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                bg = col.button_group(
+                    ["One", "Two", "Three"],
+                    Some(0),
+                    ButtonGroupStyle {
+                        width: 300.0,
+                        height: 32.0,
+                        ..ButtonGroupStyle::default()
+                    },
+                );
+            },
+        );
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&bg).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        // Click toward the right third → index 2
+        let x = b.x + b.width * 0.85;
+        let y = b.y + b.height * 0.5;
+        assert!(ui.pointer_pressed(&mut scene, x, y));
+        assert_eq!(ui.button_group_selected(bg), Some(Some(2)));
+        assert_eq!(ui.focused(), Some(bg));
+        assert_eq!(ui.take_button_group_change(), Some((bg, Some(2))));
     }
 }
