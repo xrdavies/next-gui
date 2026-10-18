@@ -1,0 +1,105 @@
+# next-gui CI matrix
+#
+# Jobs (parallel):
+#   field-soft         Soft packaging: no wgpu / next-gui-render-gpu in Field trees
+#   workspace          Default workspace cargo test (GPU crates included; GUI skips w/o DISPLAY)
+#   platform-features  Typecheck platform macos + windows features on Linux
+#   clippy             Workspace clippy; GUI-heavy code must not hang the job
+#
+# Local Field Soft gate: ./tools/ci/field-soft.sh
+# See docs/p4-design.md §5 and docs/roadmap.md P4.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Headless: platform GUI integration tests skip when unset (see platform/tests/common).
+  # Do not set DISPLAY here so CI stays non-interactive.
+
+jobs:
+  field-soft:
+    name: field-soft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.86"
+      - name: System libs (winit / softbuffer)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - name: Field Soft gate
+        run: ./tools/ci/field-soft.sh
+
+  workspace:
+    name: workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.86"
+      - name: System libs (winit / softbuffer / wgpu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - name: cargo check (workspace, default features)
+        run: cargo check --workspace
+      - name: cargo test (workspace; GUI tests skip without DISPLAY)
+        run: cargo test --workspace -- --quiet
+
+  platform-features:
+    name: platform-features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.86"
+      - name: System libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - name: Typecheck macos feature (on Linux host)
+        run: cargo check -p next-gui-platform --features macos
+      - name: Typecheck windows feature (on Linux host)
+        run: cargo check -p next-gui-platform --features windows
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain + clippy
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.86"
+          components: clippy
+      - name: System libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      # No GUI event loop — clippy is compile-time only.
+      # Soft/core (+ ui) crates: deny warnings. Full workspace: advisory (Office/GPU examples may warn).
+      - name: clippy Field Soft / core (-D warnings)
+        run: >
+          cargo clippy
+          -p next-gui-profile -p next-gui-scene -p next-gui-layout
+          -p next-gui-ui -p next-gui-render -p next-gui-render-soft -p next-gui-text
+          -p next-gui-immediate -p next-gui-platform
+          -p e01_soft_window -p e02_counter -p e03_ngui_counter -p e04_cjk_text
+          -p e24_profile_dual --no-default-features
+          --all-targets -- -D warnings
+      - name: clippy workspace (advisory)
+        run: cargo clippy --workspace --all-targets
