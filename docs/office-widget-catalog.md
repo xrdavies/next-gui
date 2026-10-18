@@ -1,6 +1,6 @@
 # Office 控件目录（对照 Ant Design / Element Plus / MUI）
 
-> **状态：已确认（2026-10-17）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主；**P0 切片**已落地（shell/inputs/data/nav/feedback）。**P1 核心** + **P1 rest** 已落地（含 Drawer、虚表、录入/反馈/结构控件；见 §9）。**P1 deferred 四项已落地**（`datetime` / `transfer` / `property_grid` / `tree_table`；见 §9）。Cascader 仍不进 P1。
+> **状态：已确认（2026-10-17）；实现侧 P0 / P1（含 rest + deferred）/ Chart / P4 Profile 已齐（2026-10-19 文档同步）。** Office 线「支持哪些控件、优先级如何」已锁定。本文以目录与优先级为主。Cascader 仍不进 P1（见 §10）。下一步产品向见 [roadmap.md](roadmap.md) **P6**；Office P2 为可选加厚。
 >
 > 配套：[office-line.md](office-line.md)（当前 Office 交付）、[requirements.md](requirements.md)、[architecture.md](architecture.md)。
 
@@ -277,8 +277,9 @@
 | P0 缺口 | **无**（目录 §4 名单已覆盖；IME/列宽拖拽等为增强，见各切片备注） |
 | 已实现（P1 deferred 切片） | `datetime`，`transfer`，`property_grid`，`tree_table`（`examples/22_office_p1_deferred`） |
 | 已实现（Office 增强） | `chart` 多瓦片面板（共享 Gauge/Trend 光栅；`examples/23_office_charts`） |
-| P1 仍待办 | Cascader（仍不进 P1；层级选择仅 TreeSelect） |
-| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗、Immediate 视口、Profile crate（P4） |
+| 刻意不做 / P2 可选 | Cascader（不进 P1；层级选择仅 TreeSelect） |
+| 未实现且非本文范围 | 动画系统、自绘 IME 候选窗；Office P2 低频控件（见 §6.2） |
+| 已实现但非控件目录项 | P4 `next-gui-profile`（见 §Profile）、P5 Immediate 视口（`e25`）；剪贴板 / 触控 stub 属 platform |
 
 实现时仍遵守：同一 `ui` / `scene` / `DrawCommand`；GPU 可选；Soft 可回退。
 
@@ -320,3 +321,4 @@
 | 2026-10-18 | **P1 deferred 切片落地：** DateTime / Transfer / PropertyGrid / TreeTable + `e22_office_p1_deferred`；Cascader 仍不进 P1。 |
 | 2026-10-18 | **Office 增强：** `chart` 多瓦片（Gauge+Trend 网格）+ P1 键盘/焦点打磨 + Soft AA；示例 `e23_office_charts`；Cascader/自绘 IME 候选仍后置。 |
 | 2026-10-18 | **P4 Profile：** `next-gui-profile` + `e24_profile_dual`；非控件配置层；Cascader/自绘 IME 仍后置。 |
+| 2026-10-19 | **文档同步：** §9 去掉已落地的 Immediate/Profile「未实现」表述；状态栏对齐 P0–P5 / Chart 已齐；Cascader 仍不进 P1。 |

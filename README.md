@@ -30,7 +30,7 @@
 
 ## 平台
 
-`platform` 尽早抽象多 OS 接口；实现顺序：**Linux → Windows → macOS（仅 Office）**。P0 输入为指针 + 键盘；触控后续补充。
+`platform` 尽早抽象多 OS 接口；实现顺序：**Linux → Windows → macOS（仅 Office）**。P0 输入为指针 + 键盘；剪贴板 UTF-8 文本 API 已有；触控为 `Event::Touch` stub（完整 HMI 映射见 P6）。
 
 **macOS Office 后端首版已实现**：`crates/next-gui-platform/src/macos.rs` + [docs/platform-macos.md](docs/platform-macos.md)。它复用 Linux 的统一事件契约与 `winit`/`softbuffer` 软渲染路径；Field 仍不以 macOS 为交付目标。
 
@@ -47,31 +47,35 @@
 | [docs/p1-design.md](docs/p1-design.md) | P1 紧凑 UI / layout / 控件范围 |
 | [docs/p2-design.md](docs/p2-design.md) | P2 文本引擎 / CJK / 软渲染字形 |
 | [docs/p3-design.md](docs/p3-design.md) | P3 GPU 后端（wgpu）与 Soft 切换 |
-| [docs/office-line.md](docs/office-line.md) | Office 线（跳过 P4）：布局/控件加厚与 Surface 缺口 |
-| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 齐，P1 核心 TreeSelect/Form/AlarmList/Gauge/Trend 已落地） |
+| [docs/office-line.md](docs/office-line.md) | Office 线：布局/控件加厚、原生 Surface、P0/P1/Chart（P4/P5 已另文落地） |
+| [docs/office-widget-catalog.md](docs/office-widget-catalog.md) | Office 控件目录（对照 Ant/Element/MUI；P0 / P1 含 rest+deferred / Chart 已齐；Cascader 仍不进 P1） |
 | [docs/platform-macos.md](docs/platform-macos.md) | macOS **Office 桌面**后端实现与已知缺口 |
 | [docs/agent-workflow.md](docs/agent-workflow.md) | Grok/Codex 跨机器交接、review 协议与 macOS 定时任务 |
 
 ## 状态
 
-**需求与架构已确认；P0–P3 已通；正在做厚 Office 线（P4 Profile 已推迟）。** P1 含 Rust API + `.ngui`（含 Row/Spacer/Separator）；P2 文本/CJK；P3 GPU + Soft；macOS Office 平台首版已通。详见 [docs/office-line.md](docs/office-line.md)。
+**需求与架构已确认；P0–P5 已通（含 Office 加厚、P4 Profile、P5 Immediate）。** Office P0 / P1（rest + deferred）与 Chart 已齐；macOS Office 平台首版已通；评测队列已清。下一步见路线图 **P6 工业打磨**（完整触控映射、无障碍、7×24、DPI、Windows 后端）。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
 
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
 ```bash
 cargo run -p e11_office_shell     # P0 shell: Toolbar/Icon/Panel/Splitter/StatusBar
-cargo run -p e12_office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Switch
+cargo run -p e12_office_inputs    # P0 input: ScrollArea/TextInput/Checkbox/Radio/Switch（含剪贴板）
 cargo run -p e13_office_data      # P0 data: List/Tree/Table
 cargo run -p e14_office_nav                        # P0 nav: Menu/ContextMenu/Tabs/Select/Slider
 cargo run -p e15_office_feedback                   # P0 feedback: Tag/Badge/Tooltip/Modal/Progress/Alert
 cargo run -p e20_office_industrial                         # P1: TreeSelect/Form/AlarmList/Gauge/Trend
 cargo run -p e21_office_p1_rest                            # P1 rest: Drawer/Virtual/Entry/Feedback/Structure
+cargo run -p e22_office_p1_deferred                        # P1 deferred: DateTime/Transfer/PropertyGrid/TreeTable
+cargo run -p e23_office_charts                             # 增强: 多瓦片 Chart + Gauge/Trend
+cargo run -p e24_profile_dual                              # P4: Field/Office Profile
+cargo run -p e25_immediate_viewport                        # P5: retained 壳 + Immediate 视口
 cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 ```
 
 `e11_office_shell`：拖拽中间 sash 调整左右面板；工具条 **Open** / **Save** / **Inc**；**Space** 切换 Soft ↔ GPU（有适配器时）。
 
-`e12_office_inputs`：单行输入（ASCII）、Checkbox/Radio/Switch、ScrollArea 滚轮/拖拽；焦点上 **Space** 切换开关，无焦点时 **Space** 切 Soft↔GPU。IME/CJK 组合输入仍为 stub。
+`e12_office_inputs`：单行输入、Checkbox/Radio/Switch、ScrollArea 滚轮/拖拽；**Ctrl/Cmd+C/V** 剪贴板；系统 IME preedit/commit（CJK）；焦点上 **Space** 切换开关，无焦点时 **Space** 切 Soft↔GPU。无自绘 IME 候选窗。
 
 `e13_office_data`：左 Tree（厂站层级）+ 右 List/Table；点击选中，**↑↓** 导航（Tree 另支持 **←→** 展开/折叠）；滚轮/拖拽滚动；无焦点 **Space** 切 Soft↔GPU。无虚拟化、无单元格编辑、列宽拖拽为 stub。
 
@@ -83,7 +87,15 @@ cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 
 `e21_office_p1_rest`：Drawer（D/按钮）、VirtualList/Table、TextArea/InputNumber、Notification（N）、Spin/Empty/Collapse/Descriptions/Card/Segmented/Breadcrumb/Pagination。**Esc** 关抽屉。`NEXT_GUI_P1_REST_QA=1` 可种子态并导出 PPM。
 
-默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
+`e22_office_p1_deferred`：DateTime / Transfer / PropertyGrid / TreeTable。**Esc** 关弹层。
+
+`e23_office_charts`：多瓦片 Chart + 独立 Gauge/Trend；无焦点 **Space** 切 Soft↔GPU。
+
+`e24_profile_dual`：Field / Office `ProfileConfig` 双档（可用 `NEXT_GUI_PROFILE=field`）。
+
+`e25_immediate_viewport`：retained 壳 + 局部 Immediate 工具面板；**Esc** 先退 Immediate 焦点。
+
+Office 示例惯例：**Esc** 先关弹层 / Immediate，idle 再退出（见各 example）。默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 
 ### 试跑 P3（Linux/macOS，需要图形桌面会话；GPU 可选）
 

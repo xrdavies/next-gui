@@ -2,7 +2,7 @@
 
 > **状态：P3 完成骨架。** 对应 [roadmap.md](roadmap.md) P3；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md)。
 >
-> 范围：`next-gui-render-gpu`、Linux 上经 **wgpu** 消费同一套 `DrawCommand`、示例可在 Soft / GPU 间切换；软渲染仍为兜底。不含 Field/Office Profile 开关（P4）、Immediate（P5）、原生窗口 surface 直出（可后续增强）。
+> 范围：`next-gui-render-gpu`、经 **wgpu** 消费同一套 `DrawCommand`、示例可在 Soft / GPU 间切换；软渲染仍为兜底。P3 示例默认走 **readback → softbuffer**；**原生 `wgpu::Surface` present** 已在 Office 线落地（见 [office-line.md](office-line.md)）。Profile（P4）与 Immediate（P5）另文。
 
 ---
 

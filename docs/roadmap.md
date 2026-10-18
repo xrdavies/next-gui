@@ -62,7 +62,7 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 > **已完成骨架**（见 [p3-design.md](p3-design.md)、`examples/05_backend_toggle`）。
 
 - 与软渲染**共用场景图 / `DrawCommand`**（`next-gui-render-gpu`）
-- Linux 上经 **wgpu** 离屏栅格 + CPU readback，再走现有 `platform.present`（softbuffer）；真 Surface present 后补
+- Linux 上经 **wgpu** 离屏栅格 + CPU readback，再走现有 `platform.present`（softbuffer）；**原生 Surface present** 已在 Office 线落地（见 [office-line.md](office-line.md)）；P3 示例 `e05` 仍默认 readback
 - GPU **服务观感与动态内容**（流畅重绘、动画、图表），非炫技
 - 无适配器时 `GpuRenderer::try_new` 失败，应用回退 Soft
 - Office 默认可走 GPU、Field 可关：配置层见 **P4**
@@ -126,4 +126,4 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 
 ## 建议顺序
 
-P0–P5（含 Office 加厚 + Profile + Immediate）已通 → 下一步 **P6 工业打磨**。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。
+P0–P5（含 Office 加厚 + Profile + Immediate）已通；共享评测队列已清 → 下一步 **P6 工业打磨**（Windows 运行时尚未验收）。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。可选并行：Office P2、控件进 `.ngui`、自绘 IME 候选。
