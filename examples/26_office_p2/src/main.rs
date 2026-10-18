@@ -1,15 +1,15 @@
-//! Office P2a–P2d demo: `button_group` / `link` / `space` / `steps` /
-//! `statistic` / `result` / `popover` / `popconfirm` / `upload` /
-//! `color_picker` / `autocomplete`.
+//! Office P2a–P2e demo: through `grid` / `timeline` / `calendar` / `image` /
+//! `config_provider` (Ui API).
 //!
 //! Tab focuses group / links / steps / result / popover / popconfirm /
-//! upload / color / autocomplete; ←/→ changes group, steps, or color swatch;
-//! Enter/Space on a link or result drains activate/action; Enter/Space on
-//! popover/popconfirm toggles open; Enter/Space on upload → Browse (demo
-//! stubs a path). Pointer uses the Button dual path for links (`hit_widget`).
-//! Space Soft↔GPU when nothing focused.
+//! upload / color / autocomplete / timeline / calendar; ←/→ changes group,
+//! steps, color, or calendar day; Enter/Space on a link or result drains
+//! activate/action; Enter/Space on popover/popconfirm toggles open;
+//! Enter/Space on upload → Browse (demo stubs a path). Pointer uses the
+//! Button dual path for links (`hit_widget`). Space Soft↔GPU when nothing
+//! focused.
 //!
-//! `NEXT_GUI_P2A_QA=1` … `NEXT_GUI_P2D_QA=1` dumps a Soft PPM after first
+//! `NEXT_GUI_P2A_QA=1` … `NEXT_GUI_P2E_QA=1` dumps a Soft PPM after first
 //! paint (then exits — no hang without interaction).
 
 use std::io::Write;
@@ -23,10 +23,11 @@ use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_ui::{
-    AutocompleteStyle, ButtonGroupStyle, ColorPickerStyle, ColumnStyle, LinkStyle, PanelStyle,
-    PopconfirmAction, PopconfirmStyle, PopoverStyle, ResultAction, ResultStatus, ResultStyle,
-    SpaceDirection, SpaceStyle, StatisticStyle, StepItem, StepsStyle, StatusBarStyle, ToolbarStyle,
-    Ui, UiKey, UploadStyle, WidgetId,
+    AutocompleteStyle, ButtonGroupStyle, CalendarStyle, ColorPickerStyle, ColumnStyle, GridStyle,
+    ImageStyle, LinkStyle, PanelStyle, PopconfirmAction, PopconfirmStyle, PopoverStyle,
+    ResultAction, ResultStatus, ResultStyle, SpaceDirection, SpaceStyle, StatisticStyle, StepItem,
+    StepsStyle, StatusBarStyle, TimelineItem, TimelineStyle, ToolbarStyle, Ui, UiConfig, UiDensity,
+    UiKey, UploadStyle, WidgetId,
 };
 
 const CLEAR: Color = Color {
@@ -150,6 +151,8 @@ struct Demo {
     upload: WidgetId,
     color: WidgetId,
     autocomplete: WidgetId,
+    timeline: WidgetId,
+    calendar: WidgetId,
     clicks: u32,
     result_actions: u32,
     popconfirm_actions: u32,
@@ -172,6 +175,14 @@ impl Demo {
         let mut upload = WidgetId(0);
         let mut color = WidgetId(0);
         let mut autocomplete = WidgetId(0);
+        let mut timeline = WidgetId(0);
+        let mut calendar = WidgetId(0);
+
+        ui.set_config(UiConfig {
+            locale: "zh-CN".into(),
+            density: UiDensity::Default,
+            accent: Some(Color::rgb(0x6a, 0xb0, 0xf0)),
+        });
 
         ui.toolbar(
             ToolbarStyle {
@@ -180,7 +191,7 @@ impl Demo {
                 ..ToolbarStyle::default()
             },
             |bar| {
-                bar.text("Office P2a–P2d");
+                bar.text("Office P2a–P2e");
                 bar.spacer(12.0, 1.0);
                 bar.text_styled(
                     "Tab · ←/→ · Enter · Esc closes pop · Space Soft↔GPU",
@@ -365,6 +376,100 @@ impl Demo {
                         ..AutocompleteStyle::default()
                     },
                 );
+                panel.spacer(1.0, 12.0);
+                panel.text("P2e — grid / timeline / calendar / image (config via Ui::set_config)");
+                panel.grid(
+                    2,
+                    GridStyle {
+                        width: width as f32 - 64.0,
+                        height: 72.0,
+                        padding: 4.0,
+                        gap: 8.0,
+                        background: Some(Color::rgb(0x22, 0x22, 0x28)),
+                        ..GridStyle::default()
+                    },
+                    |g| {
+                        g.text_styled("Grid A", Color::rgb(0xe0, 0xe4, 0xec), 13.0);
+                        g.text_styled("Grid B", Color::rgb(0xe0, 0xe4, 0xec), 13.0);
+                        g.text_styled("Grid C", Color::rgb(0xe0, 0xe4, 0xec), 13.0);
+                        g.text_styled("Grid D", Color::rgb(0xe0, 0xe4, 0xec), 13.0);
+                    },
+                );
+                panel.spacer(1.0, 8.0);
+                panel.space(
+                    SpaceStyle {
+                        direction: SpaceDirection::Horizontal,
+                        gap: 12.0,
+                        width: width as f32 - 64.0,
+                        height: 200.0,
+                        cross_align: CrossAlign::Start,
+                        ..SpaceStyle::default()
+                    },
+                    |row| {
+                        timeline = row.timeline(
+                            [
+                                TimelineItem::new("09:00", "Boot"),
+                                TimelineItem::new("09:05", "Ready").with_color(0x6ac08a),
+                                TimelineItem::new("09:10", "Sync"),
+                            ],
+                            TimelineStyle {
+                                width: 220.0,
+                                height: 140.0,
+                                ..TimelineStyle::default()
+                            },
+                        );
+                        calendar = row.calendar(
+                            2026,
+                            10,
+                            19,
+                            CalendarStyle {
+                                width: 260.0,
+                                height: 240.0,
+                                cell: 28.0,
+                                ..CalendarStyle::default()
+                            },
+                        );
+                    },
+                );
+                panel.spacer(1.0, 8.0);
+                // 4x3 RGBA gradient preview
+                let mut px = Vec::with_capacity(4 * 3 * 4);
+                for y in 0..3u8 {
+                    for x in 0..4u8 {
+                        px.extend_from_slice(&[x * 60, y * 80, 180, 255]);
+                    }
+                }
+                panel.space(
+                    SpaceStyle {
+                        direction: SpaceDirection::Horizontal,
+                        gap: 12.0,
+                        width: width as f32 - 64.0,
+                        height: 80.0,
+                        ..SpaceStyle::default()
+                    },
+                    |row| {
+                        row.image_rgba_caption(
+                            4,
+                            3,
+                            &px,
+                            "RGBA mosaic",
+                            ImageStyle {
+                                width: 96.0,
+                                height: 72.0,
+                                mosaic_max: 4,
+                                ..ImageStyle::default()
+                            },
+                        );
+                        row.image_placeholder(
+                            "placeholder",
+                            ImageStyle {
+                                width: 96.0,
+                                height: 72.0,
+                                ..ImageStyle::default()
+                            },
+                        );
+                    },
+                );
             },
         );
 
@@ -404,6 +509,8 @@ impl Demo {
             upload,
             color,
             autocomplete,
+            timeline,
+            calendar,
             clicks: 0,
             result_actions: 0,
             popconfirm_actions: 0,
@@ -412,7 +519,8 @@ impl Demo {
             qa_exit: std::env::var_os("NEXT_GUI_P2A_QA").is_some()
                 || std::env::var_os("NEXT_GUI_P2B_QA").is_some()
                 || std::env::var_os("NEXT_GUI_P2C_QA").is_some()
-                || std::env::var_os("NEXT_GUI_P2D_QA").is_some(),
+                || std::env::var_os("NEXT_GUI_P2D_QA").is_some()
+                || std::env::var_os("NEXT_GUI_P2E_QA").is_some(),
         }
     }
 
@@ -513,6 +621,19 @@ impl Demo {
         if let Some((id, v)) = self.ui.take_autocomplete_change() {
             if id == self.autocomplete {
                 eprintln!("autocomplete → {v}");
+            }
+        }
+        if let Some((id, idx)) = self.ui.take_timeline_select() {
+            if id == self.timeline {
+                eprintln!("timeline → {idx}");
+            }
+        }
+        if let Some((id, date)) = self.ui.take_calendar_change() {
+            if id == self.calendar {
+                eprintln!(
+                    "calendar → {:04}-{:02}-{:02}",
+                    date.year, date.month, date.day
+                );
             }
         }
     }
@@ -695,7 +816,7 @@ impl AppCallbacks for Demo {
 }
 
 fn main() {
-    let attrs = WindowAttrs::new("next-gui Office P2", 720, 1040);
+    let attrs = WindowAttrs::new("next-gui Office P2", 720, 1480);
     let demo = Demo::new(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
     let result = next_gui_platform::macos::run(attrs, demo);

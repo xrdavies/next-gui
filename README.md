@@ -63,7 +63,7 @@
 
 ## 状态
 
-**需求与架构已确认；P0–P6 已通（含 Office 加厚、P4 Profile、P5 Immediate、P6 工业打磨）。** Office P0 / P1（rest + deferred）与 Chart 已齐；**Office P2a–P2d**（含 `upload` / `color_picker` / `autocomplete`）已通（[docs/office-p2-design.md](docs/office-p2-design.md)、`e26`）；macOS Office 平台首版已通；**P6c–P6e** 已通。跟进：Office P2e、Windows 运行时 GUI 验、Retina 手工验等。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
+**需求与架构已确认；P0–P6 已通（含 Office 加厚、P4 Profile、P5 Immediate、P6 工业打磨）。** Office P0 / P1（rest + deferred）与 Chart 已齐；**Office P2a–P2e** 已通（[docs/office-p2-design.md](docs/office-p2-design.md)、`e26`）；macOS Office 平台首版已通；**P6c–P6e** 已通。跟进：可选 Cascader、Windows 运行时 GUI 验、Retina 手工验等。详见 [docs/office-line.md](docs/office-line.md)、[docs/roadmap.md](docs/roadmap.md)。
 
 ### 试跑 Office 线（Linux/macOS；GPU 优先，Soft 回退）
 
@@ -79,7 +79,7 @@ cargo run -p e22_office_p1_deferred                        # P1 deferred: DateTi
 cargo run -p e23_office_charts                             # 增强: 多瓦片 Chart + Gauge/Trend
 cargo run -p e24_profile_dual                              # P4: Field/Office Profile
 cargo run -p e25_immediate_viewport                        # P5: retained 壳 + Immediate 视口
-cargo run -p e26_office_p2                                 # Office P2a–P2d: + upload/color/autocomplete
+cargo run -p e26_office_p2                                 # Office P2a–P2e: + grid/timeline/calendar/image
 cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 ```
 

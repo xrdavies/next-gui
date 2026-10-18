@@ -2,7 +2,7 @@
 
 > **勿与 [p2-design.md](p2-design.md)（路线图 P2：CJK / 文本引擎）混淆。** 本文仅覆盖 [office-widget-catalog.md](office-widget-catalog.md) §6.2 的 Office 低频控件。
 
-**状态：P2a ✅ · P2b ✅ · P2c ✅ · P2d ✅**（`button_group` / `link` / `space` / `steps` / `statistic` / `result` / `popover` / `popconfirm` / `upload` / `color_picker` / `autocomplete`；示例 `e26_office_p2`）。后续切片见下。
+**状态：Office P2a–e 已齐**（`button_group` … `config_provider`；示例 `e26_office_p2`）。Cascader 仍可选 / 不进本切片。
 
 配套：[office-line.md](office-line.md)、[office-widget-catalog.md](office-widget-catalog.md)、[roadmap.md](roadmap.md)、[a11y-baseline.md](a11y-baseline.md)。
 
@@ -22,7 +22,7 @@
 | 动画系统 | 不引入通用动画 / transition |
 | AT 总线 | 不接读屏；沿用 P6d 焦序 + `accessible_name` |
 | Field Soft | 不削弱 Soft 兜底；P2 控件必须 Soft 可画 |
-| 原生系统文件对话框 / 完整栅格系统 | OS 对话框由应用 stub（P2d）；栅格等留 P2e |
+| 原生系统文件对话框 / 完整响应式 12 栅格 | OS 对话框由应用 stub（P2d）；P2e `grid` 为固定列数 CSS-grid-lite |
 | 覆盖 `docs/p2-design.md` | 禁止 |
 
 ---
@@ -35,7 +35,7 @@
 | **P2b** ✅ | `steps`、`statistic`、`result` | 展示向；无文件/色板 |
 | **P2c** ✅ | `popover`、`popconfirm` | 轻量浮层（复用 `open_popup` / overlay） |
 | **P2d** ✅ | `upload`、`color_picker`、`autocomplete` | 录入增强；文件对话框可 stub |
-| **P2e** | `grid`、`timeline`、`calendar`、`image`、`config_provider` | 布局/媒体/主题入口 |
+| **P2e** ✅ | `grid`、`timeline`、`calendar`、`image`、`config_provider` | 布局/媒体/主题入口 |
 
 可微调切片边界，但保持「先薄、后弹出/文件」。
 
@@ -206,15 +206,72 @@
 
 ---
 
-## 12. 实现落点
 
-- 样式 / `StepItem` / `ResultStatus` / `PopconfirmAction` / Upload·Color·Autocomplete 样式：`crates/next-gui-ui/src/office_p2.rs`
-- Kind / 交互 / paint：`crates/next-gui-ui/src/lib.rs`（含 `Upload`、`ColorPicker`、`Autocomplete`）
+---
+
+## 12. P2e 契约
+
+### 12.1 `grid`
+
+- **语义：** 固定列数布局（CSS-grid-lite）；子项 L→R，满列换行。
+- **API：** `ui.grid(columns, GridStyle, |ui| { … })` / `FlexBuilder::grid`（同 Column/Row 容器）。
+- **非目标：** 响应式 12 列、`fr` 轨道、跨列 span。
+
+### 12.2 `timeline`
+
+- **语义：** 垂直事件流——时间/标签 + 正文；可选点色 `TimelineItem::color_rgb`。
+- **焦点：** `TimelineStyle::clickable`（默认 true）时进 Tab；点行 → `take_timeline_select() -> Option<(WidgetId, usize)>`。
+- **API：** `ui.timeline(items, TimelineStyle)`；`timeline_selected` / `set_timeline_selected`。
+
+### 12.3 `calendar`
+
+- **语义：** 月视图；**周起日 = Sunday（Sun–Sat）**；`year` / `month` / `selected_day`。
+- **导航：** 头栏 ‹ › 换月；点日 / 方向键改日 → `take_calendar_change() -> Option<(WidgetId, CalendarDate)>`。
+- **焦点：** Tab 可达；无完整日程事件系统。
+- **API：** `ui.calendar(year, month, day, CalendarStyle)`；`calendar_date` / `set_calendar_date`。
+- **accent：** 若 `UiConfig::accent` 已设，选中日色优先用它。
+
+### 12.4 `image`
+
+- **语义：** Soft 友好光栅预览。无 PNG 解码依赖。
+- **路径：**
+  - `image_rgba(w, h, &[u8], ImageStyle)` / `image_rgba_caption`——拥有 RGBA8（`ImagePixels`）；场景无 RGBA 纹理时用 **粗马赛克色块**（`mosaic_max`）经 fill rect 绘制；
+  - `image_placeholder(caption, style)`——纯占位底 + 文案。
+- **焦点：** 默认不进 Tab。
+
+### 12.5 `config_provider`
+
+- **语义：** **Ui 级**默认袋（非 Web Context 克隆；**无独立 visual Kind**）。
+- **API：** `ui.set_config(UiConfig)` / `ui.config()`；字段 `locale`、`density`（Compact|Default|Comfortable）、可选 `accent`。
+- **消费：** 本切片仅 Calendar（及 Timeline 选中点）在 trivial 处读 accent；不改写全部 P0/P1。主题 token 体系后置。
+
+---
+
+## 13. P2e 验收
+
+| 项 | 通过样子 |
+|----|----------|
+| API | `grid` / `timeline` / `calendar` / `image_*` / `set_config` 可用 |
+| Grid | 固定列换行；子项可测 L→R / wrap |
+| Timeline | clickable 时 `take_timeline_select` 可排空 |
+| Calendar | Sun–Sat；点日/箭头 → `take_calendar_change` |
+| Image | RGBA 马赛克或 placeholder；不进焦序 |
+| Config | `set_config` / `config`；无 Kind |
+| 测试 | `office_p2e_*` 绿；不依赖 DISPLAY |
+| 示例 | `e26_office_p2` 含 P2e；`NEXT_GUI_P2E_QA=1` 可 dump |
+| 文档 | 本文 + catalog §9 + office-line / roadmap / README；**Office P2 齐**（Cascader 可选） |
+
+---
+
+## 14. 实现落点
+
+- 样式 / 数据 / `UiConfig`：`crates/next-gui-ui/src/office_p2.rs`
+- Kind / 交互 / paint / `Ui::set_config`：`crates/next-gui-ui/src/lib.rs`
 - 示例：`examples/26_office_p2`
 
 ---
 
-## 13. 修订记录
+## 15. 修订记录
 
 | 日期 | 说明 |
 |------|------|
@@ -222,3 +279,4 @@
 | 2026-10-19 | **P2b 落地**：steps / statistic / result；契约 §6–7；下一步 P2c。 |
 | 2026-10-19 | **P2c 落地**：popover / popconfirm；契约 §8–9；下一步 P2d。 |
 | 2026-10-19 | **P2d 落地**：upload / color_picker / autocomplete；契约 §10–11；下一步 P2e。 |
+| 2026-10-19 | **P2e 落地**：grid / timeline / calendar / image / config_provider；**Office P2a–e 已齐**；Cascader 仍可选。 |

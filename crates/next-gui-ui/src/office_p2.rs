@@ -1,8 +1,9 @@
-//! Office P2 styles: P2a (`button_group` / `link` / `space`), P2b
-//! (`steps` / `statistic` / `result`), P2c (`popover` / `popconfirm`), and
-//! P2d (`upload` / `color_picker` / `autocomplete`).
+//! Office P2 styles: P2a–P2e (`button_group` … `config_provider` types).
 //!
-//! See `docs/office-p2-design.md`. Cascader and P2e+ widgets stay out of this module.
+//! See `docs/office-p2-design.md`. Cascader stays optional / out of this module.
+//! [`UiConfig`] is a Ui-level bag (not a visual `Kind`).
+
+use std::sync::Arc;
 
 use next_gui_layout::CrossAlign;
 use next_gui_scene::Color;
@@ -680,6 +681,290 @@ impl Default for AutocompleteStyle {
             popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
             selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
             focus_border: Color::rgb(0x3b, 0x82, 0xf6),
+        }
+    }
+}
+
+// ── P2e: grid / timeline / calendar / image / config ─────────────────────────
+
+/// Style for [`crate::FlexBuilder::grid`] (fixed-column CSS-grid-lite).
+#[derive(Debug, Clone, Copy)]
+pub struct GridStyle {
+    /// Outer x (top-level only).
+    pub x: f32,
+    /// Outer y (top-level only).
+    pub y: f32,
+    /// Max width of the grid host.
+    pub width: f32,
+    /// Max height of the grid host.
+    pub height: f32,
+    /// Inner padding.
+    pub padding: f32,
+    /// Gap between cells (row and column).
+    pub gap: f32,
+    /// Optional fill.
+    pub background: Option<Color>,
+}
+
+impl Default for GridStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 200.0,
+            padding: 8.0,
+            gap: 8.0,
+            background: None,
+        }
+    }
+}
+
+/// One entry in [`crate::FlexBuilder::timeline`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimelineItem {
+    /// Time / label column (left).
+    pub time: String,
+    /// Content string (right of the rail).
+    pub content: String,
+    /// Optional rail/dot color override as packed RGB (`0xRRGGBB`); `None` = style default.
+    pub color_rgb: Option<u32>,
+}
+
+impl TimelineItem {
+    /// Time + content.
+    pub fn new(time: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            time: time.into(),
+            content: content.into(),
+            color_rgb: None,
+        }
+    }
+
+    /// With optional RGB accent for the dot.
+    pub fn with_color(mut self, rgb: u32) -> Self {
+        self.color_rgb = Some(rgb);
+        self
+    }
+}
+
+/// Style for [`crate::FlexBuilder::timeline`].
+#[derive(Debug, Clone, Copy)]
+pub struct TimelineStyle {
+    /// Total width.
+    pub width: f32,
+    /// Total height budget.
+    pub height: f32,
+    /// Row height per item.
+    pub item_height: f32,
+    /// Time column width.
+    pub time_width: f32,
+    /// Font size.
+    pub size: f32,
+    /// Time text color.
+    pub time_fg: Color,
+    /// Content text color.
+    pub content_fg: Color,
+    /// Default rail / dot color.
+    pub rail: Color,
+    /// Panel background.
+    pub bg: Color,
+    /// Inner padding.
+    pub padding: f32,
+    /// When true, pointer on a row selects it (`take_timeline_select`).
+    pub clickable: bool,
+}
+
+impl Default for TimelineStyle {
+    fn default() -> Self {
+        Self {
+            width: 360.0,
+            height: 160.0,
+            item_height: 36.0,
+            time_width: 72.0,
+            size: 12.0,
+            time_fg: Color::rgb(0x90, 0x98, 0xa4),
+            content_fg: Color::rgb(0xe0, 0xe4, 0xec),
+            rail: Color::rgb(0x2f, 0x5b, 0xa8),
+            bg: Color::rgb(0x2a, 0x2a, 0x32),
+            padding: 8.0,
+            clickable: true,
+        }
+    }
+}
+
+/// Civil date for [`crate::FlexBuilder::calendar`] (no time).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalendarDate {
+    /// Year (e.g. 2026).
+    pub year: i32,
+    /// Month 1..=12.
+    pub month: u8,
+    /// Day 1..=31.
+    pub day: u8,
+}
+
+impl CalendarDate {
+    /// Construct (clamps month/day roughly; day clamped via [`Self::clamp`]).
+    pub fn new(year: i32, month: u8, day: u8) -> Self {
+        Self {
+            year,
+            month: month.clamp(1, 12),
+            day: day.clamp(1, 31),
+        }
+        .clamp()
+    }
+
+    /// Clamp day to month length (Gregorian).
+    pub fn clamp(self) -> Self {
+        let max = match self.month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                let leap = (self.year % 4 == 0 && self.year % 100 != 0) || (self.year % 400 == 0);
+                if leap { 29 } else { 28 }
+            }
+            _ => 30,
+        };
+        Self {
+            day: self.day.clamp(1, max),
+            ..self
+        }
+    }
+
+    /// Weekday with **Sunday = 0** … Saturday = 6 (Sakamoto).
+    pub fn weekday_sun0(year: i32, month: u8, day: u8) -> u8 {
+        let mut y = year;
+        let t = [0i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        if month < 3 {
+            y -= 1;
+        }
+        let dow = (y + y / 4 - y / 100 + y / 400 + t[month as usize - 1] + day as i32).rem_euclid(7);
+        dow as u8
+    }
+}
+
+/// Style for [`crate::FlexBuilder::calendar`].
+///
+/// Week rows start on **Sunday** (Sun–Sat).
+#[derive(Debug, Clone, Copy)]
+pub struct CalendarStyle {
+    /// Total width.
+    pub width: f32,
+    /// Total height.
+    pub height: f32,
+    /// Day cell size.
+    pub cell: f32,
+    /// Header / day font size.
+    pub size: f32,
+    /// Text color.
+    pub fg: Color,
+    /// Selected day accent (overridden by [`crate::UiConfig::accent`] when set).
+    pub accent: Color,
+    /// Panel background.
+    pub bg: Color,
+    /// Header / chrome background.
+    pub header_bg: Color,
+    /// Inner padding.
+    pub padding: f32,
+}
+
+impl Default for CalendarStyle {
+    fn default() -> Self {
+        Self {
+            width: 280.0,
+            height: 260.0,
+            cell: 32.0,
+            size: 12.0,
+            fg: Color::rgb(0xe0, 0xe4, 0xec),
+            accent: Color::rgb(0x2f, 0x5b, 0xa8),
+            bg: Color::rgb(0x2a, 0x2a, 0x32),
+            header_bg: Color::rgb(0x22, 0x22, 0x28),
+            padding: 8.0,
+        }
+    }
+}
+
+/// Style for [`crate::FlexBuilder::image_rgba`] / [`crate::FlexBuilder::image_placeholder`].
+#[derive(Debug, Clone, Copy)]
+pub struct ImageStyle {
+    /// Display width of the host.
+    pub width: f32,
+    /// Display height of the host (caption sits inside when present).
+    pub height: f32,
+    /// Placeholder / letterbox fill.
+    pub bg: Color,
+    /// Caption text color.
+    pub caption_fg: Color,
+    /// Caption font size.
+    pub caption_size: f32,
+    /// Max mosaic cells on the long edge when painting RGBA via Soft fill rects
+    /// (no scene RGBA texture yet).
+    pub mosaic_max: u32,
+}
+
+impl Default for ImageStyle {
+    fn default() -> Self {
+        Self {
+            width: 160.0,
+            height: 100.0,
+            bg: Color::rgb(0x1e, 0x1e, 0x24),
+            caption_fg: Color::rgb(0x90, 0x98, 0xa4),
+            caption_size: 11.0,
+            mosaic_max: 24,
+        }
+    }
+}
+
+/// Owned RGBA8 pixels for [`crate::FlexBuilder::image_rgba`] (`width * height * 4` bytes).
+pub type ImagePixels = Arc<[u8]>;
+
+/// Copy RGBA8 bytes into an [`ImagePixels`] arc (truncates to `w*h*4` if longer).
+pub fn image_pixels_rgba8(width: u32, height: u32, pixels: &[u8]) -> ImagePixels {
+    let need = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+    let slice = if pixels.len() >= need {
+        &pixels[..need]
+    } else {
+        pixels
+    };
+    let mut buf = vec![0u8; need];
+    let n = slice.len().min(need);
+    buf[..n].copy_from_slice(&slice[..n]);
+    Arc::from(buf)
+}
+
+/// Density hint for [`UiConfig`] (theme entry point; widgets may ignore in MVP).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiDensity {
+    /// Tighter spacing.
+    Compact,
+    /// Default spacing.
+    #[default]
+    Default,
+    /// Looser spacing.
+    Comfortable,
+}
+
+/// Ui-level defaults bag (Office P2e `config_provider` — **not** a visual `Kind`).
+///
+/// Set via [`crate::Ui::set_config`] / read via [`crate::Ui::config`]. Full design-token
+/// system is later; new P2 controls may read [`Self::accent`] when trivial.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiConfig {
+    /// Locale tag (BCP 47-ish string; display / formatting hint).
+    pub locale: String,
+    /// Density preference.
+    pub density: UiDensity,
+    /// Optional accent color (e.g. calendar selection).
+    pub accent: Option<Color>,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            locale: "en".into(),
+            density: UiDensity::Default,
+            accent: None,
         }
     }
 }
