@@ -15099,11 +15099,12 @@ mod tests {
         let mut soft = SoftRenderer::new(w, h, clear);
         soft.render(&cmds, &dirty);
         let (pixels, pw, ph) = soft.frame_pixels().expect("pixels");
-        let out = std::path::Path::new("/workspace/next-gui-demo-shots/23-office_charts.ppm");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tmp/demo-shots/23-office_charts.ppm");
         if let Some(parent) = out.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent).expect("create QA directory");
         }
-        let mut f = std::fs::File::create(out).expect("create ppm");
+        let mut f = std::fs::File::create(&out).expect("create ppm");
         writeln!(f, "P6\n{pw} {ph}\n255").unwrap();
         for px in pixels {
             let r = ((px >> 16) & 0xff) as u8;
@@ -15183,11 +15184,12 @@ mod tests {
         let mut soft = SoftRenderer::new(w, h, clear);
         soft.render(&cmds, &dirty);
         let (pixels, pw, ph) = soft.frame_pixels().expect("pixels");
-        let out = std::path::Path::new("/workspace/next-gui-demo-shots/21-office_p1_rest.ppm");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tmp/demo-shots/21-office_p1_rest.ppm");
         if let Some(parent) = out.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent).expect("create QA directory");
         }
-        let mut f = std::fs::File::create(out).expect("create ppm");
+        let mut f = std::fs::File::create(&out).expect("create ppm");
         writeln!(f, "P6\n{pw} {ph}\n255").unwrap();
         for px in pixels {
             let r = ((px >> 16) & 0xff) as u8;
@@ -15411,11 +15413,12 @@ mod tests {
         let mut soft = SoftRenderer::new(w, h, clear);
         soft.render(&cmds, &dirty);
         let (pixels, pw, ph) = soft.frame_pixels().expect("pixels");
-        let out = std::path::Path::new("/workspace/next-gui-demo-shots/22-office_p1_deferred.ppm");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tmp/demo-shots/22-office_p1_deferred.ppm");
         if let Some(parent) = out.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent).expect("create QA directory");
         }
-        let mut f = std::fs::File::create(out).expect("create ppm");
+        let mut f = std::fs::File::create(&out).expect("create ppm");
         writeln!(f, "P6\n{pw} {ph}\n255").unwrap();
         for px in pixels {
             let r = ((px >> 16) & 0xff) as u8;

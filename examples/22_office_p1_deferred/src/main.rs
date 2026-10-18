@@ -106,6 +106,9 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
 
 fn write_ppm(path: &str, pixels: &[u32], w: u32, h: u32) -> std::io::Result<()> {
     use std::io::Write;
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let mut f = std::fs::File::create(path)?;
     writeln!(f, "P6\n{w} {h}\n255")?;
     for px in pixels {
@@ -473,7 +476,7 @@ impl Demo {
             return;
         }
         if let Some((pixels, w, h)) = self.backend.frame_pixels() {
-            let path = "/workspace/next-gui-demo-shots/22-office_p1_deferred.ppm";
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tmp/demo-shots/22-office_p1_deferred.ppm");
             if let Err(e) = write_ppm(path, pixels, w, h) {
                 eprintln!("QA dump failed: {e}");
             } else {

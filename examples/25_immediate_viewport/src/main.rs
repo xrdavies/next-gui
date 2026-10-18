@@ -87,6 +87,9 @@ impl Backend {
 
 fn write_ppm(path: &str, pixels: &[u32], w: u32, h: u32) -> std::io::Result<()> {
     use std::io::Write;
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let mut f = std::fs::File::create(path)?;
     writeln!(f, "P6\n{w} {h}\n255")?;
     for &px in pixels {
@@ -471,7 +474,7 @@ impl Demo {
             return;
         }
         if let Some((pixels, w, h)) = self.backend.frame_pixels() {
-            let path = "/workspace/next-gui-demo-shots/25-immediate_viewport.ppm";
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tmp/demo-shots/25-immediate_viewport.ppm");
             match write_ppm(path, pixels, w, h) {
                 Ok(()) => {
                     eprintln!("QA wrote {path} ({w}x{h})");
