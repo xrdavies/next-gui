@@ -7,10 +7,12 @@ description = "Windowing, input, and frame present abstraction for next-gui"
 
 [features]
 default = ["linux"]
-linux = ["dep:winit", "dep:softbuffer"]
+linux = ["dep:winit", "dep:softbuffer", "dep:arboard"]
 # Enables the macOS backend on any host for compile-check; the real windowing path is target_os = "macos".
-macos = ["dep:winit", "dep:softbuffer"]
+macos = ["dep:winit", "dep:softbuffer", "dep:arboard"]
 
 [dependencies]
 winit = { workspace = true, optional = true }
 softbuffer = { workspace = true, optional = true }
+# Text-only clipboard (no image-data) — avoids heavy `image` / newer MSRV deps.
+arboard = { workspace = true, optional = true, default-features = false }

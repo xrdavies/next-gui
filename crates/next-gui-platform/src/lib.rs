@@ -7,6 +7,10 @@
 //! - [`PresentBackend::Softbuffer`] — CPU pixels via softbuffer (Soft + GPU readback).
 //! - [`PresentBackend::GpuSurface`] — no softbuffer; window is free for `wgpu::Surface`
 //!   (Office native GPU present). Soft apps must not use this mode for `present()`.
+//!
+//! Clipboard: thin UTF-8 text API on [`WindowCtx`] (see [`clipboard`]).
+//! Touch: [`Event::Touch`] / [`TouchEvent`] stubs forwarded from winit when present;
+//! full industrial touch / HMI mapping is P6.
 
 #![deny(missing_docs)]
 
@@ -132,6 +136,33 @@ pub enum KeyCode {
     Other(u32),
 }
 
+
+/// Touch-screen contact phase (winit-compatible stub; full HMI mapping is P6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TouchPhase {
+    /// Finger (or stylus) contacted the surface.
+    Started,
+    /// Contact moved.
+    Moved,
+    /// Contact lifted.
+    Ended,
+    /// System cancelled tracking (focus loss, etc.).
+    Cancelled,
+}
+
+/// One touch point. Full multi-touch gestures / industrial key maps are P6.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchEvent {
+    /// Stable id for this contact until [`TouchPhase::Ended`] / [`TouchPhase::Cancelled`].
+    pub id: u64,
+    /// Phase.
+    pub phase: TouchPhase,
+    /// X in physical pixels.
+    pub x: f64,
+    /// Y in physical pixels.
+    pub y: f64,
+}
+
 /// Platform / window events delivered to the app.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -207,6 +238,16 @@ pub enum Event {
         window: WindowId,
         /// IME payload.
         ime: ImeEvent,
+    },
+    /// Touch-screen contact (stub). Forwarded from winit when the OS emits it.
+    ///
+    /// macOS winit currently does not emit touch; Linux/other backends may.
+    /// Apps may ignore until P6 industrial mapping.
+    Touch {
+        /// Window.
+        window: WindowId,
+        /// Touch payload.
+        touch: TouchEvent,
     },
 }
 
@@ -308,6 +349,19 @@ impl WindowCtx<'_> {
         self.inner.set_ime_cursor_area(x, y, width, height);
     }
 
+
+    /// Read UTF-8 text from the OS clipboard.
+    ///
+    /// Returns `Ok(None)` when empty or non-text. See [`clipboard`] for OS limits.
+    pub fn clipboard_get_text(&mut self) -> Result<Option<String>, PlatformError> {
+        self.inner.clipboard_get_text()
+    }
+
+    /// Write UTF-8 text to the OS clipboard.
+    pub fn clipboard_set_text(&mut self, text: &str) -> Result<(), PlatformError> {
+        self.inner.clipboard_set_text(text)
+    }
+
     /// Clone of the underlying winit window (for creating a `wgpu::Surface`).
     ///
     /// Available on Linux / macOS backends built with winit.
@@ -326,6 +380,8 @@ pub(crate) trait WindowHost {
     fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError>;
     fn set_ime_allowed(&mut self, allowed: bool);
     fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64);
+    fn clipboard_get_text(&mut self) -> Result<Option<String>, PlatformError>;
+    fn clipboard_set_text(&mut self, text: &str) -> Result<(), PlatformError>;
     #[cfg(any(feature = "linux", feature = "macos", target_os = "macos"))]
     fn winit_window(&self) -> std::sync::Arc<winit::window::Window>;
 }
@@ -340,6 +396,10 @@ pub trait AppCallbacks {
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>);
 }
 
+/// OS text clipboard helpers (also used by [`WindowCtx`]).
+#[cfg(any(feature = "linux", feature = "macos"))]
+pub mod clipboard;
+
 #[cfg(feature = "linux")]
 pub mod linux;
 
@@ -352,3 +412,55 @@ pub use linux::run;
 /// See `docs/platform-macos.md`. Not a Field target.
 #[cfg(any(target_os = "macos", feature = "macos"))]
 pub mod macos;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn touch_event_stub_constructs() {
+        let touch = TouchEvent {
+            id: 7,
+            phase: TouchPhase::Started,
+            x: 12.5,
+            y: 40.0,
+        };
+        let ev = Event::Touch {
+            window: WindowId(1),
+            touch,
+        };
+        match ev {
+            Event::Touch { window, touch } => {
+                assert_eq!(window, WindowId(1));
+                assert_eq!(touch.id, 7);
+                assert_eq!(touch.phase, TouchPhase::Started);
+                assert_eq!(touch.x, 12.5);
+                assert_eq!(touch.y, 40.0);
+            }
+            _ => panic!("expected Touch"),
+        }
+        assert_eq!(TouchPhase::Moved, TouchPhase::Moved);
+        assert_eq!(TouchPhase::Ended, TouchPhase::Ended);
+        assert_eq!(TouchPhase::Cancelled, TouchPhase::Cancelled);
+    }
+
+    #[test]
+    #[cfg(any(feature = "linux", feature = "macos"))]
+    fn clipboard_roundtrip_smoke() {
+        // May fail without a display / clipboard provider — treat that as skip.
+        let Ok(mut cb) = clipboard::Clipboard::open() else {
+            eprintln!("clipboard_roundtrip_smoke: open failed (no display?); skip");
+            return;
+        };
+        let marker = "next-gui-clipboard-smoke-7c9427c";
+        if let Err(e) = cb.set_text(marker) {
+            eprintln!("clipboard_roundtrip_smoke: set failed: {e}; skip");
+            return;
+        }
+        match cb.get_text() {
+            Ok(Some(s)) => assert_eq!(s, marker),
+            Ok(None) => panic!("expected text after set"),
+            Err(e) => panic!("get failed: {e}"),
+        }
+    }
+}
