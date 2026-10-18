@@ -249,6 +249,7 @@
 | `tag`（状态语义） | 状态片 | **P0** | 与设计 token 绑定色（运行/故障/旁路） |
 | `gauge` | 仪表盘 | **P1（不抬 P0）** | 实时量；GPU 可选画动态 |
 | `trend` / `sparkline` | 趋势/迷你图 | **P1（不抬 P0）** | 历史曲线；Office 监视核心 |
+| `chart` | 多图面板 | **增强（不抬 P0）** | 同一 retained 面板内网格排布多个 Gauge/Trend 瓦片；共享软光栅 |
 | `splitter` | 分隔面板 | **P0** | 见布局表 |
 
 ---
@@ -275,6 +276,7 @@
 | 已实现（P1 rest 切片） | `drawer`，`backdrop`（Modal/Drawer scrim），`virtual_list` / `virtual_table`，`text_area`，`input_number`，`notification`，`spin`，`empty`，`collapse`，`descriptions`，`card`，`segmented`，`breadcrumb`，`pagination`（`examples/21_office_p1_rest`） |
 | P0 缺口 | **无**（目录 §4 名单已覆盖；IME/列宽拖拽等为增强，见各切片备注） |
 | 已实现（P1 deferred 切片） | `datetime`，`transfer`，`property_grid`，`tree_table`（`examples/22_office_p1_deferred`） |
+| 已实现（Office 增强） | `chart` 多瓦片面板（共享 Gauge/Trend 光栅；`examples/23_office_charts`） |
 | P1 仍待办 | Cascader（仍不进 P1；层级选择仅 TreeSelect） |
 | 未实现且非本文范围 | 动画系统、自绘 IME 候选窗、Immediate 视口、Profile crate（P4） |
 
@@ -311,3 +313,4 @@
 | 2026-10-17 | **P1 核心切片落地：** `tree_select` / `form`（校验）/ `alarm_list` / `gauge` / `trend` + `e20_office_industrial`；Cascader 仍不进 P1；IME 仍后置。 |
 | 2026-10-18 | **P1 rest 切片落地：** Drawer（+Backdrop）、VirtualList/Table、TextArea、InputNumber、Notification、Spin、Empty、Collapse、Descriptions、Card、Segmented、Breadcrumb、Pagination + `e21_office_p1_rest`；Datetime/Transfer/PropertyGrid/TreeTable 仍后置。 |
 | 2026-10-18 | **P1 deferred 切片落地：** DateTime / Transfer / PropertyGrid / TreeTable + `e22_office_p1_deferred`；Cascader 仍不进 P1。 |
+| 2026-10-18 | **Office 增强：** `chart` 多瓦片（Gauge+Trend 网格）+ P1 键盘/焦点打磨 + Soft AA；示例 `e23_office_charts`；Cascader/自绘 IME 候选仍后置。 |

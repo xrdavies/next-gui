@@ -81,7 +81,8 @@ cargo run -p e03_ngui_counter     # .ngui 文件
 - 控件目录已确认：[office-widget-catalog.md](office-widget-catalog.md)（P0 含 TextInput/Table/Tree；Toolbar/StatusBar/Panel 一等公民）
 - **P0 目录控件（Rust API）已齐**（shell/inputs/data/nav/feedback 五切片 + 对应 `office_*` 示例）
 - **P1 核心 + rest + deferred 已落地**（含 Drawer、虚表、录入/反馈/结构、DateTime/Transfer/PropertyGrid/TreeTable；见 `e20`/`e21`/`e22`）。Cascader 仍不进 P1
-- 下一步：剩余 P1 四件套，或 P4 Profile / 图表增强
+- **Office 增强：** 多瓦片 `Chart`（共享 Gauge/Trend 光栅；`e23_office_charts`）+ P1 键盘/焦点打磨（Modal/Drawer Tab 陷阱、TextArea 行导航、InputNumber Home/End、PropertyGrid 可见性）
+- 下一步：P1/P2 打磨续，或 **P4 Profile**
 
 ## P4 — 双档 Profile
 

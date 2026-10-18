@@ -107,6 +107,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 | `AlarmList` | `ui` | **P1** 告警列表；分级色 + 未确认闪烁 + ack |
 | `Gauge` | `ui` | **P1** 仪表盘（软光栅弧 + 指针） |
 | `Trend` | `ui` | **P1** 趋势/迷你折线（软光栅） |
+| `Chart` | `ui` | **增强** 多图面板（Gauge/Trend 瓦片网格；不抬 P0） |
 | `Drawer` | `ui` | **P1** 侧滑抽屉 + Backdrop；Esc/×/遮罩关闭 |
 | `VirtualList` / `VirtualTable` | `ui` | **P1** 窗口化虚表（`virtual_list` / `virtual_table`） |
 | `TextArea` / `InputNumber` | `ui` | **P1** 多行录入 / 数字步进 |
@@ -130,8 +131,9 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/20_office_industrial` — **P1 核心**：TreeSelect + Form 校验 + AlarmList + Gauge + Trend
 - `examples/21_office_p1_rest` — **P1 rest**：Drawer / VirtualList·Table / TextArea / InputNumber / Notification / Spin / Empty / Collapse / Descriptions / Card / Segmented / Breadcrumb / Pagination
 - `examples/22_office_p1_deferred` — **P1 deferred**：DateTime / Transfer / PropertyGrid / TreeTable
+- `examples/23_office_charts` — **增强**：多瓦片 Chart + 独立 Gauge/Trend
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 核心 + rest + deferred 已落地；IME/CJK 已接**。下一步：P4 Profile，或图表多图 / 打磨。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 齐；Chart 多图增强已落地；IME/CJK 已接**。下一步：P1 打磨续 / P2 可选项，或 **P4 Profile**。
 
 ---
 
@@ -152,7 +154,7 @@ P0–P3 完成
     · 布局/工具条控件 ✓
     · 原生 Surface present ✓
     · 控件目录（已确认）：[office-widget-catalog.md](office-widget-catalog.md)
-    · P0 齐；P1 核心 + rest 已落地；IME/CJK preedit+commit 已接
+    · P0/P1 齐；Chart 多图增强 + P1 键盘打磨已落地；IME/CJK 已接
     ↓
 P4 Profile（Field/Office 配置）稍后抽
     ↓
