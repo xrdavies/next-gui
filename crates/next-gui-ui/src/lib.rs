@@ -2453,7 +2453,7 @@ impl Ui {
                         *caret = value.chars().count();
                     }
                 }
-                return true;
+                true
             }
             Some(Kind::Checkbox { .. }) => {
                 self.focus = Some(id);
@@ -2462,12 +2462,12 @@ impl Ui {
                         *checked = !*checked;
                     }
                 }
-                return true;
+                true
             }
             Some(Kind::Radio { .. }) => {
                 self.focus = Some(id);
                 self.select_radio(id);
-                return true;
+                true
             }
             Some(Kind::Switch { .. }) => {
                 self.focus = Some(id);
@@ -2476,52 +2476,52 @@ impl Ui {
                         *on = !*on;
                     }
                 }
-                return true;
+                true
             }
             Some(Kind::List { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_list(scene, id, x, y);
+                self.pointer_list(scene, id, x, y)
             }
             Some(Kind::Tree { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_tree(scene, id, x, y);
+                self.pointer_tree(scene, id, x, y)
             }
             Some(Kind::Table { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_table(scene, id, x, y);
+                self.pointer_table(scene, id, x, y)
             }
             Some(Kind::Menu { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_menu_title(scene, id);
+                self.pointer_menu_title(scene, id)
             }
             Some(Kind::ContextMenu { .. }) => {
                 // Left click on host: no menu; children handle via hit.
                 self.focus = None;
-                return false;
+                false
             }
             Some(Kind::Tabs { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_tabs(scene, id, x, y);
+                self.pointer_tabs(scene, id, x, y)
             }
             Some(Kind::Select { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_select_toggle(scene, id);
+                self.pointer_select_toggle(scene, id)
             }
             Some(Kind::TreeSelect { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_tree_select_toggle(scene, id);
+                self.pointer_tree_select_toggle(scene, id)
             }
             Some(Kind::AlarmList { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_alarm_list(scene, id, x, y);
+                self.pointer_alarm_list(scene, id, x, y)
             }
             Some(Kind::Slider { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_slider(scene, id, x, y);
+                self.pointer_slider(scene, id, x, y)
             }
             Some(Kind::Tag { closable: true, .. }) => {
                 self.focus = None;
-                return self.pointer_tag_close(scene, id, x, y);
+                self.pointer_tag_close(scene, id, x, y)
             }
             Some(Kind::Alert {
                 dismissible: true,
@@ -2529,55 +2529,55 @@ impl Ui {
                 ..
             }) => {
                 self.focus = None;
-                return self.pointer_alert_dismiss(scene, id, x, y);
+                self.pointer_alert_dismiss(scene, id, x, y)
             }
             Some(Kind::TextArea { .. }) => {
                 self.focus = Some(id);
-                return true;
+                true
             }
             Some(Kind::InputNumber { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_input_number(scene, id, x, y);
+                self.pointer_input_number(scene, id, x, y)
             }
             Some(Kind::Segmented { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_segmented(scene, id, x, y);
+                self.pointer_segmented(scene, id, x, y)
             }
             Some(Kind::Breadcrumb { .. }) => {
                 self.focus = None;
-                return self.pointer_breadcrumb(scene, id, x, y);
+                self.pointer_breadcrumb(scene, id, x, y)
             }
             Some(Kind::Pagination { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_pagination(scene, id, x, y);
+                self.pointer_pagination(scene, id, x, y)
             }
             Some(Kind::Collapse { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_collapse(scene, id, x, y);
+                self.pointer_collapse(scene, id, x, y)
             }
             Some(Kind::DateTime { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_datetime_toggle(scene, id);
+                self.pointer_datetime_toggle(scene, id)
             }
             Some(Kind::Transfer { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_transfer(scene, id, x, y);
+                self.pointer_transfer(scene, id, x, y)
             }
             Some(Kind::PropertyGrid { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_property_grid(scene, id, x, y);
+                self.pointer_property_grid(scene, id, x, y)
             }
             Some(Kind::TreeTable { .. }) => {
                 self.focus = Some(id);
-                return self.pointer_tree_table(scene, id, x, y);
+                self.pointer_tree_table(scene, id, x, y)
             }
             Some(Kind::Button { .. }) => {
                 self.focus = None;
-                return false; // let app handle button clicks via hit_widget
+                false// let app handle button clicks via hit_widget
             }
             _ => {
                 self.focus = None;
-                return false;
+                false
             }
         }
     }
@@ -3606,16 +3606,18 @@ impl Ui {
             .unwrap_or_else(Rect::empty);
         let step_w = 28.0;
         if x < bounds.x + step_w {
-            return self.set_input_number_value(
+            let _ = self.set_input_number_value(
                 id,
                 self.input_number_value(id).unwrap_or(0.0) - step,
-            ) || true;
+            );
+            return true;
         }
         if x > bounds.x + bounds.width - step_w {
-            return self.set_input_number_value(
+            let _ = self.set_input_number_value(
                 id,
                 self.input_number_value(id).unwrap_or(0.0) + step,
-            ) || true;
+            );
+            return true;
         }
         let _ = (min, max, style);
         true
@@ -3670,7 +3672,7 @@ impl Ui {
         };
         let page = self.pagination_page(id).unwrap_or(1);
         // aux[0]=prev_bg, aux[2]=next_bg
-        if let Some(&prev) = aux.get(0) {
+        if let Some(&prev) = aux.first() {
             if let Some(n) = scene.get(prev) {
                 if n.visible && n.bounds.contains(x, y) {
                     if page > 1 {
@@ -3952,14 +3954,12 @@ impl Ui {
         } else {
             -1
         };
-        let mut changed = false;
         if idx >= 0 && (idx as usize) < n_items {
             if let Some(w) = self.widgets.get_mut(&id) {
                 if let Kind::List { selected, .. } = &mut w.kind {
                     let new = Some(idx as usize);
                     if *selected != new {
                         *selected = new;
-                        changed = true;
                     }
                 }
             }
@@ -3972,7 +3972,7 @@ impl Ui {
             start_scroll_x: sx,
             start_scroll_y: scroll_y,
         });
-        changed || true
+        true
     }
 
     fn pointer_tree(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
@@ -5054,7 +5054,7 @@ impl Ui {
         if y >= grid_top && y < grid_top + grid_h {
             let col = ((x - pb.x - 8.0) / style.cell).floor() as isize;
             let row = ((y - grid_top) / style.cell).floor() as isize;
-            if col >= 0 && col < 7 && row >= 0 && row < 6 {
+            if (0..7).contains(&col) && (0..6).contains(&row) {
                 let dim = DateTimeValue::days_in_month(draft.year, draft.month) as i32;
                 // Simple: day = row*7+col+1 (no weekday offset MVP).
                 let day = (row * 7 + col + 1) as i32;
@@ -6072,9 +6072,9 @@ impl Ui {
             style.track_thickness,
         );
         let _ = y;
-        let changed = self.apply_slider_x(id, track, x);
+        let _ = self.apply_slider_x(id, track, x);
         self.drag = Some(DragState::Slider { slider: id, track });
-        changed || true
+        true
     }
 
     fn apply_slider_x(&mut self, id: WidgetId, track: Rect, x: f32) -> bool {
@@ -6977,6 +6977,7 @@ impl Ui {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn measure_flex_axis(
         &self,
         axis: Axis,
@@ -9359,9 +9360,8 @@ impl Ui {
         } else {
             style.fg
         };
-        // Single-mask multi-line: join with spaces for MVP visual; caret line via chrome unused
-        let shown = display.replace('\n', "↵ ");
-        let (_, mask) = self.font.rasterize_text(&shown, style.size, None);
+        let max_w = (bounds.width - style.padding_x * 2.0).max(1.0);
+        let (layout, mask) = self.font.rasterize_text(display, style.size, Some(max_w));
         if let Some(lab) = label {
             scene.set_bounds(
                 lab,
@@ -9376,7 +9376,25 @@ impl Ui {
             scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
             scene.set_visible(lab, true);
         }
-        let _ = caret;
+        if let Some(chrome) = chrome {
+            if focused {
+                let metrics = self.font.metrics(style.size);
+                let prefix: String = value.chars().take(caret).collect();
+                let lines_before = prefix.matches('\n').count() as f32;
+                let line_text = prefix.rsplit('\n').next().unwrap_or("");
+                let (cw, _) = self.font.measure_line(line_text, style.size);
+                let cx = bounds.x + style.padding_x + cw;
+                let cy = bounds.y + style.padding_y - scroll_y
+                    + lines_before * layout.line_height;
+                let ch = metrics.ascent.max(style.size * 0.8);
+                scene.set_bounds(chrome, Rect::new(cx, cy, 2.0, ch));
+                scene.set_fill(chrome, style.focus_border);
+                scene.set_mask(chrome, None);
+                scene.set_visible(chrome, true);
+            } else {
+                scene.set_visible(chrome, false);
+            }
+        }
     }
 
     fn paint_input_number(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -9720,7 +9738,7 @@ impl Ui {
         scene.set_fill(host, Color::rgba(0, 0, 0, 0));
         scene.set_mask(host, None);
         scene.set_visible(host, true);
-        let pages = ((total + page_size - 1) / page_size).max(1);
+        let pages = total.div_ceil(page_size).max(1);
         // aux: prev_bg, prev_l, next_bg, next_l, info
         self.ensure_aux_nodes(scene, host, id, 5);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -10028,17 +10046,31 @@ impl Ui {
         // aux: 0=panel, 1=header text, 2..=43 day cells (labels), then time + confirm labels
         // Keep it simpler: panel + header + time + confirm + up to 31 day labels
         let needed = 1 + 1 + 31 + 2 + 2;
-        let host = match self.widgets.get(&id).and_then(|w| w.node) {
-            Some(n) => n,
-            None => return,
-        };
-        self.ensure_aux_nodes(scene, host, id, needed);
+        // Mount on the raised overlay host so later siblings cannot cover the calendar (F06).
+        let overlay = self.ensure_overlay_host(scene);
+        let misplaced = self
+            .widgets
+            .get(&id)
+            .and_then(|w| w.aux.first().copied())
+            .and_then(|n| scene.get(n))
+            .map(|n| n.parent != Some(overlay))
+            .unwrap_or(false);
+        if misplaced {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                for &n in &w.aux {
+                    scene.set_visible(n, false);
+                }
+                w.aux.clear();
+            }
+        }
+        self.ensure_overlay_aux(scene, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         if let Some(&p) = aux.first() {
             scene.set_bounds(p, panel);
             scene.set_fill(p, style.popup_bg);
             scene.set_mask(p, None);
             scene.set_visible(p, true);
+            self.node_to_widget.insert(p, id);
         }
         let header = format!("‹  {:04}-{:02}  ›", draft.year, draft.month);
         let (_, hm) = self.font.rasterize_text(&header, style.size, None);
@@ -10123,8 +10155,8 @@ impl Ui {
             scene.set_visible(n, true);
         }
         // Hide unused
-        for i in 35..aux.len() {
-            scene.set_visible(aux[i], false);
+        for &n in aux.iter().skip(35) {
+            scene.set_visible(n, false);
         }
     }
 
@@ -10304,8 +10336,8 @@ impl Ui {
             }
             slot += 1;
         }
-        for i in slot..aux.len() {
-            scene.set_visible(aux[i], false);
+        for &n in aux.iter().skip(slot) {
+            scene.set_visible(n, false);
         }
     }
 
@@ -10352,7 +10384,7 @@ impl Ui {
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         let (_, km) = self.font.rasterize_text("Property", style.size, None);
-        if let Some(&n) = aux.get(0) {
+        if let Some(&n) = aux.first() {
             scene.set_bounds(
                 n,
                 Rect::new(
@@ -10495,7 +10527,7 @@ impl Ui {
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
         let (_, tm) = self.font.rasterize_text("Name", style.size, None);
-        if let Some(&n) = aux.get(0) {
+        if let Some(&n) = aux.first() {
             scene.set_bounds(
                 n,
                 Rect::new(
@@ -11244,6 +11276,7 @@ impl Ui {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn paint_item_popup(
         &mut self,
         scene: &mut Scene,
@@ -11743,7 +11776,8 @@ impl Ui {
                 true
             }
             UiKey::Enter | UiKey::Space => {
-                self.ack_alarm_list_selected(id).is_some() || true
+                let _ = self.ack_alarm_list_selected(id);
+                true
             }
             _ => false,
         }
@@ -15025,6 +15059,21 @@ mod tests {
         assert!(ui.set_input_number_value(num, 43.0));
         assert!(ui.set_text_area_value(area, "hello\nworld"));
         assert_eq!(ui.text_area_value(area), Some("hello\nworld"));
+        ui.set_focus(Some(area));
+        ui.sync(&mut scene);
+        // F07: multiline mask taller than one line; caret chrome visible when focused.
+        let lab = ui.widgets.get(&area).unwrap().label_node.expect("textarea label");
+        let mask_h = scene
+            .get(lab)
+            .and_then(|n| n.mask.as_ref())
+            .map(|m| m.height)
+            .unwrap_or(0);
+        assert!(mask_h > 20, "multiline textarea mask height={mask_h}");
+        let chrome = ui.widgets.get(&area).unwrap().chrome_node.expect("textarea chrome");
+        assert!(
+            scene.get(chrome).map(|n| n.visible).unwrap_or(false),
+            "textarea caret chrome visible"
+        );
         assert_eq!(ui.pagination_page(page), Some(1));
         assert!(ui.set_pagination_page(page, 2));
         assert!(ui.set_drawer_open(drawer, true));
@@ -15037,7 +15086,7 @@ mod tests {
         assert!(taux < 400, "virtual table aux={taux}");
         let _ = (card, empty, collapse, desc, spin, crumb);
         ui.set_drawer_open(drawer, false);
-        assert!(ui.take_drawer_action().is_none() || true);
+        assert!(ui.take_drawer_action().is_none());
     }
 
     #[test]
@@ -15350,9 +15399,20 @@ mod tests {
         );
         assert!(ui.set_datetime_open(dt, true));
         assert_eq!(ui.datetime_open(dt), Some(true));
+        ui.sync(&mut scene);
+        // F06: calendar aux must live under the raised overlay host, not the field.
+        let overlay = ui.overlay_host.expect("overlay host after open datetime");
+        let aux0 = ui.widgets.get(&dt).unwrap().aux[0];
+        assert_eq!(
+            scene.get(aux0).and_then(|n| n.parent),
+            Some(overlay),
+            "datetime popup aux parent"
+        );
         ui.set_focus(Some(dt));
         assert!(ui.key_input(UiKey::Enter));
         assert_eq!(ui.datetime_open(dt), Some(false));
+        ui.set_focus(None);
+        ui.sync(&mut scene);
 
         // Transfer: select first source row then move to target.
         let xn = ui.widgets.get(&xfer).unwrap().node.unwrap();

@@ -119,6 +119,9 @@ fn encode_node(
     }
 }
 
+/// Cropped alpha blit: x, y, width, height, pixels.
+type CroppedAlpha = (i32, i32, u32, u32, Arc<[u8]>);
+
 fn crop_alpha_blit(
     x: i32,
     y: i32,
@@ -126,7 +129,7 @@ fn crop_alpha_blit(
     height: u32,
     pixels: &Arc<[u8]>,
     clip: Rect,
-) -> Option<(i32, i32, u32, u32, Arc<[u8]>)> {
+) -> Option<CroppedAlpha> {
     let src = Rect::new(x as f32, y as f32, width as f32, height as f32);
     let area = src.intersect(&clip);
     if area.is_empty() {

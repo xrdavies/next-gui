@@ -130,7 +130,7 @@ impl AppCallbacks for Demo {
                 pressed: true,
                 ..
             } => {
-                // platform handles CloseRequested via window; Escape mapped in linux backend may quit
+                ctx.request_exit();
             }
             Event::RedrawRequested { .. } => {
                 self.needs_paint = true;

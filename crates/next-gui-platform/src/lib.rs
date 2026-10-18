@@ -328,6 +328,14 @@ impl WindowCtx<'_> {
         self.inner.request_redraw();
     }
 
+    /// Ask the platform to leave the event loop after this callback returns.
+    ///
+    /// Escape no longer exits by itself; apps call this when they want to quit
+    /// (for example after a popup or Immediate viewport has already consumed Escape).
+    pub fn request_exit(&mut self) {
+        self.inner.request_exit();
+    }
+
     /// Present packed XRGB8888 pixels (`width * height` length).
     ///
     /// Only valid for [`PresentBackend::Softbuffer`]. On [`PresentBackend::GpuSurface`]
@@ -378,6 +386,7 @@ pub(crate) trait WindowHost {
     fn present_backend(&self) -> PresentBackend;
     fn set_title(&mut self, title: &str);
     fn request_redraw(&mut self);
+    fn request_exit(&mut self);
     fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError>;
     fn set_ime_allowed(&mut self, allowed: bool);
     fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64);

@@ -474,6 +474,13 @@ impl AppCallbacks for Demo {
                 ctx.set_title(&format!("next-gui Office shell — {}", self.backend.name()));
                 ctx.request_redraw();
             }
+            Event::Key {
+                key: KeyCode::Escape,
+                pressed: true,
+                ..
+            } => {
+                ctx.request_exit();
+            }
             Event::RedrawRequested { .. } => {
                 self.needs_paint = true;
             }

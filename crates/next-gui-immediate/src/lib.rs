@@ -329,7 +329,7 @@ pub struct ImmediateCtx<'a> {
     content: Rect,
 }
 
-impl<'a> ImmediateCtx<'a> {
+impl ImmediateCtx<'_> {
     fn alloc_id(&mut self) -> ImmediateId {
         let id = ImmediateId(self.viewport.next_id);
         self.viewport.next_id = self.viewport.next_id.wrapping_add(1).max(1);
@@ -514,6 +514,9 @@ impl<'a> ImmediateCtx<'a> {
     }
 }
 
+
+/// Cropped alpha blit: x, y, width, height, pixels.
+type CroppedAlpha = (i32, i32, u32, u32, Arc<[u8]>);
 fn crop_alpha(
     ox: i32,
     oy: i32,
@@ -521,7 +524,7 @@ fn crop_alpha(
     mh: u32,
     pixels: &[u8],
     clip: Rect,
-) -> Option<(i32, i32, u32, u32, Arc<[u8]>)> {
+) -> Option<CroppedAlpha> {
     let area = Rect::new(ox as f32, oy as f32, mw as f32, mh as f32).intersect(&clip);
     if area.is_empty() {
         return None;
