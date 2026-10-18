@@ -7,7 +7,7 @@
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
-//! Office P2a/P2b (`button_group` / `link` / `space` / `steps` / `statistic` / `result`): see `docs/office-p2-design.md`.
+//! Office P2a–P2c (`button_group` / `link` / `space` / `steps` / `statistic` / `result` / `popover` / `popconfirm`): see `docs/office-p2-design.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
@@ -1926,6 +1926,23 @@ enum Kind {
         secondary_action: Option<String>,
         style: ResultStyle,
     },
+    /// Click-toggle popover bubble (Office P2c); opens via `open_popup`.
+    Popover {
+        trigger: String,
+        title: Option<String>,
+        body: String,
+        open: bool,
+        style: PopoverStyle,
+    },
+    /// Confirm bubble with OK/Cancel (Office P2c); opens via `open_popup`.
+    Popconfirm {
+        trigger: String,
+        message: String,
+        ok_label: String,
+        cancel_label: String,
+        open: bool,
+        style: PopconfirmStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -2067,6 +2084,10 @@ pub struct Ui {
     pending_steps_change: Option<(WidgetId, usize)>,
     /// Last Result action; drained by [`Ui::take_result_action`].
     pending_result_action: Option<(WidgetId, ResultAction)>,
+    /// Last Popover open-state change; drained by [`Ui::take_popover_open_change`].
+    pending_popover_open_change: Option<(WidgetId, bool)>,
+    /// Last Popconfirm action; drained by [`Ui::take_popconfirm_action`].
+    pending_popconfirm_action: Option<(WidgetId, PopconfirmAction)>,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2165,6 +2186,8 @@ impl Ui {
             pending_link_activate: None,
             pending_steps_change: None,
             pending_result_action: None,
+            pending_popover_open_change: None,
+            pending_popconfirm_action: None,
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2470,6 +2493,7 @@ impl Ui {
             }
             // Click outside closes popup; hide overlay aux immediately so the
             // underlying widget can be hit without an intervening sync.
+            self.emit_overlay_dismiss(pid);
             self.hide_popup_aux_mut(scene, pid);
             self.close_popup_internal();
         }
@@ -2693,6 +2717,14 @@ impl Ui {
             Some(Kind::Result { .. }) => {
                 self.focus = Some(id);
                 self.pointer_result(scene, id, x, y)
+            }
+            Some(Kind::Popover { .. }) => {
+                self.focus = Some(id);
+                self.pointer_popover_toggle(scene, id)
+            }
+            Some(Kind::Popconfirm { .. }) => {
+                self.focus = Some(id);
+                self.pointer_popconfirm_toggle(scene, id)
             }
             Some(Kind::Statistic { .. }) => {
                 // Display-only; not focusable.
@@ -2998,6 +3030,26 @@ impl Ui {
                     Some(title.clone())
                 }
             }
+            Kind::Popover { trigger, title, .. } => title
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .or_else(|| {
+                    if trigger.is_empty() {
+                        None
+                    } else {
+                        Some(trigger.clone())
+                    }
+                }),
+            Kind::Popconfirm { trigger, message, .. } => {
+                if !message.is_empty() {
+                    Some(message.clone())
+                } else if trigger.is_empty() {
+                    None
+                } else {
+                    Some(trigger.clone())
+                }
+            }
             Kind::Text { content, .. } => {
                 if content.is_empty() {
                     None
@@ -3046,7 +3098,9 @@ impl Ui {
             | Kind::TreeTable { .. }
             | Kind::ButtonGroup { .. }
             | Kind::Link { .. }
-            | Kind::Steps { .. } => true,
+            | Kind::Steps { .. }
+            | Kind::Popover { .. }
+            | Kind::Popconfirm { .. } => true,
             _ => false,
         }
     }
@@ -3648,6 +3702,13 @@ impl Ui {
                     Some(Kind::Drawer { .. }) => {
                         self.pending_drawer_action = Some((id, DrawerAction::Dismiss));
                     }
+                    Some(Kind::Popconfirm { .. }) => {
+                        self.pending_popconfirm_action =
+                            Some((id, PopconfirmAction::Dismiss));
+                    }
+                    Some(Kind::Popover { .. }) => {
+                        self.pending_popover_open_change = Some((id, false));
+                    }
                     _ => {}
                 }
                 if self.focus == Some(id) {
@@ -3680,6 +3741,12 @@ impl Ui {
             Some(Kind::Steps { .. }) => self.key_steps(id, key),
             Some(Kind::Result { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
                 self.key_result_activate(id)
+            }
+            Some(Kind::Popover { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+                self.key_popover_toggle(id)
+            }
+            Some(Kind::Popconfirm { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+                self.key_popconfirm_toggle(id)
             }
             Some(Kind::Link { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
                 self.pending_link_activate = Some(id);
@@ -4939,7 +5006,9 @@ impl Ui {
                 | Kind::TreeSelect { open, .. }
                 | Kind::Modal { open, .. }
                 | Kind::Drawer { open, .. }
-                | Kind::DateTime { open, .. } => {
+                | Kind::DateTime { open, .. }
+                | Kind::Popover { open, .. }
+                | Kind::Popconfirm { open, .. } => {
                     *open = false;
                 }
                 _ => {}
@@ -4990,6 +5059,110 @@ impl Ui {
     /// Drain the last Result action `(id, Primary|Secondary)`.
     pub fn take_result_action(&mut self) -> Option<(WidgetId, ResultAction)> {
         self.pending_result_action.take()
+    }
+
+    /// Drain the last Popover open-state change `(id, open)`.
+    pub fn take_popover_open_change(&mut self) -> Option<(WidgetId, bool)> {
+        self.pending_popover_open_change.take()
+    }
+
+    /// Whether the Popover is open.
+    pub fn popover_is_open(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Popover { open, .. }) => Some(*open),
+            _ => None,
+        }
+    }
+
+    /// Open or close a Popover (also sets / clears popup ownership).
+    pub fn set_popover_open(&mut self, id: WidgetId, open: bool) -> bool {
+        if !matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popover { .. })
+        ) {
+            return false;
+        }
+        if open {
+            if let Some(pid) = self.open_popup {
+                if pid != id {
+                    self.emit_overlay_dismiss(pid);
+                    self.close_popup_internal();
+                }
+            }
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Popover { open: o, .. } = &mut w.kind {
+                    *o = true;
+                }
+            }
+            self.open_popup = Some(id);
+            self.focus = Some(id);
+            self.pending_popover_open_change = Some((id, true));
+        } else {
+            let was = matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Popover { open: true, .. })
+            );
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Popover { open: o, .. } = &mut w.kind {
+                    *o = false;
+                }
+            }
+            if self.open_popup == Some(id) {
+                self.open_popup = None;
+            }
+            if was {
+                self.pending_popover_open_change = Some((id, false));
+            }
+        }
+        true
+    }
+
+    /// Drain the last Popconfirm action `(id, Confirm|Cancel|Dismiss)`.
+    pub fn take_popconfirm_action(&mut self) -> Option<(WidgetId, PopconfirmAction)> {
+        self.pending_popconfirm_action.take()
+    }
+
+    /// Whether the Popconfirm is open.
+    pub fn popconfirm_is_open(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Popconfirm { open, .. }) => Some(*open),
+            _ => None,
+        }
+    }
+
+    /// Open or close a Popconfirm (also sets / clears popup ownership).
+    pub fn set_popconfirm_open(&mut self, id: WidgetId, open: bool) -> bool {
+        if !matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popconfirm { .. })
+        ) {
+            return false;
+        }
+        if open {
+            if let Some(pid) = self.open_popup {
+                if pid != id {
+                    self.emit_overlay_dismiss(pid);
+                    self.close_popup_internal();
+                }
+            }
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Popconfirm { open: o, .. } = &mut w.kind {
+                    *o = true;
+                }
+            }
+            self.open_popup = Some(id);
+            self.focus = Some(id);
+        } else {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Popconfirm { open: o, .. } = &mut w.kind {
+                    *o = false;
+                }
+            }
+            if self.open_popup == Some(id) {
+                self.open_popup = None;
+            }
+        }
+        true
     }
 
     /// Selected tab index.
@@ -6595,6 +6768,206 @@ impl Ui {
         true
     }
 
+
+    fn emit_overlay_dismiss(&mut self, id: WidgetId) {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Popconfirm { .. }) => {
+                self.pending_popconfirm_action = Some((id, PopconfirmAction::Dismiss));
+            }
+            Some(Kind::Popover { open: true, .. }) => {
+                self.pending_popover_open_change = Some((id, false));
+            }
+            Some(Kind::Modal { .. }) => {
+                self.pending_modal_action = Some((id, ModalAction::Dismiss));
+            }
+            Some(Kind::Drawer { .. }) => {
+                self.pending_drawer_action = Some((id, DrawerAction::Dismiss));
+            }
+            _ => {}
+        }
+    }
+
+    fn pointer_popover_toggle(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popover { open: true, .. })
+        );
+        if let Some(pid) = self.open_popup {
+            if pid != id {
+                self.emit_overlay_dismiss(pid);
+            }
+            self.hide_popup_aux_mut(scene, pid);
+        }
+        self.close_popup_internal();
+        if was_open {
+            self.pending_popover_open_change = Some((id, false));
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Popover { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        self.pending_popover_open_change = Some((id, true));
+        true
+    }
+
+    fn pointer_popconfirm_toggle(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popconfirm { open: true, .. })
+        );
+        if let Some(pid) = self.open_popup {
+            if pid != id {
+                self.emit_overlay_dismiss(pid);
+            }
+            self.hide_popup_aux_mut(scene, pid);
+        }
+        self.close_popup_internal();
+        if was_open {
+            self.pending_popconfirm_action = Some((id, PopconfirmAction::Dismiss));
+            return true;
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Popconfirm { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        true
+    }
+
+    fn key_popover_toggle(&mut self, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popover { open: true, .. })
+        );
+        if was_open {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Popover { open, .. } = &mut w.kind {
+                    *open = false;
+                }
+            }
+            if self.open_popup == Some(id) {
+                self.open_popup = None;
+            }
+            self.pending_popover_open_change = Some((id, false));
+            return true;
+        }
+        if let Some(pid) = self.open_popup {
+            if pid != id {
+                self.emit_overlay_dismiss(pid);
+                self.close_popup_internal();
+            }
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Popover { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        self.pending_popover_open_change = Some((id, true));
+        true
+    }
+
+    fn key_popconfirm_toggle(&mut self, id: WidgetId) -> bool {
+        let was_open = matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popconfirm { open: true, .. })
+        );
+        if was_open {
+            if let Some(w) = self.widgets.get_mut(&id) {
+                if let Kind::Popconfirm { open, .. } = &mut w.kind {
+                    *open = false;
+                }
+            }
+            if self.open_popup == Some(id) {
+                self.open_popup = None;
+            }
+            self.pending_popconfirm_action = Some((id, PopconfirmAction::Dismiss));
+            return true;
+        }
+        if let Some(pid) = self.open_popup {
+            if pid != id {
+                self.emit_overlay_dismiss(pid);
+                self.close_popup_internal();
+            }
+        }
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Popconfirm { open, .. } = &mut w.kind {
+                *open = true;
+            }
+        }
+        self.open_popup = Some(id);
+        true
+    }
+
+    fn pointer_popover_popup(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        // Host click while open → toggle close.
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(node) = w.node {
+                if let Some(n) = scene.get(node) {
+                    if n.bounds.contains(x, y) {
+                        return self.pointer_popover_toggle(scene, id);
+                    }
+                }
+            }
+        }
+        // Click inside panel: keep open.
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(&panel) = w.aux.first() {
+                if let Some(n) = scene.get(panel) {
+                    if n.visible && n.bounds.contains(x, y) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn pointer_popconfirm_popup(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        // Host click while open → dismiss.
+        if let Some(w) = self.widgets.get(&id) {
+            if let Some(node) = w.node {
+                if let Some(n) = scene.get(node) {
+                    if n.bounds.contains(x, y) {
+                        return self.pointer_popconfirm_toggle(scene, id);
+                    }
+                }
+            }
+        }
+        let aux = self
+            .widgets
+            .get(&id)
+            .map(|w| w.aux.clone())
+            .unwrap_or_default();
+        // aux: 0=panel, 1=message, 2=ok btn, 3=ok label, 4=cancel btn, 5=cancel label
+        let hit = |idx: usize| -> bool {
+            aux.get(idx)
+                .and_then(|n| scene.get(*n))
+                .map(|n| n.visible && n.bounds.contains(x, y))
+                .unwrap_or(false)
+        };
+        if hit(2) || hit(3) {
+            self.pending_popconfirm_action = Some((id, PopconfirmAction::Confirm));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(4) || hit(5) {
+            self.pending_popconfirm_action = Some((id, PopconfirmAction::Cancel));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(0) || hit(1) {
+            return true;
+        }
+        false
+    }
+
     fn popup_contains(&self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
         let Some(w) = self.widgets.get(&id) else {
             return false;
@@ -6629,6 +7002,18 @@ impl Ui {
     fn pointer_popup_item(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popover { .. })
+        ) {
+            return self.pointer_popover_popup(scene, id, x, y);
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popconfirm { .. })
+        ) {
+            return self.pointer_popconfirm_popup(scene, id, x, y);
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Modal { .. })
         ) {
             return self.pointer_modal(scene, id, x, y);
@@ -6661,6 +7046,8 @@ impl Ui {
                             Kind::Select { .. } => return self.pointer_select_toggle(scene, id),
                             Kind::TreeSelect { .. } => return self.pointer_tree_select_toggle(scene, id),
                             Kind::DateTime { .. } => return self.pointer_datetime_toggle(scene, id),
+                            Kind::Popover { .. } => return self.pointer_popover_toggle(scene, id),
+                            Kind::Popconfirm { .. } => return self.pointer_popconfirm_toggle(scene, id),
                             _ => {}
                         }
                     }
@@ -7136,6 +7523,8 @@ impl Ui {
                 ),
                 Some(Kind::Statistic { style, .. }) => (style.bg, true),
                 Some(Kind::Result { style, .. }) => (style.bg, true),
+                Some(Kind::Popover { style, .. }) => (style.trigger_bg, true),
+                Some(Kind::Popconfirm { style, .. }) => (style.trigger_bg, true),
                 None => return,
             };
 
@@ -7178,6 +7567,20 @@ impl Ui {
                 }
                 Some(Kind::Steps { .. }) | Some(Kind::Statistic { .. }) | Some(Kind::Result { .. }) => {
                     self.node_to_widget.insert(node, id);
+                }
+                Some(Kind::Popover { .. }) | Some(Kind::Popconfirm { .. }) => {
+                    self.node_to_widget.insert(node, id);
+                    let fg = match self.widgets.get(&id).map(|w| &w.kind) {
+                        Some(Kind::Popover { style, .. }) => style.trigger_fg,
+                        Some(Kind::Popconfirm { style, .. }) => style.trigger_fg,
+                        _ => Color::rgb(255, 255, 255),
+                    };
+                    let label = scene
+                        .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), fg)
+                        .expect("insert trigger label");
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        w.label_node = Some(label);
+                    }
                 }
                 Some(Kind::Panel { style, .. }) => {
                     let title_bg = style.title_bg;
@@ -7734,6 +8137,8 @@ impl Ui {
             Some(Kind::Steps { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Statistic { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Result { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Popover { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Popconfirm { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::DateTime { style, .. }) => ChildMeasure::new(style.width, style.height),
@@ -8778,6 +9183,20 @@ impl Ui {
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popover { .. })
+        ) {
+            self.paint_popover_trigger(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Popconfirm { .. })
+        ) {
+            self.paint_popconfirm_trigger(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Breadcrumb { .. })
         ) {
             self.paint_breadcrumb(scene, id);
@@ -9261,7 +9680,9 @@ impl Ui {
             | Kind::Link { .. }
             | Kind::Steps { .. }
             | Kind::Statistic { .. }
-            | Kind::Result { .. } => {}
+            | Kind::Result { .. }
+            | Kind::Popover { .. }
+            | Kind::Popconfirm { .. } => {}
         }
     }
 
@@ -11023,6 +11444,296 @@ impl Ui {
         }
     }
 
+
+    fn paint_popover_trigger(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Popover { trigger, style, .. },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let trigger = trigger.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let Some(lab_n) = *label_node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.trigger_bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let (_, mask) = self.font.rasterize_text(&trigger, style.size, None);
+        scene.set_bounds(
+            lab_n,
+            Rect::new(
+                bounds.x + ((bounds.width - mask.width as f32) * 0.5).max(0.0),
+                bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                mask.width as f32,
+                mask.height as f32,
+            ),
+        );
+        scene.set_fill(lab_n, style.trigger_fg);
+        scene.set_mask(lab_n, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+        scene.set_visible(lab_n, true);
+    }
+
+    fn paint_popconfirm_trigger(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Popconfirm { trigger, style, .. },
+            node,
+            label_node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let trigger = trigger.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let Some(lab_n) = *label_node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.trigger_bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let (_, mask) = self.font.rasterize_text(&trigger, style.size, None);
+        scene.set_bounds(
+            lab_n,
+            Rect::new(
+                bounds.x + ((bounds.width - mask.width as f32) * 0.5).max(0.0),
+                bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0),
+                mask.width as f32,
+                mask.height as f32,
+            ),
+        );
+        scene.set_fill(lab_n, style.trigger_fg);
+        scene.set_mask(lab_n, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+        scene.set_visible(lab_n, true);
+    }
+
+    fn paint_popover_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (title, body, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Popover {
+                        title,
+                        body,
+                        style,
+                        open: true,
+                        ..
+                    },
+                node,
+                ..
+            }) => {
+                let b = node
+                    .and_then(|n| scene.get(n).map(|n| n.bounds))
+                    .unwrap_or_else(Rect::empty);
+                (title.clone(), body.clone(), *style, b)
+            }
+            _ => return,
+        };
+        if host_bounds.is_empty() {
+            return;
+        }
+        let title_h = if let Some(ref ti) = title {
+            if ti.is_empty() {
+                0.0
+            } else {
+                let (_, th) = self.font.measure_line(ti, style.title_size);
+                th + 4.0
+            }
+        } else {
+            0.0
+        };
+        let (bw, bh) = self.font.measure_line(&body, style.body_size);
+        let content_w = bw.max(
+            title
+                .as_ref()
+                .map(|ti| self.font.measure_line(ti, style.title_size).0)
+                .unwrap_or(0.0),
+        );
+        let panel_w = (content_w + style.padding * 2.0)
+            .min(style.max_width)
+            .max(80.0);
+        let panel_h = style.padding * 2.0 + title_h + bh;
+        let mut px = host_bounds.x;
+        let py = host_bounds.y + host_bounds.height + style.gap;
+        let (vw, _) = self.viewport;
+        if px + panel_w > vw {
+            px = (vw - panel_w).max(0.0);
+        }
+        let panel = Rect::new(px, py, panel_w, panel_h);
+        // aux: 0=panel, 1=title, 2=body
+        self.ensure_overlay_aux(scene, id, 3);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() < 3 {
+            return;
+        }
+        scene.set_bounds(aux[0], panel);
+        scene.set_fill(aux[0], style.popup_bg);
+        scene.set_mask(aux[0], None);
+        scene.set_visible(aux[0], true);
+        self.node_to_widget.insert(aux[0], id);
+
+        let mut cy = panel.y + style.padding;
+        if let Some(ref ti) = title {
+            if !ti.is_empty() {
+                let (_, tm) = self.font.rasterize_text(ti, style.title_size, None);
+                scene.set_bounds(
+                    aux[1],
+                    Rect::new(panel.x + style.padding, cy, tm.width as f32, tm.height as f32),
+                );
+                scene.set_fill(aux[1], style.title_fg);
+                scene.set_mask(aux[1], Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+                scene.set_visible(aux[1], true);
+                cy += tm.height as f32 + 4.0;
+            } else {
+                scene.set_visible(aux[1], false);
+            }
+        } else {
+            scene.set_visible(aux[1], false);
+        }
+        let (_, bm) = self.font.rasterize_text(&body, style.body_size, None);
+        scene.set_bounds(
+            aux[2],
+            Rect::new(panel.x + style.padding, cy, bm.width as f32, bm.height as f32),
+        );
+        scene.set_fill(aux[2], style.body_fg);
+        scene.set_mask(aux[2], Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
+        scene.set_visible(aux[2], true);
+        if let Some(h) = self.overlay_host {
+            scene.raise(h);
+        }
+    }
+
+    fn paint_popconfirm_popup(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (message, ok_label, cancel_label, style, host_bounds) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Popconfirm {
+                        message,
+                        ok_label,
+                        cancel_label,
+                        style,
+                        open: true,
+                        ..
+                    },
+                node,
+                ..
+            }) => {
+                let b = node
+                    .and_then(|n| scene.get(n).map(|n| n.bounds))
+                    .unwrap_or_else(Rect::empty);
+                (
+                    message.clone(),
+                    ok_label.clone(),
+                    cancel_label.clone(),
+                    *style,
+                    b,
+                )
+            }
+            _ => return,
+        };
+        if host_bounds.is_empty() {
+            return;
+        }
+        let (mw, mh) = self.font.measure_line(&message, style.size);
+        let (ok_w, _) = self.font.measure_line(&ok_label, style.size);
+        let (cancel_w, _) = self.font.measure_line(&cancel_label, style.size);
+        let ok_bw = (ok_w + 20.0).max(56.0);
+        let cancel_bw = (cancel_w + 20.0).max(56.0);
+        let actions_w = ok_bw + cancel_bw + style.action_gap;
+        let panel_w = (mw.max(actions_w) + style.padding * 2.0)
+            .min(style.max_width)
+            .max(120.0);
+        let panel_h = style.padding * 2.0 + mh + 8.0 + style.action_height;
+        let mut px = host_bounds.x;
+        let py = host_bounds.y + host_bounds.height + style.gap;
+        let (vw, _) = self.viewport;
+        if px + panel_w > vw {
+            px = (vw - panel_w).max(0.0);
+        }
+        let panel = Rect::new(px, py, panel_w, panel_h);
+        // aux: 0=panel, 1=message, 2=ok btn, 3=ok label, 4=cancel btn, 5=cancel label
+        self.ensure_overlay_aux(scene, id, 6);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        if aux.len() < 6 {
+            return;
+        }
+        scene.set_bounds(aux[0], panel);
+        scene.set_fill(aux[0], style.popup_bg);
+        scene.set_mask(aux[0], None);
+        scene.set_visible(aux[0], true);
+        self.node_to_widget.insert(aux[0], id);
+
+        let (_, mm) = self.font.rasterize_text(&message, style.size, None);
+        scene.set_bounds(
+            aux[1],
+            Rect::new(
+                panel.x + style.padding,
+                panel.y + style.padding,
+                mm.width as f32,
+                mm.height as f32,
+            ),
+        );
+        scene.set_fill(aux[1], style.message_fg);
+        scene.set_mask(aux[1], Some(AlphaMask::new(mm.width, mm.height, mm.pixels)));
+        scene.set_visible(aux[1], true);
+
+        let btn_y = panel.y + panel.height - style.padding - style.action_height;
+        let mut cursor = panel.x + panel.width - style.padding;
+
+        // OK (right)
+        let ok_x = cursor - ok_bw;
+        scene.set_bounds(aux[2], Rect::new(ok_x, btn_y, ok_bw, style.action_height));
+        scene.set_fill(aux[2], style.ok_bg);
+        scene.set_mask(aux[2], None);
+        scene.set_visible(aux[2], true);
+        self.node_to_widget.insert(aux[2], id);
+        let (_, olm) = self.font.rasterize_text(&ok_label, style.size, None);
+        scene.set_bounds(
+            aux[3],
+            Rect::new(
+                ok_x + ((ok_bw - olm.width as f32) * 0.5).max(0.0),
+                btn_y + ((style.action_height - olm.height as f32) * 0.5).max(0.0),
+                olm.width as f32,
+                olm.height as f32,
+            ),
+        );
+        scene.set_fill(aux[3], style.ok_fg);
+        scene.set_mask(aux[3], Some(AlphaMask::new(olm.width, olm.height, olm.pixels)));
+        scene.set_visible(aux[3], true);
+        cursor = ok_x - style.action_gap;
+
+        // Cancel (left of OK)
+        let cancel_x = cursor - cancel_bw;
+        scene.set_bounds(
+            aux[4],
+            Rect::new(cancel_x, btn_y, cancel_bw, style.action_height),
+        );
+        scene.set_fill(aux[4], style.cancel_bg);
+        scene.set_mask(aux[4], None);
+        scene.set_visible(aux[4], true);
+        self.node_to_widget.insert(aux[4], id);
+        let (_, clm) = self.font.rasterize_text(&cancel_label, style.size, None);
+        scene.set_bounds(
+            aux[5],
+            Rect::new(
+                cancel_x + ((cancel_bw - clm.width as f32) * 0.5).max(0.0),
+                btn_y + ((style.action_height - clm.height as f32) * 0.5).max(0.0),
+                clm.width as f32,
+                clm.height as f32,
+            ),
+        );
+        scene.set_fill(aux[5], style.cancel_fg);
+        scene.set_mask(aux[5], Some(AlphaMask::new(clm.width, clm.height, clm.pixels)));
+        scene.set_visible(aux[5], true);
+
+        if let Some(h) = self.overlay_host {
+            scene.raise(h);
+        }
+    }
+
     fn paint_breadcrumb(&mut self, scene: &mut Scene, id: WidgetId) {
         let Some(Widget {
             kind: Kind::Breadcrumb { items, style },
@@ -12023,6 +12734,8 @@ impl Ui {
                         | Some(Kind::Modal { open: false, .. })
                         | Some(Kind::Drawer { open: false, .. })
                         | Some(Kind::DateTime { open: false, .. })
+                        | Some(Kind::Popover { open: false, .. })
+                        | Some(Kind::Popconfirm { open: false, .. })
                 ) {
                     if let Some(w) = self.widgets.get(&wid) {
                         for &n in &w.aux {
@@ -12041,6 +12754,8 @@ impl Ui {
             Some(Kind::DateTime { .. }) => self.paint_datetime_popup(scene, id),
             Some(Kind::Modal { .. }) => self.paint_modal_popup(scene, id),
             Some(Kind::Drawer { .. }) => self.paint_drawer_popup(scene, id),
+            Some(Kind::Popover { .. }) => self.paint_popover_popup(scene, id),
+            Some(Kind::Popconfirm { .. }) => self.paint_popconfirm_popup(scene, id),
             _ => {}
         }
     }
@@ -15314,6 +16029,97 @@ impl FlexBuilder<'_> {
         id
     }
 
+
+    /// Popover: click-toggle bubble below the trigger (Office P2c).
+    ///
+    /// Placement defaults to below the host. Escape / outside click close via
+    /// [`Ui`] `open_popup`. Prefer over Tooltip when content should stay until
+    /// dismissed (Tooltip is hover-only).
+    pub fn popover(
+        &mut self,
+        trigger: impl Into<String>,
+        body: impl Into<String>,
+        style: PopoverStyle,
+    ) -> WidgetId {
+        self.popover_titled(trigger, None::<String>, body, style)
+    }
+
+    /// Popover with optional title line above the body.
+    pub fn popover_titled(
+        &mut self,
+        trigger: impl Into<String>,
+        title: Option<impl Into<String>>,
+        body: impl Into<String>,
+        style: PopoverStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Popover {
+                    trigger: trigger.into(),
+                    title: title.map(|s| s.into()),
+                    body: body.into(),
+                    open: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Popconfirm: confirm bubble with OK / Cancel (Office P2c).
+    ///
+    /// Default labels are `"OK"` / `"Cancel"`. Confirm →
+    /// [`Ui::take_popconfirm_action`](`Confirm`); Cancel button → `Cancel`;
+    /// Escape / outside / host toggle-close → `Dismiss`.
+    pub fn popconfirm(
+        &mut self,
+        trigger: impl Into<String>,
+        message: impl Into<String>,
+        style: PopconfirmStyle,
+    ) -> WidgetId {
+        self.popconfirm_labeled(trigger, message, "OK", "Cancel", style)
+    }
+
+    /// Popconfirm with custom OK / Cancel labels.
+    pub fn popconfirm_labeled(
+        &mut self,
+        trigger: impl Into<String>,
+        message: impl Into<String>,
+        ok_label: impl Into<String>,
+        cancel_label: impl Into<String>,
+        style: PopconfirmStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Popconfirm {
+                    trigger: trigger.into(),
+                    message: message.into(),
+                    ok_label: ok_label.into(),
+                    cancel_label: cancel_label.into(),
+                    open: false,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     /// Breadcrumb path.
     pub fn breadcrumb(
         &mut self,
@@ -17631,6 +18437,147 @@ mod tests {
         assert_eq!(
             ui.take_result_action(),
             Some((res, ResultAction::Secondary))
+        );
+    }
+
+    #[test]
+    fn office_p2c_popover_toggle_escape_and_outside() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(800.0, 600.0);
+        let mut pop = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 200.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                pop = col.popover_titled(
+                    "More",
+                    Some("Tips"),
+                    "Rich-ish body text",
+                    PopoverStyle::default(),
+                );
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&pop));
+        assert_eq!(ui.popover_is_open(pop), Some(false));
+        assert_eq!(ui.accessible_name(pop).as_deref(), Some("Tips"));
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&pop).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        let cx = b.x + b.width * 0.5;
+        let cy = b.y + b.height * 0.5;
+        assert!(ui.pointer_pressed(&mut scene, cx, cy));
+        assert_eq!(ui.popover_is_open(pop), Some(true));
+        assert_eq!(ui.take_popover_open_change(), Some((pop, true)));
+        assert!(ui.take_popover_open_change().is_none());
+        ui.sync(&mut scene);
+        // Escape closes
+        assert!(ui.key_input(UiKey::Escape));
+        assert_eq!(ui.popover_is_open(pop), Some(false));
+        assert_eq!(ui.take_popover_open_change(), Some((pop, false)));
+        // Re-open via API
+        assert!(ui.set_popover_open(pop, true));
+        assert_eq!(ui.popover_is_open(pop), Some(true));
+        let _ = ui.take_popover_open_change();
+        ui.sync(&mut scene);
+        // Outside click
+        assert!(ui.pointer_pressed(&mut scene, 10.0, 500.0));
+        assert_eq!(ui.popover_is_open(pop), Some(false));
+        assert_eq!(ui.take_popover_open_change(), Some((pop, false)));
+        // Keyboard toggle while focused
+        ui.set_focus(Some(pop));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.popover_is_open(pop), Some(true));
+    }
+
+    #[test]
+    fn office_p2c_popconfirm_confirm_cancel_dismiss() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        ui.set_viewport(800.0, 600.0);
+        let mut pc = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 240.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                pc = col.popconfirm_labeled(
+                    "Delete",
+                    "Remove this item?",
+                    "OK",
+                    "Cancel",
+                    PopconfirmStyle::default(),
+                );
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&pc));
+        assert_eq!(ui.popconfirm_is_open(pc), Some(false));
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&pc).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        let cx = b.x + b.width * 0.5;
+        let cy = b.y + b.height * 0.5;
+        assert!(ui.pointer_pressed(&mut scene, cx, cy));
+        assert_eq!(ui.popconfirm_is_open(pc), Some(true));
+        ui.sync(&mut scene);
+        // Hit OK button (right side of popup panel)
+        let aux = ui.widgets.get(&pc).unwrap().aux.clone();
+        assert!(aux.len() >= 6);
+        let ok_bounds = scene.get(aux[2]).unwrap().bounds;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            ok_bounds.x + ok_bounds.width * 0.5,
+            ok_bounds.y + ok_bounds.height * 0.5,
+        ));
+        assert_eq!(
+            ui.take_popconfirm_action(),
+            Some((pc, PopconfirmAction::Confirm))
+        );
+        assert_eq!(ui.popconfirm_is_open(pc), Some(false));
+        assert!(ui.take_popconfirm_action().is_none());
+
+        // Re-open, Cancel
+        assert!(ui.set_popconfirm_open(pc, true));
+        ui.sync(&mut scene);
+        let aux = ui.widgets.get(&pc).unwrap().aux.clone();
+        let cancel_bounds = scene.get(aux[4]).unwrap().bounds;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            cancel_bounds.x + cancel_bounds.width * 0.5,
+            cancel_bounds.y + cancel_bounds.height * 0.5,
+        ));
+        assert_eq!(
+            ui.take_popconfirm_action(),
+            Some((pc, PopconfirmAction::Cancel))
+        );
+
+        // Re-open, Escape → Dismiss
+        assert!(ui.set_popconfirm_open(pc, true));
+        assert!(ui.key_input(UiKey::Escape));
+        assert_eq!(
+            ui.take_popconfirm_action(),
+            Some((pc, PopconfirmAction::Dismiss))
+        );
+        assert_eq!(ui.popconfirm_is_open(pc), Some(false));
+
+        // Re-open, outside → Dismiss
+        assert!(ui.set_popconfirm_open(pc, true));
+        ui.sync(&mut scene);
+        assert!(ui.pointer_pressed(&mut scene, 10.0, 500.0));
+        assert_eq!(
+            ui.take_popconfirm_action(),
+            Some((pc, PopconfirmAction::Dismiss))
         );
     }
 }
