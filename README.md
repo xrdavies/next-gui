@@ -130,7 +130,7 @@ cargo run -p e02_counter          # Rust builder API
 cargo run -p e03_ngui_counter     # load examples/03_ngui_counter/ui/counter.ngui
 ```
 
-操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。`.ngui` 语法见 [docs/p1-design.md](docs/p1-design.md)。长时探针：`NEXT_GUI_SOAK=1 cargo run -p e02_counter`（见 [docs/soak.md](docs/soak.md)）。
+操作：点击 **Increment** / **Reset** 更新计数（状态驱动 Text）；关闭窗口退出。stderr 打印脏区面积。`.ngui` 语法见 [docs/p1-design.md](docs/p1-design.md)；全控件关键字见 [docs/ngui-widgets.md](docs/ngui-widgets.md)。长时探针：`NEXT_GUI_SOAK=1 cargo run -p e02_counter`（见 [docs/soak.md](docs/soak.md)）。
 
 ### 试跑 P0（Linux/macOS，需要图形桌面会话）
 

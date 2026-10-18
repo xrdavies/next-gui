@@ -1,0 +1,183 @@
+// Smoke fixture: one of each .ngui-supported widget (ImageRgba excluded — Rust-only).
+Column {
+  width: 900
+  height: 2400
+  padding: 8
+  gap: 6
+
+  Text("hello") @label
+  Button("Go") @btn
+  Icon("save") @ico
+  Spacer { width: 8 height: 4 }
+  Separator { length: 100 }
+
+  Toolbar @tbbar {
+    width: 400
+    height: 36
+    Button("T") @tb
+  }
+
+  Panel("Panel") @panel {
+    width: 400
+    height: 80
+    Text("inside")
+  }
+
+  StatusBar @sbar {
+    width: 400
+    height: 24
+    Text("ok")
+  }
+
+  Splitter @split {
+    width: 400
+    height: 80
+    ratio: 0.4
+    Column { width: 100 height: 60 Text("A") }
+    Column { width: 100 height: 60 Text("B") }
+  }
+
+  ScrollArea @scroll {
+    width: 200
+    height: 60
+    Text("scroll")
+  }
+
+  TextInput("type…") @ti { value: "hi" width: 160 }
+  Checkbox("On") @cb { checked: true }
+  Radio(1, "A") @rd { selected: true }
+  Switch("En") @sw { on: true }
+
+  List(["a", "b", "c"]) @lst
+  VirtualList(["v1", "v2"]) @vlst
+
+  Tree([
+    { id: 1, label: "root", children: [{ id: 2, label: "leaf" }] }
+  ]) @tr
+
+  Table @tbl {
+    columns: [["Name", 80], ["Val", 60]]
+    rows: [["x", "1"], ["y", "2"]]
+  }
+
+  VirtualTable @vtbl {
+    columns: ["A"]
+    rows: [["1"]]
+  }
+
+  Menu("File", ["Open", "Save"]) @menu
+
+  ContextMenu("hint") @ctx {
+    items: [{ id: 1, label: "Copy" }]
+    Text("host")
+  }
+
+  Tabs @tabs {
+    width: 300
+    height: 100
+    Tab("One") { Text("p1") }
+    Tab("Two") { Text("p2") }
+  }
+
+  Select(["x", "y"]) @sel { selected: 0 placeholder: "pick" }
+  Slider(0, 10, 5) @sld
+  Tag("run") @tag
+  Badge(3) @badge
+  BadgeDot @bdot
+  Tooltip("tip") @tip { Button("?") }
+  Progress(0.5) @prog
+  Alert(info, "note") @al
+
+  TreeSelect @tsel {
+    nodes: [{ id: 1, label: "n" }]
+    placeholder: "pick"
+  }
+
+  Form @form {
+    Field("name", "Name") {
+      rules: ["required"]
+      TextInput("…") @fname
+    }
+  }
+
+  AlarmList @alarms {
+    entries: [{ id: 1, severity: major, message: "hi", source: "s", time: "t" }]
+  }
+
+  Gauge @gauge { value: 40 min: 0 max: 100 unit: "%" label: "CPU" }
+  Trend([1, 2, 3, 2]) @trend
+  Chart @chart {
+    tiles: [
+      { kind: gauge, title: "G", value: 50, min: 0, max: 100 },
+      { kind: trend, title: "T", points: [1, 3, 2] }
+    ]
+  }
+
+  TextArea("notes") @ta { value: "body" }
+  InputNumber @num { value: 3 min: 0 max: 10 step: 1 }
+  Spin @spin { spinning: false Text("x") }
+  Empty("none") @empty
+  Collapse @col {
+    panels: [{ title: "H", body: "B", open: true }]
+  }
+  Descriptions @desc {
+    items: [["k", "v"]]
+  }
+  Card("Title", "Body") @card
+  Segmented(["A", "B"]) @seg { selected: 0 }
+  ButtonGroup(["X", "Y"]) @bg { selected: 0 }
+  Link("go") @link
+  Space @space {
+    direction: horizontal
+    gap: 4
+    Button("1")
+    Button("2")
+  }
+  Steps @steps {
+    items: ["One", { title: "Two", description: "d" }]
+    current: 0
+  }
+  Statistic("KPI", "42") @stat
+  Result(success, "Done") @result { primary: "OK" }
+  Popover("?") @pop { body: "more" }
+  Popconfirm("Del") @pc { message: "Sure?" }
+  Upload("file") @up
+  ColorPicker(#3b82f6) @cp
+  Autocomplete(["aa", "ab"]) @ac { value: "a" }
+  Grid(2) @grid {
+    Text("g1")
+    Text("g2")
+  }
+  Timeline @tl {
+    items: [["10:00", "start"], { time: "11:00", content: "end" }]
+  }
+  Calendar(2026, 10, 19) @cal
+  ImagePlaceholder("pic") @img
+  Breadcrumb(["Home", "Page"]) @bc
+  Pagination @pg { page: 1 page_size: 10 total: 50 }
+  DateTime @dt { year: 2026 month: 10 day: 19 hour: 8 minute: 0 }
+  Transfer @xfer {
+    source: ["a", { id: 2, label: "b" }]
+    target: ["c"]
+  }
+  PropertyGrid @pgid {
+    rows: [
+      { key: "name", value: "x" },
+      { key: "n", value: 1 },
+      { key: "on", value: true }
+    ]
+  }
+  TreeTable @tt {
+    columns: ["Col"]
+    nodes: [{ id: 1, label: "r", cells: ["v"] }]
+  }
+  Row {
+    width: 200
+    height: 32
+    Button("r")
+  }
+}
+
+Modal("Confirm", "Body", "OK") @modal { open: false secondary: "Cancel" }
+Drawer("Side", "drawer body") @drawer { open: false }
+Notify("toast") { tone: info }
