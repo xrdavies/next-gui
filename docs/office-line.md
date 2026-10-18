@@ -144,7 +144,7 @@ Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + def
 
 完整对照表与优先级见 **[office-widget-catalog.md](office-widget-catalog.md)**（Ant Design / Element Plus / MUI + 工业扩展；**2026-10-17 已拍板**）。
 
-**P0 目录控件（Rust API）已按 §4 / §10 落地。** P1 核心 / rest / deferred（含 Form 校验、`alarm_list` / `gauge` / `trend`、DateTime 等）均已落地；层级选择仅 `tree_select`（Cascader 仍不进 P1）。**Office P2a**（`button_group` / `link` / `space`）已落地，见 [office-p2-design.md](office-p2-design.md)；下一步 P2b。
+**P0 目录控件（Rust API）已按 §4 / §10 落地。** P1 核心 / rest / deferred（含 Form 校验、`alarm_list` / `gauge` / `trend`、DateTime 等）均已落地；层级选择仅 `tree_select`（Cascader 仍不进 P1）。**Office P2a/P2b**（`button_group` / `link` / `space` / `steps` / `statistic` / `result`）已落地，见 [office-p2-design.md](office-p2-design.md)；下一步 P2c。
 
 ---
 
@@ -163,7 +163,7 @@ P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
 P5 Immediate 已落地；**P6a–P6e** 已通（[p6-design.md](p6-design.md)、[soak.md](soak.md)）
     ↓
-Office **P2a** 已落地（`button_group` / `link` / `space`；[office-p2-design.md](office-p2-design.md)、`e26`）；下一步 **P2b**
+Office **P2a/P2b** 已落地（含 `steps` / `statistic` / `result`；[office-p2-design.md](office-p2-design.md)、`e26`）；下一步 **P2c**
 ```
 
 ---
@@ -183,4 +183,4 @@ Office **P2a** 已落地（`button_group` / `link` / `space`；[office-p2-design
 
 运行：`cargo run -p e10_office_panel`（需图形会话；CJK 字体同 P2）。
 有适配器时应看到：`native Surface ready (…, present=NativeSurface)`。
-Office / 后续示例：`e11`–`e15`（P0）、`e20`–`e22`（P1）、`e23`（Chart）、`e24`（Profile）、`e25`（Immediate）、`e26`（Office P2a）。
+Office / 后续示例：`e11`–`e15`（P0）、`e20`–`e22`（P1）、`e23`（Chart）、`e24`（Profile）、`e25`（Immediate）、`e26`（Office P2a+P2b）。

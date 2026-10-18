@@ -7,7 +7,7 @@
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
-//! Office P2a (`button_group` / `link` / `space`): see `docs/office-p2-design.md`.
+//! Office P2a/P2b (`button_group` / `link` / `space` / `steps` / `statistic` / `result`): see `docs/office-p2-design.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
@@ -1902,6 +1902,30 @@ enum Kind {
         label: String,
         style: LinkStyle,
     },
+    /// Step progress list (Office P2b).
+    Steps {
+        items: Vec<StepItem>,
+        current: usize,
+        style: StepsStyle,
+    },
+    /// KPI statistic block (Office P2b); display-only.
+    Statistic {
+        title: String,
+        value: String,
+        prefix: Option<String>,
+        suffix: Option<String>,
+        hint: Option<String>,
+        style: StatisticStyle,
+    },
+    /// Status result page block (Office P2b).
+    Result {
+        status: ResultStatus,
+        title: String,
+        subtitle: Option<String>,
+        primary_action: Option<String>,
+        secondary_action: Option<String>,
+        style: ResultStyle,
+    },
 }
 
 #[derive(Debug)]
@@ -2039,6 +2063,10 @@ pub struct Ui {
     pending_button_group_change: Option<(WidgetId, Option<usize>)>,
     /// Last keyboard-activated Link; drained by [`Ui::take_link_activate`].
     pending_link_activate: Option<WidgetId>,
+    /// Last Steps current change; drained by [`Ui::take_steps_change`].
+    pending_steps_change: Option<(WidgetId, usize)>,
+    /// Last Result action; drained by [`Ui::take_result_action`].
+    pending_result_action: Option<(WidgetId, ResultAction)>,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2135,6 +2163,8 @@ impl Ui {
             pending_button_activate: None,
             pending_button_group_change: None,
             pending_link_activate: None,
+            pending_steps_change: None,
+            pending_result_action: None,
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2656,6 +2686,18 @@ impl Ui {
                 self.focus = Some(id);
                 false
             }
+            Some(Kind::Steps { .. }) => {
+                self.focus = Some(id);
+                self.pointer_steps(scene, id, x, y)
+            }
+            Some(Kind::Result { .. }) => {
+                self.focus = Some(id);
+                self.pointer_result(scene, id, x, y)
+            }
+            Some(Kind::Statistic { .. }) => {
+                // Display-only; not focusable.
+                false
+            }
             _ => {
                 self.focus = None;
                 false
@@ -2937,6 +2979,25 @@ impl Ui {
                     Some(label.clone())
                 }
             }
+            Kind::Steps { items, current, .. } => items.get(*current).map(|s| s.title.clone()),
+            Kind::Statistic { title, value, .. } => {
+                if title.is_empty() && value.is_empty() {
+                    None
+                } else if title.is_empty() {
+                    Some(value.clone())
+                } else if value.is_empty() {
+                    Some(title.clone())
+                } else {
+                    Some(format!("{title}: {value}"))
+                }
+            }
+            Kind::Result { title, .. } => {
+                if title.is_empty() {
+                    None
+                } else {
+                    Some(title.clone())
+                }
+            }
             Kind::Text { content, .. } => {
                 if content.is_empty() {
                     None
@@ -2949,35 +3010,45 @@ impl Ui {
     }
 
     /// Whether this kind participates in Tab focus order (matches pointer focus).
+    ///
+    /// Office P2b: [`Kind::Steps`] is always focusable; [`Kind::Statistic`] is not;
+    /// [`Kind::Result`] is focusable only when it has at least one action label
+    /// (actions are hit targets on the Result host — no separate child widgets).
     fn kind_is_focusable(kind: &Kind) -> bool {
-        matches!(
-            kind,
+        match kind {
+            Kind::Result {
+                primary_action,
+                secondary_action,
+                ..
+            } => primary_action.is_some() || secondary_action.is_some(),
             Kind::Button { .. }
-                | Kind::TextInput { .. }
-                | Kind::TextArea { .. }
-                | Kind::InputNumber { .. }
-                | Kind::Checkbox { .. }
-                | Kind::Radio { .. }
-                | Kind::Switch { .. }
-                | Kind::List { .. }
-                | Kind::Tree { .. }
-                | Kind::Table { .. }
-                | Kind::Menu { .. }
-                | Kind::Tabs { .. }
-                | Kind::Select { .. }
-                | Kind::TreeSelect { .. }
-                | Kind::AlarmList { .. }
-                | Kind::Slider { .. }
-                | Kind::Segmented { .. }
-                | Kind::Pagination { .. }
-                | Kind::Collapse { .. }
-                | Kind::DateTime { .. }
-                | Kind::Transfer { .. }
-                | Kind::PropertyGrid { .. }
-                | Kind::TreeTable { .. }
-                | Kind::ButtonGroup { .. }
-                | Kind::Link { .. }
-        )
+            | Kind::TextInput { .. }
+            | Kind::TextArea { .. }
+            | Kind::InputNumber { .. }
+            | Kind::Checkbox { .. }
+            | Kind::Radio { .. }
+            | Kind::Switch { .. }
+            | Kind::List { .. }
+            | Kind::Tree { .. }
+            | Kind::Table { .. }
+            | Kind::Menu { .. }
+            | Kind::Tabs { .. }
+            | Kind::Select { .. }
+            | Kind::TreeSelect { .. }
+            | Kind::AlarmList { .. }
+            | Kind::Slider { .. }
+            | Kind::Segmented { .. }
+            | Kind::Pagination { .. }
+            | Kind::Collapse { .. }
+            | Kind::DateTime { .. }
+            | Kind::Transfer { .. }
+            | Kind::PropertyGrid { .. }
+            | Kind::TreeTable { .. }
+            | Kind::ButtonGroup { .. }
+            | Kind::Link { .. }
+            | Kind::Steps { .. } => true,
+            _ => false,
+        }
     }
 
     fn widget_children_ids(kind: &Kind) -> &[WidgetId] {
@@ -3606,6 +3677,10 @@ impl Ui {
             Some(Kind::InputNumber { .. }) => self.key_input_number(id, key),
             Some(Kind::Segmented { .. }) => self.key_segmented(id, key),
             Some(Kind::ButtonGroup { .. }) => self.key_button_group(id, key),
+            Some(Kind::Steps { .. }) => self.key_steps(id, key),
+            Some(Kind::Result { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+                self.key_result_activate(id)
+            }
             Some(Kind::Link { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
                 self.pending_link_activate = Some(id);
                 true
@@ -4307,6 +4382,157 @@ impl Ui {
         false
     }
 
+    fn key_steps(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let (cur, n, dir) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Steps {
+                items, current, style, ..
+            }) => (*current, items.len(), style.direction),
+            _ => return false,
+        };
+        if n == 0 {
+            return false;
+        }
+        let prev = matches!(
+            (dir, key),
+            (StepsDirection::Horizontal, UiKey::Left)
+                | (StepsDirection::Vertical, UiKey::Up)
+                | (StepsDirection::Horizontal, UiKey::Up)
+                | (StepsDirection::Vertical, UiKey::Left)
+        );
+        let next = matches!(
+            (dir, key),
+            (StepsDirection::Horizontal, UiKey::Right)
+                | (StepsDirection::Vertical, UiKey::Down)
+                | (StepsDirection::Horizontal, UiKey::Down)
+                | (StepsDirection::Vertical, UiKey::Right)
+        );
+        if prev {
+            let i = if cur == 0 { n - 1 } else { cur - 1 };
+            self.set_steps_current(id, i)
+        } else if next {
+            self.set_steps_current(id, (cur + 1) % n)
+        } else {
+            false
+        }
+    }
+
+    fn pointer_steps(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (n, style, node, clickable) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind: Kind::Steps { items, style, .. },
+                node,
+                ..
+            }) => (items.len(), *style, *node, style.clickable),
+            _ => return false,
+        };
+        if !clickable || n == 0 {
+            return false;
+        }
+        let bounds = node
+            .and_then(|nid| scene.get(nid).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let pad = style.padding;
+        match style.direction {
+            StepsDirection::Horizontal => {
+                let inner_w = (bounds.width - pad * 2.0).max(1.0);
+                let slot = inner_w / n as f32;
+                let local = x - bounds.x - pad;
+                if local < 0.0 || local > inner_w {
+                    return false;
+                }
+                let idx = (local / slot).floor() as isize;
+                if idx >= 0 && (idx as usize) < n {
+                    return self.set_steps_current(id, idx as usize);
+                }
+            }
+            StepsDirection::Vertical => {
+                let inner_h = (bounds.height - pad * 2.0).max(1.0);
+                let slot = inner_h / n as f32;
+                let local = y - bounds.y - pad;
+                if local < 0.0 || local > inner_h {
+                    return false;
+                }
+                let idx = (local / slot).floor() as isize;
+                if idx >= 0 && (idx as usize) < n {
+                    return self.set_steps_current(id, idx as usize);
+                }
+            }
+        }
+        false
+    }
+
+    fn key_result_activate(&mut self, id: WidgetId) -> bool {
+        let (primary, secondary) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Result {
+                primary_action,
+                secondary_action,
+                ..
+            }) => (primary_action.is_some(), secondary_action.is_some()),
+            _ => return false,
+        };
+        if primary {
+            self.pending_result_action = Some((id, ResultAction::Primary));
+            true
+        } else if secondary {
+            self.pending_result_action = Some((id, ResultAction::Secondary));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn pointer_result(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let (primary, secondary, style, node) = match self.widgets.get(&id) {
+            Some(Widget {
+                kind:
+                    Kind::Result {
+                        primary_action,
+                        secondary_action,
+                        style,
+                        ..
+                    },
+                node,
+                ..
+            }) => (
+                primary_action.clone(),
+                secondary_action.clone(),
+                *style,
+                *node,
+            ),
+            _ => return false,
+        };
+        let bounds = node
+            .and_then(|nid| scene.get(nid).map(|n| n.bounds))
+            .unwrap_or_else(Rect::empty);
+        let btn_y = bounds.y + bounds.height - style.padding - style.action_height;
+        let btn_h = style.action_height;
+        if y < btn_y || y > btn_y + btn_h {
+            return false;
+        }
+        // Layout: [secondary?][gap][primary?] right-aligned from padding.
+        let mut cursor = bounds.x + bounds.width - style.padding;
+        if let Some(label) = &primary {
+            let (tw, _) = self.font.measure_line(label, style.action_size);
+            let bw = (tw + 24.0).max(72.0);
+            let bx = cursor - bw;
+            if x >= bx && x <= cursor {
+                self.pending_result_action = Some((id, ResultAction::Primary));
+                return true;
+            }
+            cursor = bx - style.gap;
+        }
+        if let Some(label) = &secondary {
+            let (tw, _) = self.font.measure_line(label, style.action_size);
+            let bw = (tw + 24.0).max(72.0);
+            let bx = cursor - bw;
+            if x >= bx && x <= cursor {
+                self.pending_result_action = Some((id, ResultAction::Secondary));
+                return true;
+            }
+        }
+        false
+    }
+
     fn key_pagination(&mut self, id: WidgetId, key: UiKey) -> bool {
         let page = self.pagination_page(id).unwrap_or(1);
         match key {
@@ -4754,6 +4980,16 @@ impl Ui {
     /// returns `false` for links (same dual path as Button).
     pub fn take_link_activate(&mut self) -> Option<WidgetId> {
         self.pending_link_activate.take()
+    }
+
+    /// Drain the last Steps current-index change `(id, current)`.
+    pub fn take_steps_change(&mut self) -> Option<(WidgetId, usize)> {
+        self.pending_steps_change.take()
+    }
+
+    /// Drain the last Result action `(id, Primary|Secondary)`.
+    pub fn take_result_action(&mut self) -> Option<(WidgetId, ResultAction)> {
+        self.pending_result_action.take()
     }
 
     /// Selected tab index.
@@ -5213,6 +5449,38 @@ impl Ui {
             self.pending_button_group_change = Some((id, index));
         }
         changed
+    }
+
+    /// Steps current index (`None` if wrong kind).
+    pub fn steps_current(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Steps { current, .. }) => Some(*current),
+            _ => None,
+        }
+    }
+
+    /// Set Steps current index. Returns true if changed.
+    pub fn set_steps_current(&mut self, id: WidgetId, index: usize) -> bool {
+        let n = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Steps { items, .. }) => items.len(),
+            _ => return false,
+        };
+        if n == 0 || index >= n {
+            return false;
+        }
+        let Some(w) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        if let Kind::Steps { current, .. } = &mut w.kind {
+            if *current == index {
+                return false;
+            }
+            *current = index;
+            self.pending_steps_change = Some((id, index));
+            true
+        } else {
+            false
+        }
     }
 
     /// Pagination current page (1-based).
@@ -6862,6 +7130,12 @@ impl Ui {
                 Some(Kind::TreeTable { style, .. }) => (style.bg, true),
                 Some(Kind::ButtonGroup { style, .. }) => (style.bg, true),
                 Some(Kind::Link { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Steps { style, .. }) => (
+                    style.bg,
+                    style.bg.a > 0,
+                ),
+                Some(Kind::Statistic { style, .. }) => (style.bg, true),
+                Some(Kind::Result { style, .. }) => (style.bg, true),
                 None => return,
             };
 
@@ -6901,6 +7175,9 @@ impl Ui {
                         w.label_node = Some(label);
                         w.chrome_node = Some(underline);
                     }
+                }
+                Some(Kind::Steps { .. }) | Some(Kind::Statistic { .. }) | Some(Kind::Result { .. }) => {
+                    self.node_to_widget.insert(node, id);
                 }
                 Some(Kind::Panel { style, .. }) => {
                     let title_bg = style.title_bg;
@@ -7454,6 +7731,9 @@ impl Ui {
                 let uh = if style.underline { 3.0 } else { 0.0 };
                 ChildMeasure::new(w, h + uh + 4.0)
             },
+            Some(Kind::Steps { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Statistic { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Result { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Breadcrumb { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Pagination { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::DateTime { style, .. }) => ChildMeasure::new(style.width, style.height),
@@ -8477,6 +8757,27 @@ impl Ui {
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Steps { .. })
+        ) {
+            self.paint_steps(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Statistic { .. })
+        ) {
+            self.paint_statistic(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Result { .. })
+        ) {
+            self.paint_result(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Breadcrumb { .. })
         ) {
             self.paint_breadcrumb(scene, id);
@@ -8957,7 +9258,10 @@ impl Ui {
             | Kind::PropertyGrid { .. }
             | Kind::TreeTable { .. }
             | Kind::ButtonGroup { .. }
-            | Kind::Link { .. } => {}
+            | Kind::Link { .. }
+            | Kind::Steps { .. }
+            | Kind::Statistic { .. }
+            | Kind::Result { .. } => {}
         }
     }
 
@@ -10268,6 +10572,453 @@ impl Ui {
                 scene.set_visible(under, true);
             } else {
                 scene.set_visible(under, false);
+            }
+        }
+    }
+
+
+    fn paint_steps(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Steps {
+                    items,
+                    current,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let items = items.clone();
+        let current = *current;
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        let n = items.len();
+        if n == 0 {
+            return;
+        }
+        // aux per step: [marker_bg, marker_label, title, desc?, connector?]
+        // Fixed: marker, mlabel, title, desc, connector = 5 per step
+        self.ensure_aux_nodes(scene, host, id, n * 5);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let pad = style.padding;
+        let marker = style.marker;
+        match style.direction {
+            StepsDirection::Horizontal => {
+                let inner_w = (bounds.width - pad * 2.0).max(1.0);
+                let slot = inner_w / n as f32;
+                for (i, item) in items.iter().enumerate() {
+                    let cx = bounds.x + pad + slot * (i as f32 + 0.5);
+                    let my = bounds.y + pad;
+                    let (bg_c, fg_c) = if i < current {
+                        (style.done_bg, style.done_fg)
+                    } else if i == current {
+                        (style.process_bg, style.process_fg)
+                    } else {
+                        (style.wait_bg, style.wait_fg)
+                    };
+                    let mx = cx - marker * 0.5;
+                    if let Some(&mbg) = aux.get(i * 5) {
+                        scene.set_bounds(mbg, Rect::new(mx, my, marker, marker));
+                        scene.set_fill(mbg, bg_c);
+                        scene.set_mask(mbg, None);
+                        scene.set_visible(mbg, true);
+                    }
+                    let num = format!("{}", i + 1);
+                    let (_, nm) = self.font.rasterize_text(&num, style.size, None);
+                    if let Some(&mlab) = aux.get(i * 5 + 1) {
+                        scene.set_bounds(
+                            mlab,
+                            Rect::new(
+                                mx + ((marker - nm.width as f32) * 0.5).max(0.0),
+                                my + ((marker - nm.height as f32) * 0.5).max(0.0),
+                                nm.width as f32,
+                                nm.height as f32,
+                            ),
+                        );
+                        scene.set_fill(mlab, Color::rgb(0xff, 0xff, 0xff));
+                        scene.set_mask(
+                            mlab,
+                            Some(AlphaMask::new(nm.width, nm.height, nm.pixels)),
+                        );
+                        scene.set_visible(mlab, true);
+                    }
+                    let (_, tm) = self.font.rasterize_text(&item.title, style.size, None);
+                    let ty = my + marker + 4.0;
+                    if let Some(&title_n) = aux.get(i * 5 + 2) {
+                        scene.set_bounds(
+                            title_n,
+                            Rect::new(
+                                cx - tm.width as f32 * 0.5,
+                                ty,
+                                tm.width as f32,
+                                tm.height as f32,
+                            ),
+                        );
+                        scene.set_fill(title_n, fg_c);
+                        scene.set_mask(
+                            title_n,
+                            Some(AlphaMask::new(tm.width, tm.height, tm.pixels)),
+                        );
+                        scene.set_visible(title_n, true);
+                    }
+                    if let Some(&desc_n) = aux.get(i * 5 + 3) {
+                        if let Some(desc) = &item.description {
+                            let (_, dm) = self.font.rasterize_text(desc, style.desc_size, None);
+                            scene.set_bounds(
+                                desc_n,
+                                Rect::new(
+                                    cx - dm.width as f32 * 0.5,
+                                    ty + tm.height as f32 + 2.0,
+                                    dm.width as f32,
+                                    dm.height as f32,
+                                ),
+                            );
+                            scene.set_fill(desc_n, style.wait_fg);
+                            scene.set_mask(
+                                desc_n,
+                                Some(AlphaMask::new(dm.width, dm.height, dm.pixels)),
+                            );
+                            scene.set_visible(desc_n, true);
+                        } else {
+                            scene.set_visible(desc_n, false);
+                        }
+                    }
+                    if let Some(&conn) = aux.get(i * 5 + 4) {
+                        if i + 1 < n {
+                            let x0 = mx + marker + 2.0;
+                            let x1 = bounds.x + pad + slot * (i as f32 + 1.5) - marker * 0.5 - 2.0;
+                            let w = (x1 - x0).max(1.0);
+                            scene.set_bounds(
+                                conn,
+                                Rect::new(x0, my + marker * 0.5 - 1.0, w, 2.0),
+                            );
+                            scene.set_fill(
+                                conn,
+                                if i < current {
+                                    style.done_bg
+                                } else {
+                                    style.connector
+                                },
+                            );
+                            scene.set_mask(conn, None);
+                            scene.set_visible(conn, true);
+                        } else {
+                            scene.set_visible(conn, false);
+                        }
+                    }
+                }
+            }
+            StepsDirection::Vertical => {
+                let inner_h = (bounds.height - pad * 2.0).max(1.0);
+                let slot = inner_h / n as f32;
+                for (i, item) in items.iter().enumerate() {
+                    let cy = bounds.y + pad + slot * (i as f32 + 0.5);
+                    let mx = bounds.x + pad;
+                    let my = cy - marker * 0.5;
+                    let (bg_c, fg_c) = if i < current {
+                        (style.done_bg, style.done_fg)
+                    } else if i == current {
+                        (style.process_bg, style.process_fg)
+                    } else {
+                        (style.wait_bg, style.wait_fg)
+                    };
+                    if let Some(&mbg) = aux.get(i * 5) {
+                        scene.set_bounds(mbg, Rect::new(mx, my, marker, marker));
+                        scene.set_fill(mbg, bg_c);
+                        scene.set_mask(mbg, None);
+                        scene.set_visible(mbg, true);
+                    }
+                    let num = format!("{}", i + 1);
+                    let (_, nm) = self.font.rasterize_text(&num, style.size, None);
+                    if let Some(&mlab) = aux.get(i * 5 + 1) {
+                        scene.set_bounds(
+                            mlab,
+                            Rect::new(
+                                mx + ((marker - nm.width as f32) * 0.5).max(0.0),
+                                my + ((marker - nm.height as f32) * 0.5).max(0.0),
+                                nm.width as f32,
+                                nm.height as f32,
+                            ),
+                        );
+                        scene.set_fill(mlab, Color::rgb(0xff, 0xff, 0xff));
+                        scene.set_mask(
+                            mlab,
+                            Some(AlphaMask::new(nm.width, nm.height, nm.pixels)),
+                        );
+                        scene.set_visible(mlab, true);
+                    }
+                    let tx = mx + marker + 8.0;
+                    let (_, tm) = self.font.rasterize_text(&item.title, style.size, None);
+                    if let Some(&title_n) = aux.get(i * 5 + 2) {
+                        scene.set_bounds(
+                            title_n,
+                            Rect::new(tx, cy - tm.height as f32 * 0.5, tm.width as f32, tm.height as f32),
+                        );
+                        scene.set_fill(title_n, fg_c);
+                        scene.set_mask(
+                            title_n,
+                            Some(AlphaMask::new(tm.width, tm.height, tm.pixels)),
+                        );
+                        scene.set_visible(title_n, true);
+                    }
+                    if let Some(&desc_n) = aux.get(i * 5 + 3) {
+                        if let Some(desc) = &item.description {
+                            let (_, dm) = self.font.rasterize_text(desc, style.desc_size, None);
+                            scene.set_bounds(
+                                desc_n,
+                                Rect::new(
+                                    tx,
+                                    cy + tm.height as f32 * 0.5 + 2.0,
+                                    dm.width as f32,
+                                    dm.height as f32,
+                                ),
+                            );
+                            scene.set_fill(desc_n, style.wait_fg);
+                            scene.set_mask(
+                                desc_n,
+                                Some(AlphaMask::new(dm.width, dm.height, dm.pixels)),
+                            );
+                            scene.set_visible(desc_n, true);
+                        } else {
+                            scene.set_visible(desc_n, false);
+                        }
+                    }
+                    if let Some(&conn) = aux.get(i * 5 + 4) {
+                        if i + 1 < n {
+                            let y0 = my + marker + 2.0;
+                            let y1 = bounds.y + pad + slot * (i as f32 + 1.5) - marker * 0.5 - 2.0;
+                            let h = (y1 - y0).max(1.0);
+                            scene.set_bounds(
+                                conn,
+                                Rect::new(mx + marker * 0.5 - 1.0, y0, 2.0, h),
+                            );
+                            scene.set_fill(
+                                conn,
+                                if i < current {
+                                    style.done_bg
+                                } else {
+                                    style.connector
+                                },
+                            );
+                            scene.set_mask(conn, None);
+                            scene.set_visible(conn, true);
+                        } else {
+                            scene.set_visible(conn, false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn paint_statistic(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Statistic {
+                    title,
+                    value,
+                    prefix,
+                    suffix,
+                    hint,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let title = title.clone();
+        let value = value.clone();
+        let prefix = prefix.clone();
+        let suffix = suffix.clone();
+        let hint = hint.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        // aux: title, value_line, hint
+        self.ensure_aux_nodes(scene, host, id, 3);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let x = bounds.x + style.padding;
+        let mut y = bounds.y + style.padding;
+        let (_, tm) = self.font.rasterize_text(&title, style.title_size, None);
+        if let Some(&tn) = aux.get(0) {
+            scene.set_bounds(tn, Rect::new(x, y, tm.width as f32, tm.height as f32));
+            scene.set_fill(tn, style.title_fg);
+            scene.set_mask(tn, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+            scene.set_visible(tn, true);
+        }
+        y += tm.height as f32 + 6.0;
+        let mut value_line = String::new();
+        if let Some(p) = &prefix {
+            value_line.push_str(p);
+        }
+        value_line.push_str(&value);
+        if let Some(s) = &suffix {
+            value_line.push_str(s);
+        }
+        let (_, vm) = self.font.rasterize_text(&value_line, style.value_size, None);
+        if let Some(&vn) = aux.get(1) {
+            scene.set_bounds(vn, Rect::new(x, y, vm.width as f32, vm.height as f32));
+            scene.set_fill(vn, style.value_fg);
+            scene.set_mask(vn, Some(AlphaMask::new(vm.width, vm.height, vm.pixels)));
+            scene.set_visible(vn, true);
+        }
+        y += vm.height as f32 + 4.0;
+        if let Some(&hn) = aux.get(2) {
+            if let Some(h) = &hint {
+                let (_, hm) = self.font.rasterize_text(h, style.hint_size, None);
+                scene.set_bounds(hn, Rect::new(x, y, hm.width as f32, hm.height as f32));
+                scene.set_fill(hn, style.hint_fg);
+                scene.set_mask(hn, Some(AlphaMask::new(hm.width, hm.height, hm.pixels)));
+                scene.set_visible(hn, true);
+            } else {
+                scene.set_visible(hn, false);
+            }
+        }
+    }
+
+    fn paint_result(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind:
+                Kind::Result {
+                    status,
+                    title,
+                    subtitle,
+                    primary_action,
+                    secondary_action,
+                    style,
+                },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let status = *status;
+        let title = title.clone();
+        let subtitle = subtitle.clone();
+        let primary_action = primary_action.clone();
+        let secondary_action = secondary_action.clone();
+        let style = *style;
+        let Some(host) = *node else { return };
+        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_fill(host, style.bg);
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        // aux: status, title, subtitle, primary_bg, primary_lab, secondary_bg, secondary_lab
+        self.ensure_aux_nodes(scene, host, id, 7);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let cx = bounds.x + bounds.width * 0.5;
+        let mut y = bounds.y + style.padding;
+        let status_lab = status.label();
+        let (_, sm) = self.font.rasterize_text(status_lab, style.status_size, None);
+        if let Some(&sn) = aux.get(0) {
+            scene.set_bounds(
+                sn,
+                Rect::new(cx - sm.width as f32 * 0.5, y, sm.width as f32, sm.height as f32),
+            );
+            scene.set_fill(sn, status.color());
+            scene.set_mask(sn, Some(AlphaMask::new(sm.width, sm.height, sm.pixels)));
+            scene.set_visible(sn, true);
+        }
+        y += sm.height as f32 + 10.0;
+        let (_, tm) = self.font.rasterize_text(&title, style.title_size, None);
+        if let Some(&tn) = aux.get(1) {
+            scene.set_bounds(
+                tn,
+                Rect::new(cx - tm.width as f32 * 0.5, y, tm.width as f32, tm.height as f32),
+            );
+            scene.set_fill(tn, style.title_fg);
+            scene.set_mask(tn, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+            scene.set_visible(tn, true);
+        }
+        y += tm.height as f32 + 8.0;
+        if let Some(&sub_n) = aux.get(2) {
+            if let Some(sub) = &subtitle {
+                let (_, dm) = self.font.rasterize_text(sub, style.subtitle_size, None);
+                scene.set_bounds(
+                    sub_n,
+                    Rect::new(cx - dm.width as f32 * 0.5, y, dm.width as f32, dm.height as f32),
+                );
+                scene.set_fill(sub_n, style.subtitle_fg);
+                scene.set_mask(sub_n, Some(AlphaMask::new(dm.width, dm.height, dm.pixels)));
+                scene.set_visible(sub_n, true);
+            } else {
+                scene.set_visible(sub_n, false);
+            }
+        }
+        // Action buttons bottom-right (match pointer_result layout).
+        let btn_y = bounds.y + bounds.height - style.padding - style.action_height;
+        let btn_h = style.action_height;
+        let mut cursor = bounds.x + bounds.width - style.padding;
+        // Hide all action nodes first
+        for i in 3..7 {
+            if let Some(&n) = aux.get(i) {
+                scene.set_visible(n, false);
+            }
+        }
+        if let Some(label) = &primary_action {
+            let (tw, _) = self.font.measure_line(label, style.action_size);
+            let bw = (tw + 24.0).max(72.0);
+            let bx = cursor - bw;
+            if let Some(&bg) = aux.get(3) {
+                scene.set_bounds(bg, Rect::new(bx, btn_y, bw, btn_h));
+                scene.set_fill(bg, style.primary_bg);
+                scene.set_mask(bg, None);
+                scene.set_visible(bg, true);
+            }
+            let (_, lm) = self.font.rasterize_text(label, style.action_size, None);
+            if let Some(&lab) = aux.get(4) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        bx + ((bw - lm.width as f32) * 0.5).max(0.0),
+                        btn_y + ((btn_h - lm.height as f32) * 0.5).max(0.0),
+                        lm.width as f32,
+                        lm.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.primary_fg);
+                scene.set_mask(lab, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+                scene.set_visible(lab, true);
+            }
+            cursor = bx - style.gap;
+        }
+        if let Some(label) = &secondary_action {
+            let (tw, _) = self.font.measure_line(label, style.action_size);
+            let bw = (tw + 24.0).max(72.0);
+            let bx = cursor - bw;
+            if let Some(&bg) = aux.get(5) {
+                scene.set_bounds(bg, Rect::new(bx, btn_y, bw, btn_h));
+                scene.set_fill(bg, style.secondary_bg);
+                scene.set_mask(bg, None);
+                scene.set_visible(bg, true);
+            }
+            let (_, lm) = self.font.rasterize_text(label, style.action_size, None);
+            if let Some(&lab) = aux.get(6) {
+                scene.set_bounds(
+                    lab,
+                    Rect::new(
+                        bx + ((bw - lm.width as f32) * 0.5).max(0.0),
+                        btn_y + ((btn_h - lm.height as f32) * 0.5).max(0.0),
+                        lm.width as f32,
+                        lm.height as f32,
+                    ),
+                );
+                scene.set_fill(lab, style.secondary_fg);
+                scene.set_mask(lab, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+                scene.set_visible(lab, true);
             }
         }
     }
@@ -14447,6 +15198,122 @@ impl FlexBuilder<'_> {
         }
     }
 
+    /// Step progress list (Office P2b).
+    ///
+    /// `items` are [`StepItem`] values (title + optional description). `current` is
+    /// 0-based; clamped to the last item when non-empty.
+    pub fn steps(
+        &mut self,
+        items: impl IntoIterator<Item = StepItem>,
+        current: usize,
+        style: StepsStyle,
+    ) -> WidgetId {
+        let items: Vec<StepItem> = items.into_iter().collect();
+        let current = if items.is_empty() {
+            0
+        } else {
+            current.min(items.len() - 1)
+        };
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Steps {
+                    items,
+                    current,
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// KPI statistic block (Office P2b); display-only (not in Tab order).
+    pub fn statistic(
+        &mut self,
+        title: impl Into<String>,
+        value: impl Into<String>,
+        style: StatisticStyle,
+    ) -> WidgetId {
+        self.statistic_full(title, value, None::<String>, None::<String>, None::<String>, style)
+    }
+
+    /// Statistic with optional prefix / suffix / hint.
+    pub fn statistic_full(
+        &mut self,
+        title: impl Into<String>,
+        value: impl Into<String>,
+        prefix: Option<impl Into<String>>,
+        suffix: Option<impl Into<String>>,
+        hint: Option<impl Into<String>>,
+        style: StatisticStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Statistic {
+                    title: title.into(),
+                    value: value.into(),
+                    prefix: prefix.map(|s| s.into()),
+                    suffix: suffix.map(|s| s.into()),
+                    hint: hint.map(|s| s.into()),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Status result page block (Office P2b).
+    ///
+    /// Focusable only when at least one action label is set; Space/Enter activates
+    /// Primary (else Secondary). Pointer hits on action rects drain
+    /// [`Ui::take_result_action`].
+    pub fn result(
+        &mut self,
+        status: ResultStatus,
+        title: impl Into<String>,
+        subtitle: Option<impl Into<String>>,
+        primary_action: Option<impl Into<String>>,
+        secondary_action: Option<impl Into<String>>,
+        style: ResultStyle,
+    ) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Result {
+                    status,
+                    title: title.into(),
+                    subtitle: subtitle.map(|s| s.into()),
+                    primary_action: primary_action.map(|s| s.into()),
+                    secondary_action: secondary_action.map(|s| s.into()),
+                    style,
+                },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+                accessible_name: None,
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
     /// Breadcrumb path.
     pub fn breadcrumb(
         &mut self,
@@ -16612,5 +17479,158 @@ mod tests {
         assert_eq!(ui.button_group_selected(bg), Some(Some(2)));
         assert_eq!(ui.focused(), Some(bg));
         assert_eq!(ui.take_button_group_change(), Some((bg, Some(2))));
+    }
+
+    #[test]
+    fn office_p2b_steps_change_keyboard_and_pointer() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut steps = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 520.0,
+                height: 100.0,
+                padding: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                steps = col.steps(
+                    [
+                        StepItem::new("One"),
+                        StepItem::with_description("Two", "detail"),
+                        StepItem::new("Three"),
+                    ],
+                    0,
+                    StepsStyle {
+                        width: 480.0,
+                        height: 72.0,
+                        clickable: true,
+                        ..StepsStyle::default()
+                    },
+                );
+            },
+        );
+        assert_eq!(ui.steps_current(steps), Some(0));
+        assert!(ui.focusable_widgets().contains(&steps));
+        assert_eq!(ui.accessible_name(steps).as_deref(), Some("One"));
+        ui.set_focus(Some(steps));
+        assert!(ui.key_input(UiKey::Right));
+        assert_eq!(ui.steps_current(steps), Some(1));
+        assert_eq!(ui.take_steps_change(), Some((steps, 1)));
+        assert!(ui.take_steps_change().is_none());
+        assert!(ui.key_input(UiKey::Left));
+        assert_eq!(ui.steps_current(steps), Some(0));
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&steps).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        let x = b.x + b.width * 0.85;
+        let y = b.y + b.height * 0.5;
+        assert!(ui.pointer_pressed(&mut scene, x, y));
+        assert_eq!(ui.steps_current(steps), Some(2));
+        assert_eq!(ui.take_steps_change(), Some((steps, 2)));
+        assert!(!ui.set_steps_current(steps, 9), "oob");
+    }
+
+    #[test]
+    fn office_p2b_statistic_mount_not_focusable() {
+        let mut ui = Ui::new();
+        let mut stat = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            stat = col.statistic_full(
+                "Users",
+                "1,280",
+                Some("+"),
+                Some("k"),
+                Some("+12% MoM"),
+                StatisticStyle::default(),
+            );
+        });
+        assert!(!ui.focusable_widgets().contains(&stat));
+        assert_eq!(
+            ui.accessible_name(stat).as_deref(),
+            Some("Users: 1,280")
+        );
+        assert!(matches!(
+            ui.widgets.get(&stat).map(|w| &w.kind),
+            Some(Kind::Statistic { .. })
+        ));
+        let mut scene = Scene::new();
+        ui.sync(&mut scene);
+        assert!(ui.widgets.get(&stat).unwrap().node.is_some());
+    }
+
+    #[test]
+    fn office_p2b_result_action_keyboard_and_pointer() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut res = WidgetId(0);
+        let mut bare = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 280.0,
+                padding: 8.0,
+                gap: 8.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                res = col.result(
+                    ResultStatus::Success,
+                    "Submitted",
+                    Some("Ticket #42"),
+                    Some("Back home"),
+                    Some("View detail"),
+                    ResultStyle {
+                        width: 360.0,
+                        height: 200.0,
+                        ..ResultStyle::default()
+                    },
+                );
+                bare = col.result(
+                    ResultStatus::Info,
+                    "No actions",
+                    None::<&str>,
+                    None::<&str>,
+                    None::<&str>,
+                    ResultStyle {
+                        width: 360.0,
+                        height: 120.0,
+                        ..ResultStyle::default()
+                    },
+                );
+            },
+        );
+        assert!(ui.focusable_widgets().contains(&res));
+        assert!(!ui.focusable_widgets().contains(&bare));
+        assert_eq!(ui.accessible_name(res).as_deref(), Some("Submitted"));
+        ui.set_focus(Some(res));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(
+            ui.take_result_action(),
+            Some((res, ResultAction::Primary))
+        );
+        assert!(ui.take_result_action().is_none());
+        ui.sync(&mut scene);
+        let node = ui.widgets.get(&res).unwrap().node.unwrap();
+        let b = scene.get(node).unwrap().bounds;
+        // Primary is rightmost — click near right edge of action row
+        let x = b.x + b.width - 40.0;
+        let y = b.y + b.height - 20.0;
+        assert!(ui.pointer_pressed(&mut scene, x, y));
+        assert_eq!(
+            ui.take_result_action(),
+            Some((res, ResultAction::Primary))
+        );
+        // Secondary is left of primary
+        let x2 = b.x + b.width - 160.0;
+        assert!(ui.pointer_pressed(&mut scene, x2, y));
+        assert_eq!(
+            ui.take_result_action(),
+            Some((res, ResultAction::Secondary))
+        );
     }
 }
