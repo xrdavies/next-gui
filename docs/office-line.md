@@ -136,7 +136,7 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/24_profile_dual` — **P4**：Field/Office Profile 双档
 - `examples/25_immediate_viewport` — **P5**：retained 壳 + Immediate 工具面板
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；触控 stub；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：**P6 工业打磨**（完整触控/按键映射、无障碍、7×24、DPI、Windows）；可选 Office P2 / `.ngui` 进复杂控件。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1（含 rest + deferred）齐；Chart；IME/CJK；剪贴板文本 API；触控 stub；P4 Profile；P5 Immediate 已落地**。评测队列已清。下一步：**P6 工业打磨**（设计见 [p6-design.md](p6-design.md)）；可选 Office P2 / `.ngui` 进复杂控件。
 
 ---
 
@@ -161,7 +161,7 @@ P0–P3 完成
     ↓
 P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
-P5 Immediate 已落地 → **P6 工业打磨**
+P5 Immediate 已落地 → **P6 工业打磨**（[p6-design.md](p6-design.md)）
 ```
 
 ---

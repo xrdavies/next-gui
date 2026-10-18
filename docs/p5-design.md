@@ -115,4 +115,4 @@ NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
 | 裁剪 | 单测 `contains_and_clip_hit`；host clip |
 | 非默认路径 | Field `allow_immediate=false`；无 ui 后端切换 |
 
-下一步：**P6 工业打磨**（触控 / Windows / DPI / a11y / 7×24）。
+下一步：**P6 工业打磨**（见 [p6-design.md](p6-design.md)）。
