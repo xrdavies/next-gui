@@ -34,4 +34,4 @@ Electron / 浏览器壳迭代快、办公室观感好，但对嵌入式与工控
 
 ## 平台顺序
 
-`platform` 统一抽象多 OS；实现顺序 **Linux → Windows → macOS（仅 Office）**。Field 不要求 macOS。P0 输入为指针 + 键盘，触控后补。
+`platform` 统一抽象多 OS；实现顺序 **Linux → Windows → macOS（仅 Office）**。Field 不要求 macOS。P0 输入为指针 + 键盘；触控类型 stub 已预留，完整 HMI 映射见 P6。

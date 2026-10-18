@@ -1,8 +1,8 @@
 # P0 设计：平台 / 场景 / 软渲染
 
-> **状态：实现中。** 对应 [roadmap.md](roadmap.md) P0；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md)。
+> **状态：已完成。** 对应 [roadmap.md](roadmap.md) P0；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md)。
 >
-> 范围：**Linux**、`platform` + `scene` + `render` + `render-soft`、retained 矩形树、脏区重绘、指针 + 键盘。不含 DSL / GPU / 触控 / Immediate / layout 完整实现。
+> 范围：**Linux**（macOS Office 后端后补，见 [platform-macos.md](platform-macos.md)）、`platform` + `scene` + `render` + `render-soft`、retained 矩形树、脏区重绘、指针 + 键盘。DSL / GPU / Immediate / 完整 layout 属后续阶段。触控为契约 stub（完整 HMI 映射 P6）；剪贴板 UTF-8 文本 API 与 `request_exit` 已在 platform 落地。
 
 ---
 
@@ -27,14 +27,14 @@
 | 模块边界 | `ui`/`gpu`/`immediate` 未引入；示例只依赖 platform/scene/render/render-soft |
 | 编译 | `cargo build -p e01_soft_window` 在仓库内通过 |
 
-### 1.3 本阶段明确不做
+### 1.3 本阶段明确不做（相对 P0 骨架验收）
 
-- 紧凑 DSL / `ui` crate
-- GPU 后端
-- 触控
-- Immediate 视口
-- 完整约束布局（P0 节点自带显式几何）
-- Windows / macOS 后端实现（接口可预留 stub）
+- 紧凑 DSL / `ui` crate（→ P1）
+- GPU 后端（→ P3）
+- 完整工控触控 / 手势映射（`Event::Touch` stub 已有 → P6）
+- Immediate 视口（→ P5）
+- 完整约束布局（P0 节点自带显式几何；flex → P1）
+- Windows 后端（→ P6）；macOS Office 首版已另文落地
 
 ---
 
