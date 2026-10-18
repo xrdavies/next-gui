@@ -1,6 +1,7 @@
 //! Office P0 input demo: ScrollArea, TextInput, Checkbox, Radio, Switch.
 //!
-//! Click fields to focus/toggle. Type ASCII or use IME for CJK into TextInput (Ctrl/Cmd+A select-all).
+//! Click fields to focus/toggle. Type ASCII or use IME for CJK into TextInput
+//! (Ctrl/Cmd+A select-all, Ctrl/Cmd+C/V copy/paste via platform clipboard).
 //! Wheel or drag inside the scroll list. Space toggles focused Checkbox/Switch/Radio,
 //! or Soft↔GPU when nothing focused. Escape / close to quit.
 //!
@@ -76,8 +77,11 @@ impl Backend {
 fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKey> {
     if modifiers.commandish() {
         if let KeyCode::Char(c) = key {
-            if c == 'a' || c == 'A' {
-                return Some(UiKey::SelectAll);
+            match c {
+                'a' | 'A' => return Some(UiKey::SelectAll),
+                // Ctrl/Cmd+C/V handled in on_event via WindowCtx clipboard.
+                'c' | 'C' | 'v' | 'V' | 'x' | 'X' => return None,
+                _ => return None, // do not insert chars while a command modifier is held
             }
         }
     }
@@ -545,6 +549,36 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
+                if modifiers.commandish() {
+                    if let KeyCode::Char(c) = key {
+                        match c {
+                            'c' | 'C' => {
+                                if let Some(t) = self.ui.focused_text_for_copy() {
+                                    if let Err(e) = ctx.clipboard_set_text(&t) {
+                                        eprintln!("clipboard set: {e}");
+                                    } else {
+                                        self.refresh_status();
+                                        ctx.request_redraw();
+                                    }
+                                }
+                                return;
+                            }
+                            'v' | 'V' => {
+                                match ctx.clipboard_get_text() {
+                                    Ok(Some(t)) if self.ui.paste_into_focused_text(&t) => {
+                                        self.sync_ime(ctx);
+                                        self.refresh_status();
+                                        ctx.request_redraw();
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => eprintln!("clipboard get: {e}"),
+                                }
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 if let Some(ui_key) = map_key(key, modifiers) {
                     if self.ui.key_input(ui_key) {
                         self.sync_ime(ctx);

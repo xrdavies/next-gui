@@ -11,7 +11,8 @@
 | Product profile | **Office desktop only** |
 | Field (industrial / embedded) | **Not required** on macOS |
 | OS order | Linux (done) → Windows (later) → **macOS (Office)** |
-| Input for first pass | Pointer + keyboard (same as Linux P0); touch later |
+| Input for first pass | Pointer + keyboard + IME (same as Linux); `Event::Touch` stub (winit macOS does not emit touch); full HMI touch is P6 |
+| Clipboard | UTF-8 text via `WindowCtx::clipboard_*` (`arboard`) |
 | Full windowing | **Implemented** with `winit` + optional softbuffer; `PresentBackend::GpuSurface` supported (same as Linux); do not block Linux demos |
 
 macOS must implement the **same public platform contract** as Linux (`AppCallbacks`, `WindowAttrs`, `WindowCtx`, `Event`, `present` of XRGB8888). Upper layers (`scene` / `ui` / soft render) must not grow macOS-specific branches.
@@ -102,7 +103,9 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 ## 6. Known gaps
 
 - Retina scale is currently handled as winit physical-pixel events; there is no explicit DPI policy yet.
-- IME, text composition, touch, clipboard, multi-window management, and a Metal renderer remain out of scope for this first Office pass.
+- **IME** is wired (same contract as Linux). **Clipboard** thin text API is available on `WindowCtx`.
+- **Touch:** `Event::Touch` / `TouchEvent` stubs exist and are forwarded when winit emits them; macOS winit currently does not emit touch. Full industrial touch mapping is P6.
+- Multi-window management and a Metal renderer remain out of scope for this Office pass.
 - The backend intentionally keeps the Linux event and presentation behavior; platform-specific refinements can land without changing the upper-layer contract.
 
 ---

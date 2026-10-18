@@ -2777,6 +2777,71 @@ impl Ui {
         }
     }
 
+
+    /// Text to place on the OS clipboard from the focused TextInput / TextArea.
+    ///
+    /// When `select_all` is set, returns the full value; otherwise still returns the
+    /// full value (MVP has no partial selection range). `None` if focus is not a
+    /// text field or the value is empty.
+    pub fn focused_text_for_copy(&self) -> Option<String> {
+        let id = self.focus?;
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextInput { value, .. }) if !value.is_empty() => Some(value.clone()),
+            Some(Kind::TextArea { value, .. }) if !value.is_empty() => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    /// Insert `text` into the focused TextInput / TextArea at the caret.
+    ///
+    /// Replaces the whole value when `select_all` is set. Clears IME preedit.
+    pub fn paste_into_focused_text(&mut self, text: &str) -> bool {
+        let Some(id) = self.focus else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        match self.widgets.get_mut(&id).map(|w| &mut w.kind) {
+            Some(Kind::TextInput {
+                value,
+                caret,
+                select_all,
+                preedit,
+                preedit_cursor,
+                ..
+            }) => {
+                preedit.clear();
+                *preedit_cursor = None;
+                if *select_all {
+                    *value = text.to_owned();
+                    *caret = value.chars().count();
+                    *select_all = false;
+                } else {
+                    let mut chars: Vec<char> = value.chars().collect();
+                    *caret = (*caret).min(chars.len());
+                    for (i, ch) in text.chars().enumerate() {
+                        chars.insert(*caret + i, ch);
+                    }
+                    *caret += text.chars().count();
+                    *value = chars.into_iter().collect();
+                }
+                true
+            }
+            Some(Kind::TextArea { value, caret, .. }) => {
+                let mut chars: Vec<char> = value.chars().collect();
+                *caret = (*caret).min(chars.len());
+                for (i, ch) in text.chars().enumerate() {
+                    chars.insert(*caret + i, ch);
+                }
+                *caret += text.chars().count();
+                *value = chars.into_iter().collect();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// True when focus is on a [`Kind::TextInput`] (app should enable OS IME).
     pub fn text_input_wants_ime(&self) -> bool {
         self.focus
@@ -14139,6 +14204,14 @@ mod tests {
         assert_eq!(ui.text_input_value(input), Some("你好"));
         assert!(ui.text_input_wants_ime());
         assert!(ui.ime_clear_preedit());
+
+        // Clipboard helpers (platform owns OS clipboard; Ui only supplies text).
+        assert!(ui.paste_into_focused_text("AB"));
+        assert_eq!(ui.text_input_value(input), Some("你好AB"));
+        assert_eq!(ui.focused_text_for_copy().as_deref(), Some("你好AB"));
+        assert!(ui.key_input(UiKey::SelectAll));
+        assert!(ui.paste_into_focused_text("XY"));
+        assert_eq!(ui.text_input_value(input), Some("XY"));
 
         let cnode = ui.widgets.get(&check).unwrap().node.unwrap();
         let cb = scene.get(cnode).unwrap().bounds;
