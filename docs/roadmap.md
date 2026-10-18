@@ -139,8 +139,8 @@ P0–P6 已通（**P6a–P6e**；见 [p6-design.md](p6-design.md)、[soak.md](so
 
 ## Theme tokens（外观）
 
-> **进行中**（分支 `feat/theme-tokens`；见 [theme-tokens.md](theme-tokens.md)）。
+> **分支 `feat/theme-tokens`**：全 `XxxStyle` 已接 `from_theme*`（见 [theme-tokens.md](theme-tokens.md)）。合入 `main` 后改此状态。
 
-- Theme tokens → 现有 `XxxStyle` 默认值（light/dark + density）
-- `Ui::set_theme`；与 Profile（性能）/ `UiConfig`（locale·density·accent）分工
-- 不走 ImGui / 满血 CSS / Qt Style 引擎
+- Theme tokens → 全部 widget Style（light/dark + density）；`Ui::*_style()` + 无参构造读主题
+- 与 Profile（性能）/ `UiConfig`（locale·density·accent）分工
+- 不走 ImGui / 满血 CSS / Qt Style 引擎；跟进：`.ngui` token、枚举状态色
