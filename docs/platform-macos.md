@@ -1,6 +1,6 @@
 # macOS platform backend (Office desktop)
 
-> **Status: implemented (Office first pass).** Linux P0/P1 remain the behavioral reference; macOS uses the same public platform contract and soft-render path.
+> **Status: Office P0–P5 paths implemented; acceptance has shared issues.** Linux remains the behavioral reference. macOS uses the same platform contract, retained widgets, Profile configuration, and optional Immediate viewport. See the [2026-10-18 review](reviews/R-20261018-7c9427cf6006.md) for actual checks and remaining defects.
 
 ---
 
@@ -44,7 +44,7 @@ crates/next-gui-platform/
 ```
 
 - Module is compiled when `target_os = "macos"` **or** feature `macos` (so Linux CI can `cargo check -p next-gui-platform --features macos`).
-- Top-level `next_gui_platform::run` stays the Linux backend under feature `linux` (default). macOS examples call `next_gui_platform::macos::run` through a target `cfg`.
+- Top-level `next_gui_platform::run` selects `macos::run` on macOS, including `default-features = false, features = ["macos"]`. Other hosts retain the Linux entry point under feature `linux` (default). Existing examples may also call `macos::run` explicitly.
 - The `macos` feature enables the shared `winit` / `softbuffer` dependencies for cross-target checks without changing the Linux default.
 
 ---
@@ -54,8 +54,9 @@ crates/next-gui-platform/
 ### 4.1 Contract (must match Linux)
 
 - [x] `pub fn run(attrs: WindowAttrs, app: impl AppCallbacks) -> Result<(), PlatformError>`
-- [x] Deliver `Event::{CloseRequested, Resized, RedrawRequested, PointerMoved, PointerButton, Key}`
-- [x] Map primary mouse + Escape / Space (and `KeyCode::Other`) like Linux
+- [x] Deliver `Event::{CloseRequested, Resized, RedrawRequested, PointerMoved, PointerButton, PointerScroll, Key, Ime}`
+- [x] Map mouse buttons, wheel/trackpad deltas, editing keys, characters, and modifiers like Linux (including Command for select-all)
+- [x] Enable system IME for focused TextInput; forward preedit/commit and caret coordinates
 - [x] `WindowCtx::present(width, height, &[u32] /* XRGB8888 */)` shows soft-rendered frames
 - [x] `request_redraw` / resize update buffer size consistently
 
@@ -67,16 +68,23 @@ crates/next-gui-platform/
 
 ### 4.3 Integration
 
-- [x] `#[cfg(target_os = "macos")]` in examples calls `macos::run`
+- [x] Examples reach `macos::run` through a target `cfg` or the shared native `run` entry point
 - [x] The `macos` feature enables dependencies for cross-target checks while Linux keeps the `linux` default
 - [x] This doc records the implemented status and known gaps
 
-### 4.4 Out of scope for first Mac drop
+### 4.4 Shared Office capabilities
+
+- [x] CJK font loading, measurement, and rasterization through `next-gui-text`
+- [x] GPU readback and native wgpu Surface presentation through Metal; Soft can also upload to a GPU-surface window
+- [x] P0/P1 Office widgets and Chart use the shared retained UI and draw commands
+- [x] P4 Profile configuration and P5 optional Immediate viewport run without macOS-specific UI branches
+- [x] QA image output uses the ignored workspace `tmp/demo-shots` directory rather than a Linux-only absolute path
+
+### 4.5 Remaining scope
 
 - Field / embedded profile
 - Touch
-- Full GPU / Metal backend
-- Immediate viewport
+- Explicit DPI policy, accessibility, and long-running industrial acceptance (P6)
 - Replacing Linux backend or renaming traits
 
 ---
@@ -87,10 +95,23 @@ On a Mac:
 
 ```bash
 cargo check -p next-gui-platform --features macos
-# after real windowing:
-cargo run -p e01_soft_window   # or cfg'd mac example
+cargo test -p next-gui-platform --no-default-features --features macos
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo build --workspace --bins
+cargo run -p e01_soft_window
 cargo run -p e02_counter
+cargo run -p e03_ngui_counter
+cargo run -p e12_office_inputs
+NEXT_GUI_GPU_SURFACE=1 cargo run -p e12_office_inputs
+cargo run -p e24_profile_dual
+cargo run -p e25_immediate_viewport
 ```
+
+Run all current examples when shared platform behavior changes. Verify the actual
+window, pointer/keyboard input, IME, resize, and each presentation path; a successful
+build alone is not GUI acceptance. The five e21–e25 QA modes write PPM files under
+`tmp/demo-shots` and create the directory themselves.
 
 On Linux (must stay green):
 
@@ -102,7 +123,9 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 ## 6. Known gaps
 
 - Retina scale is currently handled as winit physical-pixel events; there is no explicit DPI policy yet.
-- IME, text composition, touch, clipboard, multi-window management, and a Metal renderer remain out of scope for this first Office pass.
+- Touch, clipboard, multi-window management, and accessibility remain future work shared with the other platforms.
+- The shared backends still exit on Escape even after a popup or Immediate viewport consumes it; native GPU presentation has a color mismatch, DateTime popups can be obscured, and TextArea multiline/caret painting is incomplete. These are open Grok findings in the linked review, not missing macOS modules. The required clippy check also has existing failures.
+- The macOS review used an Apple Silicon host and a 1× display; Retina and mixed-scale display transitions have not been accepted.
 - The backend intentionally keeps the Linux event and presentation behavior; platform-specific refinements can land without changing the upper-layer contract.
 
 ---
