@@ -127,6 +127,8 @@ Current map (dir → `cargo run -p`):
 | `15_office_feedback` | `e15_office_feedback` |
 | `20_office_industrial` | `e20_office_industrial` |
 | `21_office_p1_rest` | `e21_office_p1_rest` |
+| `22_office_p1_deferred` | `e22_office_p1_deferred` |
+| `23_office_charts` | `e23_office_charts` |
 
 ## Git Workflow / QA
 

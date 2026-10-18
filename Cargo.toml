@@ -23,6 +23,7 @@ members = [
     "examples/20_office_industrial",
     "examples/21_office_p1_rest",
     "examples/22_office_p1_deferred",
+    "examples/23_office_charts",
 ]
 
 [workspace.package]

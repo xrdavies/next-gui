@@ -1,4 +1,4 @@
-//! Soft raster helpers for Office P1 Gauge / Trend (AlphaMask coverage).
+//! Soft raster helpers for Office Gauge / Trend / Chart (AlphaMask + cheap AA).
 
 use std::sync::Arc;
 
@@ -90,7 +90,9 @@ pub(crate) fn rasterize_gauge(
 }
 
 fn stamp_disc(px: &mut [u8], w: u32, h: u32, cx: f32, cy: f32, radius: f32, cov: u8) {
-    let r = radius.ceil() as i32 + 1;
+    // Soft edge: coverage falls off across ~1px beyond the hard radius (cheap AA).
+    let soft = radius + 1.0;
+    let r = soft.ceil() as i32 + 1;
     let ix = cx as i32;
     let iy = cy as i32;
     for dy in -r..=r {
@@ -102,10 +104,18 @@ fn stamp_disc(px: &mut [u8], w: u32, h: u32, cx: f32, cy: f32, radius: f32, cov:
             }
             let fx = x as f32 + 0.5 - cx;
             let fy = y as f32 + 0.5 - cy;
-            if fx * fx + fy * fy <= radius * radius {
-                let idx = (y as u32 * w + x as u32) as usize;
-                px[idx] = px[idx].max(cov);
+            let d = (fx * fx + fy * fy).sqrt();
+            if d > soft {
+                continue;
             }
+            let edge = if d <= radius {
+                1.0
+            } else {
+                (1.0 - (d - radius) / (soft - radius).max(1e-3)).clamp(0.0, 1.0)
+            };
+            let c = (f32::from(cov) * edge) as u8;
+            let idx = (y as u32 * w + x as u32) as usize;
+            px[idx] = px[idx].max(c);
         }
     }
 }
@@ -184,7 +194,7 @@ fn draw_line(px: &mut [u8], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32, 
     let steps = (dx.abs().max(dy.abs()).ceil() as i32).max(1);
     for s in 0..=steps {
         let f = s as f32 / steps as f32;
-        stamp_disc(px, w, h, x0 + dx * f, y0 + dy * f, 1.15, cov);
+        stamp_disc(px, w, h, x0 + dx * f, y0 + dy * f, 1.35, cov);
     }
 }
 

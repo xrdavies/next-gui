@@ -6,18 +6,20 @@
 //! Office P0 + P1 widgets: shell/input/data/nav/feedback, TreeSelect/Form/AlarmList/Gauge/Trend,
 //! plus Drawer, virtual list/table, TextArea, InputNumber, Notification, Spin, Empty, Collapse,
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
-//! and TreeTable. TextInput supports IME (CJK). Cascader stays deferred (TreeSelect only).
+//! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
 
 #![deny(missing_docs)]
 
 mod dsl;
 mod icon;
 mod p1_deferred;
+mod chart;
 mod p1_raster;
 mod p1_rest;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
+pub use chart::{ChartKind, ChartStyle, ChartTile};
 pub use p1_deferred::*;
 pub use p1_rest::*;
 
@@ -1793,6 +1795,10 @@ enum Kind {
         points: Vec<f32>,
         style: TrendStyle,
     },
+    Chart {
+        tiles: Vec<ChartTile>,
+        style: ChartStyle,
+    },
     Drawer {
         title: String,
         body: String,
@@ -3189,6 +3195,9 @@ impl Ui {
                     }
                     _ => {}
                 }
+                if self.focus == Some(id) {
+                    self.focus = None;
+                }
             }
             return self.close_popup_internal();
         }
@@ -3235,6 +3244,35 @@ impl Ui {
             Some(Kind::TreeSelect { .. }) => self.key_tree_select(id, key),
             Some(Kind::AlarmList { .. }) => self.key_alarm_list(id, key),
             Some(Kind::Slider { .. }) => self.key_slider(id, key),
+            Some(Kind::Modal { open: true, .. }) => self.key_modal(id, key),
+            Some(Kind::Drawer { open: true, .. }) => self.key_drawer_overlay(id, key),
+            _ => false,
+        }
+    }
+
+    fn key_modal(&mut self, id: WidgetId, key: UiKey) -> bool {
+        match key {
+            UiKey::Enter => {
+                self.pending_modal_action = Some((id, ModalAction::Primary));
+                self.close_popup_internal();
+                if self.focus == Some(id) {
+                    self.focus = None;
+                }
+                true
+            }
+            UiKey::Tab => true, // focus trap: absorb Tab while modal open
+            _ => false,
+        }
+    }
+
+    fn key_drawer_overlay(&mut self, id: WidgetId, key: UiKey) -> bool {
+        match key {
+            UiKey::Tab => true, // focus trap: absorb Tab while drawer open
+            UiKey::Enter => {
+                // Enter does not dismiss; Esc / × / backdrop do.
+                let _ = id;
+                false
+            }
             _ => false,
         }
     }
@@ -3659,6 +3697,16 @@ impl Ui {
                 }
                 false
             }
+            UiKey::Delete => {
+                let mut chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                if i < chars.len() {
+                    chars.remove(i);
+                    *value = chars.into_iter().collect();
+                    return true;
+                }
+                false
+            }
             UiKey::Left => {
                 if *caret > 0 {
                     *caret -= 1;
@@ -3674,19 +3722,100 @@ impl Ui {
                 }
                 false
             }
+            UiKey::Home => {
+                let chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                let start = chars[..i]
+                    .iter()
+                    .rposition(|c| *c == '\n')
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                if *caret != start {
+                    *caret = start;
+                    return true;
+                }
+                false
+            }
+            UiKey::End => {
+                let chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                let end = chars[i..]
+                    .iter()
+                    .position(|c| *c == '\n')
+                    .map(|p| i + p)
+                    .unwrap_or(chars.len());
+                if *caret != end {
+                    *caret = end;
+                    return true;
+                }
+                false
+            }
+            UiKey::Up => {
+                let chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                let line_start = chars[..i]
+                    .iter()
+                    .rposition(|c| *c == '\n')
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                if line_start == 0 {
+                    return false;
+                }
+                let col = i - line_start;
+                let prev_end = line_start - 1;
+                let prev_start = chars[..prev_end]
+                    .iter()
+                    .rposition(|c| *c == '\n')
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                let prev_len = prev_end - prev_start;
+                *caret = prev_start + col.min(prev_len);
+                true
+            }
+            UiKey::Down => {
+                let chars: Vec<char> = value.chars().collect();
+                let i = (*caret).min(chars.len());
+                let line_start = chars[..i]
+                    .iter()
+                    .rposition(|c| *c == '\n')
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                let col = i - line_start;
+                let line_end = chars[i..]
+                    .iter()
+                    .position(|c| *c == '\n')
+                    .map(|p| i + p)
+                    .unwrap_or(chars.len());
+                if line_end >= chars.len() {
+                    return false;
+                }
+                let next_start = line_end + 1;
+                let next_end = chars[next_start..]
+                    .iter()
+                    .position(|c| *c == '\n')
+                    .map(|p| next_start + p)
+                    .unwrap_or(chars.len());
+                let next_len = next_end - next_start;
+                *caret = next_start + col.min(next_len);
+                true
+            }
             _ => false,
         }
     }
 
     fn key_input_number(&mut self, id: WidgetId, key: UiKey) -> bool {
-        let step = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::InputNumber { step, .. }) => *step,
+        let (step, min, max) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::InputNumber {
+                step, min, max, ..
+            }) => (*step, *min, *max),
             _ => return false,
         };
         let cur = self.input_number_value(id).unwrap_or(0.0);
         match key {
             UiKey::Up | UiKey::Right => self.set_input_number_value(id, cur + step),
             UiKey::Down | UiKey::Left => self.set_input_number_value(id, cur - step),
+            UiKey::Home => self.set_input_number_value(id, min),
+            UiKey::End => self.set_input_number_value(id, max),
             _ => false,
         }
     }
@@ -4680,10 +4809,14 @@ impl Ui {
                     *draft = *value;
                     *o = true;
                     self.open_popup = Some(id);
+                    self.focus = Some(id);
                 } else {
                     *o = false;
                     if self.open_popup == Some(id) {
                         self.open_popup = None;
+                    }
+                    if self.focus == Some(id) {
+                        self.focus = None;
                     }
                 }
                 return true;
@@ -4967,6 +5100,7 @@ impl Ui {
                     }
                 }
                 self.open_popup = Some(id);
+                self.focus = Some(id);
                 true
             }
             UiKey::Left if open => {
@@ -5296,6 +5430,7 @@ impl Ui {
                         *selected = Some((cur + 1).min(n - 1));
                     }
                 }
+                self.ensure_selected_visible_property_grid(id);
                 true
             }
             UiKey::Up => {
@@ -5305,6 +5440,25 @@ impl Ui {
                         *selected = Some(cur.saturating_sub(1));
                     }
                 }
+                self.ensure_selected_visible_property_grid(id);
+                true
+            }
+            UiKey::Home => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::PropertyGrid { selected, .. } = &mut w.kind {
+                        *selected = Some(0);
+                    }
+                }
+                self.ensure_selected_visible_property_grid(id);
+                true
+            }
+            UiKey::End => {
+                if let Some(w) = self.widgets.get_mut(&id) {
+                    if let Kind::PropertyGrid { selected, .. } = &mut w.kind {
+                        *selected = Some(n - 1);
+                    }
+                }
+                self.ensure_selected_visible_property_grid(id);
                 true
             }
             UiKey::Space | UiKey::Enter => {
@@ -5316,6 +5470,29 @@ impl Ui {
             }
             _ => false,
         }
+    }
+
+    fn ensure_selected_visible_property_grid(&mut self, id: WidgetId) {
+        let (sel, style, scroll_y) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::PropertyGrid {
+                selected,
+                style,
+                scroll_y,
+                ..
+            }) => (*selected, *style, *scroll_y),
+            _ => return,
+        };
+        let Some(i) = sel else { return };
+        let header = style.row_height;
+        let row_top = header + i as f32 * style.row_height;
+        let row_bot = row_top + style.row_height;
+        let mut ny = scroll_y;
+        if row_top < scroll_y {
+            ny = row_top;
+        } else if row_bot > scroll_y + style.height {
+            ny = row_bot - style.height;
+        }
+        self.set_any_scroll(id, 0.0, ny);
     }
 
     fn pointer_tree_table(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
@@ -6140,6 +6317,7 @@ impl Ui {
                 Some(Kind::AlarmList { style, .. }) => (style.bg, true),
                 Some(Kind::Gauge { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::Trend { style, .. }) => (style.bg, true),
+                Some(Kind::Chart { style, .. }) => (style.bg, true),
                 Some(Kind::Drawer { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::TextArea { style, .. }) => (style.bg, true),
                 Some(Kind::InputNumber { style, .. }) => (style.bg, true),
@@ -6371,6 +6549,9 @@ impl Ui {
                     if let Some(w) = self.widgets.get_mut(&id) {
                         w.chrome_node = Some(chrome);
                     }
+                }
+                Some(Kind::Chart { .. }) => {
+                    self.node_to_widget.insert(node, id);
                 }
                 Some(Kind::TextArea { .. }) => {
                     self.node_to_widget.insert(node, id);
@@ -6691,6 +6872,7 @@ impl Ui {
                 ChildMeasure::new(style.size, style.size + lh + 6.0)
             }
             Some(Kind::Trend { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::Chart { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Drawer { .. }) => ChildMeasure::new(0.0, 0.0),
             Some(Kind::TextArea { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::InputNumber { style, .. }) => ChildMeasure::new(style.width, style.height),
@@ -7686,6 +7868,13 @@ impl Ui {
         }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
+            Some(Kind::Chart { .. })
+        ) {
+            self.paint_chart(scene, id);
+            return;
+        }
+        if matches!(
+            self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::TextArea { .. })
         ) {
             self.paint_text_area(scene, id);
@@ -8184,6 +8373,7 @@ impl Ui {
             | Kind::AlarmList { .. }
             | Kind::Gauge { .. }
             | Kind::Trend { .. }
+            | Kind::Chart { .. }
             | Kind::Drawer { .. }
             | Kind::TextArea { .. }
             | Kind::InputNumber { .. }
@@ -11078,6 +11268,11 @@ impl Ui {
         matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Trend { .. }))
     }
 
+    /// Whether id is a multi-tile Chart.
+    pub fn is_chart(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Chart { .. }))
+    }
+
     /// Selected TreeSelect node id.
     pub fn tree_select_selected(&self, id: WidgetId) -> Option<u64> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -11216,6 +11411,67 @@ impl Ui {
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::Trend { points: slot, .. } = &mut w.kind {
                 *slot = points;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Number of tiles in a Chart.
+    pub fn chart_tile_count(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Chart { tiles, .. }) => Some(tiles.len()),
+            _ => None,
+        }
+    }
+
+    /// Set a Chart tile Gauge value by index (no-op if not a Gauge tile).
+    pub fn set_chart_gauge_value(&mut self, id: WidgetId, tile: usize, value: f32) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Chart { tiles, .. } = &mut w.kind {
+                if let Some(t) = tiles.get_mut(tile) {
+                    if let ChartKind::Gauge {
+                        value: v, min, max, ..
+                    } = &mut t.kind
+                    {
+                        let nv = value.clamp(*min, *max);
+                        if (*v - nv).abs() < 1e-6 {
+                            return false;
+                        }
+                        *v = nv;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Replace Chart tile Trend points by index.
+    pub fn set_chart_trend_points(
+        &mut self,
+        id: WidgetId,
+        tile: usize,
+        points: Vec<f32>,
+    ) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Chart { tiles, .. } = &mut w.kind {
+                if let Some(t) = tiles.get_mut(tile) {
+                    if let ChartKind::Trend { points: slot, .. } = &mut t.kind {
+                        *slot = points;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Replace all Chart tiles.
+    pub fn set_chart_tiles(&mut self, id: WidgetId, tiles: Vec<ChartTile>) -> bool {
+        if let Some(w) = self.widgets.get_mut(&id) {
+            if let Kind::Chart { tiles: slot, .. } = &mut w.kind {
+                *slot = tiles;
                 return true;
             }
         }
@@ -11758,58 +12014,24 @@ impl Ui {
         scene.set_mask(node, Some(AlphaMask::empty()));
         scene.set_visible(node, true);
 
-        let dial = style.size.min(bounds.width).min(bounds.height);
-        let mask = p1_raster::rasterize_gauge(
-            dial.round() as u32,
+        self.ensure_aux_nodes(scene, node, id, 1);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let dial_node = chrome;
+        let value_node = label_node;
+        let caption_node = aux.first().copied();
+        self.paint_gauge_tile(
+            scene,
+            bounds,
             value,
             min,
             max,
-            55,
-            210,
-            255,
+            &unit,
+            &label,
+            style,
+            dial_node,
+            value_node,
+            caption_node,
         );
-        if let Some(chrome) = chrome {
-            let dx = bounds.x + (bounds.width - dial) * 0.5;
-            let dy = bounds.y;
-            scene.set_bounds(chrome, Rect::new(dx, dy, dial, dial));
-            scene.set_fill(chrome, style.dial_fg);
-            scene.set_mask(chrome, Some(mask));
-            scene.set_visible(chrome, true);
-        }
-        let value_text = format!("{value:.1}{unit}");
-        let (_, vmask) = self.font.rasterize_text(&value_text, style.value_size, None);
-        if let Some(lid) = label_node {
-            let lx = bounds.x + (bounds.width - vmask.width as f32) * 0.5;
-            let ly = bounds.y + dial * 0.55;
-            scene.set_bounds(
-                lid,
-                Rect::new(lx, ly, vmask.width as f32, vmask.height as f32),
-            );
-            scene.set_fill(lid, style.text_fg);
-            scene.set_mask(
-                lid,
-                Some(AlphaMask::new(vmask.width, vmask.height, vmask.pixels)),
-            );
-            scene.set_visible(lid, true);
-        }
-        // Label under dial via aux[0]
-        self.ensure_aux_nodes(scene, node, id, 1);
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if let Some(&lab) = aux.first() {
-            let (_, lmask) = self.font.rasterize_text(&label, style.label_size, None);
-            let lx = bounds.x + (bounds.width - lmask.width as f32) * 0.5;
-            let ly = bounds.y + dial + 2.0;
-            scene.set_bounds(
-                lab,
-                Rect::new(lx, ly, lmask.width as f32, lmask.height as f32),
-            );
-            scene.set_fill(lab, style.text_fg);
-            scene.set_mask(
-                lab,
-                Some(AlphaMask::new(lmask.width, lmask.height, lmask.pixels)),
-            );
-            scene.set_visible(lab, true);
-        }
     }
 
     fn paint_trend(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -11832,23 +12054,203 @@ impl Ui {
         scene.set_mask(node, None);
         scene.set_visible(node, true);
 
+        self.ensure_aux_nodes(scene, node, id, 1);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        let line_node = aux.first().copied();
+        self.paint_trend_tile(scene, bounds, &points, style, chrome, line_node);
+    }
+
+    /// Shared Gauge dial paint (standalone Gauge + Chart tiles).
+    #[allow(clippy::too_many_arguments)]
+    fn paint_gauge_tile(
+        &mut self,
+        scene: &mut Scene,
+        bounds: Rect,
+        value: f32,
+        min: f32,
+        max: f32,
+        unit: &str,
+        label: &str,
+        style: GaugeStyle,
+        dial_node: Option<NodeId>,
+        value_node: Option<NodeId>,
+        caption_node: Option<NodeId>,
+    ) {
+        let dial = style.size.min(bounds.width).min(bounds.height.max(style.size * 0.55));
+        let mask = p1_raster::rasterize_gauge(
+            dial.round() as u32,
+            value,
+            min,
+            max,
+            55,
+            210,
+            255,
+        );
+        if let Some(chrome) = dial_node {
+            let dx = bounds.x + (bounds.width - dial) * 0.5;
+            let dy = bounds.y;
+            scene.set_bounds(chrome, Rect::new(dx, dy, dial, dial));
+            scene.set_fill(chrome, style.dial_fg);
+            scene.set_mask(chrome, Some(mask));
+            scene.set_visible(chrome, true);
+        }
+        let value_text = format!("{value:.1}{unit}");
+        let (_, vmask) = self.font.rasterize_text(&value_text, style.value_size, None);
+        if let Some(lid) = value_node {
+            let lx = bounds.x + (bounds.width - vmask.width as f32) * 0.5;
+            let ly = bounds.y + dial * 0.55;
+            scene.set_bounds(
+                lid,
+                Rect::new(lx, ly, vmask.width as f32, vmask.height as f32),
+            );
+            scene.set_fill(lid, style.text_fg);
+            scene.set_mask(
+                lid,
+                Some(AlphaMask::new(vmask.width, vmask.height, vmask.pixels)),
+            );
+            scene.set_visible(lid, true);
+        }
+        if let Some(lab) = caption_node {
+            let (_, lmask) = self.font.rasterize_text(label, style.label_size, None);
+            let lx = bounds.x + (bounds.width - lmask.width as f32) * 0.5;
+            let ly = bounds.y + dial + 2.0;
+            scene.set_bounds(
+                lab,
+                Rect::new(lx, ly, lmask.width as f32, lmask.height as f32),
+            );
+            scene.set_fill(lab, style.text_fg);
+            scene.set_mask(
+                lab,
+                Some(AlphaMask::new(lmask.width, lmask.height, lmask.pixels)),
+            );
+            scene.set_visible(lab, true);
+        }
+    }
+
+    /// Shared Trend paint (standalone Trend + Chart tiles).
+    fn paint_trend_tile(
+        &mut self,
+        scene: &mut Scene,
+        bounds: Rect,
+        points: &[f32],
+        style: TrendStyle,
+        fill_node: Option<NodeId>,
+        line_node: Option<NodeId>,
+    ) {
         let w = bounds.width.max(8.0).round() as u32;
         let h = bounds.height.max(8.0).round() as u32;
-        let line_mask = p1_raster::rasterize_trend(w, h, &points, 255, 0);
-        let fill_mask = p1_raster::rasterize_trend(w, h, &points, 0, 70);
-        if let Some(chrome) = chrome {
+        let line_mask = p1_raster::rasterize_trend(w, h, points, 255, 0);
+        let fill_mask = p1_raster::rasterize_trend(w, h, points, 0, 70);
+        if let Some(chrome) = fill_node {
             scene.set_bounds(chrome, bounds);
             scene.set_fill(chrome, style.fill);
             scene.set_mask(chrome, Some(fill_mask));
             scene.set_visible(chrome, true);
         }
-        self.ensure_aux_nodes(scene, node, id, 1);
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if let Some(&line_n) = aux.first() {
+        if let Some(line_n) = line_node {
             scene.set_bounds(line_n, bounds);
             scene.set_fill(line_n, style.line);
             scene.set_mask(line_n, Some(line_mask));
             scene.set_visible(line_n, true);
+        }
+    }
+
+    fn paint_chart(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(Widget {
+            kind: Kind::Chart { tiles, style },
+            node,
+            ..
+        }) = self.widgets.get(&id)
+        else {
+            return;
+        };
+        let tiles = tiles.clone();
+        let style = *style;
+        let Some(node) = *node else { return };
+        let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
+        scene.set_bounds(node, bounds);
+        scene.set_fill(node, style.bg);
+        scene.set_mask(node, None);
+        scene.set_visible(node, true);
+
+        // 4 aux nodes per tile: title, dial/fill, value/line, caption
+        let needed = tiles.len() * 4;
+        self.ensure_aux_nodes(scene, node, id, needed);
+        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
+        // Hide unused
+        for &n in &aux {
+            scene.set_visible(n, false);
+        }
+
+        let rects = chart::chart_tile_rects(style, tiles.len());
+        for (i, tile) in tiles.iter().enumerate() {
+            let Some(&(lx, ly, cw, ch)) = rects.get(i) else {
+                break;
+            };
+            let cell = Rect::new(bounds.x + lx, bounds.y + ly, cw, ch);
+            let base = i * 4;
+            let title_n = aux.get(base).copied();
+            let a = aux.get(base + 1).copied();
+            let b = aux.get(base + 2).copied();
+            let c = aux.get(base + 3).copied();
+
+            let title_h = style.title_size + 6.0;
+            if let Some(tn) = title_n {
+                let (_, tmask) = self.font.rasterize_text(&tile.title, style.title_size, None);
+                scene.set_bounds(
+                    tn,
+                    Rect::new(
+                        cell.x + 2.0,
+                        cell.y + 2.0,
+                        tmask.width as f32,
+                        tmask.height as f32,
+                    ),
+                );
+                scene.set_fill(tn, style.title_fg);
+                scene.set_mask(
+                    tn,
+                    Some(AlphaMask::new(tmask.width, tmask.height, tmask.pixels)),
+                );
+                scene.set_visible(tn, true);
+            }
+            let body = Rect::new(
+                cell.x,
+                cell.y + title_h,
+                cell.width,
+                (cell.height - title_h).max(8.0),
+            );
+            match &tile.kind {
+                ChartKind::Gauge {
+                    value,
+                    min,
+                    max,
+                    unit,
+                    label,
+                    style: gs,
+                } => {
+                    self.paint_gauge_tile(
+                        scene, body, *value, *min, *max, unit, label, *gs, a, b, c,
+                    );
+                }
+                ChartKind::Trend { points, style: ts } => {
+                    // Subtle per-tile bg via fill layer under line
+                    if let Some(fill_n) = a {
+                        scene.set_bounds(fill_n, body);
+                        scene.set_fill(fill_n, ts.bg);
+                        scene.set_mask(fill_n, None);
+                        scene.set_visible(fill_n, true);
+                    }
+                    // paint_trend_tile uses fill for under-curve; use b as fill, c as line
+                    // Re-paint over solid bg: allocate fill as under-curve on b, line on c
+                    let inset = Rect::new(
+                        body.x + 2.0,
+                        body.y + 2.0,
+                        (body.width - 4.0).max(4.0),
+                        (body.height - 4.0).max(4.0),
+                    );
+                    self.paint_trend_tile(scene, inset, points, *ts, b, c);
+                }
+            }
         }
     }
 
@@ -12874,6 +13276,23 @@ impl FlexBuilder<'_> {
             id,
             Widget {
                 kind: Kind::Trend { points, style },
+                node: None,
+                label_node: None,
+                chrome_node: None,
+                aux: Vec::new(),
+            },
+        );
+        self.push_child(id);
+        id
+    }
+
+    /// Multi-tile Chart panel (Gauge + Trend grid; Office enhancement).
+    pub fn chart(&mut self, tiles: Vec<ChartTile>, style: ChartStyle) -> WidgetId {
+        let id = self.ui.alloc();
+        self.ui.widgets.insert(
+            id,
+            Widget {
+                kind: Kind::Chart { tiles, style },
                 node: None,
                 label_node: None,
                 chrome_node: None,
@@ -14369,6 +14788,73 @@ mod tests {
     }
 
     #[test]
+    fn office_charts_multi_tile_gauge_trend() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut chart = WidgetId(0);
+        let mut gauge = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 700.0,
+                height: 500.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                chart = col.chart(
+                    vec![
+                        ChartTile::gauge(
+                            "A",
+                            40.0,
+                            0.0,
+                            100.0,
+                            "%",
+                            "Load",
+                            GaugeStyle::default(),
+                        ),
+                        ChartTile::trend(
+                            "B",
+                            vec![1.0, 2.0, 3.0, 2.5, 4.0],
+                            TrendStyle::default(),
+                        ),
+                        ChartTile::gauge(
+                            "C",
+                            70.0,
+                            0.0,
+                            100.0,
+                            "°C",
+                            "Temp",
+                            GaugeStyle::default(),
+                        ),
+                        ChartTile::trend(
+                            "D",
+                            vec![5.0, 4.0, 6.0, 7.0, 5.5],
+                            TrendStyle {
+                                line: Color::rgb(0xe0, 0x70, 0xb0),
+                                ..TrendStyle::default()
+                            },
+                        ),
+                    ],
+                    ChartStyle {
+                        width: 640.0,
+                        height: 320.0,
+                        columns: 2,
+                        ..ChartStyle::default()
+                    },
+                );
+                gauge = col.gauge(55.0, 0.0, 100.0, "%", "PF", GaugeStyle::default());
+            },
+        );
+        ui.sync(&mut scene);
+        assert!(ui.is_chart(chart));
+        assert_eq!(ui.chart_tile_count(chart), Some(4));
+        assert!(ui.set_chart_gauge_value(chart, 0, 88.0));
+        assert!(ui.set_chart_trend_points(chart, 1, vec![1.0, 1.5, 2.0]));
+        assert!(!ui.set_chart_gauge_value(chart, 1, 10.0)); // trend tile
+        assert!(ui.is_gauge(gauge));
+        assert!(ui.set_gauge_value(gauge, 66.0));
+    }
+
+    #[test]
     fn office_p1_rest_drawer_virtual_list_and_structure() {
         let mut scene = Scene::new();
         let mut ui = Ui::new();
@@ -14479,6 +14965,158 @@ mod tests {
         let _ = (card, empty, collapse, desc, spin, crumb);
         ui.set_drawer_open(drawer, false);
         assert!(ui.take_drawer_action().is_none() || true);
+    }
+
+    #[test]
+    fn office_charts_soft_raster_qa_ppm() {
+        use next_gui_render::{encode_scene, Renderer};
+        use next_gui_render_soft::SoftRenderer;
+        use std::io::Write;
+
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let w = 1120u32;
+        let h = 820u32;
+        ui.set_viewport(w as f32, h as f32);
+        ui.column(
+            ColumnStyle {
+                x: 12.0,
+                y: 12.0,
+                width: w as f32 - 24.0,
+                height: h as f32 - 24.0,
+                padding: 8.0,
+                gap: 8.0,
+                background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
+                ..ColumnStyle::default()
+            },
+            |col| {
+                col.text_styled(
+                    "Office charts QA",
+                    Color::rgb(0xa0, 0xa8, 0xb4),
+                    14.0,
+                );
+                col.chart(
+                    vec![
+                        ChartTile::gauge(
+                            "Load",
+                            62.0,
+                            0.0,
+                            100.0,
+                            "%",
+                            "MW",
+                            GaugeStyle {
+                                size: 110.0,
+                                ..GaugeStyle::default()
+                            },
+                        ),
+                        ChartTile::gauge(
+                            "Temp",
+                            48.0,
+                            0.0,
+                            120.0,
+                            "°C",
+                            "Oil",
+                            GaugeStyle {
+                                size: 110.0,
+                                dial_fg: Color::rgb(0xf0, 0xa0, 0x4a),
+                                ..GaugeStyle::default()
+                            },
+                        ),
+                        ChartTile::trend(
+                            "Voltage A",
+                            vec![
+                                9.5, 9.8, 10.1, 10.0, 10.2, 9.9, 10.3, 10.4, 10.1, 10.0, 9.8,
+                                10.2,
+                            ],
+                            TrendStyle {
+                                line: Color::rgb(0x4a, 0xc0, 0xf0),
+                                ..TrendStyle::default()
+                            },
+                        ),
+                        ChartTile::trend(
+                            "Current B",
+                            vec![
+                                70.0, 75.0, 80.0, 78.0, 85.0, 90.0, 88.0, 92.0, 95.0, 91.0, 87.0,
+                                93.0,
+                            ],
+                            TrendStyle {
+                                line: Color::rgb(0xe0, 0x70, 0xb0),
+                                fill: Color::rgb(0x40, 0x1a, 0x35),
+                                ..TrendStyle::default()
+                            },
+                        ),
+                    ],
+                    ChartStyle {
+                        width: w as f32 - 48.0,
+                        height: 340.0,
+                        columns: 2,
+                        ..ChartStyle::default()
+                    },
+                );
+                col.row(
+                    RowStyle {
+                        width: w as f32 - 48.0,
+                        height: 180.0,
+                        gap: 12.0,
+                        background: None,
+                        ..RowStyle::default()
+                    },
+                    |r| {
+                        r.gauge(
+                            55.0,
+                            0.0,
+                            100.0,
+                            "%",
+                            "PF",
+                            GaugeStyle {
+                                size: 120.0,
+                                dial_fg: Color::rgb(0x6a, 0xb0, 0xf0),
+                                ..GaugeStyle::default()
+                            },
+                        );
+                        r.trend(
+                            vec![40.0, 45.0, 50.0, 48.0, 55.0, 60.0, 58.0, 62.0],
+                            TrendStyle {
+                                width: 400.0,
+                                height: 120.0,
+                                ..TrendStyle::default()
+                            },
+                        );
+                    },
+                );
+            },
+        );
+        ui.sync(&mut scene);
+        scene.mark_full_dirty(w as f32, h as f32);
+        let dirty = scene.take_dirty();
+        let cmds = encode_scene(&scene, &dirty);
+        let clear = Color {
+            r: 0x1a,
+            g: 0x1a,
+            b: 0x1c,
+            a: 255,
+        };
+        let mut soft = SoftRenderer::new(w, h, clear);
+        soft.render(&cmds, &dirty);
+        let (pixels, pw, ph) = soft.frame_pixels().expect("pixels");
+        let out = std::path::Path::new("/workspace/next-gui-demo-shots/23-office_charts.ppm");
+        if let Some(parent) = out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut f = std::fs::File::create(out).expect("create ppm");
+        writeln!(f, "P6\n{pw} {ph}\n255").unwrap();
+        for px in pixels {
+            let r = ((px >> 16) & 0xff) as u8;
+            let g = ((px >> 8) & 0xff) as u8;
+            let b = (px & 0xff) as u8;
+            f.write_all(&[r, g, b]).unwrap();
+        }
+        assert!(out.exists());
+        assert_eq!((pw, ph), (w, h));
+        // Chart grid may leave the absolute center empty; sample a known chrome pixel.
+        let sample = pixels[(120usize) * pw as usize + 80];
+        assert_ne!(sample, 0);
+        assert!(pixels.iter().any(|&p| p != 0));
     }
 
     #[test]
