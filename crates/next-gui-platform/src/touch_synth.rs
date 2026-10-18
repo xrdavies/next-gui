@@ -5,8 +5,10 @@
 //! contact into that path while still emitting [`Event::Touch`] for apps that want
 //! raw multi-touch later.
 //!
-//! Coordinates stay in **physical pixels** (same as the touch stub). Logical /
-//! DPI conversion is P6b.
+//! Coordinates stay in **physical pixels** (same as pointer events on the wire).
+//! When an app uses logical layout, convert with [`crate::dpi`] and the same
+//! [`crate::WindowCtx::scale_factor`] for both touch-synth pointers and hit-testing
+//! (P6b) — do not mix spaces on one path.
 //!
 //! ## Double-fire with OS mouse
 //!

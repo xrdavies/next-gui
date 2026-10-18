@@ -12,6 +12,10 @@
 //! Clipboard: thin UTF-8 text API on [`WindowCtx`] (see [`clipboard`]).
 //! Touch: [`Event::Touch`] is always forwarded; P6a [`touch_synth`] maps the primary
 //! finger into [`Event::PointerMoved`] / [`Event::PointerButton`] for HMI.
+//!
+//! DPI (P6b): events / present / [`WindowCtx::size`] stay in **physical** pixels.
+//! Read [`WindowCtx::scale_factor`] and use [`dpi`] helpers when layout wants logical
+//! coordinates. Scale changes arrive as [`Event::ScaleFactorChanged`].
 
 #![deny(missing_docs)]
 
@@ -38,9 +42,15 @@ pub enum PresentBackend {
 pub struct WindowAttrs {
     /// Title string.
     pub title: String,
-    /// Client width in physical pixels (P0: treat as buffer pixels).
+    /// Client width in **physical** pixels (buffer / framebuffer pixels).
+    ///
+    /// Passed to winit as [`winit::dpi::PhysicalSize`]. At OS scale 1.0 this matches
+    /// logical size; on Retina / HiDPI the OS may still round the resulting buffer.
+    /// Requesting a logical size via winit `LogicalSize` is not exposed here yet —
+    /// apps that want logical window sizes can multiply by [`WindowCtx::scale_factor`]
+    /// after create, or wait for a non-breaking attrs extension.
     pub width: u32,
-    /// Client height in physical pixels.
+    /// Client height in **physical** pixels (see [`Self::width`]).
     pub height: u32,
     /// Present backend (softbuffer vs GPU-first surface).
     pub present_backend: PresentBackend,
@@ -175,14 +185,27 @@ pub enum Event {
         /// Window.
         window: WindowId,
     },
-    /// Window resized (physical pixels).
+    /// Window resized (**physical** pixels — framebuffer / Soft buffer size).
+    ///
+    /// Units match [`WindowCtx::size`] and [`WindowCtx::present`]. Does not change
+    /// when only the OS scale factor changes; see [`Event::ScaleFactorChanged`].
     Resized {
         /// Window.
         window: WindowId,
-        /// New width.
+        /// New width in physical pixels.
         width: u32,
-        /// New height.
+        /// New height in physical pixels.
         height: u32,
+    },
+    /// OS display scale factor changed (winit `ScaleFactorChanged`).
+    ///
+    /// `scale_factor` is also readable via [`WindowCtx::scale_factor`]. Pointer/touch/
+    /// resize events remain physical; use [`dpi`] to convert when doing logical layout.
+    ScaleFactorChanged {
+        /// Window.
+        window: WindowId,
+        /// New OS scale factor (typically `1.0`, `1.5`, `2.0`, …).
+        scale_factor: f64,
     },
     /// Redraw requested by the OS or by [`WindowCtx::request_redraw`].
     RedrawRequested {
@@ -312,9 +335,16 @@ impl WindowCtx<'_> {
         self.inner.window_id()
     }
 
-    /// Current buffer / client size.
+    /// Current buffer / client size in **physical** pixels.
     pub fn size(&self) -> (u32, u32) {
         self.inner.size()
+    }
+
+    /// OS scale factor (`winit` `window.scale_factor()`), default `1.0`.
+    ///
+    /// Updated on create and on [`Event::ScaleFactorChanged`]. See [`dpi`].
+    pub fn scale_factor(&self) -> f64 {
+        self.inner.scale_factor()
     }
 
     /// Present backend chosen at window creation.
@@ -393,6 +423,7 @@ impl WindowCtx<'_> {
 pub(crate) trait WindowHost {
     fn window_id(&self) -> WindowId;
     fn size(&self) -> (u32, u32);
+    fn scale_factor(&self) -> f64;
     fn present_backend(&self) -> PresentBackend;
     fn set_title(&mut self, title: &str);
     fn request_redraw(&mut self);
@@ -419,6 +450,9 @@ pub trait AppCallbacks {
 /// P6a primary-finger touch → pointer synthesis (shared by OS backends).
 pub mod touch_synth;
 
+/// P6b physical ↔ logical DPI helpers ([`dpi`]).
+pub mod dpi;
+
 /// OS text clipboard helpers (also used by [`WindowCtx`]).
 #[cfg(any(feature = "linux", feature = "macos"))]
 pub mod clipboard;
@@ -442,6 +476,24 @@ pub mod macos;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scale_factor_changed_constructs() {
+        let ev = Event::ScaleFactorChanged {
+            window: WindowId(1),
+            scale_factor: 2.0,
+        };
+        match ev {
+            Event::ScaleFactorChanged {
+                window,
+                scale_factor,
+            } => {
+                assert_eq!(window, WindowId(1));
+                assert_eq!(scale_factor, 2.0);
+            }
+            _ => panic!("expected ScaleFactorChanged"),
+        }
+    }
 
     #[test]
     fn touch_event_stub_constructs() {

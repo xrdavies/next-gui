@@ -26,6 +26,8 @@ struct Host {
     present_backend: PresentBackend,
     width: u32,
     height: u32,
+    /// OS scale factor (`window.scale_factor()`); updated on ScaleFactorChanged.
+    scale_factor: f64,
     cursor: (f64, f64),
     modifiers: Modifiers,
     /// True while a non-empty IME preedit is active (suppress Key::Character).
@@ -43,6 +45,10 @@ impl WindowHost for Host {
 
     fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    fn scale_factor(&self) -> f64 {
+        self.scale_factor
     }
 
     fn present_backend(&self) -> PresentBackend {
@@ -186,6 +192,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
         };
 
         let inner = window.inner_size();
+        let scale_factor = window.scale_factor();
         self.host = Some(Host {
             window_id: WindowId(1),
             window,
@@ -193,6 +200,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             present_backend,
             width: inner.width.max(1),
             height: inner.height.max(1),
+            scale_factor,
             cursor: (0.0, 0.0),
             modifiers: Modifiers::default(),
             ime_composing: false,
@@ -234,6 +242,20 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         height: size.height.max(1),
                     },
                 );
+                ctx.request_redraw();
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                host.scale_factor = *scale_factor;
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(
+                    &mut ctx,
+                    Event::ScaleFactorChanged {
+                        window: WindowId(1),
+                        scale_factor: *scale_factor,
+                    },
+                );
+                // Size usually follows via a separate Resized; request redraw so
+                // apps that scale layout from scale_factor alone still refresh.
                 ctx.request_redraw();
             }
             WindowEvent::RedrawRequested => {

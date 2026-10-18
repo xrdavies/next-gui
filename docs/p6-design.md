@@ -1,6 +1,6 @@
 # P6 设计：工业打磨
 
-> **状态：P6a 已落地（主触点 → 指针合成）；P6b–P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)。
+> **状态：P6a / P6b 已落地（触控合成 + DPI 契约）；P6c–P6e 未开。** 对应 [roadmap.md](roadmap.md) P6；约束见 [requirements.md](requirements.md)、[architecture.md](architecture.md) §5、[platform-macos.md](platform-macos.md)。
 >
 > 范围：触控 → 指针 HMI 映射、DPI / 缩放策略、Windows 后端骨架、无障碍基线、7×24 / 泄漏探测；macOS Office 工业打磨为跟进项，不挡 Linux 切片。
 >
@@ -40,7 +40,7 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 | 切片 | 主题 | 主战场 | 依赖 |
 |------|------|--------|------|
 | **P6a** ✅ | 触控 → 指针 / 点击 HMI 映射 | Linux + macOS（共享 `touch_synth`） | 现有 `Event::Touch` + 主触点合成指针 |
-| **P6b** | DPI / scale 策略 | Linux + 文档契约；macOS Retina 跟验 | P6a 坐标约定可并行起步 |
+| **P6b** ✅ | DPI / scale 策略 | Linux + macOS（`scale_factor` + `dpi` 助手）；Retina 手工跟验 | P6a 坐标约定 |
 | **P6c** | Windows 后端骨架 | Windows | platform trait；对标 Linux P0 |
 | **P6d** | 无障碍基线 | 跨平台（先 Linux 演示） | 焦点链已存在于 ui |
 | **P6e** | 7×24 / 泄漏 / soak | 工具或文档 + 可选示例 | 任意；建议在 P6a–c 有窗口后再跑 |
@@ -82,18 +82,30 @@ P6 按 **切片** 落地，可独立合入；推荐顺序如下。实现前本�
 
 ### 3.2 P6b — DPI / scale 策略
 
-**现状：** 事件与 present 多为物理像素；macOS Retina / 混缩未正式验收；无统一 `scale_factor` 策略文档。
+**现状（合入前）：** 事件与 present 多为物理像素；macOS Retina / 混缩未正式验收；无统一 `scale_factor` 策略。
 
 **设计：**
 
 1. 明确两套坐标：
-   - **物理像素：** framebuffer / Soft 缓冲 / GpuSurface 尺寸
-   - **逻辑像素：** 布局、控件命中、DSL 尺寸（若引入 scale）
-2. `platform` 暴露或文档约定：`scale_factor`（或等价）在 resize / scale 变更时可达；`ui`/`layout` 约定以哪套为 API 默认。
-3. Soft 与 GpuSurface：**同一逻辑 UI** 在 1× / 2× 下视觉尺度一致（允许 AA 差）。
-4. 变更 scale 时：触控合成与指针命中使用同一换算，避免「点得着、画偏了」。
+   - **物理像素：** framebuffer / Soft 缓冲 / GpuSurface 尺寸；指针 / 触控 `x`/`y`；`Event::Resized`；`present` / `size()`
+   - **逻辑像素：** 布局、控件命中、DSL 尺寸（应用经助手换算后使用）
+2. `platform` 暴露 `scale_factor`（创建时与 `ScaleFactorChanged` 时更新）；**API 默认仍为物理**，避免广改 layout。
+3. Soft 与 GpuSurface：**同一逻辑 UI** 在 1× / 2× 下视觉尺度一致（允许 AA 差）——由应用按 `scale_factor` 放大布局再栅格化到物理缓冲。
+4. 变更 scale 时：触控合成与指针命中使用同一 [`dpi`](../crates/next-gui-platform/src/dpi.rs) 换算。
 
-**P6b 不做：** 每控件独立 dpi 资源包、矢量图标全库重做。
+**实现（合入后）：**
+
+| 项 | 说明 |
+|----|------|
+| `WindowCtx::scale_factor()` | OS 因子（winit）；默认 `1.0` |
+| `Event::ScaleFactorChanged` | linux / macos 转发 `WindowEvent::ScaleFactorChanged` |
+| `next_gui_platform::dpi` | `logical_to_physical` / `physical_to_logical` 及 size/point 变体；单测 1× / 2× / round-trip |
+| 事件单位 | **不**静默改单位；`WindowAttrs` width/height 仍为物理像素 |
+| 非目标 | 未重写全部 widget；无每控件 DPI 资源包；示例多数仍忽略 scale（跟进） |
+
+无 Retina 显示时 CI 不依赖硬件；macOS 混缩手工验仍为跟进项（见 [platform-macos.md](platform-macos.md)）。
+
+**P6b 不做：** 每控件独立 dpi 资源包、矢量图标全库重做、强制逻辑坐标 API。
 
 ### 3.3 P6c — Windows 后端骨架
 
@@ -165,7 +177,7 @@ winit Touch ──► Event::Touch (保留，原始)
 | 切片 | 通过样子 |
 |------|----------|
 | P6a ✅ | 主触点合成指针；单测覆盖 Started/Moved/Ended/Cancelled + 次指不合成；linux/macos 已接；触屏手工验可选 |
-| P6b | scale 契约成文；1×/2× Soft（及可得的 GpuSurface）布局尺度一致；命中与绘制同空间 |
+| P6b ✅ | `scale_factor` + `ScaleFactorChanged`（linux/macos）；`dpi` 助手与单测；契约成文；示例多用物理、逻辑换算可选 |
 | P6c | Windows Soft 窗口 + 指针/键盘；`platform` feature 可检；Linux/macOS 不回归 |
 | P6d | 焦序与可访问名基线有文档/示例；不宣称完整读屏 |
 | P6e | soak 步骤可重复；可选探针；CI 不强制长跑 |
@@ -211,4 +223,4 @@ winit Touch ──► Event::Touch (保留，原始)
 | [office-line.md](office-line.md) | Office 加厚；下一步指向 P6 |
 | [office-widget-catalog.md](office-widget-catalog.md) | P2 控件不在本阶段 |
 
-下一步：**P6b**（DPI / scale）→ P6c → P6d → P6e。每切片合入后回写本节勾选状态。
+下一步：**P6c**（Windows 后端骨架）→ P6d → P6e。每切片合入后回写本节勾选状态。
