@@ -130,6 +130,7 @@ Current map (dir → `cargo run -p`):
 | `22_office_p1_deferred` | `e22_office_p1_deferred` |
 | `23_office_charts` | `e23_office_charts` |
 | `24_profile_dual` | `e24_profile_dual` |
+| `25_immediate_viewport` | `e25_immediate_viewport` |
 
 ## Git Workflow / QA
 

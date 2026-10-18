@@ -1,6 +1,6 @@
 # Office 线：办公桌面能力加厚（相对 Field Soft）
 
-> **状态：首轮加厚已完成；P4 Profile 已落地**（见 [p4-design.md](p4-design.md)、`e24_profile_dual`）。
+> **状态：首轮加厚已完成；P4 Profile + P5 Immediate 已落地**（见 [p4-design.md](p4-design.md)、[p5-design.md](p5-design.md)、`e24` / `e25`）。
 >
 > 历史决策：曾跳过 P4 先做厚 Office（GPU present / 布局 / 办公控件）；Soft 始终可回退。现 Profile 配置层已抽出。
 
@@ -17,7 +17,7 @@ Office 档面向规划 / 设计人员桌面（Linux → Windows → macOS Office
 非目标（本阶段）：
 
 - ~~Field/Office **Profile 配置 crate**~~ → **P4 已落地**（`next-gui-profile`）
-- Immediate 视口（P5）
+- ~~Immediate 视口（P5）~~ → **已落地**（`next-gui-immediate` / e25）
 - P0 反馈控件 Tag/Badge/Tooltip/Modal/Progress/Alert 已落地；TextInput IME/CJK 预编辑+提交已接（候选窗靠系统 IME）
 - 动画系统、图表控件
 
@@ -132,8 +132,10 @@ P3 示例 `e05_backend_toggle` 仍走此路径。
 - `examples/21_office_p1_rest` — **P1 rest**：Drawer / VirtualList·Table / TextArea / InputNumber / Notification / Spin / Empty / Collapse / Descriptions / Card / Segmented / Breadcrumb / Pagination
 - `examples/22_office_p1_deferred` — **P1 deferred**：DateTime / Transfer / PropertyGrid / TreeTable
 - `examples/23_office_charts` — **增强**：多瓦片 Chart + 独立 Gauge/Trend
+- `examples/24_profile_dual` — **P4**：Field/Office Profile 双档
+- `examples/25_immediate_viewport` — **P5**：retained 壳 + Immediate 工具面板
 
-Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 齐；Chart 多图增强已落地；IME/CJK 已接；P4 Profile 已落地**。下一步：P5 Immediate，或 Office P2 / `.ngui` 进复杂控件。
+Rust API 优先；复杂控件暂未进 `.ngui`。**P0 齐；P1 齐；Chart；IME/CJK；P4 Profile；P5 Immediate 已落地**。下一步：P6 工业打磨，或 Office P2 / `.ngui` 进复杂控件。
 
 ---
 
@@ -158,7 +160,7 @@ P0–P3 完成
     ↓
 P4 Profile（Field/Office 配置）已抽 → `next-gui-profile` / e24
     ↓
-P5 Immediate → P6 工业打磨
+P5 Immediate 已落地 → **P6 工业打磨**
 ```
 
 ---

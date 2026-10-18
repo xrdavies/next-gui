@@ -25,7 +25,9 @@ members = [
     "examples/22_office_p1_deferred",
     "examples/23_office_charts",
     "crates/next-gui-profile",
+    "crates/next-gui-immediate",
     "examples/24_profile_dual",
+    "examples/25_immediate_viewport",
 ]
 
 [workspace.package]
@@ -45,5 +47,6 @@ next-gui-layout = { path = "crates/next-gui-layout" }
 next-gui-ui = { path = "crates/next-gui-ui" }
 next-gui-text = { path = "crates/next-gui-text" }
 next-gui-profile = { path = "crates/next-gui-profile" }
+next-gui-immediate = { path = "crates/next-gui-immediate" }
 winit = { version = "0.30", default-features = true }
 softbuffer = "0.4"

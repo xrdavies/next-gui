@@ -1,0 +1,15 @@
+[package]
+name = "next-gui-immediate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Optional Immediate viewport for next-gui (local embed in retained scene; not the default UI path)"
+
+[dependencies]
+next-gui-scene = { workspace = true }
+next-gui-render = { workspace = true }
+next-gui-text = { workspace = true }
+
+[dev-dependencies]

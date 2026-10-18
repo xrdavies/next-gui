@@ -122,4 +122,4 @@ MVP 不强制 feature 门控所有示例；后续可将 Office 示例的 gpu 依
 | 忙等帧循环 | 示例按 `chart_interval` sleep，Field 保持冷静 |
 | 预算未绑死全库动画 | 控件侧后续读 `effects_enabled`；P4 先暴露开关 |
 
-下一步：**P5 Immediate 视口**；Office P2 可选项与打磨可并行。
+下一步：**P5 Immediate 视口**（已落地，见 [p5-design.md](p5-design.md)）→ P6；Office P2 可选项与打磨可并行。

@@ -473,6 +473,11 @@ impl Scene {
         d
     }
 
+    /// Mark a rectangle dirty (e.g. Immediate viewport frame refresh).
+    pub fn mark_dirty(&mut self, rect: Rect) {
+        self.dirty.add(rect);
+    }
+
     /// Mark the entire window dirty.
     pub fn mark_full_dirty(&mut self, width: f32, height: f32) {
         self.dirty = DirtyRegion::new();

@@ -154,6 +154,8 @@ platform ─┼─ win_backend     （其次）
 
 ## 7. Immediate 嵌套（Immediate nesting）
 
+> 实现见 [p5-design.md](p5-design.md)、`next-gui-immediate`、示例 `e25_immediate_viewport`（P5 骨架）。
+
 ### 7.1 定位
 
 - Immediate = **每帧用代码重建 UI 描述**的可选区域；框架不在该区域内默认长期持有完整控件对象树。  

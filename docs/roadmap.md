@@ -100,11 +100,18 @@ NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual
 
 ## P5 — Immediate 视口
 
-- 显式 `immediate { }`（或等价 API）区域（`immediate`）
-- 支持局部嵌入；保留整窗 Immediate 能力但不作 Field 默认
-- 输入焦点、裁剪、刷新边界清晰
+**状态：骨架已落地**（见 [p5-design.md](p5-design.md)）。
 
-验收：retained 主界面中可嵌一块 Immediate 工具面板且互不抢事件。
+- ~~显式 `immediate { }`（或等价 API）区域（`immediate`）~~ → `next-gui-immediate`：`ImmediateViewport` / `begin_frame`
+- ~~支持局部嵌入；保留整窗 Immediate 能力但不作 Field 默认~~ → 局部 mount；Field `allow_immediate=false`
+- ~~输入焦点、裁剪、刷新边界清晰~~ → contains/focus/Esc；clip 绘制与命中；`Scene::mark_dirty` 视口脏区
+
+验收：retained 主界面中可嵌一块 Immediate 工具面板且互不抢事件 — **e25**。
+
+```bash
+cargo run -p e25_immediate_viewport
+NEXT_GUI_IMMEDIATE_QA=1 cargo run -p e25_immediate_viewport
+```
 
 ## P6 — 工业打磨
 
@@ -118,4 +125,4 @@ NEXT_GUI_PROFILE_QA=1 cargo run -p e24_profile_dual
 
 ## 建议顺序
 
-P0–P3 + Office 加厚 + **P4 Profile** 已通 → 下一步 **P5 Immediate** → P6 工业打磨。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。
+P0–P5（含 Office 加厚 + Profile + Immediate）已通 → 下一步 **P6 工业打磨**。不要丢掉 Field Soft 兜底；也不要第一天做满血 QML 式语言。
