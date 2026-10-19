@@ -688,6 +688,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "e27_theme_tokens"
+version = "0.1.0"
+dependencies = [
+ "next-gui-platform",
+ "next-gui-render",
+ "next-gui-render-soft",
+ "next-gui-scene",
+ "next-gui-text",
+ "next-gui-ui",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
