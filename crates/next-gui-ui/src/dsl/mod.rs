@@ -8,7 +8,8 @@
 //!
 //! Optional `theme: light|dark` (document-level before root `Column`, or as a
 //! root Column prop) selects [`crate::Theme`]; widget Style defaults use
-//! `from_theme` (explicit color props still win).
+//! `from_theme` (explicit color props still win). Color props also accept
+//! unquoted [`crate::ThemeColors`] token names (e.g. `background: surface`).
 
 mod ast;
 mod build;
@@ -291,5 +292,78 @@ Column @root {
             }
             other => panic!("expected Column, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn theme_color_token_name_surface_light_vs_dark() {
+        let dark_src = r#"
+theme: dark
+Column @root {
+  width: 200
+  height: 100
+  background: surface
+}
+"#;
+        let light_src = r#"
+theme: light
+Column @root {
+  width: 200
+  height: 100
+  background: surface
+}
+"#;
+        let dark = load_ngui(dark_src).expect("dark");
+        let light = load_ngui(light_src).expect("light");
+        let dark_root = dark.require("root").unwrap();
+        let light_root = light.require("root").unwrap();
+        match (
+            &dark.ui.widgets.get(&dark_root).unwrap().kind,
+            &light.ui.widgets.get(&light_root).unwrap().kind,
+        ) {
+            (
+                crate::Kind::Column { style: ds, .. },
+                crate::Kind::Column { style: ls, .. },
+            ) => {
+                assert_eq!(ds.background, Some(crate::Theme::dark().colors.surface));
+                assert_eq!(ls.background, Some(crate::Theme::light().colors.surface));
+                assert_ne!(ds.background, ls.background);
+            }
+            other => panic!("expected Column roots, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn theme_color_token_button_bg_accent() {
+        let src = r#"
+theme: light
+Column {
+  width: 200
+  height: 100
+  Button("Go") @btn { bg: accent fg: on_accent }
+}
+"#;
+        let loaded = load_ngui(src).expect("parse");
+        let btn = loaded.require("btn").unwrap();
+        match &loaded.ui.widgets.get(&btn).unwrap().kind {
+            crate::Kind::Button { bg, fg, .. } => {
+                assert_eq!(*bg, crate::Theme::light().colors.accent);
+                assert_eq!(*fg, crate::Theme::light().colors.on_accent);
+            }
+            other => panic!("expected Button, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reject_unknown_color_token() {
+        let src = r#"
+theme: dark
+Column { width: 1 height: 1 background: neon_glow }
+"#;
+        let err = load_ngui(src).unwrap_err();
+        assert!(
+            err.message.contains("unknown color token") || err.message.contains("neon_glow"),
+            "msg={}",
+            err.message
+        );
     }
 }

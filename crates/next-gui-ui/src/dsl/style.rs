@@ -39,10 +39,13 @@ pub fn as_string(v: &AstValue, ctx: &str) -> Result<String, String> {
     }
 }
 
-pub fn as_color(v: &AstValue, ctx: &str) -> Result<Color, String> {
+pub fn as_color(v: &AstValue, ctx: &str, theme: &crate::Theme) -> Result<Color, String> {
     match v {
         AstValue::Color(c) => Ok(*c),
-        _ => Err(format!("{ctx}: expected #RRGGBB color")),
+        AstValue::Ident(name) => theme.color_by_name(name).ok_or_else(|| {
+            format!("{ctx}: unknown color token `{name}` (expected ThemeColors name or #RRGGBB)")
+        }),
+        _ => Err(format!("{ctx}: expected #RRGGBB color or theme token name")),
     }
 }
 
@@ -115,6 +118,7 @@ pub fn cross_align(v: &AstValue) -> Result<CrossAlign, String> {
 pub fn apply_column_style(
     style: &mut ColumnStyle,
     props: &[(String, AstValue)],
+    theme: &crate::Theme,
 ) -> Result<(), String> {
     for (k, v) in props {
         match k.as_str() {
@@ -124,7 +128,7 @@ pub fn apply_column_style(
             "height" => style.height = as_f32(v, k)?,
             "padding" => style.padding = as_f32(v, k)?,
             "gap" => style.gap = as_f32(v, k)?,
-            "background" => style.background = Some(as_color(v, k)?),
+            "background" => style.background = Some(as_color(v, k, theme)?),
             "cross_align" => style.cross_align = cross_align(v)?,
             other => return Err(format!("unknown Column property `{other}`")),
         }
@@ -132,7 +136,11 @@ pub fn apply_column_style(
     Ok(())
 }
 
-pub fn apply_row_style(style: &mut RowStyle, props: &[(String, AstValue)]) -> Result<(), String> {
+pub fn apply_row_style(
+    style: &mut RowStyle,
+    props: &[(String, AstValue)],
+    theme: &crate::Theme,
+) -> Result<(), String> {
     for (k, v) in props {
         match k.as_str() {
             "x" => style.x = as_f32(v, k)?,
@@ -141,7 +149,7 @@ pub fn apply_row_style(style: &mut RowStyle, props: &[(String, AstValue)]) -> Re
             "height" => style.height = as_f32(v, k)?,
             "padding" => style.padding = as_f32(v, k)?,
             "gap" => style.gap = as_f32(v, k)?,
-            "background" => style.background = Some(as_color(v, k)?),
+            "background" => style.background = Some(as_color(v, k, theme)?),
             "cross_align" => style.cross_align = cross_align(v)?,
             other => return Err(format!("unknown Row property `{other}`")),
         }
@@ -152,6 +160,7 @@ pub fn apply_row_style(style: &mut RowStyle, props: &[(String, AstValue)]) -> Re
 pub fn apply_toolbar_style(
     style: &mut ToolbarStyle,
     props: &[(String, AstValue)],
+    theme: &crate::Theme,
 ) -> Result<(), String> {
     for (k, v) in props {
         match k.as_str() {
@@ -161,7 +170,7 @@ pub fn apply_toolbar_style(
             "height" => style.height = as_f32(v, k)?,
             "padding" => style.padding = as_f32(v, k)?,
             "gap" => style.gap = as_f32(v, k)?,
-            "background" => style.background = Some(as_color(v, k)?),
+            "background" => style.background = Some(as_color(v, k, theme)?),
             "cross_align" => style.cross_align = cross_align(v)?,
             other => return Err(format!("unknown Toolbar property `{other}`")),
         }
@@ -172,6 +181,7 @@ pub fn apply_toolbar_style(
 pub fn apply_status_bar_style(
     style: &mut StatusBarStyle,
     props: &[(String, AstValue)],
+    theme: &crate::Theme,
 ) -> Result<(), String> {
     for (k, v) in props {
         match k.as_str() {
@@ -181,7 +191,7 @@ pub fn apply_status_bar_style(
             "height" => style.height = as_f32(v, k)?,
             "padding" => style.padding = as_f32(v, k)?,
             "gap" => style.gap = as_f32(v, k)?,
-            "background" => style.background = Some(as_color(v, k)?),
+            "background" => style.background = Some(as_color(v, k, theme)?),
             "cross_align" => style.cross_align = cross_align(v)?,
             other => return Err(format!("unknown StatusBar property `{other}`")),
         }
@@ -206,10 +216,11 @@ pub fn prop_f32(
 pub fn prop_color(
     props: &[(String, AstValue)],
     key: &str,
+    theme: &crate::Theme,
 ) -> Result<Option<Color>, String> {
     for (k, v) in props {
         if k == key {
-            return Ok(Some(as_color(v, k)?));
+            return Ok(Some(as_color(v, k, theme)?));
         }
     }
     Ok(None)
