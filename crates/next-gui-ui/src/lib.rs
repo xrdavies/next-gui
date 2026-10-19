@@ -10257,6 +10257,11 @@ impl Ui {
     }
 
     /// Apply ThemeRadii to a chrome node (`control` or `panel`).
+    ///
+    /// Soft paints rounded chrome for Button/TextInput/Panel/Card/Modal·Drawer plus
+    /// Tag/Alert/Select·TreeSelect/Autocomplete/Checkbox/Switch/Tooltip/Popover/List/
+    /// Badge/Progress/Tabs/Toolbar·StatusBar/TextArea/InputNumber/Notification
+    /// (Radio uses geometric circles; Switch thumb is circular).
     fn apply_corner_radius(&self, scene: &mut Scene, node: NodeId, panel: bool) {
         let r = if panel {
             self.theme.radii.panel
@@ -10302,6 +10307,14 @@ impl Ui {
                     self.apply_corner_radius(scene, node, true);
                 }
                 self.paint_panel_title(scene, id);
+            }
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Toolbar { .. } | Kind::StatusBar { .. })
+            ) {
+                if let Some(node) = self.widgets.get(&id).and_then(|w| w.node) {
+                    self.apply_corner_radius(scene, node, false);
+                }
             }
             if matches!(
                 self.widgets.get(&id).map(|w| &w.kind),
@@ -10837,6 +10850,7 @@ impl Ui {
                 );
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
+                self.apply_corner_radius(scene, node, false);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if checked {
                         let (_, cm) = self.font.rasterize_text("✓", style.box_size * 0.7, None);
@@ -10894,21 +10908,19 @@ impl Ui {
                 scene.set_fill(node, style.ring);
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
+                scene.set_corner_radius(node, d * 0.5);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if selected {
                         let inset = d * 0.28;
+                        let dd = d - inset * 2.0;
                         scene.set_bounds(
                             chrome,
-                            Rect::new(
-                                ring.x + inset,
-                                ring.y + inset,
-                                d - inset * 2.0,
-                                d - inset * 2.0,
-                            ),
+                            Rect::new(ring.x + inset, ring.y + inset, dd, dd),
                         );
                         scene.set_fill(chrome, style.dot);
                         scene.set_mask(chrome, None);
                         scene.set_visible(chrome, true);
+                        scene.set_corner_radius(chrome, dd * 0.5);
                     } else {
                         scene.set_visible(chrome, false);
                     }
@@ -10943,6 +10955,7 @@ impl Ui {
                 scene.set_fill(node, if on { style.track_on } else { style.track_off });
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
+                self.apply_corner_radius(scene, node, false);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     let thumb_d = style.height - 4.0;
                     let tx = if on {
@@ -10955,6 +10968,7 @@ impl Ui {
                     scene.set_fill(chrome, style.thumb);
                     scene.set_mask(chrome, None);
                     scene.set_visible(chrome, true);
+                    scene.set_corner_radius(chrome, thumb_d * 0.5);
                 }
                 let (_, mask) = self.font.rasterize_text(&label, style.size, None);
                 if let Some(lid) = label_node {
@@ -11068,6 +11082,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let (first, count) = if virtualized {
             p1_rest::virtual_window(
@@ -11102,6 +11117,7 @@ impl Ui {
                     scene.set_fill(chrome, style.selected_bg);
                     scene.set_mask(chrome, None);
                     scene.set_visible(chrome, true);
+                    self.apply_corner_radius(scene, chrome, false);
                 } else {
                     scene.set_visible(chrome, false);
                 }
@@ -11521,6 +11537,7 @@ impl Ui {
         scene.set_fill(node, if open { style.selected_bg } else { style.bg });
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let display = format!("{text}  ▾");
         let (_, mask) = self.font.rasterize_text(&display, style.size, None);
         if let Some(lid) = label_node {
@@ -11578,6 +11595,7 @@ impl Ui {
             scene.set_fill(track_n, style.track);
             scene.set_mask(track_n, None);
             scene.set_visible(track_n, true);
+            self.apply_corner_radius(scene, track_n, false);
         }
         if let Some(chrome) = chrome {
             let fill_w = (track_w * t).max(0.001);
@@ -11631,6 +11649,7 @@ impl Ui {
                 scene.set_fill(bg, if active { style.active_bg } else { style.strip_bg });
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, mask) = self.font.rasterize_text(title, style.size, None);
             if let Some(&lab) = aux.get(i * 2 + 1) {
@@ -11854,6 +11873,7 @@ impl Ui {
             scene.set_fill(bg, style.bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, false);
             scene.set_bounds(accent, Rect::new(x, y, 4.0, style.height));
             scene.set_fill(accent, item.tone.accent());
             scene.set_mask(accent, None);
@@ -11908,6 +11928,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         if let Some(chrome) = chrome {
             // focus ring stub: thin top bar
             scene.set_bounds(
@@ -11993,6 +12014,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let step_w = 28.0;
         self.ensure_aux_nodes(scene, host, id, 4); // -bg, -lab, +bg, +lab
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -12917,6 +12939,7 @@ impl Ui {
         scene.set_fill(aux[0], style.popup_bg);
         scene.set_mask(aux[0], None);
         scene.set_visible(aux[0], true);
+        self.apply_corner_radius(scene, aux[0], true);
         self.node_to_widget.insert(aux[0], id);
 
         let mut cy = panel.y + style.padding;
@@ -13946,6 +13969,7 @@ impl Ui {
         scene.set_fill(host, if open { style.selected_bg } else { style.bg });
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let focused = self.focus == Some(id);
         let (text, fg) = if value.is_empty() {
             (placeholder, style.placeholder_fg)
@@ -15154,6 +15178,7 @@ impl Ui {
             scene.set_fill(bg, style.popup_bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, item) in items.iter().enumerate() {
@@ -15204,6 +15229,7 @@ impl Ui {
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let close_w = if closable { style.height * 0.65 } else { 0.0 };
         let (_, mask) = self.font.rasterize_text(&label, style.size, None);
         if let Some(lid) = *label_node {
@@ -15297,12 +15323,14 @@ impl Ui {
                 scene.set_fill(cid, style.bg);
                 scene.set_mask(cid, None);
                 scene.set_visible(cid, true);
+                self.apply_corner_radius(scene, cid, false);
             }
         } else {
             scene.set_bounds(node, Rect::new(bx, by, bw, bh));
             scene.set_fill(node, style.bg);
             scene.set_mask(node, None);
             scene.set_visible(node, true);
+            self.apply_corner_radius(scene, node, false);
             if let Some(cid) = *chrome_node {
                 scene.set_visible(cid, false);
             }
@@ -15354,6 +15382,7 @@ impl Ui {
         scene.set_fill(node, style.track);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         if let Some(cid) = *chrome_node {
             let fill_w = if indeterminate {
                 (track.width * 0.35).max(8.0)
@@ -15364,6 +15393,7 @@ impl Ui {
             scene.set_fill(cid, style.fill);
             scene.set_mask(cid, None);
             scene.set_visible(cid, fill_w > 0.5);
+            self.apply_corner_radius(scene, cid, false);
         }
     }
 
@@ -15413,6 +15443,7 @@ impl Ui {
         scene.set_fill(node, bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let (_, mask) = self.font.rasterize_text(&message, style.size, None);
         if let Some(lid) = *label_node {
             let lx = bounds.x + style.padding;
@@ -15487,6 +15518,7 @@ impl Ui {
         scene.set_fill(bg, style.bg);
         scene.set_mask(bg, None);
         scene.set_visible(bg, true);
+        self.apply_corner_radius(scene, bg, false);
         let (_, mask) = self.font.rasterize_text(&text, style.size, None);
         scene.set_bounds(
             label,
@@ -16277,6 +16309,7 @@ impl Ui {
         scene.set_fill(node, if open { style.selected_bg } else { style.bg });
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let display = format!("{text}  ▾");
         let (_, mask) = self.font.rasterize_text(&display, style.size, None);
         if let Some(lid) = label_node {
