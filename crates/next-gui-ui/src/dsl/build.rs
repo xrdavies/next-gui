@@ -73,7 +73,7 @@ fn column_style_from(
     props: &[(String, AstValue)],
 ) -> Result<crate::ColumnStyle, DslError> {
     let mut style = crate::ColumnStyle::from_theme(theme);
-    apply_column_style(&mut style, props).map_err(|m| err_at(w.line, w.column, m))?;
+    apply_column_style(&mut style, props, theme).map_err(|m| err_at(w.line, w.column, m))?;
     Ok(style)
 }
 
@@ -477,11 +477,11 @@ fn build_widget(
     match kind {
         "Text" => {
             let content = first_string_arg_or(w, "")?;
-            let color = prop_color(&w.props, "fg")
-                .map_err(|m| err_at(w.line, w.column, m))?
-                .or(prop_color(&w.props, "color").map_err(|m| err_at(w.line, w.column, m))?);
-            let size = prop_f32(&w.props, "size").map_err(|m| err_at(w.line, w.column, m))?;
             let theme = builder.theme();
+            let color = prop_color(&w.props, "fg", theme)
+                .map_err(|m| err_at(w.line, w.column, m))?
+                .or(prop_color(&w.props, "color", theme).map_err(|m| err_at(w.line, w.column, m))?);
+            let size = prop_f32(&w.props, "size").map_err(|m| err_at(w.line, w.column, m))?;
             let id = match (color, size) {
                 (Some(c), Some(s)) => builder.text_styled(content, c, s),
                 (Some(c), None) => builder.text_styled(content, c, theme.typography.body),
@@ -492,9 +492,9 @@ fn build_widget(
         }
         "Button" => {
             let label = first_string_arg_or(w, "")?;
-            let bg = prop_color(&w.props, "bg").map_err(|m| err_at(w.line, w.column, m))?;
-            let fg = prop_color(&w.props, "fg").map_err(|m| err_at(w.line, w.column, m))?;
             let theme = builder.theme();
+            let bg = prop_color(&w.props, "bg", theme).map_err(|m| err_at(w.line, w.column, m))?;
+            let fg = prop_color(&w.props, "fg", theme).map_err(|m| err_at(w.line, w.column, m))?;
             let id = match (bg, fg) {
                 (Some(bg), Some(fg)) => builder.button_styled(label, bg, fg),
                 (Some(bg), None) => builder.button_styled(label, bg, theme.colors.button_fg),
@@ -508,10 +508,11 @@ fn build_widget(
             let size = prop_f32(&w.props, "size")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(18.0);
-            let color = prop_color(&w.props, "color")
+            let theme = builder.theme();
+            let color = prop_color(&w.props, "color", theme)
                 .map_err(|m| err_at(w.line, w.column, m))?
-                .or(prop_color(&w.props, "fg").map_err(|m| err_at(w.line, w.column, m))?)
-                .unwrap_or(builder.theme().colors.text_secondary);
+                .or(prop_color(&w.props, "fg", theme).map_err(|m| err_at(w.line, w.column, m))?)
+                .unwrap_or(theme.colors.text_secondary);
             let id = builder.icon_styled(IconName::from_name(&name), size, color);
             register(names, &w.name, id);
         }
@@ -543,7 +544,7 @@ fn build_widget(
         }
         "Column" => {
             let mut style = crate::ColumnStyle::from_theme(builder.theme());
-            map_err(w, apply_column_style(&mut style, &w.props))?;
+            map_err(w, apply_column_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.column(style, |inner| {
@@ -558,7 +559,7 @@ fn build_widget(
         }
         "Row" => {
             let mut style = crate::RowStyle::from_theme(builder.theme());
-            map_err(w, apply_row_style(&mut style, &w.props))?;
+            map_err(w, apply_row_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.row(style, |inner| {
@@ -573,7 +574,7 @@ fn build_widget(
         }
         "Toolbar" => {
             let mut style = crate::ToolbarStyle::from_theme(builder.theme());
-            map_err(w, apply_toolbar_style(&mut style, &w.props))?;
+            map_err(w, apply_toolbar_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.toolbar(style, |inner| {
@@ -615,7 +616,7 @@ fn build_widget(
         }
         "StatusBar" => {
             let mut style = crate::StatusBarStyle::from_theme(builder.theme());
-            map_err(w, apply_status_bar_style(&mut style, &w.props))?;
+            map_err(w, apply_status_bar_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.status_bar(style, |inner| {
@@ -1338,10 +1339,10 @@ fn build_widget(
             let value = w
                 .args
                 .first()
-                .map(|v| as_color(v, "value"))
+                .map(|v| as_color(v, "value", builder.theme()))
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
-                .or(prop_color(&w.props, "value").map_err(|m| err_at(w.line, w.column, m))?)
+                .or(prop_color(&w.props, "value", builder.theme()).map_err(|m| err_at(w.line, w.column, m))?)
                 .unwrap_or(Color::rgb(0x3b, 0x82, 0xf6));
             let id = builder.color_picker(value, ColorPickerStyle::from_theme(builder.theme()));
             register(names, &w.name, id);

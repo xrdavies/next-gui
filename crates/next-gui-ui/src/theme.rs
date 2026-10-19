@@ -172,7 +172,7 @@ pub struct ThemeSpacing {
     pub gap_sm: f32,
 }
 
-/// Corner radii (px). Soft paints Button/TextInput (`control`) and Panel/Card/Modal/Drawer (`panel`).
+/// Corner radii (px). Soft: `control` for buttons/inputs/tags/…; `panel` for Panel/Card/Modal/Drawer/list hosts/popups.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeRadii {
     /// Controls / buttons.
@@ -352,6 +352,65 @@ impl Theme {
             spacing: shared_spacing(),
             radii: shared_radii(),
         }
+    }
+
+    /// Resolve a `.ngui` color token name (`surface`, `text_primary`, …) against this theme.
+    ///
+    /// Names match [`ThemeColors`] field names. Returns `None` for unknown tokens.
+    pub fn color_by_name(&self, name: &str) -> Option<Color> {
+        let c = &self.colors;
+        Some(match name {
+            "surface" => c.surface,
+            "surface_elevated" => c.surface_elevated,
+            "panel" => c.panel,
+            "title_bar" => c.title_bar,
+            "text_primary" => c.text_primary,
+            "text_secondary" => c.text_secondary,
+            "button_bg" => c.button_bg,
+            "button_fg" => c.button_fg,
+            "accent" => c.accent,
+            "on_accent" => c.on_accent,
+            "border" => c.border,
+            "focus" => c.focus,
+            "input_bg" => c.input_bg,
+            "placeholder" => c.placeholder,
+            "link" => c.link,
+            "muted" => c.muted,
+            "disabled" => c.disabled,
+            "popup" => c.popup,
+            "list_bg" => c.list_bg,
+            "header_bg" => c.header_bg,
+            "chrome" => c.chrome,
+            "selected_bg" => c.selected_bg,
+            "hover_bg" => c.hover_bg,
+            "track" => c.track,
+            "track_on" => c.track_on,
+            "thumb" => c.thumb,
+            "grid" => c.grid,
+            "sash" => c.sash,
+            "scrim" => c.scrim,
+            "danger" => c.danger,
+            "danger_soft" => c.danger_soft,
+            "warning" => c.warning,
+            "info" => c.info,
+            "success" => c.success,
+            "success_soft" => c.success_soft,
+            "info_bg" => c.info_bg,
+            "success_bg" => c.success_bg,
+            "warning_bg" => c.warning_bg,
+            "error_bg" => c.error_bg,
+            "flash_bg" => c.flash_bg,
+            "overlay" => c.overlay,
+            "gauge_dial" => c.gauge_dial,
+            "trend_line" => c.trend_line,
+            "trend_fill" => c.trend_fill,
+            "hint_positive" => c.hint_positive,
+            "content_bg" => c.content_bg,
+            "strip_bg" => c.strip_bg,
+            "ring" => c.ring,
+            "scroll_bg" => c.scroll_bg,
+            _ => return None,
+        })
     }
 }
 
