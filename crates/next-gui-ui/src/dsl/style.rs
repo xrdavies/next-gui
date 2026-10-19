@@ -79,7 +79,7 @@ pub fn as_i32(v: &AstValue, ctx: &str) -> Result<i32, String> {
 
 pub fn as_u8(v: &AstValue, ctx: &str) -> Result<u8, String> {
     let n = as_f32(v, ctx)?;
-    if n < 0.0 || n > 255.0 || n.fract() != 0.0 {
+    if !(0.0..=255.0).contains(&n) || n.fract() != 0.0 {
         return Err(format!("{ctx}: expected u8"));
     }
     Ok(n as u8)
@@ -191,8 +191,8 @@ pub fn apply_status_bar_style(
 
 /// Apply a small set of common box props onto any style that has width/height/… fields
 /// via a callback pattern — used by build for Default styles.
-pub fn prop_f32<'a>(
-    props: &'a [(String, AstValue)],
+pub fn prop_f32(
+    props: &[(String, AstValue)],
     key: &str,
 ) -> Result<Option<f32>, String> {
     for (k, v) in props {
@@ -203,8 +203,8 @@ pub fn prop_f32<'a>(
     Ok(None)
 }
 
-pub fn prop_color<'a>(
-    props: &'a [(String, AstValue)],
+pub fn prop_color(
+    props: &[(String, AstValue)],
     key: &str,
 ) -> Result<Option<Color>, String> {
     for (k, v) in props {
@@ -215,8 +215,8 @@ pub fn prop_color<'a>(
     Ok(None)
 }
 
-pub fn prop_bool<'a>(
-    props: &'a [(String, AstValue)],
+pub fn prop_bool(
+    props: &[(String, AstValue)],
     key: &str,
 ) -> Result<Option<bool>, String> {
     for (k, v) in props {
@@ -227,8 +227,8 @@ pub fn prop_bool<'a>(
     Ok(None)
 }
 
-pub fn prop_string<'a>(
-    props: &'a [(String, AstValue)],
+pub fn prop_string(
+    props: &[(String, AstValue)],
     key: &str,
 ) -> Result<Option<String>, String> {
     for (k, v) in props {
@@ -239,8 +239,8 @@ pub fn prop_string<'a>(
     Ok(None)
 }
 
-pub fn prop_usize<'a>(
-    props: &'a [(String, AstValue)],
+pub fn prop_usize(
+    props: &[(String, AstValue)],
     key: &str,
 ) -> Result<Option<usize>, String> {
     for (k, v) in props {
