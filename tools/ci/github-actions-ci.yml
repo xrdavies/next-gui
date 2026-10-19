@@ -36,7 +36,7 @@ jobs:
       - name: System libs (winit / softbuffer)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk
       - name: Field Soft gate
         run: ./tools/ci/field-soft.sh
 
@@ -52,7 +52,7 @@ jobs:
       - name: System libs (winit / softbuffer / wgpu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk
       - name: cargo check (workspace, default features)
         run: cargo check --workspace
       - name: cargo test (workspace; GUI tests skip without DISPLAY)
@@ -70,7 +70,7 @@ jobs:
       - name: System libs
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk
       - name: Typecheck macos feature (on Linux host)
         run: cargo check -p next-gui-platform --features macos
       - name: Typecheck windows feature (on Linux host)
@@ -89,7 +89,7 @@ jobs:
       - name: System libs
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk
       # No GUI event loop — clippy is compile-time only.
       # Soft/core (+ ui) crates: deny warnings. Full workspace: advisory (Office/GPU examples may warn).
       - name: clippy Field Soft / core (-D warnings)
