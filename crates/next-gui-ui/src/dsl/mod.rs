@@ -5,6 +5,10 @@
 //!
 //! **Exception:** raw `ImageRgba` pixel buffers are Rust-only; use
 //! `ImagePlaceholder` in `.ngui`.
+//!
+//! Optional `theme: light|dark` (document-level before root `Column`, or as a
+//! root Column prop) selects [`crate::Theme`]; widget Style defaults use
+//! `from_theme` (explicit color props still win).
 
 mod ast;
 mod build;
@@ -177,5 +181,115 @@ Column {
         assert!(loaded.ui.is_modal(loaded.widget("modal").unwrap()));
         assert!(loaded.ui.is_form(loaded.widget("form").unwrap()));
         assert!(loaded.ui.is_chart(loaded.widget("chart").unwrap()));
+    }
+
+    #[test]
+    fn theme_document_directive_light_vs_dark() {
+        let dark_src = r#"
+theme: dark
+Column @root {
+  width: 320
+  height: 200
+  Text("hi") @label
+  Button("Go") @btn
+  TextInput("") @ti
+}
+"#;
+        let light_src = r#"
+theme: light
+Column @root {
+  width: 320
+  height: 200
+  Text("hi") @label
+  Button("Go") @btn
+  TextInput("") @ti
+}
+"#;
+        let dark = load_ngui(dark_src).expect("dark");
+        let light = load_ngui(light_src).expect("light");
+        assert_eq!(dark.ui.theme().mode, crate::ThemeMode::Dark);
+        assert_eq!(light.ui.theme().mode, crate::ThemeMode::Light);
+        assert_ne!(
+            dark.ui.theme().colors.surface,
+            light.ui.theme().colors.surface
+        );
+        // Root column background follows theme surface (no explicit background prop).
+        let dark_root = dark.require("root").unwrap();
+        let light_root = light.require("root").unwrap();
+        match (
+            &dark.ui.widgets.get(&dark_root).unwrap().kind,
+            &light.ui.widgets.get(&light_root).unwrap().kind,
+        ) {
+            (
+                crate::Kind::Column { style: ds, .. },
+                crate::Kind::Column { style: ls, .. },
+            ) => {
+                assert_eq!(ds.background, Some(crate::Theme::dark().colors.surface));
+                assert_eq!(ls.background, Some(crate::Theme::light().colors.surface));
+                assert_ne!(ds.background, ls.background);
+            }
+            other => panic!("expected Column roots, got {other:?}"),
+        }
+        // TextInput bg differs light vs dark.
+        let dark_ti = dark.require("ti").unwrap();
+        let light_ti = light.require("ti").unwrap();
+        match (
+            &dark.ui.widgets.get(&dark_ti).unwrap().kind,
+            &light.ui.widgets.get(&light_ti).unwrap().kind,
+        ) {
+            (
+                crate::Kind::TextInput { style: ds, .. },
+                crate::Kind::TextInput { style: ls, .. },
+            ) => {
+                assert_eq!(ds.bg, crate::Theme::dark().colors.input_bg);
+                assert_eq!(ls.bg, crate::Theme::light().colors.input_bg);
+                assert_ne!(ds.bg, ls.bg);
+            }
+            other => panic!("expected TextInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn theme_root_column_prop_overrides_directive() {
+        let src = r#"
+theme: dark
+Column {
+  theme: light
+  width: 200
+  height: 100
+}
+"#;
+        let loaded = load_ngui(src).expect("parse");
+        assert_eq!(loaded.ui.theme().mode, crate::ThemeMode::Light);
+    }
+
+    #[test]
+    fn reject_unknown_theme_name() {
+        let err = load_ngui("theme: neon\nColumn { width: 1 height: 1 }").unwrap_err();
+        assert!(
+            err.message.contains("unknown theme") || err.message.contains("neon"),
+            "msg={}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn explicit_background_overrides_theme_surface() {
+        let src = r#"
+theme: light
+Column @root {
+  width: 200
+  height: 100
+  background: #112233
+}
+"#;
+        let loaded = load_ngui(src).expect("parse");
+        let root = loaded.require("root").unwrap();
+        match &loaded.ui.widgets.get(&root).unwrap().kind {
+            crate::Kind::Column { style, .. } => {
+                assert_eq!(style.background, Some(next_gui_scene::Color::rgb(0x11, 0x22, 0x33)));
+            }
+            other => panic!("expected Column, got {other:?}"),
+        }
     }
 }

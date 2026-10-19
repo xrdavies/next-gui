@@ -362,13 +362,19 @@ impl ResultStatus {
         }
     }
 
-    /// Accent color for the status label.
+    /// Accent color for the status label (historical dark-aligned defaults).
     pub fn color(self) -> Color {
+        self.color_for_theme(&crate::Theme::dark())
+    }
+
+    /// Accent from theme tokens (`info` / `success` / `warning` / `danger`).
+    pub fn color_for_theme(self, theme: &crate::Theme) -> Color {
+        let c = &theme.colors;
         match self {
-            Self::Info => Color::rgb(0x6a, 0xb0, 0xf0),
-            Self::Success => Color::rgb(0x6a, 0xc0, 0x8a),
-            Self::Warning => Color::rgb(0xe0, 0xb0, 0x40),
-            Self::Error => Color::rgb(0xe0, 0x60, 0x60),
+            Self::Info => c.info,
+            Self::Success => c.success,
+            Self::Warning => c.warning,
+            Self::Error => c.danger,
         }
     }
 }

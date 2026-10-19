@@ -213,6 +213,9 @@ pub struct Node {
     /// Optional clip rectangle in window coordinates (e.g. ScrollArea viewport).
     /// Descendants inherit via encode/hit-test clip stacks.
     pub clip: Option<Rect>,
+    /// Corner radius in px (`0` = sharp axis-aligned rect). Soft draws rounded fills;
+    /// hit-testing still uses the AABB.
+    pub corner_radius: f32,
 }
 
 /// Accumulated dirty rectangles.
@@ -294,6 +297,7 @@ impl Scene {
                 visible: false,
                 mask: None,
                 clip: None,
+                corner_radius: 0.0,
             },
         );
         Self {
@@ -330,6 +334,7 @@ impl Scene {
             visible: true,
             mask: None,
             clip: None,
+            corner_radius: 0.0,
         };
         self.nodes.insert(id, node);
         if let Some(p) = self.nodes.get_mut(&parent) {
@@ -378,6 +383,21 @@ impl Scene {
         }
         let bounds = node.bounds;
         node.visible = visible;
+        self.dirty.add(bounds);
+        true
+    }
+
+    /// Set corner radius for rounded fills (`0` = sharp). Marks dirty.
+    pub fn set_corner_radius(&mut self, id: NodeId, radius: f32) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        let radius = radius.max(0.0);
+        if (node.corner_radius - radius).abs() < f32::EPSILON {
+            return true;
+        }
+        let bounds = node.bounds;
+        node.corner_radius = radius;
         self.dirty.add(bounds);
         true
     }

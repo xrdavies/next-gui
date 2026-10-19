@@ -267,3 +267,25 @@ pub fn reject_unknown(props: &[(String, AstValue)], allowed: &[&str], kind: &str
     }
     Ok(())
 }
+
+/// Parse `light` / `dark` theme mode from a DSL value.
+pub fn parse_theme_mode(v: &AstValue) -> Result<crate::ThemeMode, String> {
+    let s = as_ident(v, "theme")?;
+    match s.as_str() {
+        "light" => Ok(crate::ThemeMode::Light),
+        "dark" => Ok(crate::ThemeMode::Dark),
+        other => Err(format!("unknown theme `{other}` (expected light|dark)")),
+    }
+}
+
+/// Take and remove a `theme:` prop from a prop list (root Column only).
+pub fn take_theme_prop(
+    props: &mut Vec<(String, AstValue)>,
+) -> Result<Option<crate::ThemeMode>, String> {
+    if let Some(idx) = props.iter().position(|(k, _)| k == "theme") {
+        let (_, v) = props.remove(idx);
+        Ok(Some(parse_theme_mode(&v)?))
+    } else {
+        Ok(None)
+    }
+}
