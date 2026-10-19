@@ -6,6 +6,24 @@ use super::DslError;
 
 pub fn parse_document(src: &str) -> Result<Document, DslError> {
     let mut p = Parser::new(src);
+    let mut theme = None;
+    // Optional document-level `theme: light|dark` before the root Column.
+    if matches!(p.lex.peek_tok()?, Tok::Ident(ref s) if s == "theme") {
+        p.lex.next_tok()?; // theme
+        match p.lex.next_tok()? {
+            Tok::Colon => {}
+            _ => return Err(p.lex.err("expected `:` after `theme`")),
+        }
+        let mode = match p.lex.next_tok()? {
+            Tok::Ident(s) | Tok::String(s) => parse_theme_mode_str(&s).map_err(|m| p.lex.err(m))?,
+            other => {
+                return Err(p.lex.err(format!(
+                    "theme: expected light|dark, got {other:?}"
+                )));
+            }
+        };
+        theme = Some(mode);
+    }
     let root = p.parse_widget()?;
     if root.kind != "Column" {
         return Err(DslError {
@@ -28,7 +46,21 @@ pub fn parse_document(src: &str) -> Result<Document, DslError> {
             }
         }
     }
-    Ok(Document { root, overlays })
+    Ok(Document {
+        theme,
+        root,
+        overlays,
+    })
+}
+
+fn parse_theme_mode_str(s: &str) -> Result<crate::ThemeMode, String> {
+    match s {
+        "light" => Ok(crate::ThemeMode::Light),
+        "dark" => Ok(crate::ThemeMode::Dark),
+        other => Err(format!(
+            "unknown theme `{other}` (expected light|dark)"
+        )),
+    }
 }
 
 struct Parser<'a> {

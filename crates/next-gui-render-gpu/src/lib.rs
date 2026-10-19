@@ -1077,6 +1077,24 @@ impl Renderer for GpuRenderer {
                             pass.draw(0..6, 0..1);
                             solid_bufs.push(vb);
                         }
+                        // GPU MVP: rounded rects fall back to sharp AABB fills.
+                        DrawCommand::FillRoundedRect { rect, color, .. } => {
+                            if !rect.intersects(d) {
+                                continue;
+                            }
+                            let verts = Self::solid_quad(rect, *color, fw, fh);
+                            let vb = self.device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("fill-round-vb"),
+                                    contents: bytemuck::cast_slice(&verts),
+                                    usage: wgpu::BufferUsages::VERTEX,
+                                },
+                            );
+                            pass.set_pipeline(&self.solid_pipeline);
+                            pass.set_vertex_buffer(0, vb.slice(..));
+                            pass.draw(0..6, 0..1);
+                            solid_bufs.push(vb);
+                        }
                         DrawCommand::BlitAlpha {
                             x,
                             y,

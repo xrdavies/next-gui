@@ -16,6 +16,15 @@ pub enum DrawCommand {
         /// Fill color.
         color: Color,
     },
+    /// Fill a rectangle with uniform corner radius (soft AA at edges).
+    FillRoundedRect {
+        /// Rectangle in scene/window coordinates.
+        rect: Rect,
+        /// Fill color.
+        color: Color,
+        /// Corner radius in px (clamped to half min side).
+        radius: f32,
+    },
     /// Tint an 8-bit coverage mask with `color` at `(x, y)`.
     BlitAlpha {
         /// Left edge in window coordinates.
@@ -106,10 +115,18 @@ fn encode_node(
                 None => node.bounds,
             };
             if !rect.is_empty() && dirty.intersects_rect(&rect) {
-                cmds.push(DrawCommand::FillRect {
-                    rect,
-                    color: node.fill,
-                });
+                if node.corner_radius > 0.0 {
+                    cmds.push(DrawCommand::FillRoundedRect {
+                        rect,
+                        color: node.fill,
+                        radius: node.corner_radius,
+                    });
+                } else {
+                    cmds.push(DrawCommand::FillRect {
+                        rect,
+                        color: node.fill,
+                    });
+                }
             }
         }
     }
@@ -211,6 +228,29 @@ mod tests {
             }
             _ => panic!("expected FillRect"),
         }
+    }
+
+    #[test]
+    fn encode_rounded_rect_when_radius_set() {
+        let mut scene = Scene::new();
+        let id = scene
+            .insert(
+                scene.root(),
+                Rect::new(10.0, 10.0, 40.0, 20.0),
+                Color::rgb(255, 0, 0),
+            )
+            .unwrap();
+        scene.set_corner_radius(id, 4.0);
+        scene.mark_full_dirty(64.0, 64.0);
+        let dirty = scene.take_dirty();
+        let cmds = encode_scene(&scene, &dirty);
+        assert!(
+            cmds.iter().any(|c| matches!(
+                c,
+                DrawCommand::FillRoundedRect { radius, .. } if (*radius - 4.0).abs() < f32::EPSILON
+            )),
+            "expected FillRoundedRect, got {cmds:?}"
+        );
     }
 
     #[test]

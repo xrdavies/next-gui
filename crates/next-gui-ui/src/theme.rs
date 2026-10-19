@@ -100,6 +100,10 @@ pub struct ThemeColors {
     pub danger: Color,
     /// Soft danger (popconfirm trigger).
     pub danger_soft: Color,
+    /// Warning accent (Result / Alarm).
+    pub warning: Color,
+    /// Info accent (Result / Alarm).
+    pub info: Color,
     /// Success accent (gauge).
     pub success: Color,
     /// Soft success fill (steps done).
@@ -168,7 +172,7 @@ pub struct ThemeSpacing {
     pub gap_sm: f32,
 }
 
-/// Corner radii (px). Stored for future chrome; few styles consume them yet.
+/// Corner radii (px). Soft paints Button/TextInput (`control`) and Panel/Card/Modal/Drawer (`panel`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeRadii {
     /// Controls / buttons.
@@ -264,6 +268,8 @@ impl Theme {
                 scrim: Color::rgb(0x0c, 0x0c, 0x10),
                 danger: Color::rgb(0xe0, 0x4f, 0x5f),
                 danger_soft: Color::rgb(0xa0, 0x40, 0x40),
+                warning: Color::rgb(0xe0, 0xb0, 0x40),
+                info: Color::rgb(0x6a, 0xb0, 0xf0),
                 success: Color::rgb(0x3b, 0xc4, 0x8c),
                 success_soft: Color::rgb(0x3d, 0x8b, 0x5a),
                 info_bg: Color::rgb(0x2a, 0x3a, 0x55),
@@ -323,6 +329,8 @@ impl Theme {
                 scrim: Color::rgb(0x60, 0x60, 0x68),
                 danger: Color::rgb(0xe0, 0x4f, 0x5f),
                 danger_soft: Color::rgb(0xc0, 0x50, 0x50),
+                warning: Color::rgb(0xc0, 0x80, 0x20),
+                info: Color::rgb(0x1a, 0x6a, 0xc8),
                 success: Color::rgb(0x2a, 0xa0, 0x6a),
                 success_soft: Color::rgb(0x3d, 0x8b, 0x5a),
                 info_bg: Color::rgb(0xd8, 0xe4, 0xf4),
@@ -2250,5 +2258,47 @@ mod tests {
         let _ = TimelineStyle::from_theme_with_density(&theme, d);
         let _ = CalendarStyle::from_theme_with_density(&theme, d);
         let _ = ImageStyle::from_theme_with_density(&theme, d);
+    }
+
+    #[test]
+    fn result_status_colors_follow_theme() {
+        use crate::ResultStatus;
+        let dark = Theme::dark();
+        let light = Theme::light();
+        assert_eq!(
+            ResultStatus::Error.color_for_theme(&dark),
+            dark.colors.danger
+        );
+        assert_eq!(
+            ResultStatus::Success.color_for_theme(&light),
+            light.colors.success
+        );
+        assert_ne!(
+            ResultStatus::Info.color_for_theme(&dark),
+            ResultStatus::Info.color_for_theme(&light)
+        );
+        assert_ne!(
+            ResultStatus::Warning.color_for_theme(&dark),
+            ResultStatus::Warning.color_for_theme(&light)
+        );
+        assert_eq!(ResultStatus::Error.color(), Theme::dark().colors.danger);
+    }
+
+    #[test]
+    fn alarm_severity_maps_theme_tokens() {
+        use crate::AlarmSeverity;
+        let light = Theme::light();
+        assert_eq!(
+            AlarmSeverity::Critical.color_for_theme(&light),
+            light.colors.danger
+        );
+        assert_eq!(
+            AlarmSeverity::Info.color_for_theme(&light),
+            light.colors.text_secondary
+        );
+        assert_ne!(
+            AlarmSeverity::Minor.color_for_theme(&Theme::dark()),
+            AlarmSeverity::Minor.color_for_theme(&light)
+        );
     }
 }

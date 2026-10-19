@@ -1437,13 +1437,20 @@ impl AlarmSeverity {
         }
     }
 
-    fn color(self) -> Color {
+    /// Historical dark-aligned severity color (dark preset).
+    pub fn color(self) -> Color {
+        self.color_for_theme(&Theme::dark())
+    }
+
+    /// Severity color from theme tokens.
+    pub fn color_for_theme(self, theme: &Theme) -> Color {
+        let c = &theme.colors;
         match self {
-            AlarmSeverity::Critical => Color::rgb(0xe0, 0x3a, 0x4a),
-            AlarmSeverity::Major => Color::rgb(0xf0, 0x8a, 0x2a),
-            AlarmSeverity::Minor => Color::rgb(0xe0, 0xc0, 0x40),
-            AlarmSeverity::Warning => Color::rgb(0x80, 0xb0, 0xe0),
-            AlarmSeverity::Info => Color::rgb(0x90, 0x98, 0xa8),
+            AlarmSeverity::Critical => c.danger,
+            AlarmSeverity::Major => c.danger_soft,
+            AlarmSeverity::Minor => c.warning,
+            AlarmSeverity::Warning => c.info,
+            AlarmSeverity::Info => c.text_secondary,
         }
     }
 
@@ -10249,6 +10256,16 @@ impl Ui {
         }
     }
 
+    /// Apply ThemeRadii to a chrome node (`control` or `panel`).
+    fn apply_corner_radius(&self, scene: &mut Scene, node: NodeId, panel: bool) {
+        let r = if panel {
+            self.theme.radii.panel
+        } else {
+            self.theme.radii.control
+        };
+        scene.set_corner_radius(node, r);
+    }
+
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -10281,6 +10298,9 @@ impl Ui {
                 self.widgets.get(&id).map(|w| &w.kind),
                 Some(Kind::Panel { .. })
             ) {
+                if let Some(node) = self.widgets.get(&id).and_then(|w| w.node) {
+                    self.apply_corner_radius(scene, node, true);
+                }
                 self.paint_panel_title(scene, id);
             }
             if matches!(
@@ -10649,6 +10669,7 @@ impl Ui {
                 let bg = *bg;
                 scene.set_fill(node, bg);
                 scene.set_mask(node, None);
+                self.apply_corner_radius(scene, node, false);
                 let (_, mask) = self.font.rasterize_text(&label, size, None);
                 if let Some(lid) = label_node {
                     let lx = bounds.x + 16.0;
@@ -10707,6 +10728,7 @@ impl Ui {
                 };
                 scene.set_fill(node, style.bg);
                 scene.set_mask(node, None);
+                self.apply_corner_radius(scene, node, false);
                 let _ = border;
                 let before: String = value.chars().take(caret).collect();
                 let after: String = value.chars().skip(caret).collect();
@@ -11701,6 +11723,7 @@ impl Ui {
         scene.set_fill(panel_n, style.panel_bg);
         scene.set_mask(panel_n, None);
         scene.set_visible(panel_n, true);
+        self.apply_corner_radius(scene, panel_n, true);
 
         let title_rect = Rect::new(panel.x, panel.y, panel.width, style.title_height);
         scene.set_bounds(title_bg, title_rect);
@@ -12104,6 +12127,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         if let Some(chrome) = chrome {
             scene.set_bounds(
                 chrome,
@@ -12669,7 +12693,7 @@ impl Ui {
                 sn,
                 Rect::new(cx - sm.width as f32 * 0.5, y, sm.width as f32, sm.height as f32),
             );
-            scene.set_fill(sn, status.color());
+            scene.set_fill(sn, status.color_for_theme(&self.theme));
             scene.set_mask(sn, Some(AlphaMask::new(sm.width, sm.height, sm.pixels)));
             scene.set_visible(sn, true);
         }
@@ -15548,6 +15572,7 @@ impl Ui {
         scene.set_fill(panel_n, style.panel_bg);
         scene.set_mask(panel_n, None);
         scene.set_visible(panel_n, true);
+        self.apply_corner_radius(scene, panel_n, true);
 
         let title_rect = Rect::new(panel.x, panel.y, panel.width, style.title_height);
         scene.set_bounds(title_bg, title_rect);
@@ -16449,7 +16474,7 @@ impl Ui {
                     if selected == Some(i) {
                         Color::rgb(0xff, 0xff, 0xff)
                     } else {
-                        e.severity.color()
+                        e.severity.color_for_theme(&self.theme)
                     },
                 );
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
@@ -16740,6 +16765,11 @@ pub struct FlexBuilder<'a> {
 }
 
 impl FlexBuilder<'_> {
+    /// Borrow the active [`Theme`] (for Style `from_theme` / DSL builders).
+    pub fn theme(&self) -> &Theme {
+        self.ui.theme()
+    }
+
     /// Add a text label; returns its [`WidgetId`].
     ///
     /// Uses the active [`Theme`] text color and body size (density-scaled).

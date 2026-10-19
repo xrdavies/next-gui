@@ -1,6 +1,6 @@
 # Theme tokens
 
-> **状态：全 Style 覆盖（分支 `feat/theme-tokens`）**。不是 CSS、不是 Qt Style 引擎、不是 ImGui 全局 StyleVar。
+> **状态：全 Style 覆盖 + `.ngui` theme 选择（分支 `feat/theme-tokens`）**。不是 CSS、不是 Qt Style 引擎、不是 ImGui 全局 StyleVar。
 > 产品路线：retained 组件 + **Theme tokens** + 渐进加强 `.ngui`。
 > 示例：`cargo run -p e27_theme_tokens`（`NEXT_GUI_THEME_QA=1` 导出 PPM）。
 
@@ -62,9 +62,9 @@ Density：`UiDensity::spacing_scale` / `font_scale`。
 ## 有意例外
 
 - **`UiConfig`**：不是视觉 Style，是 locale / density / accent 袋。
-- **枚举色**（如 `ResultStatus::color`、`AlarmSeverity`）：状态语义色，暂不进 Theme；后续可挂 token。
-- **`.ngui` DSL**：仍用 `ColumnStyle::default()` 解析默认；token 名进 DSL 为跟进项。
-- **Radii**：token 已存，多数 Soft 控件尚未画圆角。
+- **枚举色**：`ResultStatus::color_for_theme` / `AlarmSeverity::color_for_theme` 读 `ThemeColors`（`info` / `success` / `warning` / `danger` / …）；无参 `color()` 仍对齐 dark 历史值。
+- **`.ngui` DSL**：已支持 `theme: light|dark`（文档级或根 `Column` prop）；无显式色时用 `from_theme`。尚不支持把 token **名**写成 prop 值（如 `background: surface`）— 用 `#RRGGBB` 或省略。
+- **Radii**：Soft 已对 **Button / TextInput / Panel / Card / Modal·Drawer 面板** 画 `ThemeRadii` 圆角（`Node::corner_radius` → `FillRoundedRect`）。GPU 暂回落为直角填充。其它控件仍多为直角。
 
 ## 校验
 
