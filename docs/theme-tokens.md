@@ -2,6 +2,7 @@
 
 > **状态：全 Style 覆盖（分支 `feat/theme-tokens`）**。不是 CSS、不是 Qt Style 引擎、不是 ImGui 全局 StyleVar。
 > 产品路线：retained 组件 + **Theme tokens** + 渐进加强 `.ngui`。
+> 示例：`cargo run -p e27_theme_tokens`（`NEXT_GUI_THEME_QA=1` 导出 PPM）。
 
 ## 和 Profile / UiConfig 的分工
 

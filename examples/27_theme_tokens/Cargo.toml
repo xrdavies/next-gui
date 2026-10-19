@@ -1,0 +1,19 @@
+[package]
+name = "e27_theme_tokens"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Theme tokens demo: toggle light/dark via set_theme + rebuild"
+
+[[bin]]
+name = "e27_theme_tokens"
+path = "src/main.rs"
+
+[dependencies]
+next-gui-platform = { workspace = true }
+next-gui-scene = { workspace = true }
+next-gui-render = { workspace = true }
+next-gui-render-soft = { workspace = true }
+next-gui-ui = { workspace = true }
+next-gui-text = { workspace = true }

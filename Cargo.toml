@@ -29,6 +29,7 @@ members = [
     "examples/24_profile_dual",
     "examples/25_immediate_viewport",
     "examples/26_office_p2",
+    "examples/27_theme_tokens",
 ]
 
 [workspace.package]
