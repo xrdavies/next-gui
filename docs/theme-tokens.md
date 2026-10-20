@@ -64,7 +64,10 @@ Density：`UiDensity::spacing_scale` / `font_scale`。
 - **`UiConfig`**：不是视觉 Style，是 locale / density / accent 袋。
 - **枚举色**：`ResultStatus::color_for_theme` / `AlarmSeverity::color_for_theme` 读 `ThemeColors`（`info` / `success` / `warning` / `danger` / …）；无参 `color()` 仍对齐 dark 历史值。
 - **`.ngui` DSL**：已支持 `theme: light|dark`（文档级或根 `Column` prop）；无显式色时用 `from_theme`。颜色 prop（`background` / `bg` / `fg` / `color` / ColorPicker `value` 等）可写 **未加引号的 token 名**（`ThemeColors` 字段，如 `background: surface`、`bg: accent`）；`#RRGGBB` 仍可用；未知名报错。
-- **Radii**：Soft 对 Button / TextInput / Panel / Card / Modal·Drawer 以及 Tag / Alert / Select·TreeSelect / Autocomplete / Checkbox / Switch / Tooltip / Popover / List / Badge / Progress / Tabs / Toolbar·StatusBar / TextArea / InputNumber / Notification toast 画 `ThemeRadii`（Radio 为几何圆；Switch thumb 为圆）。**仍多为直角**：Tree / Table / Menu 行、多数 Chart/工业控件、Empty/Collapse 等。GPU 对 `FillRoundedRect` 做扇区三角剖分（硬边，无 Soft 那种 ~1px AA）。
+- **Radii**：Soft 经 `Ui::apply_corner_radius` 把 `ThemeRadii`（`control` / `panel`）接到有填充 chrome 的控件上：
+  - **已覆盖（host / popup / 选中行等）**：Button、TextInput、Panel、Card、Modal·Drawer、Tag、Alert、Select·TreeSelect（字段+popup）、Autocomplete、Checkbox、Switch、Tooltip、Popover·Popconfirm（trigger+popup）、List、Badge、Progress、Tabs、Toolbar·StatusBar、TextArea、InputNumber、Notification；以及 Tree / Table / TreeTable / VirtualTable（同 Table）、Menu·ContextMenu（标题/host + popup）、Empty、Collapse、Descriptions、Segmented、ButtonGroup、Pagination 按钮、Statistic、Result、Calendar、Timeline、Transfer、PropertyGrid、AlarmList、Form·Grid、Upload、ColorPicker、DateTime、Image、Trend / Chart 主机、Spin 遮罩。Steps 标记与 Timeline 点为几何圆（`set_corner_radius(半宽)`）；Radio / Switch thumb 同理。
+  - **有意仍直角 / 不套 radii**：Link 下划线、Breadcrumb 纯文字、Steps 连接线与 Timeline 轨道（发丝线）、Table / TreeTable / PropertyGrid **表头条**（贴在已圆角 host 顶边，四角全圆会错）、Gauge 表盘与 Trend 折线（alpha mask 几何）、Image 马赛克单元格。圆角数值只在 Theme，不在 `.ngui` 单独配 `radius`。
+  - GPU 对 `FillRoundedRect` 做扇区三角剖分（硬边，无 Soft 那种 ~1px AA）。
 
 ## 校验
 
