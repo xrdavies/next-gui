@@ -10318,6 +10318,14 @@ impl Ui {
             }
             if matches!(
                 self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Form { .. } | Kind::Grid { .. })
+            ) {
+                if let Some(node) = self.widgets.get(&id).and_then(|w| w.node) {
+                    self.apply_corner_radius(scene, node, true);
+                }
+            }
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
                 Some(Kind::Tabs { .. })
             ) {
                 self.paint_tabs_strip(scene, id);
@@ -11212,6 +11220,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let needed = flats.len() * 2;
         self.ensure_aux_nodes(scene, host, id, needed);
@@ -11233,6 +11242,7 @@ impl Ui {
                     scene.set_fill(chrome, style.selected_bg);
                     scene.set_mask(chrome, None);
                     scene.set_visible(chrome, true);
+                    self.apply_corner_radius(scene, chrome, false);
                 } else {
                     scene.set_visible(chrome, false);
                 }
@@ -11323,6 +11333,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let ncols = columns.len().max(1);
         let body_h = (bounds.height - style.header_height).max(0.0);
@@ -11399,6 +11410,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -11493,6 +11505,7 @@ impl Ui {
         scene.set_fill(node, bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let (_, mask) = self.font.rasterize_text(&title, style.size, None);
         if let Some(lid) = label_node {
             let lx = bounds.x + 10.0;
@@ -11681,6 +11694,7 @@ impl Ui {
         scene.set_fill(node, style.host_bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, true);
         if hint.is_empty() {
             if let Some(lid) = label_node {
                 scene.set_visible(lid, false);
@@ -12106,6 +12120,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         let (_, mask) = self.font.rasterize_text(&description, style.size, None);
         if let Some(lab) = label {
             scene.set_bounds(
@@ -12214,6 +12229,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let n = options.len().max(1);
         let seg_w = ((bounds.width - style.padding * 2.0) / n as f32).max(1.0);
         self.ensure_aux_nodes(scene, host, id, n * 2);
@@ -12229,6 +12245,9 @@ impl Ui {
                 scene.set_fill(bg, if is_sel { style.selected_bg } else { style.bg });
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, is_sel);
+                if is_sel {
+                    self.apply_corner_radius(scene, bg, false);
+                }
             }
             let (_, mask) = self.font.rasterize_text(opt, style.size, None);
             if let Some(&lab) = aux.get(i * 2 + 1) {
@@ -12270,6 +12289,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let n = labels.len().max(1);
         let gaps = style.gap * (n.saturating_sub(1) as f32);
         let inner_w = (bounds.width - style.padding * 2.0 - gaps).max(1.0);
@@ -12294,6 +12314,7 @@ impl Ui {
                 );
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, mask) = self.font.rasterize_text(lab, style.size, None);
             if let Some(&lab_n) = aux.get(i * 2 + 1) {
@@ -12390,6 +12411,9 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        if style.bg.a > 0 {
+            self.apply_corner_radius(scene, host, true);
+        }
         let n = items.len();
         if n == 0 {
             return;
@@ -12418,6 +12442,7 @@ impl Ui {
                         scene.set_fill(mbg, bg_c);
                         scene.set_mask(mbg, None);
                         scene.set_visible(mbg, true);
+                        scene.set_corner_radius(mbg, marker * 0.5);
                     }
                     let num = format!("{}", i + 1);
                     let (_, nm) = self.font.rasterize_text(&num, style.size, None);
@@ -12521,6 +12546,7 @@ impl Ui {
                         scene.set_fill(mbg, bg_c);
                         scene.set_mask(mbg, None);
                         scene.set_visible(mbg, true);
+                        scene.set_corner_radius(mbg, marker * 0.5);
                     }
                     let num = format!("{}", i + 1);
                     let (_, nm) = self.font.rasterize_text(&num, style.size, None);
@@ -12633,6 +12659,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: title, value_line, hint
         self.ensure_aux_nodes(scene, host, id, 3);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -12703,6 +12730,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: status, title, subtitle, primary_bg, primary_lab, secondary_bg, secondary_lab
         self.ensure_aux_nodes(scene, host, id, 7);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -12764,6 +12792,7 @@ impl Ui {
                 scene.set_fill(bg, style.primary_bg);
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, lm) = self.font.rasterize_text(label, style.action_size, None);
             if let Some(&lab) = aux.get(4) {
@@ -12791,6 +12820,7 @@ impl Ui {
                 scene.set_fill(bg, style.secondary_bg);
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, lm) = self.font.rasterize_text(label, style.action_size, None);
             if let Some(&lab) = aux.get(6) {
@@ -12829,6 +12859,7 @@ impl Ui {
         scene.set_fill(host, style.trigger_bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let (_, mask) = self.font.rasterize_text(&trigger, style.size, None);
         scene.set_bounds(
             lab_n,
@@ -12862,6 +12893,7 @@ impl Ui {
         scene.set_fill(host, style.trigger_bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let (_, mask) = self.font.rasterize_text(&trigger, style.size, None);
         scene.set_bounds(
             lab_n,
@@ -13031,6 +13063,7 @@ impl Ui {
         scene.set_fill(aux[0], style.popup_bg);
         scene.set_mask(aux[0], None);
         scene.set_visible(aux[0], true);
+        self.apply_corner_radius(scene, aux[0], true);
         self.node_to_widget.insert(aux[0], id);
 
         let (_, mm) = self.font.rasterize_text(&message, style.size, None);
@@ -13056,6 +13089,7 @@ impl Ui {
         scene.set_fill(aux[2], style.ok_bg);
         scene.set_mask(aux[2], None);
         scene.set_visible(aux[2], true);
+        self.apply_corner_radius(scene, aux[2], false);
         self.node_to_widget.insert(aux[2], id);
         let (_, olm) = self.font.rasterize_text(&ok_label, style.size, None);
         scene.set_bounds(
@@ -13081,6 +13115,7 @@ impl Ui {
         scene.set_fill(aux[4], style.cancel_bg);
         scene.set_mask(aux[4], None);
         scene.set_visible(aux[4], true);
+        self.apply_corner_radius(scene, aux[4], false);
         self.node_to_widget.insert(aux[4], id);
         let (_, clm) = self.font.rasterize_text(&cancel_label, style.size, None);
         scene.set_bounds(
@@ -13414,6 +13449,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: per item [dot, time_lab, content_lab] + optional rail segments
         let n = items.len();
         self.ensure_aux_nodes(scene, host, id, n * 3 + 1);
@@ -13442,6 +13478,7 @@ impl Ui {
                 });
                 scene.set_mask(dot, None);
                 scene.set_visible(dot, true);
+                scene.set_corner_radius(dot, 4.0);
             }
             let (_, tm) = self.font.rasterize_text(&item.time, style.size, None);
             if let Some(&lab) = aux.get(2 + i * 3) {
@@ -13503,6 +13540,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: header_bg, prev, title, next, 7 weekday labels, 42 day cells (bg+lab pairs = 84) — keep lighter:
         // 0 header_bg, 1 prev, 2 title, 3 next, 4..=10 weekday, 11..=52 day labels (42)
         let needed = 4 + 7 + 42;
@@ -13519,6 +13557,7 @@ impl Ui {
             scene.set_fill(hb, style.header_bg);
             scene.set_mask(hb, None);
             scene.set_visible(hb, true);
+            self.apply_corner_radius(scene, hb, false);
         }
         let prev_s = "‹";
         let (_, pm) = self.font.rasterize_text(prev_s, style.size + 2.0, None);
@@ -13653,6 +13692,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         let cap_h = if caption.is_empty() { 0.0 } else { 18.0 };
         let mosaic_h = (bounds.height - cap_h).max(1.0);
         let mosaic_w = bounds.width.max(1.0);
@@ -13768,6 +13808,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
 
         let (browse, clear) = Self::upload_button_rects(bounds, style, path.is_some());
         let path_right = clear
@@ -13801,6 +13842,7 @@ impl Ui {
             scene.set_fill(bb, style.browse_bg);
             scene.set_mask(bb, None);
             scene.set_visible(bb, true);
+            self.apply_corner_radius(scene, bb, false);
             self.node_to_widget.insert(bb, id);
         }
         let (_, bm) = self.font.rasterize_text(&browse_label, style.size, None);
@@ -13824,6 +13866,7 @@ impl Ui {
                 scene.set_fill(cb, style.clear_bg);
                 scene.set_mask(cb, None);
                 scene.set_visible(cb, true);
+                self.apply_corner_radius(scene, cb, false);
                 self.node_to_widget.insert(cb, id);
             }
             let (_, cm) = self.font.rasterize_text(&clear_label, style.size, None);
@@ -13878,6 +13921,7 @@ impl Ui {
             scene.set_fill(host, style.bg);
             scene.set_mask(host, None);
             scene.set_visible(host, true);
+            self.apply_corner_radius(scene, host, false);
         } else {
             scene.set_fill(host, Color::rgba(0, 0, 0, 0));
             scene.set_mask(host, Some(AlphaMask::empty()));
@@ -13897,6 +13941,7 @@ impl Ui {
                 scene.set_fill(n, *c);
                 scene.set_mask(n, None);
                 scene.set_visible(n, true);
+                self.apply_corner_radius(scene, n, false);
                 self.node_to_widget.insert(n, id);
                 if selected_swatch == Some(i) {
                     // draw selection as slightly inset darker — Soft-friendly: raise outline via smaller inset fill is hard;
@@ -13918,6 +13963,7 @@ impl Ui {
             scene.set_fill(hb, style.hex_bg);
             scene.set_mask(hb, None);
             scene.set_visible(hb, true);
+            self.apply_corner_radius(scene, hb, false);
             self.node_to_widget.insert(hb, id);
         }
         let display = if hex.is_empty() { "#------".to_string() } else { hex };
@@ -14046,6 +14092,7 @@ impl Ui {
             scene.set_fill(bg, style.popup_bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, (_, label)) in filtered.iter().enumerate() {
@@ -14057,6 +14104,9 @@ impl Ui {
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
+                if hi {
+                    self.apply_corner_radius(scene, rbg, false);
+                }
                 self.node_to_widget.insert(rbg, id);
             }
             let (_, mask) = self.font.rasterize_text(label, style.size, None);
@@ -14172,6 +14222,7 @@ impl Ui {
         scene.set_fill(aux[0], style.btn_bg);
         scene.set_mask(aux[0], None);
         scene.set_visible(aux[0], true);
+        self.apply_corner_radius(scene, aux[0], false);
         let (_, pm) = self.font.rasterize_text("Prev", style.size, None);
         scene.set_bounds(
             aux[1],
@@ -14207,6 +14258,7 @@ impl Ui {
         scene.set_fill(aux[2], style.btn_bg);
         scene.set_mask(aux[2], None);
         scene.set_visible(aux[2], true);
+        self.apply_corner_radius(scene, aux[2], false);
         let (_, nm) = self.font.rasterize_text("Next", style.size, None);
         scene.set_bounds(
             aux[3],
@@ -14239,6 +14291,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // per panel: header_bg, header_lab, body_lab
         let needed = panels.len() * 3;
         self.ensure_aux_nodes(scene, host, id, needed);
@@ -14256,6 +14309,7 @@ impl Ui {
                 scene.set_fill(hbg, style.header_bg);
                 scene.set_mask(hbg, None);
                 scene.set_visible(hbg, true);
+                self.apply_corner_radius(scene, hbg, false);
             }
             let (_, tm) = self.font.rasterize_text(&title, style.size, None);
             if let Some(&lab) = aux.get(base + 1) {
@@ -14312,6 +14366,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         self.ensure_aux_nodes(scene, host, id, items.len() * 2);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         for (i, item) in items.iter().enumerate() {
@@ -14384,6 +14439,7 @@ impl Ui {
                 scene.set_fill(chrome, style.overlay);
                 scene.set_mask(chrome, None);
                 scene.set_visible(chrome, true);
+                self.apply_corner_radius(scene, chrome, true);
             }
             let (_, mask) = self.font.rasterize_text(style.tip, style.size, None);
             if let Some(lab) = label {
@@ -14429,6 +14485,7 @@ impl Ui {
         scene.set_fill(node, if open { style.focus_border } else { style.bg });
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let (_, mask) = self.font.rasterize_text(&text, style.size, None);
         if let Some(lid) = label_node {
             let lx = bounds.x + style.padding;
@@ -14490,6 +14547,7 @@ impl Ui {
             scene.set_fill(p, style.popup_bg);
             scene.set_mask(p, None);
             scene.set_visible(p, true);
+            self.apply_corner_radius(scene, p, true);
             self.node_to_widget.insert(p, id);
         }
         let header = format!("‹  {:04}-{:02}  ›", draft.year, draft.month);
@@ -14609,6 +14667,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let list_w = style.list_width;
         let btn_w = (style.width - list_w * 2.0 - style.gap * 2.0).max(40.0);
@@ -14686,6 +14745,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14727,6 +14787,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14788,6 +14849,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let header_h = style.row_height;
         // header bg via chrome
@@ -14855,6 +14917,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14929,6 +14992,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         if let Some(chrome) = chrome {
             scene.set_bounds(
@@ -15005,6 +15069,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -15190,6 +15255,9 @@ impl Ui {
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
+                if hi {
+                    self.apply_corner_radius(scene, rbg, false);
+                }
                 self.node_to_widget.insert(rbg, id);
             }
             let (_, mask) = self.font.rasterize_text(&item.label, style.size, None);
@@ -15732,6 +15800,7 @@ impl Ui {
             scene.set_fill(bg, popup_bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, item) in items.iter().enumerate() {
@@ -16361,6 +16430,7 @@ impl Ui {
             scene.set_mask(bg, None);
             scene.set_clip(bg, Some(panel));
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, row) in flats.iter().enumerate() {
@@ -16381,6 +16451,9 @@ impl Ui {
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
+                if hi {
+                    self.apply_corner_radius(scene, rbg, false);
+                }
                 self.node_to_widget.insert(rbg, id);
             }
             let twiddle = if row.has_children {
@@ -16435,6 +16508,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let needed = entries.len() * 2;
         self.ensure_aux_nodes(scene, host, id, needed);
@@ -16455,6 +16529,7 @@ impl Ui {
                 scene.set_fill(chrome, style.selected_bg);
                 scene.set_mask(chrome, None);
                 scene.set_visible(chrome, true);
+                self.apply_corner_radius(scene, chrome, false);
             } else {
                 scene.set_visible(chrome, false);
             }
@@ -16485,6 +16560,9 @@ impl Ui {
                 scene.set_fill(bg, if flash { style.flash_bg } else { style.bg });
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, flash);
+                if flash {
+                    self.apply_corner_radius(scene, bg, false);
+                }
             }
             let ack = if e.acked { "ACK" } else { "NEW" };
             let line = format!(
@@ -16588,6 +16666,7 @@ impl Ui {
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, true);
 
         self.ensure_aux_nodes(scene, node, id, 1);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -16707,6 +16786,7 @@ impl Ui {
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, true);
 
         // 4 aux nodes per tile: title, dial/fill, value/line, caption
         let needed = tiles.len() * 4;
@@ -21630,6 +21710,75 @@ mod tests {
             accent: Some(Color::rgb(0xe0, 0x60, 0x60)),
         });
         assert_eq!(ui.resolve_accent().r, 0xe0);
+    }
+
+    #[test]
+    fn tree_table_hosts_get_theme_panel_radius() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let panel_r = ui.theme().radii.panel;
+        let control_r = ui.theme().radii.control;
+        let mut tree = WidgetId(0);
+        let mut table = WidgetId(0);
+        let mut empty = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 480.0,
+                height: 420.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                tree = col.tree(
+                    vec![TreeNode::leaf(1, "Root")],
+                    TreeStyle {
+                        width: 200.0,
+                        height: 120.0,
+                        ..TreeStyle::default()
+                    },
+                );
+                table = col.table(
+                    vec![TableColumn::new("A", 80.0)],
+                    vec![vec!["1".into()]],
+                    TableStyle {
+                        width: 200.0,
+                        height: 100.0,
+                        ..TableStyle::default()
+                    },
+                );
+                empty = col.empty("nothing", EmptyStyle::default());
+            },
+        );
+        ui.sync(&mut scene);
+        // Select a tree row so chrome gets control radius.
+        let tnode = ui.widgets.get(&tree).unwrap().node.unwrap();
+        let tb = scene.get(tnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, tb.x + 12.0, tb.y + 8.0));
+        ui.sync(&mut scene);
+
+        let tree_host = ui.widgets.get(&tree).unwrap().node.unwrap();
+        assert!(
+            (scene.get(tree_host).unwrap().corner_radius - panel_r).abs() < f32::EPSILON,
+            "tree host should use panel radius"
+        );
+        if let Some(chrome) = ui.widgets.get(&tree).unwrap().chrome_node {
+            assert!(
+                (scene.get(chrome).unwrap().corner_radius - control_r).abs() < f32::EPSILON,
+                "tree selection chrome should use control radius"
+            );
+        } else {
+            panic!("expected tree chrome_node");
+        }
+
+        let table_host = ui.widgets.get(&table).unwrap().node.unwrap();
+        assert!(
+            (scene.get(table_host).unwrap().corner_radius - panel_r).abs() < f32::EPSILON,
+            "table host should use panel radius"
+        );
+        let empty_host = ui.widgets.get(&empty).unwrap().node.unwrap();
+        assert!(
+            (scene.get(empty_host).unwrap().corner_radius - panel_r).abs() < f32::EPSILON,
+            "empty host should use panel radius"
+        );
     }
 
     #[test]
