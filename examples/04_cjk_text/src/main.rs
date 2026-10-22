@@ -56,6 +56,7 @@ impl Demo {
         });
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut title = WidgetId(0);
         let mut mixed = WidgetId(0);
         let mut status = WidgetId(0);
@@ -71,7 +72,7 @@ impl Demo {
                 padding: 20.0,
                 gap: 12.0,
                 background: Some(Color::rgb(0x2c, 0x2c, 0x2e)),
-                            ..ColumnStyle::default()
+                            ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 title = col.text_styled(

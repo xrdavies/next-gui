@@ -144,6 +144,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font.clone());
+        let theme = *ui.theme();
         let mut title = WidgetId(0);
         let mut hint = WidgetId(0);
         let mut status = WidgetId(0);
@@ -159,7 +160,7 @@ impl Demo {
                 y: 0.0,
                 width: width as f32,
                 height: 40.0,
-                ..ToolbarStyle::default()
+                ..ToolbarStyle::from_theme(&theme)
             },
             |tb| {
                 tb.text_styled(
@@ -194,7 +195,7 @@ impl Demo {
                     PanelStyle {
                         width: (left_w - 24.0).max(300.0),
                         height: 180.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         retained_count_label =
@@ -207,7 +208,7 @@ impl Demo {
                                 gap: 10.0,
                                 padding: 0.0,
                                 background: None,
-                                ..RowStyle::default()
+                                ..RowStyle::from_theme(&theme)
                             },
                             |row| {
                                 btn_retained = row.button("Retained +1");
@@ -231,7 +232,7 @@ impl Demo {
                 y: height as f32 - 28.0,
                 width: width as f32,
                 height: 28.0,
-                ..StatusBarStyle::default()
+                ..StatusBarStyle::from_theme(&theme)
             },
             |sb| {
                 status = sb.text_styled("…", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

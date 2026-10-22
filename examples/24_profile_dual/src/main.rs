@@ -145,6 +145,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut title = WidgetId(0);
         let mut budget = WidgetId(0);
         let mut backend_label = WidgetId(0);
@@ -181,7 +182,7 @@ impl Demo {
                     PanelStyle {
                         width: (width as f32 - 64.0).max(360.0),
                         height: 200.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         budget = p.text_styled("…", Color::rgb(0xe0, 0xe4, 0xec), 14.0);
@@ -217,7 +218,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: (width as f32 - 64.0).max(360.0),
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("…", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

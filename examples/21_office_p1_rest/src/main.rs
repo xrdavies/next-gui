@@ -158,6 +158,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut open_btn = WidgetId(0);
         let mut toast_btn = WidgetId(0);
         let mut vlist = WidgetId(0);
@@ -182,13 +183,13 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
-                ..ColumnStyle::default()
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.text_styled(
@@ -206,7 +207,7 @@ impl Demo {
                     ["Plant North", "Bay-03", "Meter-12"],
                     BreadcrumbStyle {
                         width: shell_w - 16.0,
-                        ..BreadcrumbStyle::default()
+                        ..BreadcrumbStyle::from_theme(&theme)
                     },
                 );
 
@@ -215,7 +216,7 @@ impl Demo {
                     0,
                     SegmentedStyle {
                         width: 280.0,
-                        ..SegmentedStyle::default()
+                        ..SegmentedStyle::from_theme(&theme)
                     },
                 );
 
@@ -225,7 +226,7 @@ impl Demo {
                         height: 150.0,
                         gap: 10.0,
                         cross_align: CrossAlign::Start,
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |r| {
                         r.panel(
@@ -233,7 +234,7 @@ impl Demo {
                             PanelStyle {
                                 width: 280.0,
                                 height: 148.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 vlist = p.virtual_list(
@@ -241,7 +242,7 @@ impl Demo {
                                     ListStyle {
                                         width: 256.0,
                                         height: 110.0,
-                                        ..ListStyle::default()
+                                        ..ListStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -251,7 +252,7 @@ impl Demo {
                             PanelStyle {
                                 width: 320.0,
                                 height: 148.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 p.virtual_table(
@@ -264,7 +265,7 @@ impl Demo {
                                     TableStyle {
                                         width: 292.0,
                                         height: 110.0,
-                                        ..TableStyle::default()
+                                        ..TableStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -274,7 +275,7 @@ impl Demo {
                             PanelStyle {
                                 width: 300.0,
                                 height: 148.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 p.text_area(
@@ -283,10 +284,10 @@ impl Demo {
                                     TextAreaStyle {
                                         width: 270.0,
                                         height: 64.0,
-                                        ..TextAreaStyle::default()
+                                        ..TextAreaStyle::from_theme(&theme)
                                     },
                                 );
-                                p.input_number(36.5, 0.0, 100.0, 0.5, InputNumberStyle::default());
+                                p.input_number(36.5, 0.0, 100.0, 0.5, InputNumberStyle::from_theme(&theme));
                             },
                         );
                     },
@@ -297,7 +298,7 @@ impl Demo {
                         width: shell_w - 16.0,
                         height: 170.0,
                         gap: 10.0,
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |r| {
                         r.card(
@@ -306,7 +307,7 @@ impl Demo {
                             CardStyle {
                                 width: 220.0,
                                 height: 120.0,
-                                ..CardStyle::default()
+                                ..CardStyle::from_theme(&theme)
                             },
                         );
                         r.empty(
@@ -314,7 +315,7 @@ impl Demo {
                             EmptyStyle {
                                 width: 160.0,
                                 height: 120.0,
-                                ..EmptyStyle::default()
+                                ..EmptyStyle::from_theme(&theme)
                             },
                         );
                         r.collapse(
@@ -324,7 +325,7 @@ impl Demo {
                             ],
                             CollapseStyle {
                                 width: 220.0,
-                                ..CollapseStyle::default()
+                                ..CollapseStyle::from_theme(&theme)
                             },
                         );
                         r.descriptions(
@@ -335,7 +336,7 @@ impl Demo {
                             ],
                             DescriptionsStyle {
                                 width: 220.0,
-                                ..DescriptionsStyle::default()
+                                ..DescriptionsStyle::from_theme(&theme)
                             },
                         );
                         r.spin(
@@ -343,7 +344,7 @@ impl Demo {
                             SpinStyle {
                                 width: 140.0,
                                 height: 120.0,
-                                ..SpinStyle::default()
+                                ..SpinStyle::from_theme(&theme)
                             },
                             |s| {
                                 s.text_styled("Panel", Color::rgb(0xa0, 0xa8, 0xb4), 12.0);
@@ -358,7 +359,7 @@ impl Demo {
                     8000,
                     PaginationStyle {
                         width: 360.0,
-                        ..PaginationStyle::default()
+                        ..PaginationStyle::from_theme(&theme)
                     },
                 );
 
@@ -371,7 +372,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Soft", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);
@@ -392,7 +393,7 @@ impl Demo {
             DrawerStyle {
                 placement: DrawerPlacement::Right,
                 width: 340.0,
-                ..DrawerStyle::default()
+                ..DrawerStyle::from_theme(&theme)
             },
         );
 

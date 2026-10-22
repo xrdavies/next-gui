@@ -165,6 +165,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut chart = WidgetId(0);
         let mut gauge = WidgetId(0);
         let mut trend = WidgetId(0);
@@ -185,7 +186,7 @@ impl Demo {
                 GaugeStyle {
                     size: 110.0,
                     dial_fg: Color::rgb(0x3b, 0xc4, 0x8c),
-                    ..GaugeStyle::default()
+                    ..GaugeStyle::from_theme(&theme)
                 },
             ),
             ChartTile::gauge(
@@ -198,7 +199,7 @@ impl Demo {
                 GaugeStyle {
                     size: 110.0,
                     dial_fg: Color::rgb(0xf0, 0xa0, 0x4a),
-                    ..GaugeStyle::default()
+                    ..GaugeStyle::from_theme(&theme)
                 },
             ),
             ChartTile::trend(
@@ -209,7 +210,7 @@ impl Demo {
                     height: 100.0,
                     line: Color::rgb(0x4a, 0xc0, 0xf0),
                     fill: Color::rgb(0x1a, 0x40, 0x55),
-                    ..TrendStyle::default()
+                    ..TrendStyle::from_theme(&theme)
                 },
             ),
             ChartTile::trend(
@@ -220,7 +221,7 @@ impl Demo {
                     height: 100.0,
                     line: Color::rgb(0xe0, 0x70, 0xb0),
                     fill: Color::rgb(0x40, 0x1a, 0x35),
-                    ..TrendStyle::default()
+                    ..TrendStyle::from_theme(&theme)
                 },
             ),
         ];
@@ -234,13 +235,13 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
-                ..ColumnStyle::default()
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.text_styled(
@@ -256,7 +257,7 @@ impl Demo {
                     PanelStyle {
                         width: shell_w - 16.0,
                         height: 380.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         chart = p.chart(
@@ -265,7 +266,7 @@ impl Demo {
                                 width: shell_w - 48.0,
                                 height: 330.0,
                                 columns: 2,
-                                ..ChartStyle::default()
+                                ..ChartStyle::from_theme(&theme)
                             },
                         );
                     },
@@ -279,7 +280,7 @@ impl Demo {
                         padding: 0.0,
                         cross_align: CrossAlign::Start,
                         background: None,
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |r| {
                         r.panel(
@@ -287,7 +288,7 @@ impl Demo {
                             PanelStyle {
                                 width: 200.0,
                                 height: 190.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 gauge = p.gauge(
@@ -299,7 +300,7 @@ impl Demo {
                                     GaugeStyle {
                                         size: 120.0,
                                         dial_fg: Color::rgb(0x6a, 0xb0, 0xf0),
-                                        ..GaugeStyle::default()
+                                        ..GaugeStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -309,7 +310,7 @@ impl Demo {
                             PanelStyle {
                                 width: (shell_w - 240.0).max(320.0),
                                 height: 190.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 trend = p.trend(
@@ -317,7 +318,7 @@ impl Demo {
                                     TrendStyle {
                                         width: (shell_w - 280.0).max(280.0),
                                         height: 130.0,
-                                        ..TrendStyle::default()
+                                        ..TrendStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -328,7 +329,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Soft", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

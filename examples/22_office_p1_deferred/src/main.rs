@@ -156,6 +156,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut datetime = WidgetId(0);
         let mut transfer = WidgetId(0);
         let mut props = WidgetId(0);
@@ -184,13 +185,13 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
-                ..ColumnStyle::default()
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.text_styled(
@@ -207,7 +208,7 @@ impl Demo {
                         height: 300.0,
                         gap: 10.0,
                         cross_align: CrossAlign::Start,
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |r| {
                         r.panel(
@@ -215,7 +216,7 @@ impl Demo {
                             PanelStyle {
                                 width: 360.0,
                                 height: 290.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 p.text_styled("Log from", Color::rgb(0x90, 0x98, 0xa4), 12.0);
@@ -223,7 +224,7 @@ impl Demo {
                                     DateTimeValue::new(2026, 10, 18, 8, 30),
                                     DateTimeStyle {
                                         width: 220.0,
-                                        ..DateTimeStyle::default()
+                                        ..DateTimeStyle::from_theme(&theme)
                                     },
                                 );
                                 p.spacer(4.0, 8.0);
@@ -250,7 +251,7 @@ impl Demo {
                                     PropertyGridStyle {
                                         width: 320.0,
                                         height: 160.0,
-                                        ..PropertyGridStyle::default()
+                                        ..PropertyGridStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -260,7 +261,7 @@ impl Demo {
                             PanelStyle {
                                 width: 560.0,
                                 height: 290.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 transfer = p.transfer(
@@ -269,7 +270,7 @@ impl Demo {
                                     TransferStyle {
                                         width: 520.0,
                                         height: 240.0,
-                                        ..TransferStyle::default()
+                                        ..TransferStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -282,7 +283,7 @@ impl Demo {
                     PanelStyle {
                         width: shell_w - 16.0,
                         height: 320.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         tree_table = p.tree_table(
@@ -329,7 +330,7 @@ impl Demo {
                                 width: shell_w - 48.0,
                                 height: 260.0,
                                 tree_col_width: 180.0,
-                                ..TreeTableStyle::default()
+                                ..TreeTableStyle::from_theme(&theme)
                             },
                         );
                     },
@@ -344,7 +345,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Soft", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);
