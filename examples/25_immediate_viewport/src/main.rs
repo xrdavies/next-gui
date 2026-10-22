@@ -180,7 +180,7 @@ impl Demo {
                 padding: 12.0,
                 gap: 10.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x22, 0x22, 0x26)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 title = col.text_styled("Retained shell", Color::rgb(0xff, 0xff, 0xff), 20.0);
@@ -245,7 +245,10 @@ impl Demo {
         let mut viewport = ImmediateViewport::new(
             bounds,
             ImmediateViewportStyle {
-                background: Color::rgb(0x1e, 0x24, 0x2c),
+                background: theme.colors.panel,
+                title_bg: theme.colors.title_bar,
+                title_fg: theme.colors.text_primary,
+                title_size: theme.typography.button_sm,
                 ..ImmediateViewportStyle::default()
             },
         );

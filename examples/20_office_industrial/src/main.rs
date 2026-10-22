@@ -190,7 +190,7 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x20, 0x20, 0x24)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(

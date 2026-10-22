@@ -72,7 +72,7 @@ Density：`UiDensity::spacing_scale` / `font_scale`。
 
 ## 示例迁移
 
-旧 Office / 小 demo（e02、e04、e05、e10–e15、e20–e26）已从 `XxxStyle::default()` 改为 `XxxStyle::from_theme(&theme)`（构建前 `let theme = *ui.theme()`），保留字段级覆盖。`e27_theme_tokens` 仍是 `ui.*_style()` 参考。`ImmediateViewportStyle` 无 `from_theme`，e25 仍用 `::default()`。库内 `XxxStyle::default()` 语义未改（历史硬编码）。
+旧 Office / 小 demo（e02、e04、e05、e10–e15、e20–e26）已从 `XxxStyle::default()` 改为 `XxxStyle::from_theme(&theme)`（构建前 `let theme = *ui.theme()`），保留字段级覆盖。`e27_theme_tokens` 仍是 `ui.*_style()` 参考。`ImmediateViewportStyle` 仍无 `from_theme`（`next-gui-immediate` 不依赖 Theme，避免与 ui 循环依赖）；e25 在示例里把 `background` / `title_bg` / `title_fg` / `title_size` 从 `theme.colors` / `theme.typography` 映射上去，其余字段仍 `..Default::default()`。根 Column/Row 不再整袋硬编码色，统一 `..XxxStyle::from_theme(&theme)`。库内 `XxxStyle::default()` 语义未改（历史硬编码）。
 
 ## 校验
 
