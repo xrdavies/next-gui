@@ -163,7 +163,7 @@ impl Demo {
                 padding: 12.0,
                 gap: 10.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x22, 0x22, 0x26)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 title = col.text_styled(
@@ -200,14 +200,12 @@ impl Demo {
 
                 col.row(
                     RowStyle {
-                        x: 0.0,
-                        y: 0.0,
                         width: (width as f32 - 64.0).max(360.0),
                         height: 40.0,
                         gap: 10.0,
                         padding: 0.0,
-                        cross_align: CrossAlign::Center,
-                        background: None,
+                        background: None, // transparent strip over column surface
+                        ..RowStyle::from_theme(&theme)
                     },
                     |row| {
                         btn_toggle = row.button("Toggle profile");

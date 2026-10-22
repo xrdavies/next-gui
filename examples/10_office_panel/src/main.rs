@@ -129,7 +129,7 @@ impl Demo {
                 padding: 14.0,
                 gap: 12.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x24, 0x24, 0x28)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.text_styled(
