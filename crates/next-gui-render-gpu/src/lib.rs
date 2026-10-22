@@ -3,8 +3,8 @@
 //! Consumes the same [`DrawCommand`] stream as `next-gui-render-soft` and draws into an
 //! off-screen retained texture (Rgba8Unorm).
 //!
-//! [`DrawCommand::FillRoundedRect`] is tessellated into opaque triangles (hard edges).
-//! Soft keeps ~1px coverage AA; GPU MVP does not.
+//! [`DrawCommand::FillRoundedRect`] uses an SDF fragment shader with ~1px coverage AA
+//! (alpha-blended), matching Soft's soft edges. Sharp [`DrawCommand::FillRect`] stays opaque.
 //!
 //! Present paths ([`GpuPresentPath`]):
 //! - [`GpuPresentPath::ReadbackSoftbuffer`] — CPU readback → `platform.present` (softbuffer).
@@ -38,6 +38,46 @@ fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>) -> VsOut 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return in.color;
+}
+"#;
+
+const ROUNDED_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) local: vec2<f32>,
+    @location(2) boxp: vec4<f32>,
+}
+
+@vertex
+fn vs_main(
+    @location(0) pos: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) local: vec2<f32>,
+    @location(3) boxp: vec4<f32>,
+) -> VsOut {
+    var o: VsOut;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.local = local;
+    o.boxp = boxp;
+    return o;
+}
+
+fn sd_round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
+    let b = max(half - vec2<f32>(r, r), vec2<f32>(0.0));
+    let q = abs(p) - b;
+    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let half = in.boxp.xy;
+    let r = in.boxp.z;
+    let sd = sd_round_box(in.local, half, r);
+    // Soft-like ~1px coverage AA along the signed distance field.
+    let coverage = clamp(0.5 - sd, 0.0, 1.0);
+    return vec4<f32>(in.color.rgb, in.color.a * coverage);
 }
 "#;
 
@@ -114,6 +154,17 @@ struct SolidVertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct RoundedVertex {
+    pos: [f32; 2],
+    color: [f32; 4],
+    /// Pixel-space position relative to the rect center (interpolated).
+    local: [f32; 2],
+    /// half_w, half_h, radius, _pad
+    boxp: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct BlitVertex {
     pos: [f32; 2],
     uv: [f32; 2],
@@ -178,6 +229,7 @@ pub struct GpuRenderer {
     pixels: Vec<u32>,
     target: Option<TargetTextures>,
     solid_pipeline: wgpu::RenderPipeline,
+    rounded_pipeline: wgpu::RenderPipeline,
     blit_pipeline: wgpu::RenderPipeline,
     blit_bind_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
@@ -264,6 +316,10 @@ impl GpuRenderer {
             label: Some("solid"),
             source: wgpu::ShaderSource::Wgsl(SOLID_SHADER.into()),
         });
+        let rounded_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rounded"),
+            source: wgpu::ShaderSource::Wgsl(ROUNDED_SHADER.into()),
+        });
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("blit"),
             source: wgpu::ShaderSource::Wgsl(BLIT_SHADER.into()),
@@ -325,6 +381,44 @@ impl GpuRenderer {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
                     blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let rounded_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rounded-pipeline"),
+            layout: Some(&solid_layout),
+            vertex: wgpu::VertexState {
+                module: &rounded_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<RoundedVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2,
+                        1 => Float32x4,
+                        2 => Float32x2,
+                        3 => Float32x4
+                    ],
+                }],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &rounded_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -523,6 +617,7 @@ impl GpuRenderer {
             pixels: Vec::new(),
             target: None,
             solid_pipeline,
+            rounded_pipeline,
             blit_pipeline,
             blit_bind_layout,
             blit_sampler,
@@ -714,136 +809,46 @@ impl GpuRenderer {
         ]
     }
 
-    /// Tessellate a rounded rect into opaque triangles (hard edges; Soft keeps AA).
+    /// Axis-aligned quad for SDF rounded-rect AA (fragment coverage ~1px).
     ///
-    /// Uses a center body + side strips + 4 corner fans. No fragment AA — good enough
-    /// for MVP GPU chrome; Soft path remains the reference for soft edges.
-    fn solid_rounded_quad(
+    /// Expands the AABB by 0.5px so the fringe has fragments. Radius < 0.5 falls
+    /// back to [`Self::solid_quad`] at the call site.
+    fn rounded_aa_quad(
         rect: &Rect,
         color: Color,
         radius: f32,
         fw: f32,
         fh: f32,
-    ) -> Vec<SolidVertex> {
+    ) -> [RoundedVertex; 6] {
         let r = radius
             .min(rect.width * 0.5)
             .min(rect.height * 0.5)
             .max(0.0);
-        if r < 0.5 {
-            return Self::solid_quad(rect, color, fw, fh).to_vec();
-        }
         let c = Self::color_f32(color);
-        let x0 = rect.x;
-        let y0 = rect.y;
-        let x1 = rect.x + rect.width;
-        let y1 = rect.y + rect.height;
-        let mut verts: Vec<SolidVertex> = Vec::with_capacity(6 * 5 + 4 * 8 * 3);
-        let push_tri = |verts: &mut Vec<SolidVertex>, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32| {
-            verts.push(SolidVertex {
-                pos: Self::to_ndc(ax, ay, fw, fh),
-                color: c,
-            });
-            verts.push(SolidVertex {
-                pos: Self::to_ndc(bx, by, fw, fh),
-                color: c,
-            });
-            verts.push(SolidVertex {
-                pos: Self::to_ndc(cx, cy, fw, fh),
-                color: c,
-            });
+        let cx = rect.x + rect.width * 0.5;
+        let cy = rect.y + rect.height * 0.5;
+        let hw = rect.width * 0.5;
+        let hh = rect.height * 0.5;
+        let boxp = [hw, hh, r, 0.0];
+        let pad = 0.5;
+        let x0 = rect.x - pad;
+        let y0 = rect.y - pad;
+        let x1 = rect.x + rect.width + pad;
+        let y1 = rect.y + rect.height + pad;
+        let mk = |x: f32, y: f32| RoundedVertex {
+            pos: Self::to_ndc(x, y, fw, fh),
+            color: c,
+            local: [x - cx, y - cy],
+            boxp,
         };
-        let push_quad = |verts: &mut Vec<SolidVertex>,
-                         ax: f32,
-                         ay: f32,
-                         bx: f32,
-                         by: f32,
-                         cx: f32,
-                         cy: f32,
-                         dx: f32,
-                         dy: f32| {
-            push_tri(verts, ax, ay, bx, by, cx, cy);
-            push_tri(verts, bx, by, dx, dy, cx, cy);
-        };
-        // Center rectangle (between corner centers).
-        push_quad(
-            &mut verts,
-            x0 + r,
-            y0 + r,
-            x1 - r,
-            y0 + r,
-            x0 + r,
-            y1 - r,
-            x1 - r,
-            y1 - r,
-        );
-        // Top / bottom strips (excluding corners).
-        push_quad(
-            &mut verts,
-            x0 + r,
-            y0,
-            x1 - r,
-            y0,
-            x0 + r,
-            y0 + r,
-            x1 - r,
-            y0 + r,
-        );
-        push_quad(
-            &mut verts,
-            x0 + r,
-            y1 - r,
-            x1 - r,
-            y1 - r,
-            x0 + r,
-            y1,
-            x1 - r,
-            y1,
-        );
-        // Left / right strips.
-        push_quad(
-            &mut verts,
-            x0,
-            y0 + r,
-            x0 + r,
-            y0 + r,
-            x0,
-            y1 - r,
-            x0 + r,
-            y1 - r,
-        );
-        push_quad(
-            &mut verts,
-            x1 - r,
-            y0 + r,
-            x1,
-            y0 + r,
-            x1 - r,
-            y1 - r,
-            x1,
-            y1 - r,
-        );
-        // Corner fans (SEGS segments each). y grows down: py = cy - r*sin(theta).
-        const SEGS: usize = 8;
-        let corners = [
-            (x0 + r, y0 + r, std::f32::consts::PI, std::f32::consts::FRAC_PI_2),
-            (x1 - r, y0 + r, std::f32::consts::FRAC_PI_2, 0.0),
-            (x1 - r, y1 - r, 0.0, -std::f32::consts::FRAC_PI_2),
-            (x0 + r, y1 - r, -std::f32::consts::FRAC_PI_2, -std::f32::consts::PI),
-        ];
-        for (cx, cy, a0, a1) in corners {
-            for i in 0..SEGS {
-                let t0 = i as f32 / SEGS as f32;
-                let t1 = (i + 1) as f32 / SEGS as f32;
-                let ang0 = a0 + (a1 - a0) * t0;
-                let ang1 = a0 + (a1 - a0) * t1;
-                let px0 = cx + r * ang0.cos();
-                let py0 = cy - r * ang0.sin();
-                let px1 = cx + r * ang1.cos();
-                let py1 = cy - r * ang1.sin();
-                push_tri(&mut verts, cx, cy, px0, py0, px1, py1);
-            }
-        }
-        verts
+        [
+            mk(x0, y0),
+            mk(x1, y0),
+            mk(x0, y1),
+            mk(x1, y0),
+            mk(x1, y1),
+            mk(x0, y1),
+        ]
     }
 
     fn blit_quad(
@@ -1216,22 +1221,38 @@ impl Renderer for GpuRenderer {
                             if !rect.intersects(d) {
                                 continue;
                             }
-                            let verts = Self::solid_rounded_quad(rect, *color, *radius, fw, fh);
-                            let count = verts.len() as u32;
-                            if count == 0 {
-                                continue;
+                            let r = (*radius)
+                                .min(rect.width * 0.5)
+                                .min(rect.height * 0.5)
+                                .max(0.0);
+                            if r < 0.5 {
+                                let verts = Self::solid_quad(rect, *color, fw, fh);
+                                let vb = self.device.create_buffer_init(
+                                    &wgpu::util::BufferInitDescriptor {
+                                        label: Some("fill-round-sharp-vb"),
+                                        contents: bytemuck::cast_slice(&verts),
+                                        usage: wgpu::BufferUsages::VERTEX,
+                                    },
+                                );
+                                pass.set_pipeline(&self.solid_pipeline);
+                                pass.set_vertex_buffer(0, vb.slice(..));
+                                pass.draw(0..6, 0..1);
+                                solid_bufs.push(vb);
+                            } else {
+                                let verts =
+                                    Self::rounded_aa_quad(rect, *color, *radius, fw, fh);
+                                let vb = self.device.create_buffer_init(
+                                    &wgpu::util::BufferInitDescriptor {
+                                        label: Some("fill-round-aa-vb"),
+                                        contents: bytemuck::cast_slice(&verts),
+                                        usage: wgpu::BufferUsages::VERTEX,
+                                    },
+                                );
+                                pass.set_pipeline(&self.rounded_pipeline);
+                                pass.set_vertex_buffer(0, vb.slice(..));
+                                pass.draw(0..6, 0..1);
+                                solid_bufs.push(vb);
                             }
-                            let vb = self.device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
-                                    label: Some("fill-round-vb"),
-                                    contents: bytemuck::cast_slice(&verts),
-                                    usage: wgpu::BufferUsages::VERTEX,
-                                },
-                            );
-                            pass.set_pipeline(&self.solid_pipeline);
-                            pass.set_vertex_buffer(0, vb.slice(..));
-                            pass.draw(0..count, 0..1);
-                            solid_bufs.push(vb);
                         }
                         DrawCommand::BlitAlpha {
                             x,
@@ -1370,8 +1391,43 @@ mod tests {
         let center = at(14, 14);
         let cr = (center >> 16) & 0xff;
         assert!(cr > 200, "expected red center, got {center:#x}");
-        // Far outside the corner circle stays clear (tessellated fan).
+        // Far outside the corner circle stays clear (SDF coverage 0).
         let corner = at(4, 4);
         assert_eq!(corner, 0, "expected clear far corner, got {corner:#x}");
+    }
+
+    #[test]
+    fn rounded_rect_aa_fringe_or_skip() {
+        let Ok(mut gpu) = GpuRenderer::try_new(32, 32, Color::rgb(0, 0, 0)) else {
+            return;
+        };
+        // Corner center at (12,12), radius 8 → arc near (12-8, 12) = (4, 12).
+        // Pixel (5, 5) sits in the AA band of the TL arc for r=8.
+        let cmds = [DrawCommand::FillRoundedRect {
+            rect: Rect::new(4.0, 4.0, 20.0, 20.0),
+            color: Color::rgb(255, 0, 0),
+            radius: 8.0,
+        }];
+        let mut dirty = DirtyRegion::new();
+        dirty.add(Rect::new(0.0, 0.0, 32.0, 32.0));
+        gpu.render(&cmds, &dirty);
+        let (px, w, _) = gpu.frame_pixels().unwrap();
+        let at = |x: u32, y: u32| px[(y * w + x) as usize];
+        // On the geometric corner of the AABB: should stay clear / near-zero.
+        assert_eq!(at(4, 4), 0, "AABB corner must be outside");
+        // A sample on the arc fringe: distance from (12,12) to (5.5,5.5) ≈ 9.19;
+        // with r=8, sd≈1.19 → coverage ≈ 0 → also near clear.
+        // Pick a pixel closer to the arc: (12 - 8 + 0, 12) = (4, 12) is on the
+        // left edge midpoint of the corner circle — still on AABB edge.
+        // (6, 6): dist to (12,12) = √72 ≈ 8.49 → sd≈0.49 → coverage ≈ 0.01..0.5
+        let fringe = at(6, 6);
+        let fr = (fringe >> 16) & 0xff;
+        // Soft AA should produce a partial red, not full 255 and not 0.
+        assert!(
+            fr > 0 && fr < 250,
+            "expected AA fringe red channel in (0,250), got {fringe:#x} (r={fr})"
+        );
+        let body = at(14, 14);
+        assert!(((body >> 16) & 0xff) > 200, "body should be opaque red");
     }
 }
