@@ -1,6 +1,6 @@
 # Theme tokens
 
-> **状态：全 Style 覆盖 + `.ngui` theme / token 名 + Soft/GPU 圆角扩展（分支 `feat/theme-tokens`）**。不是 CSS、不是 Qt Style 引擎、不是 ImGui 全局 StyleVar。
+> **状态：全 Style 覆盖 + `.ngui` theme / token 名 + Soft/GPU 圆角（含 GPU SDF ~1px AA）+ 示例已迁到 `from_theme`（分支 `feat/theme-tokens`）**。不是 CSS、不是 Qt Style 引擎、不是 ImGui 全局 StyleVar。
 > 产品路线：retained 组件 + **Theme tokens** + 渐进加强 `.ngui`。
 > 示例：`cargo run -p e27_theme_tokens`（`NEXT_GUI_THEME_QA=1` 导出 PPM）。
 
@@ -67,7 +67,12 @@ Density：`UiDensity::spacing_scale` / `font_scale`。
 - **Radii**：Soft 经 `Ui::apply_corner_radius` 把 `ThemeRadii`（`control` / `panel`）接到有填充 chrome 的控件上：
   - **已覆盖（host / popup / 选中行等）**：Button、TextInput、Panel、Card、Modal·Drawer、Tag、Alert、Select·TreeSelect（字段+popup）、Autocomplete、Checkbox、Switch、Tooltip、Popover·Popconfirm（trigger+popup）、List、Badge、Progress、Tabs、Toolbar·StatusBar、TextArea、InputNumber、Notification；以及 Tree / Table / TreeTable / VirtualTable（同 Table）、Menu·ContextMenu（标题/host + popup）、Empty、Collapse、Descriptions、Segmented、ButtonGroup、Pagination 按钮、Statistic、Result、Calendar、Timeline、Transfer、PropertyGrid、AlarmList、Form·Grid、Upload、ColorPicker、DateTime、Image、Trend / Chart 主机、Spin 遮罩。Steps 标记与 Timeline 点为几何圆（`set_corner_radius(半宽)`）；Radio / Switch thumb 同理。
   - **有意仍直角 / 不套 radii**：Link 下划线、Breadcrumb 纯文字、Steps 连接线与 Timeline 轨道（发丝线）、Table / TreeTable / PropertyGrid **表头条**（贴在已圆角 host 顶边，四角全圆会错）、Gauge 表盘与 Trend 折线（alpha mask 几何）、Image 马赛克单元格。圆角数值只在 Theme，不在 `.ngui` 单独配 `radius`。
-  - GPU 对 `FillRoundedRect` 做扇区三角剖分（硬边，无 Soft 那种 ~1px AA）。
+  - GPU `FillRoundedRect`：SDF fragment + alpha blend，~1px coverage AA（与 Soft 同量级）；`radius < 0.5` 仍走不透明直角填充。`FillRect` / `BlitAlpha` 路径不变。
+  - **`.ngui` 写 `radius` / `radii`：刻意延后，非当前重点**（圆角只在 Theme `ThemeRadii`）。
+
+## 示例迁移
+
+旧 Office / 小 demo（e02、e04、e05、e10–e15、e20–e26）已从 `XxxStyle::default()` 改为 `XxxStyle::from_theme(&theme)`（构建前 `let theme = *ui.theme()`），保留字段级覆盖。`e27_theme_tokens` 仍是 `ui.*_style()` 参考。`ImmediateViewportStyle` 无 `from_theme`，e25 仍用 `::default()`。库内 `XxxStyle::default()` 语义未改（历史硬编码）。
 
 ## 校验
 
