@@ -23,7 +23,7 @@ use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_ui::{
-    AutocompleteStyle, ButtonGroupStyle, CalendarStyle, ColorPickerStyle, ColumnStyle, GridStyle,
+    AutocompleteStyle, ButtonGroupStyle, CalendarStyle, ColorPickerStyle, GridStyle,
     ImageStyle, LinkStyle, PanelStyle, PopconfirmAction, PopconfirmStyle, PopoverStyle,
     ResultAction, ResultStatus, ResultStyle, SpaceDirection, SpaceStyle, StatisticStyle, StepItem,
     StepsStyle, StatusBarStyle, TimelineItem, TimelineStyle, ToolbarStyle, Ui, UiConfig, UiDensity,
@@ -164,6 +164,7 @@ struct Demo {
 impl Demo {
     fn new(width: u32, height: u32, window_backend: PresentBackend) -> Self {
         let mut ui = Ui::new();
+        let theme = *ui.theme();
         let mut status = WidgetId(0);
         let mut group = WidgetId(0);
         let mut link_docs = WidgetId(0);
@@ -188,7 +189,7 @@ impl Demo {
             ToolbarStyle {
                 width: width as f32 - 16.0,
                 height: 40.0,
-                ..ToolbarStyle::default()
+                ..ToolbarStyle::from_theme(&theme)
             },
             |bar| {
                 bar.text("Office P2a–P2e");
@@ -208,14 +209,14 @@ impl Demo {
                 y: 56.0,
                 width: width as f32 - 32.0,
                 height: height as f32 - 100.0,
-                ..PanelStyle::default()
+                ..PanelStyle::from_theme(&theme)
             },
             |panel| {
                 panel.text("P2a — button_group / link / space");
                 group = panel.button_group(
                     ["Day", "Week", "Month"],
                     Some(0),
-                    ButtonGroupStyle::default(),
+                    ButtonGroupStyle::from_theme(&theme),
                 );
                 panel.spacer(1.0, 8.0);
                 panel.space(
@@ -225,7 +226,7 @@ impl Demo {
                         width: width as f32 - 64.0,
                         height: 36.0,
                         cross_align: CrossAlign::Center,
-                        ..SpaceStyle::default()
+                        ..SpaceStyle::from_theme(&theme)
                     },
                     |row| {
                         link_docs = row.link("Open docs");
@@ -234,7 +235,7 @@ impl Demo {
                             LinkStyle {
                                 underline: true,
                                 fg: Color::rgb(0x90, 0xd0, 0xa0),
-                                ..LinkStyle::default()
+                                ..LinkStyle::from_theme(&theme)
                             },
                         );
                         row.button("Solid CTA");
@@ -253,7 +254,7 @@ impl Demo {
                         width: width as f32 - 64.0,
                         height: 64.0,
                         clickable: true,
-                        ..StepsStyle::default()
+                        ..StepsStyle::from_theme(&theme)
                     },
                 );
                 panel.spacer(1.0, 12.0);
@@ -265,7 +266,7 @@ impl Demo {
                         width: width as f32 - 64.0,
                         height: 96.0,
                         cross_align: CrossAlign::Start,
-                        ..SpaceStyle::default()
+                        ..SpaceStyle::from_theme(&theme)
                     },
                     |row| {
                         row.statistic_full(
@@ -277,7 +278,7 @@ impl Demo {
                             StatisticStyle {
                                 width: 140.0,
                                 height: 88.0,
-                                ..StatisticStyle::default()
+                                ..StatisticStyle::from_theme(&theme)
                             },
                         );
                         row.statistic_full(
@@ -289,7 +290,7 @@ impl Demo {
                             StatisticStyle {
                                 width: 140.0,
                                 height: 88.0,
-                                ..StatisticStyle::default()
+                                ..StatisticStyle::from_theme(&theme)
                             },
                         );
                         row.statistic(
@@ -298,7 +299,7 @@ impl Demo {
                             StatisticStyle {
                                 width: 140.0,
                                 height: 88.0,
-                                ..StatisticStyle::default()
+                                ..StatisticStyle::from_theme(&theme)
                             },
                         );
                     },
@@ -314,7 +315,7 @@ impl Demo {
                     ResultStyle {
                         width: width as f32 - 64.0,
                         height: 140.0,
-                        ..ResultStyle::default()
+                        ..ResultStyle::from_theme(&theme)
                     },
                 );
                 panel.spacer(1.0, 12.0);
@@ -326,19 +327,19 @@ impl Demo {
                         width: width as f32 - 64.0,
                         height: 40.0,
                         cross_align: CrossAlign::Center,
-                        ..SpaceStyle::default()
+                        ..SpaceStyle::from_theme(&theme)
                     },
                     |row| {
                         popover = row.popover_titled(
                             "Details",
                             Some("Popover"),
                             "Click-toggle bubble · below host",
-                            PopoverStyle::default(),
+                            PopoverStyle::from_theme(&theme),
                         );
                         popconfirm = row.popconfirm(
                             "Delete",
                             "Remove this row permanently?",
-                            PopconfirmStyle::default(),
+                            PopconfirmStyle::from_theme(&theme),
                         );
                     },
                 );
@@ -348,7 +349,7 @@ impl Demo {
                     "Choose a config file…",
                     UploadStyle {
                         width: width as f32 - 64.0,
-                        ..UploadStyle::default()
+                        ..UploadStyle::from_theme(&theme)
                     },
                 );
                 panel.spacer(1.0, 8.0);
@@ -356,7 +357,7 @@ impl Demo {
                     Color::rgb(0x6a, 0xb0, 0xf0),
                     ColorPickerStyle {
                         width: width as f32 - 64.0,
-                        ..ColorPickerStyle::default()
+                        ..ColorPickerStyle::from_theme(&theme)
                     },
                 );
                 panel.spacer(1.0, 8.0);
@@ -373,7 +374,7 @@ impl Demo {
                     "City…",
                     AutocompleteStyle {
                         width: 280.0,
-                        ..AutocompleteStyle::default()
+                        ..AutocompleteStyle::from_theme(&theme)
                     },
                 );
                 panel.spacer(1.0, 12.0);
@@ -386,7 +387,7 @@ impl Demo {
                         padding: 4.0,
                         gap: 8.0,
                         background: Some(Color::rgb(0x22, 0x22, 0x28)),
-                        ..GridStyle::default()
+                        ..GridStyle::from_theme(&theme)
                     },
                     |g| {
                         g.text_styled("Grid A", Color::rgb(0xe0, 0xe4, 0xec), 13.0);
@@ -403,7 +404,7 @@ impl Demo {
                         width: width as f32 - 64.0,
                         height: 200.0,
                         cross_align: CrossAlign::Start,
-                        ..SpaceStyle::default()
+                        ..SpaceStyle::from_theme(&theme)
                     },
                     |row| {
                         timeline = row.timeline(
@@ -415,7 +416,7 @@ impl Demo {
                             TimelineStyle {
                                 width: 220.0,
                                 height: 140.0,
-                                ..TimelineStyle::default()
+                                ..TimelineStyle::from_theme(&theme)
                             },
                         );
                         calendar = row.calendar(
@@ -426,7 +427,7 @@ impl Demo {
                                 width: 260.0,
                                 height: 240.0,
                                 cell: 28.0,
-                                ..CalendarStyle::default()
+                                ..CalendarStyle::from_theme(&theme)
                             },
                         );
                     },
@@ -445,7 +446,7 @@ impl Demo {
                         gap: 12.0,
                         width: width as f32 - 64.0,
                         height: 80.0,
-                        ..SpaceStyle::default()
+                        ..SpaceStyle::from_theme(&theme)
                     },
                     |row| {
                         row.image_rgba_caption(
@@ -457,7 +458,7 @@ impl Demo {
                                 width: 96.0,
                                 height: 72.0,
                                 mosaic_max: 4,
-                                ..ImageStyle::default()
+                                ..ImageStyle::from_theme(&theme)
                             },
                         );
                         row.image_placeholder(
@@ -465,7 +466,7 @@ impl Demo {
                             ImageStyle {
                                 width: 96.0,
                                 height: 72.0,
-                                ..ImageStyle::default()
+                                ..ImageStyle::from_theme(&theme)
                             },
                         );
                     },
@@ -477,7 +478,7 @@ impl Demo {
             StatusBarStyle {
                 width: width as f32 - 16.0,
                 height: 28.0,
-                ..StatusBarStyle::default()
+                ..StatusBarStyle::from_theme(&theme)
             },
             |bar| {
                 status = bar.text_styled("ready", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);
@@ -488,7 +489,6 @@ impl Demo {
         ui.sync(&mut scene);
         scene.mark_full_dirty(width as f32, height as f32);
 
-        let _ = ColumnStyle::default();
 
         Self {
             scene,
