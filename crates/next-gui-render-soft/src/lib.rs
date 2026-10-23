@@ -51,6 +51,103 @@ impl SoftRenderer {
         }
     }
 
+    /// Fill a rounded rect; coverage falls off across ~1px at the rounded edge.
+    fn fill_rounded_rect_clipped(&mut self, rect: &Rect, color: Color, radius: f32, clip: &Rect) {
+        let area = rect.intersect(clip);
+        let Some((x0, y0, w, h)) = area.clip_to_buffer(self.width, self.height) else {
+            return;
+        };
+        if radius <= 0.0 {
+            self.fill_rect_clipped(rect, color, clip);
+            return;
+        }
+        let r = radius
+            .min(rect.width * 0.5)
+            .min(rect.height * 0.5)
+            .max(0.0);
+        if r <= 0.0 {
+            self.fill_rect_clipped(rect, color, clip);
+            return;
+        }
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x + rect.width;
+        let bottom = rect.y + rect.height;
+        // Inner sharp region (outside the four corner circles).
+        let ix0 = left + r;
+        let iy0 = top + r;
+        let ix1 = right - r;
+        let iy1 = bottom - r;
+        let cr = color.r as u32;
+        let cg = color.g as u32;
+        let cb = color.b as u32;
+        let ca = color.a as u32;
+        for py in y0..y0 + h {
+            for px in x0..x0 + w {
+                let fx = px as f32 + 0.5;
+                let fy = py as f32 + 0.5;
+                // Distance to rounded shape: 0 inside, >0 outside.
+                let (cx, cy) = if fx < ix0 && fy < iy0 {
+                    (ix0, iy0)
+                } else if fx > ix1 && fy < iy0 {
+                    (ix1, iy0)
+                } else if fx < ix0 && fy > iy1 {
+                    (ix0, iy1)
+                } else if fx > ix1 && fy > iy1 {
+                    (ix1, iy1)
+                } else {
+                    // Inside the axis-aligned body (including edge strips).
+                    let dest_i = (py * self.width + px) as usize;
+                    if ca >= 255 {
+                        self.pixels[dest_i] = color.to_xrgb8888();
+                    } else if ca > 0 {
+                        let dst = self.pixels[dest_i];
+                        let dr = (dst >> 16) & 0xff;
+                        let dg = (dst >> 8) & 0xff;
+                        let db = dst & 0xff;
+                        let inv = 255 - ca;
+                        let nr = (cr * ca + dr * inv) / 255;
+                        let ng = (cg * ca + dg * inv) / 255;
+                        let nb = (cb * ca + db * inv) / 255;
+                        self.pixels[dest_i] = (nr << 16) | (ng << 8) | nb;
+                    }
+                    continue;
+                };
+                let dx = fx - cx;
+                let dy = fy - cy;
+                let d = (dx * dx + dy * dy).sqrt();
+                let coverage = if d <= r - 0.5 {
+                    1.0
+                } else if d >= r + 0.5 {
+                    0.0
+                } else {
+                    (r + 0.5 - d).clamp(0.0, 1.0)
+                };
+                if coverage <= 0.0 {
+                    continue;
+                }
+                let a = ((coverage * ca as f32).round() as u32).min(255);
+                if a == 0 {
+                    continue;
+                }
+                let dest_i = (py * self.width + px) as usize;
+                if a >= 255 {
+                    self.pixels[dest_i] = color.to_xrgb8888();
+                } else {
+                    let dst = self.pixels[dest_i];
+                    let dr = (dst >> 16) & 0xff;
+                    let dg = (dst >> 8) & 0xff;
+                    let db = dst & 0xff;
+                    let inv = 255 - a;
+                    let nr = (cr * a + dr * inv) / 255;
+                    let ng = (cg * a + dg * inv) / 255;
+                    let nb = (cb * a + db * inv) / 255;
+                    self.pixels[dest_i] = (nr << 16) | (ng << 8) | nb;
+                }
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn blit_alpha_clipped(
         &mut self,
@@ -142,6 +239,11 @@ impl Renderer for SoftRenderer {
                             self.fill_rect_clipped(rect, *color, d);
                         }
                     }
+                    DrawCommand::FillRoundedRect { rect, color, radius } => {
+                        if rect.intersects(d) {
+                            self.fill_rounded_rect_clipped(rect, *color, *radius, d);
+                        }
+                    }
                     DrawCommand::BlitAlpha {
                         x,
                         y,
@@ -202,5 +304,22 @@ mod tests {
         soft.render(&cmds, &dirty);
         assert_eq!(soft.pixel(3, 4), Some(Color::rgb(0, 0, 255).to_xrgb8888()));
         assert_eq!(soft.pixel(0, 0), Some(Color::rgb(0, 0, 0).to_xrgb8888()));
+    }
+
+    #[test]
+    fn rounded_rect_skips_far_corner() {
+        let mut soft = SoftRenderer::new(32, 32, Color::rgb(0, 0, 0));
+        let cmds = [DrawCommand::FillRoundedRect {
+            rect: Rect::new(4.0, 4.0, 20.0, 20.0),
+            color: Color::rgb(255, 0, 0),
+            radius: 8.0,
+        }];
+        let mut dirty = DirtyRegion::new();
+        dirty.add(Rect::new(0.0, 0.0, 32.0, 32.0));
+        soft.render(&cmds, &dirty);
+        // Center of rounded rect is filled.
+        assert_eq!(soft.pixel(14, 14), Some(Color::rgb(255, 0, 0).to_xrgb8888()));
+        // Far outside the corner circle stays clear.
+        assert_eq!(soft.pixel(4, 4), Some(Color::rgb(0, 0, 0).to_xrgb8888()));
     }
 }

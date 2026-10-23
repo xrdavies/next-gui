@@ -113,6 +113,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut status = WidgetId(0);
         let mut hint = WidgetId(0);
         let mut btn_open = WidgetId(0);
@@ -128,7 +129,7 @@ impl Demo {
                 padding: 14.0,
                 gap: 12.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x24, 0x24, 0x28)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.text_styled(
@@ -144,7 +145,7 @@ impl Demo {
                         gap: 8.0,
                         cross_align: CrossAlign::Center,
                         background: Some(Color::rgb(0x32, 0x32, 0x38)),
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |row| {
                         btn_open = row.button("Open");

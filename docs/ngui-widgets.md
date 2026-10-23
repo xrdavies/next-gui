@@ -9,6 +9,7 @@
 - Positional args in `(…)`; style / seed props as `key: value` inside `{…}`; nested widgets are PascalCase children.
 - Lists `[…]`, objects `{ key: value }`, bools `true`/`false`, colors `#RRGGBB`, `//` line comments.
 - Document root is **`Column`**. Optional overlays after the root: `Modal` / `Drawer` / `Notify`.
+- **Theme:** optional `theme: light` or `theme: dark` as a **document-level** directive before the root `Column`, or as a prop on the root `Column` (root prop wins if both are set). Default is dark (same as `Ui::new`). Widget Style defaults use `XxxStyle::from_theme`; explicit color props (`background`, `bg`, `fg`, …) still override. Color props also accept unquoted **token names** matching `ThemeColors` fields (`surface`, `accent`, `text_primary`, …).
 
 ## Keywords
 
@@ -43,9 +44,37 @@ Modal("Title", "Body", "OK") @m { open: false secondary: "Cancel" }
 
 Heavy trees/tables support enough literals to construct via existing APIs; not a full spreadsheet language.
 
+## Theme
+
+```text
+theme: light
+Column {
+  width: 640
+  height: 400
+  // no background → Theme::light().colors.surface
+  Button("OK")           // theme button colors
+  Button("X") { bg: #6b7280 fg: #ffffff }  // explicit wins
+}
+```
+
+Equivalent root prop: `Column { theme: dark … }`. Unknown names (`theme: neon`) are rejected.
+
+**Limits:** nested widgets cannot set `theme` (unknown Column property). Unknown color token names are rejected. `ImageRgba` remains Rust-only.
+
+```text
+theme: light
+Column {
+  width: 640
+  height: 400
+  background: surface
+  Button("OK") { bg: accent fg: on_accent }
+  Text("hi") { fg: text_secondary }
+}
+```
+
 ## Tests
 
-- Unit: `crates/next-gui-ui/src/dsl/mod.rs` (counter, row, unknown prop, **all_widgets** fixture).
+- Unit: `crates/next-gui-ui/src/dsl/mod.rs` (counter, row, unknown prop, theme light/dark, **all_widgets** fixture).
 - Fixture: `crates/next-gui-ui/tests/fixtures/all_widgets.ngui`.
 
 ```bash

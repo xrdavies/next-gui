@@ -74,6 +74,7 @@ impl Demo {
     fn new(width: u32, height: u32) -> Self {
         let mut scene = Scene::new();
         let mut ui = Ui::new();
+        let theme = *ui.theme();
         let mut label = WidgetId(0);
         let mut btn_inc = WidgetId(0);
         let mut btn_reset = WidgetId(0);
@@ -87,7 +88,7 @@ impl Demo {
                 padding: 20.0,
                 gap: 14.0,
                 background: Some(Color::rgb(0x2a, 0x2a, 0x2e)),
-                ..ColumnStyle::default()
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 label = col.text("Count: 0");

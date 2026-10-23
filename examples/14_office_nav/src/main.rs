@@ -132,6 +132,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut menu = WidgetId(0);
         let mut ctx = WidgetId(0);
         let mut tabs = WidgetId(0);
@@ -152,13 +153,13 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
-                ..ColumnStyle::default()
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         menu = tb.menu(
@@ -169,7 +170,7 @@ impl Demo {
                                 MenuItem::disabled(3, "Export…"),
                                 MenuItem::new(4, "Quit"),
                             ],
-                            MenuStyle::default(),
+                            MenuStyle::from_theme(&theme),
                         );
                         tb.menu(
                             "Edit",
@@ -178,7 +179,7 @@ impl Demo {
                                 MenuItem::new(21, "Redo"),
                                 MenuItem::new(22, "Preferences"),
                             ],
-                            MenuStyle::default(),
+                            MenuStyle::from_theme(&theme),
                         );
                         tb.spacer(12.0, 1.0);
                         tb.text_styled(
@@ -197,7 +198,7 @@ impl Demo {
                         padding: 0.0,
                         background: None,
                         cross_align: CrossAlign::Start,
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |row| {
                         ctx = row.context_menu(
@@ -211,7 +212,7 @@ impl Demo {
                             ContextMenuStyle {
                                 width: 280.0,
                                 height: 180.0,
-                                ..ContextMenuStyle::default()
+                                ..ContextMenuStyle::from_theme(&theme)
                             },
                             |c| {
                                 c.panel(
@@ -219,7 +220,7 @@ impl Demo {
                                     PanelStyle {
                                         width: 260.0,
                                         height: 160.0,
-                                        ..PanelStyle::default()
+                                        ..PanelStyle::from_theme(&theme)
                                     },
                                     |p| {
                                         p.text_styled(
@@ -241,7 +242,7 @@ impl Demo {
                             TabsStyle {
                                 width: (shell_w - 16.0 - 300.0).max(360.0),
                                 height: 180.0,
-                                ..TabsStyle::default()
+                                ..TabsStyle::from_theme(&theme)
                             },
                             |tb| {
                                 tb.page("General", |p| {
@@ -280,7 +281,7 @@ impl Demo {
                     PanelStyle {
                         width: shell_w - 16.0,
                         height: 160.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         p.row(
@@ -291,7 +292,7 @@ impl Demo {
                                 padding: 0.0,
                                 background: None,
                                 cross_align: CrossAlign::Center,
-                                ..RowStyle::default()
+                                ..RowStyle::from_theme(&theme)
                             },
                             |r| {
                                 r.text_styled("Mode", Color::rgb(0xa0, 0xa8, 0xb4), 13.0);
@@ -301,7 +302,7 @@ impl Demo {
                                     "Choose…",
                                     SelectStyle {
                                         width: 160.0,
-                                        ..SelectStyle::default()
+                                        ..SelectStyle::from_theme(&theme)
                                     },
                                 );
                                 r.spacer(24.0, 1.0);
@@ -312,7 +313,7 @@ impl Demo {
                                     42.0,
                                     SliderStyle {
                                         width: 220.0,
-                                        ..SliderStyle::default()
+                                        ..SliderStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -328,7 +329,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Soft", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

@@ -362,13 +362,19 @@ impl ResultStatus {
         }
     }
 
-    /// Accent color for the status label.
+    /// Accent color for the status label (historical dark-aligned defaults).
     pub fn color(self) -> Color {
+        self.color_for_theme(&crate::Theme::dark())
+    }
+
+    /// Accent from theme tokens (`info` / `success` / `warning` / `danger`).
+    pub fn color_for_theme(self, theme: &crate::Theme) -> Color {
+        let c = &theme.colors;
         match self {
-            Self::Info => Color::rgb(0x6a, 0xb0, 0xf0),
-            Self::Success => Color::rgb(0x6a, 0xc0, 0x8a),
-            Self::Warning => Color::rgb(0xe0, 0xb0, 0x40),
-            Self::Error => Color::rgb(0xe0, 0x60, 0x60),
+            Self::Info => c.info,
+            Self::Success => c.success,
+            Self::Warning => c.warning,
+            Self::Error => c.danger,
         }
     }
 }
@@ -947,8 +953,9 @@ pub enum UiDensity {
 
 /// Ui-level defaults bag (Office P2e `config_provider` — **not** a visual `Kind`).
 ///
-/// Set via [`crate::Ui::set_config`] / read via [`crate::Ui::config`]. Full design-token
-/// system is later; new P2 controls may read [`Self::accent`] when trivial.
+/// Set via [`crate::Ui::set_config`] / read via [`crate::Ui::config`].
+/// Appearance colors/type/spacing live in [`crate::Theme`] ([`crate::Ui::set_theme`]);
+/// this bag holds locale, density (scales theme spacing/fonts), and optional accent override.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UiConfig {
     /// Locale tag (BCP 47-ish string; display / formatting hint).

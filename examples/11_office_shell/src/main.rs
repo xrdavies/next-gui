@@ -114,6 +114,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut splitter = WidgetId(0);
         let mut status = WidgetId(0);
         let mut mode_label = WidgetId(0);
@@ -134,14 +135,14 @@ impl Demo {
                 padding: 8.0,
                 gap: 6.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x20, 0x20, 0x24)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
                         height: 40.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.icon(IconName::Menu);
@@ -169,7 +170,7 @@ impl Demo {
                         sash_size: 5.0,
                         sash_color: Color::rgb(0x55, 0x55, 0x5e),
                         background: Some(Color::rgb(0x1c, 0x1c, 0x20)),
-                        ..SplitterStyle::default()
+                        ..SplitterStyle::from_theme(&theme)
                     },
                     |left| {
                         left.panel(
@@ -177,7 +178,7 @@ impl Demo {
                             PanelStyle {
                                 width: 200.0,
                                 height: split_h,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 p.text_styled(
@@ -205,7 +206,7 @@ impl Demo {
                             PanelStyle {
                                 width: 500.0,
                                 height: split_h,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 p.text_styled(
@@ -229,7 +230,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         sb.icon_styled(IconName::Info, 14.0, Color::rgb(0x8a, 0xe6, 0x9a));

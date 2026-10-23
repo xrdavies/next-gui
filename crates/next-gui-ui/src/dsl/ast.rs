@@ -2,9 +2,13 @@
 
 use next_gui_scene::Color;
 
-/// Top-level document: root Column + optional Ui overlays.
+use crate::ThemeMode;
+
+/// Top-level document: optional theme + root Column + optional Ui overlays.
 #[derive(Debug)]
 pub struct Document {
+    /// Optional `theme: light|dark` directive (document-level or root Column prop).
+    pub theme: Option<ThemeMode>,
     pub root: AstWidget,
     pub overlays: Vec<AstWidget>,
 }

@@ -8,7 +8,7 @@ use super::ast::{AstValue, AstWidget, Document};
 use super::style::{
     apply_column_style, apply_row_style, apply_status_bar_style, apply_toolbar_style, as_bool,
     as_color, as_f32, as_ident, as_number_list, as_string, as_string_list, as_u64, as_usize,
-    err_at, prop_bool, prop_color, prop_f32, prop_string, prop_usize, take_prop,
+    err_at, prop_bool, prop_color, prop_f32, prop_string, prop_usize, take_prop, take_theme_prop,
 };
 use super::{DslError, LoadedUi};
 use crate::{
@@ -22,15 +22,31 @@ use crate::{
     PropertyGridStyle, PropertyRow, PropertyValue, RadioStyle, ResultStatus, ResultStyle,
     ScrollAreaStyle, SegmentedStyle, SelectStyle, SliderStyle, SpaceDirection, SpaceStyle,
     SpinStyle, SplitterStyle, StatisticStyle, StepItem, StepsStyle, SwitchStyle, TableColumn,
-    TableStyle, TabsStyle, TagStyle, TextAreaStyle, TextInputStyle, TimelineItem, TimelineStyle,
-    TransferItem, TransferStyle, TreeNode, TreeSelectStyle, TreeStyle, TreeTableNode,
-    TreeTableStyle, TrendStyle, Ui, UploadStyle, WidgetId,
+    TableStyle, TabsStyle, TagStyle, TextAreaStyle, TextInputStyle, Theme, ThemeMode,
+    TimelineItem, TimelineStyle, TransferItem, TransferStyle, TreeNode, TreeSelectStyle, TreeStyle,
+    TreeTableNode, TreeTableStyle, TrendStyle, Ui, UploadStyle, WidgetId,
 };
 
 pub fn document_to_ui(doc: Document) -> Result<LoadedUi, DslError> {
     let mut ui = Ui::new();
     let mut names = HashMap::new();
-    let style = column_style_from(&doc.root)?;
+
+    // Theme: document-level `theme: …` first; root Column `theme:` prop overrides.
+    let mut root_props = doc.root.props.clone();
+    let mut theme_mode = doc.theme;
+    let root_theme = take_theme_prop(&mut root_props)
+        .map_err(|m| err_at(doc.root.line, doc.root.column, m))?;
+    if let Some(mode) = root_theme {
+        theme_mode = Some(mode);
+    }
+    if let Some(mode) = theme_mode {
+        ui.set_theme(match mode {
+            ThemeMode::Light => Theme::light(),
+            ThemeMode::Dark => Theme::dark(),
+        });
+    }
+
+    let style = column_style_from(ui.theme(), &doc.root, &root_props)?;
     let root_name = doc.root.name.clone();
     let children = doc.root.children.clone();
     let mut build_err: Option<DslError> = None;
@@ -51,9 +67,13 @@ pub fn document_to_ui(doc: Document) -> Result<LoadedUi, DslError> {
     Ok(LoadedUi { ui, names })
 }
 
-fn column_style_from(w: &AstWidget) -> Result<crate::ColumnStyle, DslError> {
-    let mut style = crate::ColumnStyle::default();
-    apply_column_style(&mut style, &w.props).map_err(|m| err_at(w.line, w.column, m))?;
+fn column_style_from(
+    theme: &Theme,
+    w: &AstWidget,
+    props: &[(String, AstValue)],
+) -> Result<crate::ColumnStyle, DslError> {
+    let mut style = crate::ColumnStyle::from_theme(theme);
+    apply_column_style(&mut style, props, theme).map_err(|m| err_at(w.line, w.column, m))?;
     Ok(style)
 }
 
@@ -93,7 +113,7 @@ fn apply_overlay(
             let open = prop_bool(&w.props, "open")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(false);
-            let id = ui.modal(title, body, primary, secondary, ModalStyle::default());
+            let id = ui.modal(title, body, primary, secondary, ModalStyle::from_theme(ui.theme()));
             if open {
                 ui.set_modal_open(id, true);
             }
@@ -106,7 +126,7 @@ fn apply_overlay(
             let open = prop_bool(&w.props, "open")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(false);
-            let id = ui.drawer(title, body, DrawerStyle::default());
+            let id = ui.drawer(title, body, DrawerStyle::from_theme(ui.theme()));
             if open {
                 ui.set_drawer_open(id, true);
             }
@@ -457,32 +477,28 @@ fn build_widget(
     match kind {
         "Text" => {
             let content = first_string_arg_or(w, "")?;
-            let color = prop_color(&w.props, "fg")
+            let theme = builder.theme();
+            let color = prop_color(&w.props, "fg", theme)
                 .map_err(|m| err_at(w.line, w.column, m))?
-                .or(prop_color(&w.props, "color").map_err(|m| err_at(w.line, w.column, m))?);
+                .or(prop_color(&w.props, "color", theme).map_err(|m| err_at(w.line, w.column, m))?);
             let size = prop_f32(&w.props, "size").map_err(|m| err_at(w.line, w.column, m))?;
             let id = match (color, size) {
                 (Some(c), Some(s)) => builder.text_styled(content, c, s),
-                (Some(c), None) => builder.text_styled(content, c, 22.0),
-                (None, Some(s)) => {
-                    builder.text_styled(content, Color::rgb(0xe5, 0xe5, 0xe5), s)
-                }
+                (Some(c), None) => builder.text_styled(content, c, theme.typography.body),
+                (None, Some(s)) => builder.text_styled(content, theme.colors.text_primary, s),
                 (None, None) => builder.text(content),
             };
             register(names, &w.name, id);
         }
         "Button" => {
             let label = first_string_arg_or(w, "")?;
-            let bg = prop_color(&w.props, "bg").map_err(|m| err_at(w.line, w.column, m))?;
-            let fg = prop_color(&w.props, "fg").map_err(|m| err_at(w.line, w.column, m))?;
+            let theme = builder.theme();
+            let bg = prop_color(&w.props, "bg", theme).map_err(|m| err_at(w.line, w.column, m))?;
+            let fg = prop_color(&w.props, "fg", theme).map_err(|m| err_at(w.line, w.column, m))?;
             let id = match (bg, fg) {
                 (Some(bg), Some(fg)) => builder.button_styled(label, bg, fg),
-                (Some(bg), None) => {
-                    builder.button_styled(label, bg, Color::rgb(0xff, 0xff, 0xff))
-                }
-                (None, Some(fg)) => {
-                    builder.button_styled(label, Color::rgb(0x3b, 0x82, 0xf6), fg)
-                }
+                (Some(bg), None) => builder.button_styled(label, bg, theme.colors.button_fg),
+                (None, Some(fg)) => builder.button_styled(label, theme.colors.button_bg, fg),
                 (None, None) => builder.button(label),
             };
             register(names, &w.name, id);
@@ -492,10 +508,11 @@ fn build_widget(
             let size = prop_f32(&w.props, "size")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(18.0);
-            let color = prop_color(&w.props, "color")
+            let theme = builder.theme();
+            let color = prop_color(&w.props, "color", theme)
                 .map_err(|m| err_at(w.line, w.column, m))?
-                .or(prop_color(&w.props, "fg").map_err(|m| err_at(w.line, w.column, m))?)
-                .unwrap_or(Color::rgb(0xd0, 0xd4, 0xdc));
+                .or(prop_color(&w.props, "fg", theme).map_err(|m| err_at(w.line, w.column, m))?)
+                .unwrap_or(theme.colors.text_secondary);
             let id = builder.icon_styled(IconName::from_name(&name), size, color);
             register(names, &w.name, id);
         }
@@ -526,8 +543,8 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "Column" => {
-            let mut style = crate::ColumnStyle::default();
-            map_err(w, apply_column_style(&mut style, &w.props))?;
+            let mut style = crate::ColumnStyle::from_theme(builder.theme());
+            map_err(w, apply_column_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.column(style, |inner| {
@@ -541,8 +558,8 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "Row" => {
-            let mut style = crate::RowStyle::default();
-            map_err(w, apply_row_style(&mut style, &w.props))?;
+            let mut style = crate::RowStyle::from_theme(builder.theme());
+            map_err(w, apply_row_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.row(style, |inner| {
@@ -556,8 +573,8 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "Toolbar" => {
-            let mut style = crate::ToolbarStyle::default();
-            map_err(w, apply_toolbar_style(&mut style, &w.props))?;
+            let mut style = crate::ToolbarStyle::from_theme(builder.theme());
+            map_err(w, apply_toolbar_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.toolbar(style, |inner| {
@@ -572,7 +589,7 @@ fn build_widget(
         }
         "Panel" => {
             let title = first_string_arg_or(w, "")?;
-            let mut style = PanelStyle::default();
+            let mut style = PanelStyle::from_theme(builder.theme());
             if let Some(v) = take_prop(&w.props, "width") {
                 style.width = as_f32(v, "width").map_err(|m| err_at(w.line, w.column, m))?;
             }
@@ -598,8 +615,8 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "StatusBar" => {
-            let mut style = crate::StatusBarStyle::default();
-            map_err(w, apply_status_bar_style(&mut style, &w.props))?;
+            let mut style = crate::StatusBarStyle::from_theme(builder.theme());
+            map_err(w, apply_status_bar_style(&mut style, &w.props, builder.theme()))?;
             let children = w.children.clone();
             let mut err = None;
             let id = builder.status_bar(style, |inner| {
@@ -613,7 +630,7 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "Splitter" => {
-            let mut style = SplitterStyle::default();
+            let mut style = SplitterStyle::from_theme(builder.theme());
             if let Some(v) = take_prop(&w.props, "ratio") {
                 style.ratio = as_f32(v, "ratio").map_err(|m| err_at(w.line, w.column, m))?;
             }
@@ -657,7 +674,7 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "ScrollArea" => {
-            let mut style = ScrollAreaStyle::default();
+            let mut style = ScrollAreaStyle::from_theme(builder.theme());
             if let Some(v) = take_prop(&w.props, "width") {
                 style.width = as_f32(v, "width").map_err(|m| err_at(w.line, w.column, m))?;
             }
@@ -682,7 +699,7 @@ fn build_widget(
             let value = prop_string(&w.props, "value")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let mut style = TextInputStyle::default();
+            let mut style = TextInputStyle::from_theme(builder.theme());
             if let Some(v) = take_prop(&w.props, "width") {
                 style.width = as_f32(v, "width").map_err(|m| err_at(w.line, w.column, m))?;
             }
@@ -695,7 +712,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.get(1).and_then(|v| as_bool(v, "checked").ok()))
                 .unwrap_or(false);
-            let id = builder.checkbox_styled(label, checked, CheckboxStyle::default());
+            let id = builder.checkbox_styled(label, checked, CheckboxStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Radio" => {
@@ -711,7 +728,7 @@ fn build_widget(
             let selected = prop_bool(&w.props, "selected")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(false);
-            let id = builder.radio_styled(group, label, selected, RadioStyle::default());
+            let id = builder.radio_styled(group, label, selected, RadioStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Switch" => {
@@ -720,7 +737,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or(prop_bool(&w.props, "checked").map_err(|m| err_at(w.line, w.column, m))?)
                 .unwrap_or(false);
-            let id = builder.switch_styled(label, on, SwitchStyle::default());
+            let id = builder.switch_styled(label, on, SwitchStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "List" | "VirtualList" => {
@@ -731,7 +748,7 @@ fn build_widget(
             } else {
                 Vec::new()
             };
-            let style = ListStyle::default();
+            let style = ListStyle::from_theme(builder.theme());
             let id = if kind == "VirtualList" {
                 builder.virtual_list(items, style)
             } else {
@@ -747,7 +764,7 @@ fn build_widget(
             } else {
                 Vec::new()
             };
-            let id = builder.tree(roots, TreeStyle::default());
+            let id = builder.tree(roots, TreeStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Table" | "VirtualTable" => {
@@ -763,7 +780,7 @@ fn build_widget(
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let style = TableStyle::default();
+            let style = TableStyle::from_theme(builder.theme());
             let id = if kind == "VirtualTable" {
                 builder.virtual_table(columns, rows, style)
             } else {
@@ -779,7 +796,7 @@ fn build_widget(
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.menu(title, items, MenuStyle::default());
+            let id = builder.menu(title, items, MenuStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "ContextMenu" => {
@@ -791,7 +808,7 @@ fn build_widget(
                 .unwrap_or_default();
             let children = w.children.clone();
             let mut err = None;
-            let id = builder.context_menu(hint, items, ContextMenuStyle::default(), |inner| {
+            let id = builder.context_menu(hint, items, ContextMenuStyle::from_theme(builder.theme()), |inner| {
                 if let Err(e) = build_children(inner, names, &children) {
                     err = Some(e);
                 }
@@ -802,7 +819,7 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "Tabs" => {
-            let mut style = TabsStyle::default();
+            let mut style = TabsStyle::from_theme(builder.theme());
             if let Some(v) = take_prop(&w.props, "width") {
                 style.width = as_f32(v, "width").map_err(|m| err_at(w.line, w.column, m))?;
             }
@@ -860,7 +877,7 @@ fn build_widget(
             let placeholder = prop_string(&w.props, "placeholder")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.select(options, selected, placeholder, SelectStyle::default());
+            let id = builder.select(options, selected, placeholder, SelectStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Slider" => {
@@ -876,7 +893,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.get(2).and_then(|v| as_f32(v, "value").ok()))
                 .unwrap_or(min);
-            let id = builder.slider(min, max, value, SliderStyle::default());
+            let id = builder.slider(min, max, value, SliderStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Tag" => {
@@ -884,7 +901,7 @@ fn build_widget(
             let closable = prop_bool(&w.props, "closable")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(false);
-            let id = builder.tag_styled(label, closable, TagStyle::default());
+            let id = builder.tag_styled(label, closable, TagStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Badge" | "BadgeCount" => {
@@ -899,7 +916,7 @@ fn build_widget(
                 let mut err = None;
                 let id = builder.badge_host(
                     BadgeKind::Count(count),
-                    BadgeStyle::default(),
+                    BadgeStyle::from_theme(builder.theme()),
                     |inner| {
                         if let Err(e) = build_children(inner, names, &children) {
                             err = Some(e);
@@ -919,7 +936,7 @@ fn build_widget(
             } else {
                 let children = w.children.clone();
                 let mut err = None;
-                let id = builder.badge_host(BadgeKind::Dot, BadgeStyle::default(), |inner| {
+                let id = builder.badge_host(BadgeKind::Dot, BadgeStyle::from_theme(builder.theme()), |inner| {
                     if let Err(e) = build_children(inner, names, &children) {
                         err = Some(e);
                     }
@@ -953,7 +970,7 @@ fn build_widget(
             let indeterminate = prop_bool(&w.props, "indeterminate")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(false);
-            let id = builder.progress_styled(value, indeterminate, ProgressStyle::default());
+            let id = builder.progress_styled(value, indeterminate, ProgressStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Alert" => {
@@ -976,7 +993,7 @@ fn build_widget(
             let dismissible = prop_bool(&w.props, "dismissible")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(true);
-            let id = builder.alert_styled(tone, message, dismissible, AlertStyle::default());
+            let id = builder.alert_styled(tone, message, dismissible, AlertStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
 
@@ -990,11 +1007,11 @@ fn build_widget(
             let placeholder = prop_string(&w.props, "placeholder")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.tree_select(roots, None, placeholder, TreeSelectStyle::default());
+            let id = builder.tree_select(roots, None, placeholder, TreeSelectStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Form" => {
-            let style = FormStyle::default();
+            let style = FormStyle::from_theme(builder.theme());
             let fields: Vec<AstWidget> = w.children.clone();
             let mut err = None;
             let id = builder.form(style, |fb| {
@@ -1050,7 +1067,7 @@ fn build_widget(
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.alarm_list(entries, AlarmListStyle::default());
+            let id = builder.alarm_list(entries, AlarmListStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Gauge" => {
@@ -1070,7 +1087,7 @@ fn build_widget(
             let label = prop_string(&w.props, "label")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.gauge(value, min, max, unit, label, GaugeStyle::default());
+            let id = builder.gauge(value, min, max, unit, label, GaugeStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Trend" => {
@@ -1080,13 +1097,13 @@ fn build_widget(
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.trend(points, TrendStyle::default());
+            let id = builder.trend(points, TrendStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Chart" => {
-            let tiles = parse_chart_tiles(take_prop(&w.props, "tiles").or(w.args.first()))
+            let tiles = parse_chart_tiles(builder.theme(), take_prop(&w.props, "tiles").or(w.args.first()))
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.chart(tiles, ChartStyle::default());
+            let id = builder.chart(tiles, ChartStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "TextArea" => {
@@ -1094,7 +1111,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
             let placeholder = first_string_arg_or(w, "")?;
-            let id = builder.text_area(value, placeholder, TextAreaStyle::default());
+            let id = builder.text_area(value, placeholder, TextAreaStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "InputNumber" => {
@@ -1111,7 +1128,7 @@ fn build_widget(
             let step = prop_f32(&w.props, "step")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(1.0) as f64;
-            let id = builder.input_number(value, min, max, step, InputNumberStyle::default());
+            let id = builder.input_number(value, min, max, step, InputNumberStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Spin" => {
@@ -1121,7 +1138,7 @@ fn build_widget(
                 .unwrap_or(true);
             let children = w.children.clone();
             let mut err = None;
-            let id = builder.spin(spinning, SpinStyle::default(), |inner| {
+            let id = builder.spin(spinning, SpinStyle::from_theme(builder.theme()), |inner| {
                 if let Err(e) = build_children(inner, names, &children) {
                     err = Some(e);
                 }
@@ -1133,20 +1150,20 @@ fn build_widget(
         }
         "Empty" => {
             let desc = first_string_arg_or(w, "No data")?;
-            let id = builder.empty(desc, EmptyStyle::default());
+            let id = builder.empty(desc, EmptyStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Collapse" => {
             let panels = parse_collapse_panels(take_prop(&w.props, "panels").or(w.args.first()))
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.collapse(panels, CollapseStyle::default());
+            let id = builder.collapse(panels, CollapseStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Descriptions" => {
             let items =
                 parse_description_items(take_prop(&w.props, "items").or(w.args.first()))
                     .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.descriptions(items, DescriptionsStyle::default());
+            let id = builder.descriptions(items, DescriptionsStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Card" => {
@@ -1155,7 +1172,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.get(1).and_then(|v| as_string(v, "body").ok()))
                 .unwrap_or_default();
-            let id = builder.card(title, body, CardStyle::default());
+            let id = builder.card(title, body, CardStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Segmented" => {
@@ -1169,7 +1186,7 @@ fn build_widget(
             let selected = prop_usize(&w.props, "selected")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(0);
-            let id = builder.segmented(options, selected, SegmentedStyle::default());
+            let id = builder.segmented(options, selected, SegmentedStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "ButtonGroup" => {
@@ -1182,7 +1199,7 @@ fn build_widget(
             };
             let selected = prop_usize(&w.props, "selected")
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.button_group(labels, selected, ButtonGroupStyle::default());
+            let id = builder.button_group(labels, selected, ButtonGroupStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Link" => {
@@ -1191,7 +1208,7 @@ fn build_widget(
             register(names, &w.name, id);
         }
         "Space" => {
-            let mut style = SpaceStyle::default();
+            let mut style = SpaceStyle::from_theme(builder.theme());
             if let Some(v) = take_prop(&w.props, "direction") {
                 let d = as_ident(v, "direction").map_err(|m| err_at(w.line, w.column, m))?;
                 style.direction = match d.as_str() {
@@ -1228,7 +1245,7 @@ fn build_widget(
             let current = prop_usize(&w.props, "current")
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(0);
-            let id = builder.steps(items, current, StepsStyle::default());
+            let id = builder.steps(items, current, StepsStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Statistic" => {
@@ -1237,7 +1254,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.get(1).and_then(|v| as_string(v, "value").ok()))
                 .unwrap_or_default();
-            let id = builder.statistic(title, value, StatisticStyle::default());
+            let id = builder.statistic(title, value, StatisticStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Result" => {
@@ -1281,7 +1298,7 @@ fn build_widget(
                 subtitle,
                 primary,
                 secondary,
-                ResultStyle::default(),
+                ResultStyle::from_theme(builder.theme()),
             );
             register(names, &w.name, id);
         }
@@ -1293,7 +1310,7 @@ fn build_widget(
                 .unwrap_or_default();
             let title = prop_string(&w.props, "title")
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.popover_titled(trigger, title, body, PopoverStyle::default());
+            let id = builder.popover_titled(trigger, title, body, PopoverStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Popconfirm" => {
@@ -1302,7 +1319,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.get(1).and_then(|v| as_string(v, "message").ok()))
                 .unwrap_or_default();
-            let id = builder.popconfirm(trigger, message, PopconfirmStyle::default());
+            let id = builder.popconfirm(trigger, message, PopconfirmStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Upload" => {
@@ -1314,7 +1331,7 @@ fn build_widget(
                 "Browse",
                 "Clear",
                 path,
-                UploadStyle::default(),
+                UploadStyle::from_theme(builder.theme()),
             );
             register(names, &w.name, id);
         }
@@ -1322,12 +1339,12 @@ fn build_widget(
             let value = w
                 .args
                 .first()
-                .map(|v| as_color(v, "value"))
+                .map(|v| as_color(v, "value", builder.theme()))
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
-                .or(prop_color(&w.props, "value").map_err(|m| err_at(w.line, w.column, m))?)
+                .or(prop_color(&w.props, "value", builder.theme()).map_err(|m| err_at(w.line, w.column, m))?)
                 .unwrap_or(Color::rgb(0x3b, 0x82, 0xf6));
-            let id = builder.color_picker(value, ColorPickerStyle::default());
+            let id = builder.color_picker(value, ColorPickerStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Autocomplete" => {
@@ -1348,7 +1365,7 @@ fn build_widget(
                 options,
                 value,
                 placeholder,
-                AutocompleteStyle::default(),
+                AutocompleteStyle::from_theme(builder.theme()),
             );
             register(names, &w.name, id);
         }
@@ -1357,7 +1374,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.first().and_then(|v| as_usize(v, "columns").ok()))
                 .unwrap_or(2);
-            let style = GridStyle::default();
+            let style = GridStyle::from_theme(builder.theme());
             let children = w.children.clone();
             let mut err = None;
             let id = builder.grid(columns, style, |inner| {
@@ -1373,7 +1390,7 @@ fn build_widget(
         "Timeline" => {
             let items = parse_timeline_items(take_prop(&w.props, "items").or(w.args.first()))
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.timeline(items, TimelineStyle::default());
+            let id = builder.timeline(items, TimelineStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Calendar" => {
@@ -1390,12 +1407,12 @@ fn build_widget(
                 .or(prop_f32(&w.props, "selected_day").map_err(|m| err_at(w.line, w.column, m))?)
                 .or_else(|| w.args.get(2).and_then(|v| as_f32(v, "day").ok()))
                 .unwrap_or(1.0) as u8;
-            let id = builder.calendar(year, month, day, CalendarStyle::default());
+            let id = builder.calendar(year, month, day, CalendarStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "ImagePlaceholder" => {
             let caption = first_string_arg_or(w, "")?;
-            let id = builder.image_placeholder(caption, ImageStyle::default());
+            let id = builder.image_placeholder(caption, ImageStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "ImageRgba" => {
@@ -1413,7 +1430,7 @@ fn build_widget(
             } else {
                 Vec::new()
             };
-            let id = builder.breadcrumb(items, BreadcrumbStyle::default());
+            let id = builder.breadcrumb(items, BreadcrumbStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Pagination" => {
@@ -1429,7 +1446,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .or_else(|| w.args.get(2).and_then(|v| as_usize(v, "total").ok()))
                 .unwrap_or(0);
-            let id = builder.pagination(page, page_size, total, PaginationStyle::default());
+            let id = builder.pagination(page, page_size, total, PaginationStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "DateTime" => {
@@ -1449,7 +1466,7 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or(0.0) as u8;
             let value = DateTimeValue::new(year, month, day, hour, minute);
-            let id = builder.datetime(value, DateTimeStyle::default());
+            let id = builder.datetime(value, DateTimeStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Transfer" => {
@@ -1457,13 +1474,13 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?;
             let target = parse_transfer_items(take_prop(&w.props, "target"))
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.transfer(source, target, TransferStyle::default());
+            let id = builder.transfer(source, target, TransferStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "PropertyGrid" => {
             let rows = parse_property_rows(take_prop(&w.props, "rows").or(w.args.first()))
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.property_grid(rows, PropertyGridStyle::default());
+            let id = builder.property_grid(rows, PropertyGridStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "TreeTable" => {
@@ -1477,7 +1494,7 @@ fn build_widget(
                 .transpose()
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
-            let id = builder.tree_table(columns, roots, TreeTableStyle::default());
+            let id = builder.tree_table(columns, roots, TreeTableStyle::from_theme(builder.theme()));
             register(names, &w.name, id);
         }
         "Modal" | "Drawer" | "Notify" => {
@@ -1508,7 +1525,7 @@ fn build_widget(
     Ok(())
 }
 
-fn parse_chart_tiles(v: Option<&AstValue>) -> Result<Vec<ChartTile>, String> {
+fn parse_chart_tiles(theme: &Theme, v: Option<&AstValue>) -> Result<Vec<ChartTile>, String> {
     let Some(v) = v else {
         return Ok(Vec::new());
     };
@@ -1572,7 +1589,7 @@ fn parse_chart_tiles(v: Option<&AstValue>) -> Result<Vec<ChartTile>, String> {
                     max,
                     unit,
                     label,
-                    GaugeStyle::default(),
+                    GaugeStyle::from_theme(theme),
                 ));
             }
             "trend" => {
@@ -1582,7 +1599,7 @@ fn parse_chart_tiles(v: Option<&AstValue>) -> Result<Vec<ChartTile>, String> {
                     .map(|(_, v)| as_number_list(v, "points"))
                     .transpose()?
                     .unwrap_or_default();
-                out.push(ChartTile::trend(title, points, TrendStyle::default()));
+                out.push(ChartTile::trend(title, points, TrendStyle::from_theme(theme)));
             }
             other => return Err(format!("unknown chart kind `{other}`")),
         }

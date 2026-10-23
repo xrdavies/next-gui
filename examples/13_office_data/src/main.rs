@@ -129,6 +129,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut list = WidgetId(0);
         let mut tree = WidgetId(0);
         let mut table = WidgetId(0);
@@ -174,14 +175,14 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x20, 0x20, 0x24)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
                         height: 36.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.text_styled(
@@ -198,7 +199,7 @@ impl Demo {
                         height: shell_h - 80.0,
                         axis: Axis::Vertical,
                         ratio: 0.32,
-                        ..SplitterStyle::default()
+                        ..SplitterStyle::from_theme(&theme)
                     },
                     |left| {
                         left.panel(
@@ -206,7 +207,7 @@ impl Demo {
                             PanelStyle {
                                 width: 240.0,
                                 height: shell_h - 90.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 tree = p.tree(
@@ -214,7 +215,7 @@ impl Demo {
                                     TreeStyle {
                                         width: 220.0,
                                         height: (shell_h - 160.0).max(200.0),
-                                        ..TreeStyle::default()
+                                        ..TreeStyle::from_theme(&theme)
                                     },
                                 );
                             },
@@ -228,7 +229,7 @@ impl Demo {
                                 padding: 0.0,
                                 gap: 8.0,
                                 background: None,
-                                ..ColumnStyle::default()
+                                ..ColumnStyle::from_theme(&theme)
                             },
                             |c| {
                                 c.panel(
@@ -236,7 +237,7 @@ impl Demo {
                                     PanelStyle {
                                         width: 460.0,
                                         height: 200.0,
-                                        ..PanelStyle::default()
+                                        ..PanelStyle::from_theme(&theme)
                                     },
                                     |p| {
                                         list = p.list(
@@ -244,7 +245,7 @@ impl Demo {
                                             ListStyle {
                                                 width: 430.0,
                                                 height: 150.0,
-                                                ..ListStyle::default()
+                                                ..ListStyle::from_theme(&theme)
                                             },
                                         );
                                     },
@@ -254,7 +255,7 @@ impl Demo {
                                     PanelStyle {
                                         width: 460.0,
                                         height: (shell_h - 320.0).max(180.0),
-                                        ..PanelStyle::default()
+                                        ..PanelStyle::from_theme(&theme)
                                     },
                                     |p| {
                                         table = p.table(
@@ -317,7 +318,7 @@ impl Demo {
                                             TableStyle {
                                                 width: 430.0,
                                                 height: (shell_h - 380.0).max(140.0),
-                                                ..TableStyle::default()
+                                                ..TableStyle::from_theme(&theme)
                                             },
                                         );
                                     },
@@ -330,7 +331,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Ready", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);
