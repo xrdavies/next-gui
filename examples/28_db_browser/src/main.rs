@@ -18,10 +18,10 @@ use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
 use next_gui_render_soft::SoftRenderer;
 use next_gui_scene::{Color, Scene};
 use next_gui_text::{load_default_cjk_font, Font};
-use next_gui_ui::{ModalAction, PropertyValue, Theme, ThemeMode, Ui, UiKey, WidgetId};
+use next_gui_ui::{ModalAction, Theme, ThemeMode, Ui, UiKey, WidgetId};
 
-use crate::db::{self as dbmod};
-use crate::state::{AppState, ConfirmKind, DockKind, MainTab};
+use crate::db::{self as dbmod, ObjectKind};
+use crate::state::{AppState, ConfirmKind, DockKind, MainTab, OverlayKind};
 use crate::ui_build::{build_ui, clear_color, mid, BuiltUi};
 
 enum Backend {
@@ -138,6 +138,7 @@ struct Demo {
     last_tab: usize,
     last_browse_sel: Option<usize>,
     last_browse_row: Option<usize>,
+    last_wizard_list: Option<usize>,
     exit_requested: bool,
 }
 
@@ -162,24 +163,27 @@ struct BuiltUiIds {
     btn_struct_delete: WidgetId,
     btn_struct_refresh: WidgetId,
     btn_run_ddl: WidgetId,
-    new_table_name: WidgetId,
-    new_table_cols: WidgetId,
-    new_index_name: WidgetId,
-    new_index_on: WidgetId,
+    btn_browse_new_tab: WidgetId,
     browse_select: WidgetId,
     browse_filter: WidgetId,
     btn_browse_go: WidgetId,
     btn_add_row: WidgetId,
     btn_del_row: WidgetId,
     browse_table: WidgetId,
-    pragma_grid: WidgetId,
-    pragma_value: WidgetId,
+    browse_col_filters: Vec<WidgetId>,
+    browse_tab_btns: Vec<WidgetId>,
+    sql_tab_btns: Vec<WidgetId>,
+    pragma_inputs: Vec<WidgetId>,
+    pragma_switches: Vec<WidgetId>,
+    pragma_selects: Vec<WidgetId>,
     btn_pragma_apply: WidgetId,
     sql_area: WidgetId,
     btn_sql_run: WidgetId,
     btn_sql_new_tab: WidgetId,
     btn_sql_open: WidgetId,
     btn_sql_save: WidgetId,
+    btn_sql_find: WidgetId,
+    btn_sql_stop: WidgetId,
     sql_table: WidgetId,
     dock_tabs: WidgetId,
     edit_col: WidgetId,
@@ -189,6 +193,35 @@ struct BuiltUiIds {
     chart_col: WidgetId,
     btn_chart: WidgetId,
     modal: WidgetId,
+    ov_name: WidgetId,
+    ov_list: WidgetId,
+    ov_col_name: WidgetId,
+    ov_col_type: WidgetId,
+    ov_pk: WidgetId,
+    ov_nn: WidgetId,
+    ov_unique: WidgetId,
+    ov_default: WidgetId,
+    ov_btn_add: WidgetId,
+    ov_btn_del: WidgetId,
+    ov_btn_up: WidgetId,
+    ov_btn_down: WidgetId,
+    ov_btn_ok: WidgetId,
+    ov_btn_cancel: WidgetId,
+    ov_idx_table: WidgetId,
+    ov_idx_cols: WidgetId,
+    ov_idx_unique: WidgetId,
+    ov_csv_table: WidgetId,
+    ov_csv_header: WidgetId,
+    ov_csv_delim: WidgetId,
+    ov_csv_quote: WidgetId,
+    ov_csv_paste: WidgetId,
+    ov_attach_path: WidgetId,
+    ov_attach_schema: WidgetId,
+    ov_find: WidgetId,
+    ov_replace: WidgetId,
+    ov_btn_find: WidgetId,
+    ov_btn_repl: WidgetId,
+    ov_btn_repl_all: WidgetId,
 }
 
 impl From<&BuiltUi> for BuiltUiIds {
@@ -213,24 +246,27 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_struct_delete: b.btn_struct_delete,
             btn_struct_refresh: b.btn_struct_refresh,
             btn_run_ddl: b.btn_run_ddl,
-            new_table_name: b.new_table_name,
-            new_table_cols: b.new_table_cols,
-            new_index_name: b.new_index_name,
-            new_index_on: b.new_index_on,
+            btn_browse_new_tab: b.btn_browse_new_tab,
             browse_select: b.browse_select,
             browse_filter: b.browse_filter,
             btn_browse_go: b.btn_browse_go,
             btn_add_row: b.btn_add_row,
             btn_del_row: b.btn_del_row,
             browse_table: b.browse_table,
-            pragma_grid: b.pragma_grid,
-            pragma_value: b.pragma_value,
+            browse_col_filters: b.browse_col_filters.clone(),
+            browse_tab_btns: b.browse_tab_btns.clone(),
+            sql_tab_btns: b.sql_tab_btns.clone(),
+            pragma_inputs: b.pragma_inputs.clone(),
+            pragma_switches: b.pragma_switches.clone(),
+            pragma_selects: b.pragma_selects.clone(),
             btn_pragma_apply: b.btn_pragma_apply,
             sql_area: b.sql_area,
             btn_sql_run: b.btn_sql_run,
             btn_sql_new_tab: b.btn_sql_new_tab,
             btn_sql_open: b.btn_sql_open,
             btn_sql_save: b.btn_sql_save,
+            btn_sql_find: b.btn_sql_find,
+            btn_sql_stop: b.btn_sql_stop,
             sql_table: b.sql_table,
             dock_tabs: b.dock_tabs,
             edit_col: b.edit_col,
@@ -240,9 +276,39 @@ impl From<&BuiltUi> for BuiltUiIds {
             chart_col: b.chart_col,
             btn_chart: b.btn_chart,
             modal: b.modal,
+            ov_name: b.ov_name,
+            ov_list: b.ov_list,
+            ov_col_name: b.ov_col_name,
+            ov_col_type: b.ov_col_type,
+            ov_pk: b.ov_pk,
+            ov_nn: b.ov_nn,
+            ov_unique: b.ov_unique,
+            ov_default: b.ov_default,
+            ov_btn_add: b.ov_btn_add,
+            ov_btn_del: b.ov_btn_del,
+            ov_btn_up: b.ov_btn_up,
+            ov_btn_down: b.ov_btn_down,
+            ov_btn_ok: b.ov_btn_ok,
+            ov_btn_cancel: b.ov_btn_cancel,
+            ov_idx_table: b.ov_idx_table,
+            ov_idx_cols: b.ov_idx_cols,
+            ov_idx_unique: b.ov_idx_unique,
+            ov_csv_table: b.ov_csv_table,
+            ov_csv_header: b.ov_csv_header,
+            ov_csv_delim: b.ov_csv_delim,
+            ov_csv_quote: b.ov_csv_quote,
+            ov_csv_paste: b.ov_csv_paste,
+            ov_attach_path: b.ov_attach_path,
+            ov_attach_schema: b.ov_attach_schema,
+            ov_find: b.ov_find,
+            ov_replace: b.ov_replace,
+            ov_btn_find: b.ov_btn_find,
+            ov_btn_repl: b.ov_btn_repl,
+            ov_btn_repl_all: b.ov_btn_repl_all,
         }
     }
 }
+
 
 impl Demo {
     fn new(width: u32, height: u32, window_backend: PresentBackend) -> Self {
@@ -257,6 +323,10 @@ impl Demo {
                 "browse" => MainTab::Browse,
                 "pragmas" => MainTab::Pragmas,
                 "sql" | "execute" => MainTab::ExecuteSql,
+                "wizard" | "table" => {
+                    state.open_create_table_wizard();
+                    MainTab::Structure
+                }
                 // legacy aliases → docks / structure
                 "charts" | "plot" => {
                     state.dock_plot = true;
@@ -297,28 +367,31 @@ impl Demo {
             last_tab: 0,
             last_browse_sel: None,
             last_browse_row: None,
+            last_wizard_list: None,
             exit_requested: false,
         }
     }
 
     fn snapshot_inputs(&mut self) {
-        if let Some(v) = self.ui.text_area_value(self.ids.ddl_area) {
-            self.state.ddl_draft = v.to_string();
+        if self.ids.ddl_area.0 != 0 {
+            if let Some(v) = self.ui.text_area_value(self.ids.ddl_area) {
+                self.state.ddl_draft = v.to_string();
+            }
         }
-        if let Some(v) = self.ui.text_input_value(self.ids.new_table_name) {
-            self.state.new_table_name = v.to_string();
+        if self.ids.browse_filter.0 != 0 {
+            if let Some(v) = self.ui.text_input_value(self.ids.browse_filter) {
+                self.state.browse_mut().filter = v.to_string();
+            }
         }
-        if let Some(v) = self.ui.text_input_value(self.ids.new_table_cols) {
-            self.state.new_table_cols = v.to_string();
-        }
-        if let Some(v) = self.ui.text_input_value(self.ids.new_index_name) {
-            self.state.new_index_name = v.to_string();
-        }
-        if let Some(v) = self.ui.text_input_value(self.ids.new_index_on) {
-            self.state.new_index_on = v.to_string();
-        }
-        if let Some(v) = self.ui.text_input_value(self.ids.browse_filter) {
-            self.state.browse_filter = v.to_string();
+        for (i, id) in self.ids.browse_col_filters.iter().enumerate() {
+            if id.0 == 0 { continue; }
+            if let Some(v) = self.ui.text_input_value(*id) {
+                let tab = self.state.browse_mut();
+                if tab.col_filters.len() <= i {
+                    tab.col_filters.resize(i + 1, String::new());
+                }
+                tab.col_filters[i] = v.to_string();
+            }
         }
         if self.ids.edit_col.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.edit_col) {
@@ -330,19 +403,20 @@ impl Demo {
                 self.state.edit_value = v.to_string();
             }
         }
-        if let Some(v) = self.ui.text_area_value(self.ids.sql_area) {
-            *self.state.sql_editor_mut() = v.to_string();
+        if self.ids.sql_area.0 != 0 {
+            if let Some(v) = self.ui.text_area_value(self.ids.sql_area) {
+                *self.state.sql_editor_mut() = v.to_string();
+            }
         }
         if self.ids.chart_col.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.chart_col) {
                 self.state.chart_column = v.to_string();
             }
         }
-        if let Some(v) = self.ui.text_input_value(self.ids.pragma_value) {
-            self.state.pragma_value_draft = v.to_string();
-        }
-        if let Some(i) = self.ui.tabs_selected(self.ids.tabs) {
-            self.state.tab = MainTab::from_index(i);
+        if self.ids.tabs.0 != 0 {
+            if let Some(i) = self.ui.tabs_selected(self.ids.tabs) {
+                self.state.tab = MainTab::from_index(i);
+            }
         }
         if self.ids.dock_tabs.0 != 0 {
             if let Some(i) = self.ui.tabs_selected(self.ids.dock_tabs) {
@@ -350,6 +424,168 @@ impl Demo {
                 if let Some(d) = docks.get(i) {
                     self.state.dock_focus = *d;
                 }
+            }
+        }
+        for (i, (key, _)) in self.state.pragmas.clone().iter().enumerate() {
+            let sw = self.ids.pragma_switches.get(i).copied().unwrap_or(WidgetId(0));
+            let sel = self.ids.pragma_selects.get(i).copied().unwrap_or(WidgetId(0));
+            let inp = self.ids.pragma_inputs.get(i).copied().unwrap_or(WidgetId(0));
+            if self.state.pragma_drafts.len() <= i {
+                self.state.pragma_drafts.resize(i + 1, String::new());
+            }
+            if sw.0 != 0 {
+                if let Some(on) = self.ui.is_checked(sw) {
+                    self.state.pragma_drafts[i] = if on { "1".into() } else { "0".into() };
+                }
+            } else if sel.0 != 0 {
+                if let Some(si) = self.ui.select_selected(sel) {
+                    let val = match key.as_str() {
+                        "journal_mode" => ["delete","truncate","persist","memory","wal","off"].get(si).copied().unwrap_or("delete"),
+                        "synchronous" => ["OFF","NORMAL","FULL","EXTRA"].get(si).copied().unwrap_or("FULL"),
+                        _ => continue,
+                    };
+                    self.state.pragma_drafts[i] = val.into();
+                }
+            } else if inp.0 != 0 {
+                if let Some(v) = self.ui.text_input_value(inp) {
+                    self.state.pragma_drafts[i] = v.to_string();
+                }
+            }
+        }
+        self.snapshot_overlay();
+    }
+
+    fn snapshot_overlay(&mut self) {
+        let Some(kind) = self.state.overlay else { return };
+        if self.ids.ov_name.0 != 0 {
+            if let Some(v) = self.ui.text_input_value(self.ids.ov_name) {
+                match kind {
+                    OverlayKind::EditTable => self.state.wizard_table_name = v.to_string(),
+                    OverlayKind::EditIndex => self.state.wizard_index_name = v.to_string(),
+                    _ => {}
+                }
+            }
+        }
+        match kind {
+            OverlayKind::EditTable => {
+                if let Some(i) = self.ui.list_selected(self.ids.ov_list) {
+                    if Some(i) != self.last_wizard_list {
+                        self.flush_wizard_col();
+                        self.state.wizard_col_sel = i;
+                        self.last_wizard_list = Some(i);
+                        self.rebuild = true;
+                    }
+                }
+                self.flush_wizard_col();
+            }
+            OverlayKind::EditIndex => {
+                if self.ids.ov_idx_cols.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_idx_cols) {
+                        self.state.wizard_index_cols = v.to_string();
+                    }
+                }
+                if self.ids.ov_idx_unique.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_idx_unique) {
+                        self.state.wizard_index_unique = on;
+                    }
+                }
+                if self.ids.ov_idx_table.0 != 0 {
+                    if let Some(i) = self.ui.select_selected(self.ids.ov_idx_table) {
+                        let names = self.state.table_names();
+                        if let Some(n) = names.get(i) {
+                            self.state.wizard_index_table = n.clone();
+                        }
+                    }
+                }
+            }
+            OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
+                if self.ids.ov_csv_table.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_csv_table) {
+                        self.state.csv_table = v.to_string();
+                    }
+                }
+                if self.ids.ov_csv_header.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_csv_header) {
+                        self.state.csv_has_header = on;
+                    }
+                }
+                if self.ids.ov_csv_delim.0 != 0 {
+                    if let Some(i) = self.ui.select_selected(self.ids.ov_csv_delim) {
+                        self.state.csv_delim_idx = i;
+                    }
+                }
+                if self.ids.ov_csv_quote.0 != 0 {
+                    if let Some(i) = self.ui.select_selected(self.ids.ov_csv_quote) {
+                        self.state.csv_quote_idx = i;
+                    }
+                }
+                if kind == OverlayKind::PasteCsv && self.ids.ov_csv_paste.0 != 0 {
+                    if let Some(v) = self.ui.text_area_value(self.ids.ov_csv_paste) {
+                        self.state.csv_paste = v.to_string();
+                    }
+                }
+            }
+            OverlayKind::FindReplace => {
+                if self.ids.ov_find.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_find) {
+                        self.state.find_text = v.to_string();
+                    }
+                }
+                if self.ids.ov_replace.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_replace) {
+                        self.state.replace_text = v.to_string();
+                    }
+                }
+            }
+            OverlayKind::Attach => {
+                if self.ids.ov_attach_path.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_attach_path) {
+                        self.state.attach_path = v.to_string();
+                    }
+                }
+                if self.ids.ov_attach_schema.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_attach_schema) {
+                        self.state.attach_schema = v.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    fn flush_wizard_col(&mut self) {
+        let sel = self.state.wizard_col_sel;
+        if sel >= self.state.wizard_cols.len() { return; }
+        if self.ids.ov_col_name.0 != 0 {
+            if let Some(v) = self.ui.text_input_value(self.ids.ov_col_name) {
+                self.state.wizard_cols[sel].name = v.to_string();
+            }
+        }
+        if self.ids.ov_col_type.0 != 0 {
+            if let Some(i) = self.ui.select_selected(self.ids.ov_col_type) {
+                let types = AppState::column_type_names();
+                if let Some(ty) = types.get(i) {
+                    self.state.wizard_cols[sel].type_name = ty.clone();
+                }
+            }
+        }
+        if self.ids.ov_pk.0 != 0 {
+            if let Some(on) = self.ui.is_checked(self.ids.ov_pk) {
+                self.state.wizard_cols[sel].pk = on;
+            }
+        }
+        if self.ids.ov_nn.0 != 0 {
+            if let Some(on) = self.ui.is_checked(self.ids.ov_nn) {
+                self.state.wizard_cols[sel].notnull = on;
+            }
+        }
+        if self.ids.ov_unique.0 != 0 {
+            if let Some(on) = self.ui.is_checked(self.ids.ov_unique) {
+                self.state.wizard_cols[sel].unique = on;
+            }
+        }
+        if self.ids.ov_default.0 != 0 {
+            if let Some(v) = self.ui.text_input_value(self.ids.ov_default) {
+                self.state.wizard_cols[sel].default_value = v.to_string();
             }
         }
     }
@@ -372,7 +608,8 @@ impl Demo {
         self.last_tree_sel = self.ui.tree_selected(self.ids.tree);
         self.last_tab = self.state.tab.index();
         self.last_browse_sel = self.ui.select_selected(self.ids.browse_select);
-        self.last_browse_row = self.state.browse_sel_row;
+        self.last_browse_row = self.state.browse().sel_row;
+        self.last_wizard_list = self.ui.list_selected(self.ids.ov_list);
     }
 
     fn set_error(&mut self, e: impl Into<String>) {
@@ -446,120 +683,55 @@ impl Demo {
     }
 
     fn action_create_table(&mut self) {
-        if self.state.guard_writable().is_err() {
-            if let Err(e) = self.state.guard_writable() {
-                self.set_error(e);
-            }
-            self.rebuild = true;
-            return;
-        }
-        self.snapshot_inputs();
-        let name = self.state.new_table_name.clone();
-        let cols = self.state.new_table_cols.clone();
-        match dbmod::create_table_simple(self.state.conn.as_ref().unwrap(), &name, &cols) {
-            Ok(()) => {
-                self.state.log_sql(format!("CREATE TABLE {name} ({cols})"));
-                self.state.mark_dirty();
-                let _ = self.state.refresh_schema();
-                self.state.browse_table = Some(name);
-                let _ = self.state.refresh_browse();
-                self.state.tab = MainTab::Structure;
-                self.state.status_msg = "Table created (unwritten)".into();
-                self.clear_error();
-            }
-            Err(e) => self.set_error(e),
-        }
+        self.state.open_create_table_wizard();
         self.rebuild = true;
     }
 
     fn action_create_index(&mut self) {
-        if let Err(e) = self.state.guard_writable() {
-            self.set_error(e);
-            self.rebuild = true;
-            return;
-        }
-        self.snapshot_inputs();
-        let name = self.state.new_index_name.clone();
-        let on = self.state.new_index_on.clone();
-        // on form: table(cols) or table cols
-        let (table, cols) = if let Some(paren) = on.find('(') {
-            let table = on[..paren].trim().to_string();
-            let cols = on[paren + 1..].trim().trim_end_matches(')').to_string();
-            (table, cols)
+        self.state.open_create_index_wizard();
+        self.rebuild = true;
+    }
+
+
+    fn action_import_csv(&mut self) {
+        if let Some(path) = file_dlg::pick_open_csv() {
+            self.state.csv_path = path.display().to_string();
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported").to_string();
+            self.state.csv_table = stem;
+            self.state.csv_has_header = true;
+            self.state.csv_delim_idx = 0;
+            self.state.csv_quote_idx = 0;
+            self.state.overlay = Some(OverlayKind::ImportCsv);
         } else {
-            let mut parts = on.splitn(2, char::is_whitespace);
-            (
-                parts.next().unwrap_or("").to_string(),
-                parts.next().unwrap_or("").to_string(),
-            )
-        };
-        if table.is_empty() || cols.is_empty() {
-            self.set_error("Index needs table(cols), e.g. products(name)");
-            self.rebuild = true;
-            return;
-        }
-        match dbmod::create_index(self.state.conn.as_ref().unwrap(), &name, &table, &cols, false) {
-            Ok(()) => {
-                self.state
-                    .log_sql(format!("CREATE INDEX {name} ON {table}({cols})"));
-                self.state.mark_dirty();
-                let _ = self.state.refresh_schema();
-                self.state.status_msg = "Index created (unwritten)".into();
-                self.clear_error();
-            }
-            Err(e) => self.set_error(e),
+            self.state.status_msg = "Import CSV cancelled".into();
         }
         self.rebuild = true;
     }
 
-    fn action_import_csv(&mut self) {
-        if let Err(e) = self.state.guard_writable() {
-            self.set_error(e);
-            self.rebuild = true;
-            return;
-        }
-        let Some(path) = file_dlg::pick_open_csv() else {
-            self.state.status_msg = "Import CSV cancelled".into();
+    fn action_export_json(&mut self) {
+        let Some(res) = self.state.browse().result.clone() else {
+            self.set_error("Nothing to export — browse a table first");
             self.rebuild = true;
             return;
         };
-        let table = self
-            .state
-            .browse_table
-            .clone()
-            .unwrap_or_else(|| "imported".into());
-        match dbmod::import_csv_parse(&path) {
-            Ok((cols, rows)) => {
-                match dbmod::import_csv_into_table(
-                    self.state.conn.as_ref().unwrap(),
-                    &table,
-                    &cols,
-                    &rows,
-                    true,
-                ) {
-                    Ok(n) => {
-                        self.state.log_sql(format!("-- import csv → {table} ({n} rows)"));
-                        self.state.mark_dirty();
-                        let _ = self.state.refresh_schema();
-                        self.state.browse_table = Some(table);
-                        let _ = self.state.refresh_browse();
-                        self.state.io_path = path.display().to_string();
-                        self.state.status_msg = format!("Imported {n} rows (unwritten)");
-                        self.clear_error();
-                    }
-                    Err(e) => self.set_error(e),
+        if let Some(path) = file_dlg::pick_save_json() {
+            match dbmod::export_json(&path, &res.columns, &res.rows) {
+                Ok(()) => {
+                    self.state.status_msg = format!("Exported JSON {}", path.display());
+                    self.clear_error();
                 }
+                Err(e) => self.set_error(e),
             }
-            Err(e) => self.set_error(e),
         }
         self.rebuild = true;
     }
+
 
     fn action_export_csv(&mut self) {
         if !self.require_conn() {
             return;
         }
-        let Some(res) = self.state.browse_result.clone() else {
+        let Some(res) = self.state.browse().result.clone() else {
             self.set_error("Nothing to export — browse a table first");
             self.rebuild = true;
             return;
@@ -774,20 +946,155 @@ impl Demo {
                 self.rebuild = true;
             }
             mid::HELP_WIKI => self.stub("Help Wiki link"),
-            mid::FILE_ATTACH
-            | mid::FILE_IMPORT_CLIP
-            | mid::FILE_EXPORT_JSON
-            | mid::FILE_PROJECT_OPEN
+            mid::FILE_ATTACH => {
+                if let Some(path) = file_dlg::pick_open_db() {
+                    self.state.attach_path = path.display().to_string();
+                }
+                self.state.overlay = Some(OverlayKind::Attach);
+                self.rebuild = true;
+            }
+            mid::FILE_IMPORT_CLIP => {
+                self.state.csv_paste.clear();
+                self.state.csv_table = "clipboard".into();
+                self.state.csv_has_header = true;
+                self.state.overlay = Some(OverlayKind::PasteCsv);
+                self.rebuild = true;
+            }
+            mid::FILE_EXPORT_JSON => self.action_export_json(),
+            mid::EDIT_MODIFY => {
+                let res = match self.state.selected.as_ref().map(|s| s.kind) {
+                    Some(ObjectKind::Table) => self.state.open_modify_table_wizard(),
+                    Some(ObjectKind::Index) => self.state.open_modify_index_wizard(),
+                    _ => Err("Select a table or index to modify".into()),
+                };
+                match res {
+                    Ok(()) => self.clear_error(),
+                    Err(e) => self.set_error(e),
+                }
+                self.rebuild = true;
+            }
+            mid::FILE_PROJECT_OPEN
             | mid::FILE_PROJECT_SAVE
-            | mid::EDIT_MODIFY
             | mid::EDIT_PREFS
             | mid::TOOLS_ENCRYPT
             | mid::TOOLS_EXT => self.stub(&format!("menu item {item}")),
+            x if (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&x) => {
+                let idx = (x - mid::FILE_RECENT_BASE) as usize;
+                if let Some(path) = self.state.recent.get(idx).cloned() {
+                    match self.state.open_path(&path) {
+                        Ok(()) => self.clear_error(),
+                        Err(e) => self.set_error(e),
+                    }
+                    self.rebuild = true;
+                }
+            }
             _ => {}
         }
     }
 
+
+    fn handle_overlay_button(&mut self, id: WidgetId) -> bool {
+        if self.state.overlay.is_none() {
+            return false;
+        }
+        if id == self.ids.ov_btn_cancel {
+            self.state.overlay = None;
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_ok {
+            self.snapshot_inputs();
+            let res = match self.state.overlay {
+                Some(OverlayKind::EditTable) => self.state.apply_table_wizard(),
+                Some(OverlayKind::EditIndex) => self.state.apply_index_wizard(),
+                Some(OverlayKind::ImportCsv) | Some(OverlayKind::PasteCsv) => self.state.apply_csv_import(),
+                Some(OverlayKind::Attach) => self.state.apply_attach(),
+                Some(OverlayKind::FindReplace) => {
+                    self.state.overlay = None;
+                    Ok(())
+                }
+                None => Ok(()),
+            };
+            match res {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_add {
+            self.flush_wizard_col();
+            self.state.wizard_cols.push(dbmod::ColDef::new("col", "TEXT"));
+            self.state.wizard_col_sel = self.state.wizard_cols.len() - 1;
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_del {
+            self.flush_wizard_col();
+            if !self.state.wizard_cols.is_empty() {
+                let i = self.state.wizard_col_sel.min(self.state.wizard_cols.len() - 1);
+                self.state.wizard_cols.remove(i);
+                if self.state.wizard_col_sel >= self.state.wizard_cols.len() {
+                    self.state.wizard_col_sel = self.state.wizard_cols.len().saturating_sub(1);
+                }
+            }
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_up {
+            self.flush_wizard_col();
+            let i = self.state.wizard_col_sel;
+            if i > 0 {
+                self.state.wizard_cols.swap(i, i - 1);
+                self.state.wizard_col_sel = i - 1;
+            }
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_down {
+            self.flush_wizard_col();
+            let i = self.state.wizard_col_sel;
+            if i + 1 < self.state.wizard_cols.len() {
+                self.state.wizard_cols.swap(i, i + 1);
+                self.state.wizard_col_sel = i + 1;
+            }
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_find {
+            self.snapshot_inputs();
+            self.state.status_msg = if self.state.find_next_in_sql() {
+                format!("Found at {}", self.state.find_pos)
+            } else {
+                "Not found".into()
+            };
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_repl {
+            self.snapshot_inputs();
+            self.state.status_msg = if self.state.replace_one_in_sql() {
+                "Replaced one".into()
+            } else {
+                "Not found".into()
+            };
+            self.rebuild = true;
+            return true;
+        }
+        if id == self.ids.ov_btn_repl_all {
+            self.snapshot_inputs();
+            let n = self.state.replace_all_in_sql();
+            self.state.status_msg = format!("Replaced {n}");
+            self.rebuild = true;
+            return true;
+        }
+        false
+    }
+
     fn handle_button(&mut self, id: WidgetId) {
+        if self.handle_overlay_button(id) {
+            return;
+        }
         if id == self.ids.btn_theme {
             self.handle_menu(mid::VIEW_THEME);
             return;
@@ -809,11 +1116,17 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_struct_new_table {
-            self.action_create_table();
+            self.state.open_create_table_wizard();
+            self.rebuild = true;
             return;
         }
         if id == self.ids.btn_struct_new_index {
-            self.action_create_index();
+            self.state.open_create_index_wizard();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_struct_modify {
+            self.handle_menu(mid::EDIT_MODIFY);
             return;
         }
         if id == self.ids.btn_struct_modify {
@@ -871,7 +1184,7 @@ impl Demo {
                 self.rebuild = true;
                 return;
             }
-            let Some(table) = self.state.browse_table.clone() else {
+            let Some(table) = self.state.browse().table.clone() else {
                 self.set_error("No browse table");
                 self.rebuild = true;
                 return;
@@ -902,21 +1215,22 @@ impl Demo {
                 return;
             }
             self.snapshot_inputs();
-            let Some(table) = self.state.browse_table.clone() else {
+            let Some(table) = self.state.browse().table.clone() else {
                 self.set_error("No browse table");
                 self.rebuild = true;
                 return;
             };
             let Some(row) = self
                 .state
-                .browse_sel_row
+                .browse()
+                .sel_row
                 .or_else(|| self.ui.table_selected_row(self.ids.browse_table))
             else {
                 self.set_error("Select a browse row first");
                 self.rebuild = true;
                 return;
             };
-            let Some(&rowid) = self.state.browse_rowids.get(row) else {
+            let Some(&rowid) = self.state.browse().rowids.get(row) else {
                 self.set_error("No rowid for selection (views are read-only here)");
                 self.rebuild = true;
                 return;
@@ -943,89 +1257,57 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_pragma_apply {
-            if let Err(e) = self.state.guard_writable() {
-                self.set_error(e);
-                self.rebuild = true;
-                return;
-            }
             self.snapshot_inputs();
-            let Some(idx) = self.ui.property_grid_selected(self.ids.pragma_grid) else {
-                self.set_error("Select a pragma row");
-                self.rebuild = true;
-                return;
-            };
-            let key = self
-                .state
-                .pragmas
-                .get(idx)
-                .map(|(k, _)| k.clone())
-                .unwrap_or_default();
-            let mut value = self.state.pragma_value_draft.trim().to_string();
-            if value.is_empty() {
-                if let Some(pv) = self.ui.property_grid_value(self.ids.pragma_grid, idx) {
-                    value = match pv {
-                        PropertyValue::Bool(b) => {
-                            if *b {
-                                "ON".into()
-                            } else {
-                                "OFF".into()
-                            }
-                        }
-                        PropertyValue::Select { options, selected } => {
-                            options.get(*selected).cloned().unwrap_or_default()
-                        }
-                        PropertyValue::Text(s) => s.clone(),
-                        PropertyValue::Number(n) => n.to_string(),
-                    };
-                }
-            }
-            match dbmod::write_pragma(self.state.conn.as_ref().unwrap(), &key, &value) {
-                Ok(()) => {
-                    self.state.log_sql(format!("PRAGMA {key} = {value}"));
-                    self.state.mark_dirty();
-                    let _ = self.state.refresh_pragmas();
-                    self.state.status_msg = format!("PRAGMA {key} applied (session)");
-                    self.clear_error();
-                }
+            match self.state.save_pragmas() {
+                Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_sql_run {
-            if !self.require_conn() {
+        if id == self.ids.btn_browse_new_tab {
+            self.state.add_browse_tab();
+            self.rebuild = true;
+            return;
+        }
+        for (i, bid) in self.ids.browse_tab_btns.iter().enumerate() {
+            if id == *bid {
+                self.snapshot_inputs();
+                self.state.browse_tab_idx = i;
+                let _ = self.state.refresh_browse();
+                self.rebuild = true;
                 return;
             }
+        }
+        if id == self.ids.btn_sql_stop {
+            self.state.request_sql_stop();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_sql_find {
+            self.state.overlay = Some(OverlayKind::FindReplace);
+            self.rebuild = true;
+            return;
+        }
+        for (i, bid) in self.ids.sql_tab_btns.iter().enumerate() {
+            if id == *bid {
+                self.snapshot_inputs();
+                self.state.sql_tab_idx = i;
+                self.rebuild = true;
+                return;
+            }
+        }
+        if id == self.ids.btn_sql_run {
             self.snapshot_inputs();
-            let sql = self.state.sql_editor().to_string();
-            match dbmod::execute_sql(self.state.conn.as_ref().unwrap(), &sql) {
-                Ok(res) => {
-                    let mutating = sql
-                        .trim_start()
-                        .to_ascii_lowercase()
-                        .starts_with("insert")
-                        || sql.trim_start().to_ascii_lowercase().starts_with("update")
-                        || sql.trim_start().to_ascii_lowercase().starts_with("delete")
-                        || sql.trim_start().to_ascii_lowercase().starts_with("create")
-                        || sql.trim_start().to_ascii_lowercase().starts_with("drop")
-                        || sql.trim_start().to_ascii_lowercase().starts_with("alter");
-                    if mutating {
-                        self.state.mark_dirty();
-                    }
-                    self.state.log_sql(sql.lines().next().unwrap_or("SQL").to_string());
-                    let n = res.rows.len();
-                    self.state.sql_result = Some(res);
-                    self.state.sql_message = format!("OK — {n} result row(s)");
-                    let _ = self.state.refresh_schema();
-                    self.state.status_msg = "SQL ok".into();
-                    self.clear_error();
-                }
+            match self.state.start_sql_job() {
+                Ok(()) => self.clear_error(),
                 Err(e) => {
-                    self.state.sql_result = None;
-                    self.set_error(e);
+                    match self.state.run_sql_sync() {
+                        Ok(()) => self.clear_error(),
+                        Err(_) => self.set_error(e),
+                    }
                 }
             }
-            self.state.tab = MainTab::ExecuteSql;
             self.rebuild = true;
             return;
         }
@@ -1088,13 +1370,21 @@ impl Demo {
     }
 
     fn apply_browse_select(&mut self) {
+        if self.ids.browse_select.0 == 0 {
+            return;
+        }
         let opts = self.state.table_names();
         if let Some(i) = self.ui.select_selected(self.ids.browse_select) {
             if let Some(name) = opts.get(i) {
-                self.state.browse_table = Some(name.clone());
+                let tab = self.state.browse_mut();
+                tab.table = Some(name.clone());
+                tab.title = name.clone();
+                tab.order_col = None;
+                tab.sel_row = None;
             }
         }
     }
+
 
     fn apply_chart_select(&mut self) {
         if self.ids.chart_select.0 == 0 {
@@ -1134,7 +1424,7 @@ impl Demo {
         if let Some(row) = self.ui.table_selected_row(self.ids.browse_table) {
             if self.last_browse_row != Some(row) {
                 self.last_browse_row = Some(row);
-                self.state.browse_sel_row = Some(row);
+                self.state.browse_mut().sel_row = Some(row);
                 self.state.sync_edit_cell_from_selection();
                 dirty = true;
             }
@@ -1149,22 +1439,17 @@ impl Demo {
             if tid != self.ids.browse_table {
                 return;
             }
-            let Some(res) = self.state.browse_result.as_ref() else {
-                return;
-            };
-            let Some(col_name) = res.columns.get(col_idx).cloned() else {
-                return;
-            };
-            // Strip sort markers if present in display — columns store raw names in state
-            let col_name = col_name
-                .trim_end_matches(" ▲")
-                .trim_end_matches(" ▼")
-                .to_string();
-            if self.state.browse_order_col.as_deref() == Some(col_name.as_str()) {
-                self.state.browse_order_desc = !self.state.browse_order_desc;
-            } else {
-                self.state.browse_order_col = Some(col_name);
-                self.state.browse_order_desc = false;
+            let Some(res) = self.state.browse().result.as_ref() else { return };
+            let Some(col_name) = res.columns.get(col_idx).cloned() else { return };
+            let col_name = col_name.trim_end_matches(" ▲").trim_end_matches(" ▼").to_string();
+            {
+                let tab = self.state.browse_mut();
+                if tab.order_col.as_deref() == Some(col_name.as_str()) {
+                    tab.order_desc = !tab.order_desc;
+                } else {
+                    tab.order_col = Some(col_name);
+                    tab.order_desc = false;
+                }
             }
             match self.state.refresh_browse() {
                 Ok(()) => self.clear_error(),
@@ -1173,6 +1458,7 @@ impl Demo {
             self.rebuild = true;
         }
     }
+
 
     fn handle_modal(&mut self) {
         if let Some((mid_w, action)) = self.ui.take_modal_action() {
@@ -1221,29 +1507,32 @@ impl Demo {
                 ConfirmKind::DeleteRow => {
                     if let Err(e) = self.state.guard_writable() {
                         self.set_error(e);
-                    } else if let (Some(table), Some(row)) = (
-                        self.state.browse_table.clone(),
-                        self.state
-                            .browse_sel_row
-                            .or_else(|| self.ui.table_selected_row(self.ids.browse_table)),
-                    ) {
-                        if let Some(&rowid) = self.state.browse_rowids.get(row) {
-                            if let Some(conn) = self.state.conn.as_ref() {
-                                match dbmod::delete_row_by_rowid(conn, &table, rowid) {
-                                    Ok(_) => {
-                                        self.state.log_sql(format!(
-                                            "DELETE FROM {table} WHERE rowid={rowid}"
-                                        ));
-                                        self.state.mark_dirty();
-                                        let _ = self.state.refresh_browse();
-                                        self.state.status_msg = "Row deleted (unwritten)".into();
-                                        self.clear_error();
+                    } else {
+                        let table = self.state.browse().table.clone();
+                        let row = self
+                            .state
+                            .browse()
+                            .sel_row
+                            .or_else(|| self.ui.table_selected_row(self.ids.browse_table));
+                        if let (Some(table), Some(row)) = (table, row) {
+                            if let Some(&rowid) = self.state.browse().rowids.get(row) {
+                                if let Some(conn) = self.state.conn.as_ref() {
+                                    match dbmod::delete_row_by_rowid(conn, &table, rowid) {
+                                        Ok(_) => {
+                                            self.state.log_sql(format!(
+                                                "DELETE FROM {table} WHERE rowid={rowid}"
+                                            ));
+                                            self.state.mark_dirty();
+                                            let _ = self.state.refresh_browse();
+                                            self.state.status_msg = "Row deleted (unwritten)".into();
+                                            self.clear_error();
+                                        }
+                                        Err(e) => self.set_error(e),
                                     }
-                                    Err(e) => self.set_error(e),
                                 }
+                            } else {
+                                self.set_error("No rowid");
                             }
-                        } else {
-                            self.set_error("No rowid");
                         }
                     }
                 }
@@ -1342,6 +1631,9 @@ impl Demo {
         self.handle_modal();
         self.poll_header_sort();
         self.poll_selection_changes();
+        if self.state.poll_sql_job() {
+            self.rebuild = true;
+        }
         if self.rebuild {
             self.do_rebuild();
         } else {
@@ -1483,6 +1775,13 @@ impl AppCallbacks for Demo {
                         return;
                     }
                     if matches!(ui_key, UiKey::Escape) {
+                        if self.state.overlay.is_some() {
+                            self.state.overlay = None;
+                            self.rebuild = true;
+                            self.do_rebuild();
+                            ctx.request_redraw();
+                            return;
+                        }
                         if self.ui.modal_open(self.ids.modal).unwrap_or(false) {
                             let _ = self.ui.set_modal_open(self.ids.modal, false);
                             self.state.confirm_open = false;
