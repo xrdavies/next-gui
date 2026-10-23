@@ -451,6 +451,28 @@ impl Demo {
                 _ => MainTab::Structure,
             };
         }
+        if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() {
+            if matches!(state.tab, MainTab::ExecuteSql) {
+                state.sql_tabs[0] = "SELECT * FROM customers;".into();
+                let _ = state.run_sql_sync();
+            }
+            if matches!(state.tab, MainTab::Browse) {
+                let _ = state.refresh_browse();
+                if matches!(state.browse_view, crate::state::BrowseViewMode::Form) {
+                    if state.browse().sel_row.is_none() {
+                        state.browse_mut().sel_row = Some(0);
+                        state.browse_mut().sel_col = Some(0);
+                    }
+                    state.sync_edit_cell_from_selection();
+                }
+            }
+        }
+        let mut theme = theme;
+        if let Ok(mode) = std::env::var("NEXT_GUI_DB_BROWSER_QA_THEME") {
+            if mode.eq_ignore_ascii_case("light") {
+                theme = Theme::light();
+            }
+        }
         let built = build_ui(font.clone(), theme, width, height, &state);
         let clear = clear_color(&theme);
         let qa_exit = std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some();
@@ -815,7 +837,14 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
-        self.backend.set_clear_color(clear_color(&self.theme));
+        let clear = clear_color(&self.theme);
+        self.backend.set_clear_color(clear);
+        if let Some(g) = self.gpu_stash.as_mut() {
+            g.set_clear_color(clear);
+        }
+        if let Some(g) = self.surface_gpu.as_mut() {
+            g.set_clear_color(clear);
+        }
         self.needs_paint = true;
         self.rebuild = false;
         self.last_tree_sel = self.ui.tree_selected(self.ids.tree);
@@ -1915,6 +1944,18 @@ impl Demo {
             if tab != self.last_tab {
                 self.last_tab = tab;
                 self.state.tab = MainTab::from_index(tab);
+                dirty = true;
+            }
+        }
+        if self.ids.dock_tabs.0 != 0 {
+            if let Some(i) = self.ui.tabs_selected(self.ids.dock_tabs) {
+                let docks = self.state.visible_docks();
+                if let Some(d) = docks.get(i) {
+                    if self.state.dock_focus != *d {
+                        self.state.dock_focus = *d;
+                        dirty = true;
+                    }
+                }
             }
         }
         if let Some(i) = self.ui.select_selected(self.ids.browse_select) {
@@ -1926,9 +1967,14 @@ impl Demo {
             }
         }
         if let Some(row) = self.ui.table_selected_row(self.ids.browse_table) {
-            if self.last_browse_row != Some(row) {
+            let col = self.ui.table_selected_col(self.ids.browse_table);
+            let col_changed = col.is_some() && col != self.state.browse().sel_col;
+            if self.last_browse_row != Some(row) || col_changed {
                 self.last_browse_row = Some(row);
                 self.state.browse_mut().sel_row = Some(row);
+                if let Some(c) = col {
+                    self.state.browse_mut().sel_col = Some(c);
+                }
                 self.state.sync_edit_cell_from_selection();
                 if matches!(self.state.edit_mode, crate::state::EditCellMode::Image) {
                     self.state.decode_edit_image();

@@ -69,7 +69,7 @@ Counts (Phase 4 close): **done 101 · partial 0 · todo 0** (re-tally when updat
 | Toggle DB Schema dock | done | |
 | Toggle SQL Log dock | done | |
 | Toggle Plot dock | done | |
-| Toggle Remote dock | done | local path list UI (DB4S Remote cloud N/A; local paths only) |
+| Toggle Remote dock | done | on by default; local path list UI (DB4S Remote cloud N/A) |
 | Toggle DB / Extra / Project / SQL toolbars | done | four independent View toggles |
 
 ## Tools menu
@@ -148,7 +148,7 @@ Counts (Phase 4 close): **done 101 · partial 0 · todo 0** (re-tally when updat
 | DB Schema | done | compact schema list |
 | SQL Log | done | |
 | Plot | done | Trend from numeric column |
-| Remote | done | dock panel with connection list (local paths); Add/Open — DB4S cloud sync N/A |
+| Remote | done | dock tab enabled by default; connection list (local paths); Add/Open — DB4S cloud sync N/A |
 
 ## Dialogs
 
@@ -183,7 +183,8 @@ Counts (Phase 4 close): **done 101 · partial 0 · todo 0** (re-tally when updat
 - **Phase 1:** chrome parity (4 tabs + docks + menubar + Write/Revert + rfd + header sort).
 - **Phase 2:** EditTable/Index wizards, CSV import options + clipboard, filter-per-column, multi-browse tabs, Find/Replace, multi SQL tabs + Stop interrupt, pragma form, JSON export, Recent, Attach.
 - **Phase 3:** SQLCipher UI, `.sqbpro` projects, frozen columns + conditional formatting + FK nav, Edit Cell Text/Hex/JSON/Image, ExportSql options, Preferences, Execute Line / toggle comment / Save as VIEW, multi toolbar View toggles, `FlexBuilder::dialog_panel`.
-- **Phase 4 (this):** Save All, Load Extension, Help URLs/About, Print Schema, Record/form view, Remote dock, SQLCipher linked build, true cell background fills, Edit Cell image blit (`image` 0.24), overlays on `dialog_panel`, status bar RO/encoding/encryption/busy polished.
+- **Phase 4:** Save All, Load Extension, Help URLs/About, Print Schema, Record/form view, Remote dock, SQLCipher linked build, true cell background fills, Edit Cell image blit (`image` 0.24), overlays on `dialog_panel`, status bar RO/encoding/encryption/busy polished.
+- **Phase 4b (visual QA):** Table aux stride bug (only last row painted); Tabs recursive hide (Pragma bleed); Menu popup width; light clear/menubar; Remote dock default on; SQL log ellipsis; Plot clip/padding; Edit Cell col sync; Form toggle; Comment button label.
 
 ## Framework / external notes (not gaps)
 

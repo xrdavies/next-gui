@@ -839,9 +839,9 @@ impl MenuStyle {
         let f = density.font_scale();
         let _ = (c, s, f);
         Self {
-            min_width: 72.0,
+            min_width: 96.0,
             item_height: scale(28.0, s),
-            popup_width: 160.0,
+            popup_width: 260.0,
             size: scale(13.0, f),
             fg: c.text_primary,
             disabled_fg: c.disabled,

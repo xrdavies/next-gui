@@ -143,7 +143,7 @@ pub(crate) fn rasterize_trend(
     if (vmax - vmin).abs() < 1e-6 {
         vmax = vmin + 1.0;
     }
-    let pad = 2.0;
+    let pad = 4.0;
     let n = points.len();
     let mut coords: Vec<(f32, f32)> = Vec::with_capacity(n);
     for (i, &v) in points.iter().enumerate() {

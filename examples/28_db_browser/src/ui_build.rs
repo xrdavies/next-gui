@@ -4,9 +4,9 @@ use next_gui_layout::{Axis, CrossAlign};
 use next_gui_scene::{Color, Scene};
 use next_gui_text::Font;
 use next_gui_ui::{
-    AlertTone, ChartStyle, ChartTile, ColumnStyle, ListStyle, MenuItem, MenuStyle, ModalStyle,
+    AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, ListStyle, MenuItem, MenuStyle, ModalStyle,
     PanelStyle, RowStyle, SelectStyle, SplitterStyle, ImageStyle, StatusBarStyle, SwitchStyle, TableColumn,
-    TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme, ThemeMode, ToolbarStyle, TreeNode,
+    TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme, ToolbarStyle, TreeNode,
     TreeStyle, TrendStyle, Ui, WidgetId,
 };
 
@@ -207,10 +207,8 @@ pub struct BuiltUi {
 }
 
 pub fn clear_color(theme: &Theme) -> Color {
-    match theme.mode {
-        ThemeMode::Dark => Color::rgb(0x1a, 0x1a, 0x1c),
-        ThemeMode::Light => theme.colors.content_bg,
-    }
+    // Match tab/shell fills so gaps never show a stale dark clear.
+    theme.colors.content_bg
 }
 
 fn schema_tree(state: &AppState) -> Vec<TreeNode> {
@@ -416,7 +414,9 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let dock_w = (shell_w - 20.0) * (1.0 - main_frac) - 8.0;
     let tab_page_h = (content_h - 36.0).max(360.0);
 
-    let menu_style = MenuStyle::from_theme(&theme);
+    let mut menu_style = MenuStyle::from_theme(&theme);
+    menu_style.popup_width = menu_style.popup_width.max(280.0);
+    menu_style.min_width = menu_style.min_width.max(72.0);
     let check = |on: bool| if on { "✓ " } else { "  " };
 
     let mut col_style = ui.column_style();
@@ -427,17 +427,20 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     col_style.padding = 4.0;
     col_style.gap = 4.0;
     col_style.cross_align = CrossAlign::Start;
+    col_style.background = Some(theme.colors.content_bg);
 
     let mut menu_tb = ToolbarStyle::from_theme(&theme);
     menu_tb.width = shell_w - 8.0;
     menu_tb.height = 34.0;
     menu_tb.padding = 2.0;
     menu_tb.gap = 4.0;
+    menu_tb.background = Some(theme.colors.strip_bg);
 
     let mut main_tb = ToolbarStyle::from_theme(&theme);
     main_tb.width = shell_w - 8.0;
     main_tb.height = 38.0;
     main_tb.padding = 4.0;
+    main_tb.background = Some(theme.colors.surface_elevated);
 
     // Recent menu items
     let mut file_items = vec![
@@ -939,7 +942,22 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             let log_items: Vec<String> = if state.sql_log.is_empty() {
                 vec!["(empty)".into()]
             } else {
-                state.sql_log.iter().rev().take(100).cloned().collect()
+                state
+                    .sql_log
+                    .iter()
+                    .rev()
+                    .take(100)
+                    .map(|s| {
+                        const MAX: usize = 56;
+                        let one_line = s.replace('\n', " ");
+                        if one_line.chars().count() > MAX {
+                            let trunc: String = one_line.chars().take(MAX.saturating_sub(1)).collect();
+                            format!("{trunc}…")
+                        } else {
+                            one_line
+                        }
+                    })
+                    .collect()
             };
             let schema_items: Vec<String> = if state.schema.is_empty() {
                 vec!["(no objects)".into()]
@@ -967,6 +985,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             )];
 
             let mut body_split = SplitterStyle::from_theme(&theme);
+            body_split.sash_color = theme.colors.sash;
             body_split.width = shell_w - 8.0;
             body_split.height = content_h;
             body_split.axis = Axis::Vertical;
@@ -975,6 +994,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             let mut tabs_style = TabsStyle::from_theme(&theme);
             tabs_style.width = main_w - 4.0;
             tabs_style.height = content_h - 4.0;
+            tabs_style.content_bg = theme.colors.content_bg;
+            tabs_style.strip_bg = theme.colors.strip_bg;
 
             let mut struct_tb = ToolbarStyle::from_theme(&theme);
             struct_tb.width = main_w - 24.0;
@@ -1039,6 +1060,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             let mut dock_tabs_style = TabsStyle::from_theme(&theme);
             dock_tabs_style.width = dock_w.max(220.0);
             dock_tabs_style.height = content_h - 4.0;
+            dock_tabs_style.content_bg = theme.colors.content_bg;
+            dock_tabs_style.strip_bg = theme.colors.strip_bg;
 
             let mut dock_col = ColumnStyle::from_theme(&theme);
             dock_col.width = dock_w.max(200.0) - 16.0;
@@ -1063,7 +1086,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             chart_style.width = (dock_w - 28.0).max(180.0);
             chart_style.height = (tab_page_h - 100.0).max(160.0);
             chart_style.columns = 1;
-            chart_style.padding = 6.0;
+            chart_style.padding = 10.0;
+            chart_style.gap = 8.0;
 
             let mut dock_row = RowStyle::from_theme(&theme);
             dock_row.width = (dock_w - 28.0).max(180.0);
@@ -1090,6 +1114,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             pragma_col.padding = 4.0;
             pragma_col.gap = 4.0;
             pragma_col.cross_align = CrossAlign::Start;
+            pragma_col.background = Some(theme.colors.content_bg);
 
             let sw = SwitchStyle::from_theme(&theme);
             let mut prag_sel = SelectStyle::from_theme(&theme);
@@ -1102,6 +1127,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 |left| {
                     tabs = left.tabs(tabs_style, |tb| {
                         tb.page(MainTab::Structure.title(), |p| {
+                            if state.tab != MainTab::Structure {
+                                p.text_styled("", theme.colors.content_bg, 1.0);
+                                return;
+                            }
                             p.toolbar(struct_tb, |tb| {
                                 btn_struct_new_table = tb.tool_button("New Table");
                                 btn_struct_new_index = tb.tool_button("New Index");
@@ -1132,6 +1161,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                         });
 
                         tb.page(MainTab::Browse.title(), |p| {
+                            if state.tab != MainTab::Browse {
+                                p.text_styled("", theme.colors.content_bg, 1.0);
+                                return;
+                            }
                             // Browse multi-tabs strip
                             let titles: Vec<String> =
                                 state.browse_tabs.iter().map(|t| t.title.clone()).collect();
@@ -1159,13 +1192,15 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                 btn_browse_go = row.tool_button("Apply");
                                 btn_add_row = row.tool_button("New Record");
                                 btn_del_row = row.tool_button("Delete Record");
+                            });
+                            p.row(tool_row, |row| {
+                                btn_form_view = row.tool_button(match state.browse_view {
+                                    crate::state::BrowseViewMode::Table => "Form View",
+                                    crate::state::BrowseViewMode::Form => "Grid View",
+                                });
                                 btn_freeze = row.tool_button(format!("Freeze {}", state.frozen_cols));
                                 btn_cond_fmt = row.tool_button("Cond Format…");
                                 btn_fk_nav = row.tool_button("FK →");
-                                btn_form_view = row.tool_button(match state.browse_view {
-                                    crate::state::BrowseViewMode::Table => "Form View",
-                                    crate::state::BrowseViewMode::Form => "Table View",
-                                });
                             });
                             // Per-column filters
                             if !col_names.is_empty() {
@@ -1239,6 +1274,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                         });
 
                         tb.page(MainTab::Pragmas.title(), |p| {
+                            if state.tab != MainTab::Pragmas {
+                                p.text_styled("", theme.colors.content_bg, 1.0);
+                                return;
+                            }
                             p.text("Database preferences (PRAGMA). Edit values then Save Pragmas.");
                             p.column(pragma_col, |c| {
                                 for (i, (key, _val)) in state.pragmas.iter().enumerate() {
@@ -1311,6 +1350,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                         });
 
                         tb.page(MainTab::ExecuteSql.title(), |p| {
+                            if state.tab != MainTab::ExecuteSql {
+                                p.text_styled("", theme.colors.content_bg, 1.0);
+                                return;
+                            }
                             if state.toolbar_sql {
                                 p.toolbar(sql_tb, |tb| {
                                     btn_sql_new_tab = tb.tool_button("New Tab");
@@ -1320,7 +1363,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                     btn_sql_line = tb.tool_button("Execute Line");
                                     btn_sql_stop = tb.tool_button("Stop");
                                     btn_sql_find = tb.tool_button("Find");
-                                    btn_sql_comment = tb.tool_button("Toggle --");
+                                    btn_sql_comment = tb.tool_button("Comment");
                                     btn_sql_view = tb.tool_button("Save as VIEW");
                                     tb.spacer(8.0, 1.0);
                                     tb.text_styled(
@@ -1354,7 +1397,9 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                 .error_msg
                                 .clone()
                                 .unwrap_or_else(|| state.sql_message.clone());
-                            sql_alert = p.alert(tone, msg);
+                            let mut alert_s = AlertStyle::from_theme(&theme);
+                            alert_s.width = main_w - 24.0;
+                            sql_alert = p.alert_styled(tone, msg, false, alert_s);
                             sql_table = p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style);
                         });
                     });
