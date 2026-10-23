@@ -145,6 +145,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut title = WidgetId(0);
         let mut budget = WidgetId(0);
         let mut backend_label = WidgetId(0);
@@ -162,7 +163,7 @@ impl Demo {
                 padding: 12.0,
                 gap: 10.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x22, 0x22, 0x26)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 title = col.text_styled(
@@ -181,7 +182,7 @@ impl Demo {
                     PanelStyle {
                         width: (width as f32 - 64.0).max(360.0),
                         height: 200.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         budget = p.text_styled("…", Color::rgb(0xe0, 0xe4, 0xec), 14.0);
@@ -199,14 +200,12 @@ impl Demo {
 
                 col.row(
                     RowStyle {
-                        x: 0.0,
-                        y: 0.0,
                         width: (width as f32 - 64.0).max(360.0),
                         height: 40.0,
                         gap: 10.0,
                         padding: 0.0,
-                        cross_align: CrossAlign::Center,
-                        background: None,
+                        background: None, // transparent strip over column surface
+                        ..RowStyle::from_theme(&theme)
                     },
                     |row| {
                         btn_toggle = row.button("Toggle profile");
@@ -217,7 +216,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: (width as f32 - 64.0).max(360.0),
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("…", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

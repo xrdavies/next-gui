@@ -135,6 +135,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut tag = WidgetId(0);
         let mut badge = WidgetId(0);
         let mut tip_save = WidgetId(0);
@@ -158,18 +159,18 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 background: Some(Color::rgb(0x1e, 0x1e, 0x22)),
-                ..ColumnStyle::default()
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tip_save = tb.tooltip_styled(
                             "Save project (tooltip)",
-                            TooltipStyle::default(),
+                            TooltipStyle::from_theme(&theme),
                             |t| {
                                 t.icon(IconName::Save);
                             },
@@ -193,7 +194,7 @@ impl Demo {
                     true,
                     AlertStyle {
                         width: shell_w - 16.0,
-                        ..AlertStyle::default()
+                        ..AlertStyle::from_theme(&theme)
                     },
                 );
 
@@ -202,7 +203,7 @@ impl Demo {
                     PanelStyle {
                         width: shell_w - 16.0,
                         height: 100.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         p.row(
@@ -211,7 +212,7 @@ impl Demo {
                                 height: 36.0,
                                 gap: 10.0,
                                 cross_align: CrossAlign::Center,
-                                ..RowStyle::default()
+                                ..RowStyle::from_theme(&theme)
                             },
                             |r| {
                                 tag = r.tag_styled(
@@ -220,7 +221,7 @@ impl Demo {
                                     TagStyle {
                                         bg: Color::rgb(0x1e, 0x3d, 0x2a),
                                         fg: Color::rgb(0x8a, 0xe6, 0x9a),
-                                        ..TagStyle::default()
+                                        ..TagStyle::from_theme(&theme)
                                     },
                                 );
                                 r.tag_styled(
@@ -229,7 +230,7 @@ impl Demo {
                                     TagStyle {
                                         bg: Color::rgb(0x4a, 0x3a, 0x18),
                                         fg: Color::rgb(0xf0, 0xd0, 0x80),
-                                        ..TagStyle::default()
+                                        ..TagStyle::from_theme(&theme)
                                     },
                                 );
                                 r.tag_styled(
@@ -238,13 +239,13 @@ impl Demo {
                                     TagStyle {
                                         bg: Color::rgb(0x4a, 0x22, 0x28),
                                         fg: Color::rgb(0xf0, 0xa0, 0xa8),
-                                        ..TagStyle::default()
+                                        ..TagStyle::from_theme(&theme)
                                     },
                                 );
                                 r.spacer(16.0, 1.0);
                                 r.badge_host(
                                     BadgeKind::Count(7),
-                                    BadgeStyle::default(),
+                                    BadgeStyle::from_theme(&theme),
                                     |h| {
                                         h.icon(IconName::Warning);
                                     },
@@ -261,7 +262,7 @@ impl Demo {
                     PanelStyle {
                         width: shell_w - 16.0,
                         height: 160.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         p.text_styled("Download / command progress", Color::rgb(0xa0, 0xa8, 0xb4), 12.0);
@@ -270,7 +271,7 @@ impl Demo {
                             false,
                             ProgressStyle {
                                 width: shell_w - 64.0,
-                                ..ProgressStyle::default()
+                                ..ProgressStyle::from_theme(&theme)
                             },
                         );
                         p.row(
@@ -279,7 +280,7 @@ impl Demo {
                                 height: 40.0,
                                 gap: 10.0,
                                 cross_align: CrossAlign::Center,
-                                ..RowStyle::default()
+                                ..RowStyle::from_theme(&theme)
                             },
                             |r| {
                                 open_btn = r.tool_button("Open Modal");
@@ -297,7 +298,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Soft", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);
@@ -317,7 +318,7 @@ impl Demo {
             "Remove tag Running from the monitoring list?",
             "Delete",
             Some("Cancel".into()),
-            ModalStyle::default(),
+            ModalStyle::from_theme(&theme),
         );
 
         ui.sync(&mut scene);

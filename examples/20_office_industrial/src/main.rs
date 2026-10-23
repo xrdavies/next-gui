@@ -138,6 +138,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut tree_sel = WidgetId(0);
         let mut form = WidgetId(0);
         let mut validate_btn = WidgetId(0);
@@ -189,14 +190,14 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x20, 0x20, 0x24)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
                         height: 36.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.text_styled(
@@ -215,7 +216,7 @@ impl Demo {
                         padding: 0.0,
                         cross_align: CrossAlign::Start,
                         background: None,
-                        ..RowStyle::default()
+                        ..RowStyle::from_theme(&theme)
                     },
                     |row| {
                         row.panel(
@@ -223,7 +224,7 @@ impl Demo {
                             PanelStyle {
                                 width: 340.0,
                                 height: shell_h - 100.0,
-                                ..PanelStyle::default()
+                                ..PanelStyle::from_theme(&theme)
                             },
                             |p| {
                                 p.text_styled(
@@ -238,7 +239,7 @@ impl Demo {
                                     TreeSelectStyle {
                                         width: 300.0,
                                         popup_max_height: 180.0,
-                                        ..TreeSelectStyle::default()
+                                        ..TreeSelectStyle::from_theme(&theme)
                                     },
                                 );
                                 p.spacer(1.0, 8.0);
@@ -246,7 +247,7 @@ impl Demo {
                                     FormStyle {
                                         width: 310.0,
                                         height: 220.0,
-                                        ..FormStyle::default()
+                                        ..FormStyle::from_theme(&theme)
                                     },
                                     |f| {
                                         f.field(
@@ -259,7 +260,7 @@ impl Demo {
                                                     "e.g. Feeder-1",
                                                     TextInputStyle {
                                                         width: 280.0,
-                                                        ..TextInputStyle::default()
+                                                        ..TextInputStyle::from_theme(&theme)
                                                     },
                                                 );
                                             },
@@ -278,7 +279,7 @@ impl Demo {
                                                     "e.g. 1001",
                                                     TextInputStyle {
                                                         width: 280.0,
-                                                        ..TextInputStyle::default()
+                                                        ..TextInputStyle::from_theme(&theme)
                                                     },
                                                 );
                                             },
@@ -301,7 +302,7 @@ impl Demo {
                                 padding: 0.0,
                                 gap: 8.0,
                                 background: None,
-                                ..ColumnStyle::default()
+                                ..ColumnStyle::from_theme(&theme)
                             },
                             |c| {
                                 c.panel(
@@ -309,7 +310,7 @@ impl Demo {
                                     PanelStyle {
                                         width: (shell_w - 400.0).max(400.0),
                                         height: 240.0,
-                                        ..PanelStyle::default()
+                                        ..PanelStyle::from_theme(&theme)
                                     },
                                     |p| {
                                         p.text_styled(
@@ -322,7 +323,7 @@ impl Demo {
                                             AlarmListStyle {
                                                 width: (shell_w - 440.0).max(360.0),
                                                 height: 170.0,
-                                                ..AlarmListStyle::default()
+                                                ..AlarmListStyle::from_theme(&theme)
                                             },
                                         );
                                     },
@@ -335,7 +336,7 @@ impl Demo {
                                         padding: 0.0,
                                         cross_align: CrossAlign::Start,
                                         background: None,
-                                        ..RowStyle::default()
+                                        ..RowStyle::from_theme(&theme)
                                     },
                                     |r| {
                                         r.panel(
@@ -343,7 +344,7 @@ impl Demo {
                                             PanelStyle {
                                                 width: 180.0,
                                                 height: 170.0,
-                                                ..PanelStyle::default()
+                                                ..PanelStyle::from_theme(&theme)
                                             },
                                             |p| {
                                                 gauge = p.gauge(
@@ -352,7 +353,7 @@ impl Demo {
                                                     100.0,
                                                     "%",
                                                     "Load",
-                                                    GaugeStyle::default(),
+                                                    GaugeStyle::from_theme(&theme),
                                                 );
                                             },
                                         );
@@ -361,7 +362,7 @@ impl Demo {
                                             PanelStyle {
                                                 width: (shell_w - 620.0).max(260.0),
                                                 height: 170.0,
-                                                ..PanelStyle::default()
+                                                ..PanelStyle::from_theme(&theme)
                                             },
                                             |p| {
                                                 trend = p.trend(
@@ -372,7 +373,7 @@ impl Demo {
                                                     TrendStyle {
                                                         width: (shell_w - 660.0).max(220.0),
                                                         height: 110.0,
-                                                        ..TrendStyle::default()
+                                                        ..TrendStyle::from_theme(&theme)
                                                     },
                                                 );
                                             },
@@ -387,7 +388,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Soft", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

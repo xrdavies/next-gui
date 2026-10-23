@@ -141,6 +141,7 @@ impl Demo {
 
         let mut scene = Scene::new();
         let mut ui = Ui::with_font(font);
+        let theme = *ui.theme();
         let mut name_input = WidgetId(0);
         let mut tag_input = WidgetId(0);
         let mut check = WidgetId(0);
@@ -163,14 +164,14 @@ impl Demo {
                 padding: 8.0,
                 gap: 8.0,
                 cross_align: CrossAlign::Start,
-                background: Some(Color::rgb(0x20, 0x20, 0x24)),
+                ..ColumnStyle::from_theme(&theme)
             },
             |col| {
                 col.toolbar(
                     ToolbarStyle {
                         width: shell_w - 16.0,
                         height: 36.0,
-                        ..ToolbarStyle::default()
+                        ..ToolbarStyle::from_theme(&theme)
                     },
                     |tb| {
                         tb.text_styled(
@@ -186,7 +187,7 @@ impl Demo {
                     PanelStyle {
                         width: shell_w - 16.0,
                         height: shell_h - 80.0,
-                        ..PanelStyle::default()
+                        ..PanelStyle::from_theme(&theme)
                     },
                     |p| {
                         p.text_styled("Name", Color::rgb(0xa8, 0xb0, 0xbc), 13.0);
@@ -195,7 +196,7 @@ impl Demo {
                             "Plant name…",
                             TextInputStyle {
                                 width: (shell_w - 60.0).min(420.0),
-                                ..TextInputStyle::default()
+                                ..TextInputStyle::from_theme(&theme)
                             },
                         );
                         p.spacer(1.0, 6.0);
@@ -205,22 +206,22 @@ impl Demo {
                             "Tag id",
                             TextInputStyle {
                                 width: (shell_w - 60.0).min(420.0),
-                                ..TextInputStyle::default()
+                                ..TextInputStyle::from_theme(&theme)
                             },
                         );
                         p.spacer(1.0, 10.0);
                         check = p.checkbox_styled(
                             "Alarm enabled",
                             true,
-                            CheckboxStyle::default(),
+                            CheckboxStyle::from_theme(&theme),
                         );
                         p.spacer(1.0, 6.0);
                         p.text_styled("Priority", Color::rgb(0xa8, 0xb0, 0xbc), 13.0);
-                        radio_a = p.radio_styled(7, "Low", false, RadioStyle::default());
-                        radio_b = p.radio_styled(7, "Medium", true, RadioStyle::default());
-                        radio_c = p.radio_styled(7, "High", false, RadioStyle::default());
+                        radio_a = p.radio_styled(7, "Low", false, RadioStyle::from_theme(&theme));
+                        radio_b = p.radio_styled(7, "Medium", true, RadioStyle::from_theme(&theme));
+                        radio_c = p.radio_styled(7, "High", false, RadioStyle::from_theme(&theme));
                         p.spacer(1.0, 8.0);
-                        sw = p.switch_styled("Remote control", false, SwitchStyle::default());
+                        sw = p.switch_styled("Remote control", false, SwitchStyle::from_theme(&theme));
                         p.spacer(1.0, 12.0);
                         p.text_styled(
                             "Scroll list (wheel / drag)",
@@ -231,7 +232,7 @@ impl Demo {
                             ScrollAreaStyle {
                                 width: (shell_w - 60.0).min(420.0),
                                 height: 140.0,
-                                ..ScrollAreaStyle::default()
+                                ..ScrollAreaStyle::from_theme(&theme)
                             },
                             |sa| {
                                 for i in 1..=24 {
@@ -249,7 +250,7 @@ impl Demo {
                 col.status_bar(
                     StatusBarStyle {
                         width: shell_w - 16.0,
-                        ..StatusBarStyle::default()
+                        ..StatusBarStyle::from_theme(&theme)
                     },
                     |sb| {
                         status = sb.text_styled("Ready", Color::rgb(0x8a, 0xe6, 0x9a), 12.0);

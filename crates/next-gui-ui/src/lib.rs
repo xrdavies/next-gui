@@ -8,6 +8,7 @@
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
 //! Office P2a–P2e (`button_group` … `config_provider`): see `docs/office-p2-design.md`.
+//! Theme tokens (MVP): [`Theme`] / [`Ui::set_theme`]; see `docs/theme-tokens.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
 
@@ -20,6 +21,7 @@ mod chart;
 mod p1_raster;
 mod p1_rest;
 mod office_p2;
+mod theme;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
@@ -27,6 +29,7 @@ pub use chart::{ChartKind, ChartStyle, ChartTile};
 pub use p1_deferred::*;
 pub use p1_rest::*;
 pub use office_p2::*;
+pub use theme::{Theme, ThemeColors, ThemeMode, ThemeRadii, ThemeSpacing, ThemeTypography};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1434,13 +1437,20 @@ impl AlarmSeverity {
         }
     }
 
-    fn color(self) -> Color {
+    /// Historical dark-aligned severity color (dark preset).
+    pub fn color(self) -> Color {
+        self.color_for_theme(&Theme::dark())
+    }
+
+    /// Severity color from theme tokens.
+    pub fn color_for_theme(self, theme: &Theme) -> Color {
+        let c = &theme.colors;
         match self {
-            AlarmSeverity::Critical => Color::rgb(0xe0, 0x3a, 0x4a),
-            AlarmSeverity::Major => Color::rgb(0xf0, 0x8a, 0x2a),
-            AlarmSeverity::Minor => Color::rgb(0xe0, 0xc0, 0x40),
-            AlarmSeverity::Warning => Color::rgb(0x80, 0xb0, 0xe0),
-            AlarmSeverity::Info => Color::rgb(0x90, 0x98, 0xa8),
+            AlarmSeverity::Critical => c.danger,
+            AlarmSeverity::Major => c.danger_soft,
+            AlarmSeverity::Minor => c.warning,
+            AlarmSeverity::Warning => c.info,
+            AlarmSeverity::Info => c.text_secondary,
         }
     }
 
@@ -2155,6 +2165,8 @@ pub struct Ui {
     pending_calendar_change: Option<(WidgetId, CalendarDate)>,
     /// Ui-level theme/locale bag (Office P2e config_provider — not a Kind).
     config: UiConfig,
+    /// Appearance tokens (light/dark + scales). Profile stays separate.
+    theme: Theme,
     /// Scene overlay host (last child of root) for popup panels.
     overlay_host: Option<NodeId>,
     /// Hovered Tooltip host (pointer enter); tip painted in sync.
@@ -2262,6 +2274,7 @@ impl Ui {
             pending_timeline_select: None,
             pending_calendar_change: None,
             config: UiConfig::default(),
+            theme: Theme::dark(),
             overlay_host: None,
             tooltip_hover: None,
             pending_modal_action: None,
@@ -2272,7 +2285,7 @@ impl Ui {
             pending_pagination_change: None,
             notifications: Vec::new(),
             next_notification_id: 1,
-            notification_style: NotificationStyle::default(),
+            notification_style: NotificationStyle::from_theme(&Theme::dark()),
             notification_aux: Vec::new(),
             viewport: (800.0, 600.0),
             last_pointer: None,
@@ -2292,11 +2305,348 @@ impl Ui {
     /// Office P2e `config_provider`: replace the Ui-level defaults bag.
     pub fn set_config(&mut self, config: UiConfig) {
         self.config = config;
+        self.notification_style =
+            NotificationStyle::from_theme_with_density(&self.theme, self.config.density);
     }
 
     /// Borrow the current [`UiConfig`] (locale / density / accent).
     pub fn config(&self) -> &UiConfig {
         &self.config
+    }
+
+    /// Replace the active [`Theme`] (colors / type / spacing / radii).
+    ///
+    /// Does not rebuild existing widgets; new `*_style()` helpers and unstyled
+    /// constructors pick up the theme. Pass an explicit Style to override.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        self.notification_style =
+            NotificationStyle::from_theme_with_density(&theme, self.config.density);
+    }
+
+    /// Borrow the active [`Theme`].
+    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    /// Effective accent: [`UiConfig::accent`] if set, else theme accent.
+    pub fn resolve_accent(&self) -> Color {
+        self.config.accent.unwrap_or(self.theme.colors.accent)
+    }
+
+    /// [`ColumnStyle`] from current theme + density.
+    pub fn column_style(&self) -> ColumnStyle {
+        ColumnStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`RowStyle`] from current theme + density.
+    pub fn row_style(&self) -> RowStyle {
+        RowStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ToolbarStyle`] from current theme + density.
+    pub fn toolbar_style(&self) -> ToolbarStyle {
+        ToolbarStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PanelStyle`] from current theme + density.
+    pub fn panel_style(&self) -> PanelStyle {
+        PanelStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`StatusBarStyle`] from current theme + density.
+    pub fn status_bar_style(&self) -> StatusBarStyle {
+        StatusBarStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SplitterStyle`] from current theme + density.
+    pub fn splitter_style(&self) -> SplitterStyle {
+        SplitterStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ScrollAreaStyle`] from current theme + density.
+    pub fn scroll_area_style(&self) -> ScrollAreaStyle {
+        ScrollAreaStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TextInputStyle`] from current theme + density.
+    pub fn text_input_style(&self) -> TextInputStyle {
+        TextInputStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CheckboxStyle`] from current theme + density.
+    pub fn checkbox_style(&self) -> CheckboxStyle {
+        CheckboxStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`RadioStyle`] from current theme + density.
+    pub fn radio_style(&self) -> RadioStyle {
+        RadioStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SwitchStyle`] from current theme + density.
+    pub fn switch_style(&self) -> SwitchStyle {
+        SwitchStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ListStyle`] from current theme + density.
+    pub fn list_style(&self) -> ListStyle {
+        ListStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TreeStyle`] from current theme + density.
+    pub fn tree_style(&self) -> TreeStyle {
+        TreeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TableStyle`] from current theme + density.
+    pub fn table_style(&self) -> TableStyle {
+        TableStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`MenuStyle`] from current theme + density.
+    pub fn menu_style(&self) -> MenuStyle {
+        MenuStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ContextMenuStyle`] from current theme + density.
+    pub fn context_menu_style(&self) -> ContextMenuStyle {
+        ContextMenuStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TabsStyle`] from current theme + density.
+    pub fn tabs_style(&self) -> TabsStyle {
+        TabsStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SelectStyle`] from current theme + density.
+    pub fn select_style(&self) -> SelectStyle {
+        SelectStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SliderStyle`] from current theme + density.
+    pub fn slider_style(&self) -> SliderStyle {
+        SliderStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TagStyle`] from current theme + density.
+    pub fn tag_style(&self) -> TagStyle {
+        TagStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`BadgeStyle`] from current theme + density.
+    pub fn badge_style(&self) -> BadgeStyle {
+        BadgeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TooltipStyle`] from current theme + density.
+    pub fn tooltip_style(&self) -> TooltipStyle {
+        TooltipStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ModalStyle`] from current theme + density.
+    pub fn modal_style(&self) -> ModalStyle {
+        ModalStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ProgressStyle`] from current theme + density.
+    pub fn progress_style(&self) -> ProgressStyle {
+        ProgressStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`AlertStyle`] from current theme + density.
+    pub fn alert_style(&self) -> AlertStyle {
+        AlertStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`FormStyle`] from current theme + density.
+    pub fn form_style(&self) -> FormStyle {
+        FormStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TreeSelectStyle`] from current theme + density.
+    pub fn tree_select_style(&self) -> TreeSelectStyle {
+        TreeSelectStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`AlarmListStyle`] from current theme + density.
+    pub fn alarm_list_style(&self) -> AlarmListStyle {
+        AlarmListStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`GaugeStyle`] from current theme + density.
+    pub fn gauge_style(&self) -> GaugeStyle {
+        GaugeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TrendStyle`] from current theme + density.
+    pub fn trend_style(&self) -> TrendStyle {
+        TrendStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ChartStyle`] from current theme + density.
+    pub fn chart_style(&self) -> ChartStyle {
+        ChartStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`BackdropStyle`] from current theme + density.
+    pub fn backdrop_style(&self) -> BackdropStyle {
+        BackdropStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`DrawerStyle`] from current theme + density.
+    pub fn drawer_style(&self) -> DrawerStyle {
+        DrawerStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TextAreaStyle`] from current theme + density.
+    pub fn text_area_style(&self) -> TextAreaStyle {
+        TextAreaStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`InputNumberStyle`] from current theme + density.
+    pub fn input_number_style(&self) -> InputNumberStyle {
+        InputNumberStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`NotificationStyle`] from current theme + density.
+    pub fn notification_toast_style(&self) -> NotificationStyle {
+        NotificationStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SpinStyle`] from current theme + density.
+    pub fn spin_style(&self) -> SpinStyle {
+        SpinStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`EmptyStyle`] from current theme + density.
+    pub fn empty_style(&self) -> EmptyStyle {
+        EmptyStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CollapseStyle`] from current theme + density.
+    pub fn collapse_style(&self) -> CollapseStyle {
+        CollapseStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`DescriptionsStyle`] from current theme + density.
+    pub fn descriptions_style(&self) -> DescriptionsStyle {
+        DescriptionsStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CardStyle`] from current theme + density.
+    pub fn card_style(&self) -> CardStyle {
+        CardStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SegmentedStyle`] from current theme + density.
+    pub fn segmented_style(&self) -> SegmentedStyle {
+        SegmentedStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`BreadcrumbStyle`] from current theme + density.
+    pub fn breadcrumb_style(&self) -> BreadcrumbStyle {
+        BreadcrumbStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PaginationStyle`] from current theme + density.
+    pub fn pagination_style(&self) -> PaginationStyle {
+        PaginationStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`DateTimeStyle`] from current theme + density.
+    pub fn datetime_style(&self) -> DateTimeStyle {
+        DateTimeStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TransferStyle`] from current theme + density.
+    pub fn transfer_style(&self) -> TransferStyle {
+        TransferStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PropertyGridStyle`] from current theme + density.
+    pub fn property_grid_style(&self) -> PropertyGridStyle {
+        PropertyGridStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TreeTableStyle`] from current theme + density.
+    pub fn tree_table_style(&self) -> TreeTableStyle {
+        TreeTableStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`SpaceStyle`] from current theme + density.
+    pub fn space_style(&self) -> SpaceStyle {
+        SpaceStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ButtonGroupStyle`] from current theme + density.
+    pub fn button_group_style(&self) -> ButtonGroupStyle {
+        ButtonGroupStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`LinkStyle`] from current theme + density.
+    pub fn link_style(&self) -> LinkStyle {
+        LinkStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`StepsStyle`] from current theme + density.
+    pub fn steps_style(&self) -> StepsStyle {
+        StepsStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`StatisticStyle`] from current theme + density.
+    pub fn statistic_style(&self) -> StatisticStyle {
+        StatisticStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ResultStyle`] from current theme + density.
+    pub fn result_style(&self) -> ResultStyle {
+        ResultStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PopoverStyle`] from current theme + density.
+    pub fn popover_style(&self) -> PopoverStyle {
+        PopoverStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`PopconfirmStyle`] from current theme + density.
+    pub fn popconfirm_style(&self) -> PopconfirmStyle {
+        PopconfirmStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`UploadStyle`] from current theme + density.
+    pub fn upload_style(&self) -> UploadStyle {
+        UploadStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ColorPickerStyle`] from current theme + density.
+    pub fn color_picker_style(&self) -> ColorPickerStyle {
+        ColorPickerStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`AutocompleteStyle`] from current theme + density.
+    pub fn autocomplete_style(&self) -> AutocompleteStyle {
+        AutocompleteStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`GridStyle`] from current theme + density.
+    pub fn grid_style(&self) -> GridStyle {
+        GridStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`TimelineStyle`] from current theme + density.
+    pub fn timeline_style(&self) -> TimelineStyle {
+        TimelineStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`CalendarStyle`] from current theme + density.
+    pub fn calendar_style(&self) -> CalendarStyle {
+        CalendarStyle::from_theme_with_density(&self.theme, self.config.density)
+    }
+
+    /// [`ImageStyle`] from current theme + density.
+    pub fn image_style(&self) -> ImageStyle {
+        ImageStyle::from_theme_with_density(&self.theme, self.config.density)
     }
 
     fn alloc(&mut self) -> WidgetId {
@@ -9906,6 +10256,21 @@ impl Ui {
         }
     }
 
+    /// Apply ThemeRadii to a chrome node (`control` or `panel`).
+    ///
+    /// Soft paints rounded chrome for Button/TextInput/Panel/Card/Modal·Drawer plus
+    /// Tag/Alert/Select·TreeSelect/Autocomplete/Checkbox/Switch/Tooltip/Popover/List/
+    /// Badge/Progress/Tabs/Toolbar·StatusBar/TextArea/InputNumber/Notification
+    /// (Radio uses geometric circles; Switch thumb is circular).
+    fn apply_corner_radius(&self, scene: &mut Scene, node: NodeId, panel: bool) {
+        let r = if panel {
+            self.theme.radii.panel
+        } else {
+            self.theme.radii.control
+        };
+        scene.set_corner_radius(node, r);
+    }
+
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -9938,7 +10303,26 @@ impl Ui {
                 self.widgets.get(&id).map(|w| &w.kind),
                 Some(Kind::Panel { .. })
             ) {
+                if let Some(node) = self.widgets.get(&id).and_then(|w| w.node) {
+                    self.apply_corner_radius(scene, node, true);
+                }
                 self.paint_panel_title(scene, id);
+            }
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Toolbar { .. } | Kind::StatusBar { .. })
+            ) {
+                if let Some(node) = self.widgets.get(&id).and_then(|w| w.node) {
+                    self.apply_corner_radius(scene, node, false);
+                }
+            }
+            if matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::Form { .. } | Kind::Grid { .. })
+            ) {
+                if let Some(node) = self.widgets.get(&id).and_then(|w| w.node) {
+                    self.apply_corner_radius(scene, node, true);
+                }
             }
             if matches!(
                 self.widgets.get(&id).map(|w| &w.kind),
@@ -10306,6 +10690,7 @@ impl Ui {
                 let bg = *bg;
                 scene.set_fill(node, bg);
                 scene.set_mask(node, None);
+                self.apply_corner_radius(scene, node, false);
                 let (_, mask) = self.font.rasterize_text(&label, size, None);
                 if let Some(lid) = label_node {
                     let lx = bounds.x + 16.0;
@@ -10364,6 +10749,7 @@ impl Ui {
                 };
                 scene.set_fill(node, style.bg);
                 scene.set_mask(node, None);
+                self.apply_corner_radius(scene, node, false);
                 let _ = border;
                 let before: String = value.chars().take(caret).collect();
                 let after: String = value.chars().skip(caret).collect();
@@ -10472,6 +10858,7 @@ impl Ui {
                 );
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
+                self.apply_corner_radius(scene, node, false);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if checked {
                         let (_, cm) = self.font.rasterize_text("✓", style.box_size * 0.7, None);
@@ -10529,21 +10916,19 @@ impl Ui {
                 scene.set_fill(node, style.ring);
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
+                scene.set_corner_radius(node, d * 0.5);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if selected {
                         let inset = d * 0.28;
+                        let dd = d - inset * 2.0;
                         scene.set_bounds(
                             chrome,
-                            Rect::new(
-                                ring.x + inset,
-                                ring.y + inset,
-                                d - inset * 2.0,
-                                d - inset * 2.0,
-                            ),
+                            Rect::new(ring.x + inset, ring.y + inset, dd, dd),
                         );
                         scene.set_fill(chrome, style.dot);
                         scene.set_mask(chrome, None);
                         scene.set_visible(chrome, true);
+                        scene.set_corner_radius(chrome, dd * 0.5);
                     } else {
                         scene.set_visible(chrome, false);
                     }
@@ -10578,6 +10963,7 @@ impl Ui {
                 scene.set_fill(node, if on { style.track_on } else { style.track_off });
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
+                self.apply_corner_radius(scene, node, false);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     let thumb_d = style.height - 4.0;
                     let tx = if on {
@@ -10590,6 +10976,7 @@ impl Ui {
                     scene.set_fill(chrome, style.thumb);
                     scene.set_mask(chrome, None);
                     scene.set_visible(chrome, true);
+                    scene.set_corner_radius(chrome, thumb_d * 0.5);
                 }
                 let (_, mask) = self.font.rasterize_text(&label, style.size, None);
                 if let Some(lid) = label_node {
@@ -10703,6 +11090,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let (first, count) = if virtualized {
             p1_rest::virtual_window(
@@ -10737,6 +11125,7 @@ impl Ui {
                     scene.set_fill(chrome, style.selected_bg);
                     scene.set_mask(chrome, None);
                     scene.set_visible(chrome, true);
+                    self.apply_corner_radius(scene, chrome, false);
                 } else {
                     scene.set_visible(chrome, false);
                 }
@@ -10831,6 +11220,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let needed = flats.len() * 2;
         self.ensure_aux_nodes(scene, host, id, needed);
@@ -10852,6 +11242,7 @@ impl Ui {
                     scene.set_fill(chrome, style.selected_bg);
                     scene.set_mask(chrome, None);
                     scene.set_visible(chrome, true);
+                    self.apply_corner_radius(scene, chrome, false);
                 } else {
                     scene.set_visible(chrome, false);
                 }
@@ -10942,6 +11333,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let ncols = columns.len().max(1);
         let body_h = (bounds.height - style.header_height).max(0.0);
@@ -11018,6 +11410,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -11112,6 +11505,7 @@ impl Ui {
         scene.set_fill(node, bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let (_, mask) = self.font.rasterize_text(&title, style.size, None);
         if let Some(lid) = label_node {
             let lx = bounds.x + 10.0;
@@ -11156,6 +11550,7 @@ impl Ui {
         scene.set_fill(node, if open { style.selected_bg } else { style.bg });
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let display = format!("{text}  ▾");
         let (_, mask) = self.font.rasterize_text(&display, style.size, None);
         if let Some(lid) = label_node {
@@ -11213,6 +11608,7 @@ impl Ui {
             scene.set_fill(track_n, style.track);
             scene.set_mask(track_n, None);
             scene.set_visible(track_n, true);
+            self.apply_corner_radius(scene, track_n, false);
         }
         if let Some(chrome) = chrome {
             let fill_w = (track_w * t).max(0.001);
@@ -11266,6 +11662,7 @@ impl Ui {
                 scene.set_fill(bg, if active { style.active_bg } else { style.strip_bg });
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, mask) = self.font.rasterize_text(title, style.size, None);
             if let Some(&lab) = aux.get(i * 2 + 1) {
@@ -11297,6 +11694,7 @@ impl Ui {
         scene.set_fill(node, style.host_bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, true);
         if hint.is_empty() {
             if let Some(lid) = label_node {
                 scene.set_visible(lid, false);
@@ -11358,6 +11756,7 @@ impl Ui {
         scene.set_fill(panel_n, style.panel_bg);
         scene.set_mask(panel_n, None);
         scene.set_visible(panel_n, true);
+        self.apply_corner_radius(scene, panel_n, true);
 
         let title_rect = Rect::new(panel.x, panel.y, panel.width, style.title_height);
         scene.set_bounds(title_bg, title_rect);
@@ -11488,6 +11887,7 @@ impl Ui {
             scene.set_fill(bg, style.bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, false);
             scene.set_bounds(accent, Rect::new(x, y, 4.0, style.height));
             scene.set_fill(accent, item.tone.accent());
             scene.set_mask(accent, None);
@@ -11542,6 +11942,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         if let Some(chrome) = chrome {
             // focus ring stub: thin top bar
             scene.set_bounds(
@@ -11627,6 +12028,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let step_w = 28.0;
         self.ensure_aux_nodes(scene, host, id, 4); // -bg, -lab, +bg, +lab
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -11718,6 +12120,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         let (_, mask) = self.font.rasterize_text(&description, style.size, None);
         if let Some(lab) = label {
             scene.set_bounds(
@@ -11761,6 +12164,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         if let Some(chrome) = chrome {
             scene.set_bounds(
                 chrome,
@@ -11825,6 +12229,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let n = options.len().max(1);
         let seg_w = ((bounds.width - style.padding * 2.0) / n as f32).max(1.0);
         self.ensure_aux_nodes(scene, host, id, n * 2);
@@ -11840,6 +12245,9 @@ impl Ui {
                 scene.set_fill(bg, if is_sel { style.selected_bg } else { style.bg });
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, is_sel);
+                if is_sel {
+                    self.apply_corner_radius(scene, bg, false);
+                }
             }
             let (_, mask) = self.font.rasterize_text(opt, style.size, None);
             if let Some(&lab) = aux.get(i * 2 + 1) {
@@ -11881,6 +12289,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let n = labels.len().max(1);
         let gaps = style.gap * (n.saturating_sub(1) as f32);
         let inner_w = (bounds.width - style.padding * 2.0 - gaps).max(1.0);
@@ -11905,6 +12314,7 @@ impl Ui {
                 );
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, mask) = self.font.rasterize_text(lab, style.size, None);
             if let Some(&lab_n) = aux.get(i * 2 + 1) {
@@ -12001,6 +12411,9 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        if style.bg.a > 0 {
+            self.apply_corner_radius(scene, host, true);
+        }
         let n = items.len();
         if n == 0 {
             return;
@@ -12029,6 +12442,7 @@ impl Ui {
                         scene.set_fill(mbg, bg_c);
                         scene.set_mask(mbg, None);
                         scene.set_visible(mbg, true);
+                        scene.set_corner_radius(mbg, marker * 0.5);
                     }
                     let num = format!("{}", i + 1);
                     let (_, nm) = self.font.rasterize_text(&num, style.size, None);
@@ -12132,6 +12546,7 @@ impl Ui {
                         scene.set_fill(mbg, bg_c);
                         scene.set_mask(mbg, None);
                         scene.set_visible(mbg, true);
+                        scene.set_corner_radius(mbg, marker * 0.5);
                     }
                     let num = format!("{}", i + 1);
                     let (_, nm) = self.font.rasterize_text(&num, style.size, None);
@@ -12244,6 +12659,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: title, value_line, hint
         self.ensure_aux_nodes(scene, host, id, 3);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -12314,6 +12730,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: status, title, subtitle, primary_bg, primary_lab, secondary_bg, secondary_lab
         self.ensure_aux_nodes(scene, host, id, 7);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -12326,7 +12743,7 @@ impl Ui {
                 sn,
                 Rect::new(cx - sm.width as f32 * 0.5, y, sm.width as f32, sm.height as f32),
             );
-            scene.set_fill(sn, status.color());
+            scene.set_fill(sn, status.color_for_theme(&self.theme));
             scene.set_mask(sn, Some(AlphaMask::new(sm.width, sm.height, sm.pixels)));
             scene.set_visible(sn, true);
         }
@@ -12375,6 +12792,7 @@ impl Ui {
                 scene.set_fill(bg, style.primary_bg);
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, lm) = self.font.rasterize_text(label, style.action_size, None);
             if let Some(&lab) = aux.get(4) {
@@ -12402,6 +12820,7 @@ impl Ui {
                 scene.set_fill(bg, style.secondary_bg);
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, true);
+                self.apply_corner_radius(scene, bg, false);
             }
             let (_, lm) = self.font.rasterize_text(label, style.action_size, None);
             if let Some(&lab) = aux.get(6) {
@@ -12440,6 +12859,7 @@ impl Ui {
         scene.set_fill(host, style.trigger_bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let (_, mask) = self.font.rasterize_text(&trigger, style.size, None);
         scene.set_bounds(
             lab_n,
@@ -12473,6 +12893,7 @@ impl Ui {
         scene.set_fill(host, style.trigger_bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let (_, mask) = self.font.rasterize_text(&trigger, style.size, None);
         scene.set_bounds(
             lab_n,
@@ -12550,6 +12971,7 @@ impl Ui {
         scene.set_fill(aux[0], style.popup_bg);
         scene.set_mask(aux[0], None);
         scene.set_visible(aux[0], true);
+        self.apply_corner_radius(scene, aux[0], true);
         self.node_to_widget.insert(aux[0], id);
 
         let mut cy = panel.y + style.padding;
@@ -12641,6 +13063,7 @@ impl Ui {
         scene.set_fill(aux[0], style.popup_bg);
         scene.set_mask(aux[0], None);
         scene.set_visible(aux[0], true);
+        self.apply_corner_radius(scene, aux[0], true);
         self.node_to_widget.insert(aux[0], id);
 
         let (_, mm) = self.font.rasterize_text(&message, style.size, None);
@@ -12666,6 +13089,7 @@ impl Ui {
         scene.set_fill(aux[2], style.ok_bg);
         scene.set_mask(aux[2], None);
         scene.set_visible(aux[2], true);
+        self.apply_corner_radius(scene, aux[2], false);
         self.node_to_widget.insert(aux[2], id);
         let (_, olm) = self.font.rasterize_text(&ok_label, style.size, None);
         scene.set_bounds(
@@ -12691,6 +13115,7 @@ impl Ui {
         scene.set_fill(aux[4], style.cancel_bg);
         scene.set_mask(aux[4], None);
         scene.set_visible(aux[4], true);
+        self.apply_corner_radius(scene, aux[4], false);
         self.node_to_widget.insert(aux[4], id);
         let (_, clm) = self.font.rasterize_text(&cancel_label, style.size, None);
         scene.set_bounds(
@@ -13024,6 +13449,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: per item [dot, time_lab, content_lab] + optional rail segments
         let n = items.len();
         self.ensure_aux_nodes(scene, host, id, n * 3 + 1);
@@ -13052,6 +13478,7 @@ impl Ui {
                 });
                 scene.set_mask(dot, None);
                 scene.set_visible(dot, true);
+                scene.set_corner_radius(dot, 4.0);
             }
             let (_, tm) = self.font.rasterize_text(&item.time, style.size, None);
             if let Some(&lab) = aux.get(2 + i * 3) {
@@ -13113,6 +13540,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // aux: header_bg, prev, title, next, 7 weekday labels, 42 day cells (bg+lab pairs = 84) — keep lighter:
         // 0 header_bg, 1 prev, 2 title, 3 next, 4..=10 weekday, 11..=52 day labels (42)
         let needed = 4 + 7 + 42;
@@ -13129,6 +13557,7 @@ impl Ui {
             scene.set_fill(hb, style.header_bg);
             scene.set_mask(hb, None);
             scene.set_visible(hb, true);
+            self.apply_corner_radius(scene, hb, false);
         }
         let prev_s = "‹";
         let (_, pm) = self.font.rasterize_text(prev_s, style.size + 2.0, None);
@@ -13263,6 +13692,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         let cap_h = if caption.is_empty() { 0.0 } else { 18.0 };
         let mosaic_h = (bounds.height - cap_h).max(1.0);
         let mosaic_w = bounds.width.max(1.0);
@@ -13378,6 +13808,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
 
         let (browse, clear) = Self::upload_button_rects(bounds, style, path.is_some());
         let path_right = clear
@@ -13411,6 +13842,7 @@ impl Ui {
             scene.set_fill(bb, style.browse_bg);
             scene.set_mask(bb, None);
             scene.set_visible(bb, true);
+            self.apply_corner_radius(scene, bb, false);
             self.node_to_widget.insert(bb, id);
         }
         let (_, bm) = self.font.rasterize_text(&browse_label, style.size, None);
@@ -13434,6 +13866,7 @@ impl Ui {
                 scene.set_fill(cb, style.clear_bg);
                 scene.set_mask(cb, None);
                 scene.set_visible(cb, true);
+                self.apply_corner_radius(scene, cb, false);
                 self.node_to_widget.insert(cb, id);
             }
             let (_, cm) = self.font.rasterize_text(&clear_label, style.size, None);
@@ -13488,6 +13921,7 @@ impl Ui {
             scene.set_fill(host, style.bg);
             scene.set_mask(host, None);
             scene.set_visible(host, true);
+            self.apply_corner_radius(scene, host, false);
         } else {
             scene.set_fill(host, Color::rgba(0, 0, 0, 0));
             scene.set_mask(host, Some(AlphaMask::empty()));
@@ -13507,6 +13941,7 @@ impl Ui {
                 scene.set_fill(n, *c);
                 scene.set_mask(n, None);
                 scene.set_visible(n, true);
+                self.apply_corner_radius(scene, n, false);
                 self.node_to_widget.insert(n, id);
                 if selected_swatch == Some(i) {
                     // draw selection as slightly inset darker — Soft-friendly: raise outline via smaller inset fill is hard;
@@ -13528,6 +13963,7 @@ impl Ui {
             scene.set_fill(hb, style.hex_bg);
             scene.set_mask(hb, None);
             scene.set_visible(hb, true);
+            self.apply_corner_radius(scene, hb, false);
             self.node_to_widget.insert(hb, id);
         }
         let display = if hex.is_empty() { "#------".to_string() } else { hex };
@@ -13579,6 +14015,7 @@ impl Ui {
         scene.set_fill(host, if open { style.selected_bg } else { style.bg });
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
         let focused = self.focus == Some(id);
         let (text, fg) = if value.is_empty() {
             (placeholder, style.placeholder_fg)
@@ -13655,6 +14092,7 @@ impl Ui {
             scene.set_fill(bg, style.popup_bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, (_, label)) in filtered.iter().enumerate() {
@@ -13666,6 +14104,9 @@ impl Ui {
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
+                if hi {
+                    self.apply_corner_radius(scene, rbg, false);
+                }
                 self.node_to_widget.insert(rbg, id);
             }
             let (_, mask) = self.font.rasterize_text(label, style.size, None);
@@ -13781,6 +14222,7 @@ impl Ui {
         scene.set_fill(aux[0], style.btn_bg);
         scene.set_mask(aux[0], None);
         scene.set_visible(aux[0], true);
+        self.apply_corner_radius(scene, aux[0], false);
         let (_, pm) = self.font.rasterize_text("Prev", style.size, None);
         scene.set_bounds(
             aux[1],
@@ -13816,6 +14258,7 @@ impl Ui {
         scene.set_fill(aux[2], style.btn_bg);
         scene.set_mask(aux[2], None);
         scene.set_visible(aux[2], true);
+        self.apply_corner_radius(scene, aux[2], false);
         let (_, nm) = self.font.rasterize_text("Next", style.size, None);
         scene.set_bounds(
             aux[3],
@@ -13848,6 +14291,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         // per panel: header_bg, header_lab, body_lab
         let needed = panels.len() * 3;
         self.ensure_aux_nodes(scene, host, id, needed);
@@ -13865,6 +14309,7 @@ impl Ui {
                 scene.set_fill(hbg, style.header_bg);
                 scene.set_mask(hbg, None);
                 scene.set_visible(hbg, true);
+                self.apply_corner_radius(scene, hbg, false);
             }
             let (_, tm) = self.font.rasterize_text(&title, style.size, None);
             if let Some(&lab) = aux.get(base + 1) {
@@ -13921,6 +14366,7 @@ impl Ui {
         scene.set_fill(host, style.bg);
         scene.set_mask(host, None);
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
         self.ensure_aux_nodes(scene, host, id, items.len() * 2);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         for (i, item) in items.iter().enumerate() {
@@ -13993,6 +14439,7 @@ impl Ui {
                 scene.set_fill(chrome, style.overlay);
                 scene.set_mask(chrome, None);
                 scene.set_visible(chrome, true);
+                self.apply_corner_radius(scene, chrome, true);
             }
             let (_, mask) = self.font.rasterize_text(style.tip, style.size, None);
             if let Some(lab) = label {
@@ -14038,6 +14485,7 @@ impl Ui {
         scene.set_fill(node, if open { style.focus_border } else { style.bg });
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let (_, mask) = self.font.rasterize_text(&text, style.size, None);
         if let Some(lid) = label_node {
             let lx = bounds.x + style.padding;
@@ -14099,6 +14547,7 @@ impl Ui {
             scene.set_fill(p, style.popup_bg);
             scene.set_mask(p, None);
             scene.set_visible(p, true);
+            self.apply_corner_radius(scene, p, true);
             self.node_to_widget.insert(p, id);
         }
         let header = format!("‹  {:04}-{:02}  ›", draft.year, draft.month);
@@ -14218,6 +14667,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let list_w = style.list_width;
         let btn_w = (style.width - list_w * 2.0 - style.gap * 2.0).max(40.0);
@@ -14295,6 +14745,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14336,6 +14787,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14397,6 +14849,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let header_h = style.row_height;
         // header bg via chrome
@@ -14464,6 +14917,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14538,6 +14992,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         if let Some(chrome) = chrome {
             scene.set_bounds(
@@ -14614,6 +15069,7 @@ impl Ui {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
+                    self.apply_corner_radius(scene, bg, false);
                 } else {
                     scene.set_visible(bg, false);
                 }
@@ -14787,6 +15243,7 @@ impl Ui {
             scene.set_fill(bg, style.popup_bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, item) in items.iter().enumerate() {
@@ -14798,6 +15255,9 @@ impl Ui {
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
+                if hi {
+                    self.apply_corner_radius(scene, rbg, false);
+                }
                 self.node_to_widget.insert(rbg, id);
             }
             let (_, mask) = self.font.rasterize_text(&item.label, style.size, None);
@@ -14837,6 +15297,7 @@ impl Ui {
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let close_w = if closable { style.height * 0.65 } else { 0.0 };
         let (_, mask) = self.font.rasterize_text(&label, style.size, None);
         if let Some(lid) = *label_node {
@@ -14930,12 +15391,14 @@ impl Ui {
                 scene.set_fill(cid, style.bg);
                 scene.set_mask(cid, None);
                 scene.set_visible(cid, true);
+                self.apply_corner_radius(scene, cid, false);
             }
         } else {
             scene.set_bounds(node, Rect::new(bx, by, bw, bh));
             scene.set_fill(node, style.bg);
             scene.set_mask(node, None);
             scene.set_visible(node, true);
+            self.apply_corner_radius(scene, node, false);
             if let Some(cid) = *chrome_node {
                 scene.set_visible(cid, false);
             }
@@ -14987,6 +15450,7 @@ impl Ui {
         scene.set_fill(node, style.track);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         if let Some(cid) = *chrome_node {
             let fill_w = if indeterminate {
                 (track.width * 0.35).max(8.0)
@@ -14997,6 +15461,7 @@ impl Ui {
             scene.set_fill(cid, style.fill);
             scene.set_mask(cid, None);
             scene.set_visible(cid, fill_w > 0.5);
+            self.apply_corner_radius(scene, cid, false);
         }
     }
 
@@ -15046,6 +15511,7 @@ impl Ui {
         scene.set_fill(node, bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let (_, mask) = self.font.rasterize_text(&message, style.size, None);
         if let Some(lid) = *label_node {
             let lx = bounds.x + style.padding;
@@ -15120,6 +15586,7 @@ impl Ui {
         scene.set_fill(bg, style.bg);
         scene.set_mask(bg, None);
         scene.set_visible(bg, true);
+        self.apply_corner_radius(scene, bg, false);
         let (_, mask) = self.font.rasterize_text(&text, style.size, None);
         scene.set_bounds(
             label,
@@ -15205,6 +15672,7 @@ impl Ui {
         scene.set_fill(panel_n, style.panel_bg);
         scene.set_mask(panel_n, None);
         scene.set_visible(panel_n, true);
+        self.apply_corner_radius(scene, panel_n, true);
 
         let title_rect = Rect::new(panel.x, panel.y, panel.width, style.title_height);
         scene.set_bounds(title_bg, title_rect);
@@ -15332,6 +15800,7 @@ impl Ui {
             scene.set_fill(bg, popup_bg);
             scene.set_mask(bg, None);
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, item) in items.iter().enumerate() {
@@ -15909,6 +16378,7 @@ impl Ui {
         scene.set_fill(node, if open { style.selected_bg } else { style.bg });
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, false);
         let display = format!("{text}  ▾");
         let (_, mask) = self.font.rasterize_text(&display, style.size, None);
         if let Some(lid) = label_node {
@@ -15960,6 +16430,7 @@ impl Ui {
             scene.set_mask(bg, None);
             scene.set_clip(bg, Some(panel));
             scene.set_visible(bg, true);
+            self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
         for (i, row) in flats.iter().enumerate() {
@@ -15980,6 +16451,9 @@ impl Ui {
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
+                if hi {
+                    self.apply_corner_radius(scene, rbg, false);
+                }
                 self.node_to_widget.insert(rbg, id);
             }
             let twiddle = if row.has_children {
@@ -16034,6 +16508,7 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, true);
 
         let needed = entries.len() * 2;
         self.ensure_aux_nodes(scene, host, id, needed);
@@ -16054,6 +16529,7 @@ impl Ui {
                 scene.set_fill(chrome, style.selected_bg);
                 scene.set_mask(chrome, None);
                 scene.set_visible(chrome, true);
+                self.apply_corner_radius(scene, chrome, false);
             } else {
                 scene.set_visible(chrome, false);
             }
@@ -16084,6 +16560,9 @@ impl Ui {
                 scene.set_fill(bg, if flash { style.flash_bg } else { style.bg });
                 scene.set_mask(bg, None);
                 scene.set_visible(bg, flash);
+                if flash {
+                    self.apply_corner_radius(scene, bg, false);
+                }
             }
             let ack = if e.acked { "ACK" } else { "NEW" };
             let line = format!(
@@ -16106,7 +16585,7 @@ impl Ui {
                     if selected == Some(i) {
                         Color::rgb(0xff, 0xff, 0xff)
                     } else {
-                        e.severity.color()
+                        e.severity.color_for_theme(&self.theme)
                     },
                 );
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
@@ -16187,6 +16666,7 @@ impl Ui {
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, true);
 
         self.ensure_aux_nodes(scene, node, id, 1);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -16306,6 +16786,7 @@ impl Ui {
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
         scene.set_visible(node, true);
+        self.apply_corner_radius(scene, node, true);
 
         // 4 aux nodes per tile: title, dial/fill, value/line, caption
         let needed = tiles.len() * 4;
@@ -16397,9 +16878,20 @@ pub struct FlexBuilder<'a> {
 }
 
 impl FlexBuilder<'_> {
+    /// Borrow the active [`Theme`] (for Style `from_theme` / DSL builders).
+    pub fn theme(&self) -> &Theme {
+        self.ui.theme()
+    }
+
     /// Add a text label; returns its [`WidgetId`].
+    ///
+    /// Uses the active [`Theme`] text color and body size (density-scaled).
     pub fn text(&mut self, content: impl Into<String>) -> WidgetId {
-        self.text_styled(content, Color::rgb(0xe5, 0xe5, 0xe5), 22.0)
+        let theme = self.ui.theme;
+        let size = (theme.typography.body * self.ui.config.density.font_scale())
+            .round()
+            .max(1.0);
+        self.text_styled(content, theme.colors.text_primary, size)
     }
 
     /// Add a text label with explicit color/size (px).
@@ -16430,21 +16922,23 @@ impl FlexBuilder<'_> {
     }
 
     /// Add a button; returns its [`WidgetId`] for hit-testing.
+    ///
+    /// Uses the active [`Theme`] button colors and density-scaled sizes.
     pub fn button(&mut self, label: impl Into<String>) -> WidgetId {
-        self.button_styled(
-            label,
-            Color::rgb(0x3b, 0x82, 0xf6),
-            Color::rgb(0xff, 0xff, 0xff),
-        )
+        let theme = self.ui.theme;
+        self.button_styled(label, theme.colors.button_bg, theme.colors.button_fg)
     }
 
-    /// Button with custom colors.
+    /// Button with custom colors (sizes still follow the active theme + density).
     pub fn button_styled(
         &mut self,
         label: impl Into<String>,
         bg: Color,
         fg: Color,
     ) -> WidgetId {
+        let theme = self.ui.theme;
+        let s = self.ui.config.density.spacing_scale();
+        let f = self.ui.config.density.font_scale();
         let id = self.ui.alloc();
         self.ui.widgets.insert(
             id,
@@ -16453,9 +16947,9 @@ impl FlexBuilder<'_> {
                     label: label.into(),
                     bg,
                     fg,
-                    size: 18.0,
-                    min_width: 88.0,
-                    height: 36.0,
+                    size: (theme.typography.button * f).round().max(1.0),
+                    min_width: (88.0 * s).round().max(1.0),
+                    height: (36.0 * s).round().max(1.0),
                 },
                 node: None,
                 label_node: None,
@@ -16468,19 +16962,22 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Compact toolbar button (smaller height).
+    /// Compact toolbar button (smaller height; theme colors + density).
     pub fn tool_button(&mut self, label: impl Into<String>) -> WidgetId {
+        let theme = self.ui.theme;
+        let s = self.ui.config.density.spacing_scale();
+        let f = self.ui.config.density.font_scale();
         let id = self.ui.alloc();
         self.ui.widgets.insert(
             id,
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
-                    bg: Color::rgb(0x3b, 0x82, 0xf6),
-                    fg: Color::rgb(0xff, 0xff, 0xff),
-                    size: 14.0,
-                    min_width: 64.0,
-                    height: 28.0,
+                    bg: theme.colors.button_bg,
+                    fg: theme.colors.button_fg,
+                    size: (theme.typography.button_sm * f).round().max(1.0),
+                    min_width: (64.0 * s).round().max(1.0),
+                    height: (28.0 * s).round().max(1.0),
                 },
                 node: None,
                 label_node: None,
@@ -16493,9 +16990,13 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Built-in icon glyph.
+    /// Built-in icon glyph (theme secondary text color).
     pub fn icon(&mut self, name: IconName) -> WidgetId {
-        self.icon_styled(name, 18.0, Color::rgb(0xd0, 0xd4, 0xdc))
+        let theme = self.ui.theme;
+        let size = (theme.typography.button * self.ui.config.density.font_scale())
+            .round()
+            .max(1.0);
+        self.icon_styled(name, size, theme.colors.text_secondary)
     }
 
     /// Icon from a stable name string (`"save"`, …).
@@ -16733,8 +17234,10 @@ impl FlexBuilder<'_> {
     }
 
     /// Single-line text field with optional placeholder.
+    ///
+    /// Style comes from the active [`Theme`] + density.
     pub fn text_input(&mut self, placeholder: impl Into<String>) -> WidgetId {
-        self.text_input_styled("", placeholder, TextInputStyle::default())
+        self.text_input_styled("", placeholder, self.ui.text_input_style())
     }
 
     /// TextInput with initial value and style.
@@ -16772,7 +17275,7 @@ impl FlexBuilder<'_> {
 
     /// Checkbox with label.
     pub fn checkbox(&mut self, label: impl Into<String>, checked: bool) -> WidgetId {
-        self.checkbox_styled(label, checked, CheckboxStyle::default())
+        self.checkbox_styled(label, checked, self.ui.checkbox_style())
     }
 
     /// Checkbox with style.
@@ -16804,7 +17307,7 @@ impl FlexBuilder<'_> {
 
     /// Radio button in `group` (mutually exclusive within the group).
     pub fn radio(&mut self, group: u64, label: impl Into<String>, selected: bool) -> WidgetId {
-        self.radio_styled(group, label, selected, RadioStyle::default())
+        self.radio_styled(group, label, selected, self.ui.radio_style())
     }
 
     /// Radio with style.
@@ -16838,7 +17341,7 @@ impl FlexBuilder<'_> {
 
     /// On/off switch with label.
     pub fn switch(&mut self, label: impl Into<String>, on: bool) -> WidgetId {
-        self.switch_styled(label, on, SwitchStyle::default())
+        self.switch_styled(label, on, self.ui.switch_style())
     }
 
     /// Switch with style.
@@ -17112,7 +17615,7 @@ impl FlexBuilder<'_> {
 
     /// Compact status Tag chip.
     pub fn tag(&mut self, label: impl Into<String>) -> WidgetId {
-        self.tag_styled(label, false, TagStyle::default())
+        self.tag_styled(label, false, self.ui.tag_style())
     }
 
     /// Tag with optional close affordance and style.
@@ -17144,12 +17647,12 @@ impl FlexBuilder<'_> {
 
     /// Standalone count Badge pill.
     pub fn badge_count(&mut self, count: u32) -> WidgetId {
-        self.badge_styled(BadgeKind::Count(count), BadgeStyle::default())
+        self.badge_styled(BadgeKind::Count(count), self.ui.badge_style())
     }
 
     /// Standalone Badge dot.
     pub fn badge_dot(&mut self) -> WidgetId {
-        self.badge_styled(BadgeKind::Dot, BadgeStyle::default())
+        self.badge_styled(BadgeKind::Dot, self.ui.badge_style())
     }
 
     /// Badge with style (standalone).
@@ -17211,7 +17714,7 @@ impl FlexBuilder<'_> {
     where
         F: FnOnce(&mut FlexBuilder<'_>),
     {
-        self.tooltip_styled(text, TooltipStyle::default(), build)
+        self.tooltip_styled(text, self.ui.tooltip_style(), build)
     }
 
     /// Tooltip with style.
@@ -17253,7 +17756,7 @@ impl FlexBuilder<'_> {
 
     /// Determinate Progress bar (`value` in 0..=1).
     pub fn progress(&mut self, value: f32) -> WidgetId {
-        self.progress_styled(value, false, ProgressStyle::default())
+        self.progress_styled(value, false, self.ui.progress_style())
     }
 
     /// Progress with style; `indeterminate` paints a stub partial fill.
@@ -17285,7 +17788,7 @@ impl FlexBuilder<'_> {
 
     /// Inline Alert banner.
     pub fn alert(&mut self, tone: AlertTone, message: impl Into<String>) -> WidgetId {
-        self.alert_styled(tone, message, true, AlertStyle::default())
+        self.alert_styled(tone, message, true, self.ui.alert_style())
     }
 
     /// Alert with dismissibility and style.
@@ -17800,9 +18303,9 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Text link (Office P2a) with default accent + underline.
+    /// Text link (Office P2a) with theme link color + underline.
     pub fn link(&mut self, label: impl Into<String>) -> WidgetId {
-        self.link_styled(label, LinkStyle::default())
+        self.link_styled(label, self.ui.link_style())
     }
 
     /// Text link with custom style.
@@ -21171,5 +21674,137 @@ mod tests {
         assert_eq!(ui.config().locale, "en-US");
         assert_eq!(ui.config().density, UiDensity::Comfortable);
         assert_eq!(ui.config().accent.unwrap().r, 0x2f);
+    }
+
+    #[test]
+    fn theme_defaults_follow_set_theme() {
+        let mut ui = Ui::new();
+        assert_eq!(ui.theme().mode, ThemeMode::Dark);
+        assert_eq!(
+            ui.column_style().background,
+            Some(Theme::dark().colors.surface)
+        );
+
+        ui.set_theme(Theme::light());
+        assert_eq!(ui.theme().mode, ThemeMode::Light);
+        let col = ui.column_style();
+        assert_eq!(col.background, Some(Theme::light().colors.surface));
+        let panel = ui.panel_style();
+        assert_eq!(panel.title_fg, Theme::light().colors.text_primary);
+        assert_eq!(panel.background, Some(Theme::light().colors.panel));
+
+        // Density from UiConfig scales padding.
+        ui.set_config(UiConfig {
+            locale: "en".into(),
+            density: UiDensity::Compact,
+            accent: None,
+        });
+        let compact = ui.column_style();
+        assert!(compact.padding < ColumnStyle::from_theme(&Theme::light()).padding);
+
+        // Accent: config overrides theme.
+        assert_eq!(ui.resolve_accent(), Theme::light().colors.accent);
+        ui.set_config(UiConfig {
+            locale: "en".into(),
+            density: UiDensity::Default,
+            accent: Some(Color::rgb(0xe0, 0x60, 0x60)),
+        });
+        assert_eq!(ui.resolve_accent().r, 0xe0);
+    }
+
+    #[test]
+    fn tree_table_hosts_get_theme_panel_radius() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let panel_r = ui.theme().radii.panel;
+        let control_r = ui.theme().radii.control;
+        let mut tree = WidgetId(0);
+        let mut table = WidgetId(0);
+        let mut empty = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 480.0,
+                height: 420.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                tree = col.tree(
+                    vec![TreeNode::leaf(1, "Root")],
+                    TreeStyle {
+                        width: 200.0,
+                        height: 120.0,
+                        ..TreeStyle::default()
+                    },
+                );
+                table = col.table(
+                    vec![TableColumn::new("A", 80.0)],
+                    vec![vec!["1".into()]],
+                    TableStyle {
+                        width: 200.0,
+                        height: 100.0,
+                        ..TableStyle::default()
+                    },
+                );
+                empty = col.empty("nothing", EmptyStyle::default());
+            },
+        );
+        ui.sync(&mut scene);
+        // Select a tree row so chrome gets control radius.
+        let tnode = ui.widgets.get(&tree).unwrap().node.unwrap();
+        let tb = scene.get(tnode).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, tb.x + 12.0, tb.y + 8.0));
+        ui.sync(&mut scene);
+
+        let tree_host = ui.widgets.get(&tree).unwrap().node.unwrap();
+        assert!(
+            (scene.get(tree_host).unwrap().corner_radius - panel_r).abs() < f32::EPSILON,
+            "tree host should use panel radius"
+        );
+        if let Some(chrome) = ui.widgets.get(&tree).unwrap().chrome_node {
+            assert!(
+                (scene.get(chrome).unwrap().corner_radius - control_r).abs() < f32::EPSILON,
+                "tree selection chrome should use control radius"
+            );
+        } else {
+            panic!("expected tree chrome_node");
+        }
+
+        let table_host = ui.widgets.get(&table).unwrap().node.unwrap();
+        assert!(
+            (scene.get(table_host).unwrap().corner_radius - panel_r).abs() < f32::EPSILON,
+            "table host should use panel radius"
+        );
+        let empty_host = ui.widgets.get(&empty).unwrap().node.unwrap();
+        assert!(
+            (scene.get(empty_host).unwrap().corner_radius - panel_r).abs() < f32::EPSILON,
+            "empty host should use panel radius"
+        );
+    }
+
+    #[test]
+    fn unstyled_text_and_button_use_theme() {
+        let mut ui = Ui::new();
+        ui.set_theme(Theme::light());
+        let mut text_id = WidgetId(0);
+        let mut btn_id = WidgetId(0);
+        let style = ui.column_style();
+        ui.column(style, |col| {
+            text_id = col.text("hello");
+            btn_id = col.button("Go");
+        });
+        match &ui.widgets.get(&text_id).unwrap().kind {
+            Kind::Text { color, size, .. } => {
+                assert_eq!(*color, Theme::light().colors.text_primary);
+                assert!((*size - Theme::light().typography.body).abs() < 0.01);
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+        match &ui.widgets.get(&btn_id).unwrap().kind {
+            Kind::Button { bg, fg, .. } => {
+                assert_eq!(*bg, Theme::light().colors.button_bg);
+                assert_eq!(*fg, Theme::light().colors.button_fg);
+            }
+            other => panic!("expected Button, got {other:?}"),
+        }
     }
 }

@@ -80,6 +80,7 @@ cargo run -p e23_office_charts                             # 增强: 多瓦片 C
 cargo run -p e24_profile_dual                              # P4: Field/Office Profile
 cargo run -p e25_immediate_viewport                        # P5: retained 壳 + Immediate 视口
 cargo run -p e26_office_p2                                 # Office P2a–P2e: + grid/timeline/calendar/image
+cargo run -p e27_theme_tokens                             # Theme tokens: light/dark 切换 + 控件样例
 cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 ```
 
@@ -104,6 +105,8 @@ cargo run -p e10_office_panel     # 早期 Row 工具条 demo
 `e24_profile_dual`：Field / Office `ProfileConfig` 双档（可用 `NEXT_GUI_PROFILE=field`）。默认带 `gpu`；Field Soft 打包：`cargo run -p e24_profile_dual --no-default-features`。
 
 `e25_immediate_viewport`：retained 壳 + 局部 Immediate 工具面板；**Esc** 先退 Immediate 焦点。
+
+`e27_theme_tokens`：亮/暗 Theme 切换（按钮或空格）；控件走 `ui.*_style()`；切换时整树重建。`NEXT_GUI_THEME_QA=1` 导出 PPM。
 
 Office 示例惯例：**Esc** 先关弹层 / Immediate，idle 再退出（见各 example）。默认 Softbuffer 窗口；`NEXT_GUI_GPU_SURFACE=1` 可试原生 Surface。
 
