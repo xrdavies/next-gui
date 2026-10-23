@@ -72,7 +72,7 @@ impl DockKind {
 
     pub fn title(self) -> &'static str {
         match self {
-            DockKind::EditCell => "Edit Database Cell",
+            DockKind::EditCell => "Edit Cell",
             DockKind::Schema => "DB Schema",
             DockKind::Log => "SQL Log",
             DockKind::Plot => "Plot",
@@ -445,7 +445,7 @@ impl AppState {
             cond_op_idx: 0,
             cond_value: String::new(),
             cond_color: "E67E22".into(),
-            dock_remote: false,
+            dock_remote: true,
             browse_view: BrowseViewMode::Table,
             form_field_idx: 0,
             ext_path: String::new(),
@@ -495,7 +495,11 @@ impl AppState {
     }
 
     pub fn any_dock_visible(&self) -> bool {
-        self.dock_edit || self.dock_schema || self.dock_log || self.dock_plot
+        self.dock_edit
+            || self.dock_schema
+            || self.dock_log
+            || self.dock_plot
+            || self.dock_remote
     }
 
     pub fn visible_docks(&self) -> Vec<DockKind> {
@@ -1914,23 +1918,37 @@ impl AppState {
             BrowseViewMode::Table => BrowseViewMode::Form,
             BrowseViewMode::Form => BrowseViewMode::Table,
         };
-        self.status_msg = format!("Browse view: {:?}", self.browse_view);
+        if matches!(self.browse_view, BrowseViewMode::Form) {
+            let n = self.browse().result.as_ref().map(|r| r.rows.len()).unwrap_or(0);
+            if n > 0 && self.browse().sel_row.is_none() {
+                self.browse_mut().sel_row = Some(0);
+                self.browse_mut().sel_col = Some(0);
+            }
+            self.sync_edit_cell_from_selection();
+        }
     }
 
+
     pub fn form_next_record(&mut self) {
-        let b = self.browse_mut();
-        let n = b.result.as_ref().map(|r| r.rows.len()).unwrap_or(0);
+        let n = self.browse().result.as_ref().map(|r| r.rows.len()).unwrap_or(0);
         if n == 0 {
             return;
         }
-        let cur = b.sel_row.unwrap_or(0);
-        b.sel_row = Some((cur + 1).min(n - 1));
+        let cur = self.browse().sel_row.unwrap_or(0);
+        self.browse_mut().sel_row = Some((cur + 1).min(n - 1));
+        if self.browse().sel_col.is_none() {
+            self.browse_mut().sel_col = Some(0);
+        }
+        self.sync_edit_cell_from_selection();
     }
 
     pub fn form_prev_record(&mut self) {
-        let b = self.browse_mut();
-        let cur = b.sel_row.unwrap_or(0);
-        b.sel_row = Some(cur.saturating_sub(1));
+        let cur = self.browse().sel_row.unwrap_or(0);
+        self.browse_mut().sel_row = Some(cur.saturating_sub(1));
+        if self.browse().sel_col.is_none() {
+            self.browse_mut().sel_col = Some(0);
+        }
+        self.sync_edit_cell_from_selection();
     }
 
     pub fn decode_edit_image(&mut self) {

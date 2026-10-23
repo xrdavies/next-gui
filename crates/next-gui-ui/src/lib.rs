@@ -761,9 +761,9 @@ pub struct MenuStyle {
 impl Default for MenuStyle {
     fn default() -> Self {
         Self {
-            min_width: 72.0,
+            min_width: 88.0,
             item_height: 28.0,
-            popup_width: 160.0,
+            popup_width: 240.0,
             size: 13.0,
             fg: Color::rgb(0xe0, 0xe4, 0xec),
             disabled_fg: Color::rgb(0x70, 0x74, 0x80),
@@ -1700,6 +1700,8 @@ enum Kind {
         columns: Vec<TableColumn>,
         rows: Vec<Vec<String>>,
         selected_row: Option<usize>,
+        /// Column index of the last body click (for cell editors).
+        selected_col: Option<usize>,
         scroll_y: f32,
         /// Horizontal scroll for columns beyond [`frozen_cols`].
         scroll_x: f32,
@@ -4196,6 +4198,14 @@ impl Ui {
         }
     }
 
+    /// Column index of the last body click on a Table, if any.
+    pub fn table_selected_col(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { selected_col, .. }) => *selected_col,
+            _ => None,
+        }
+    }
+
     /// Drain last Table header click as `(table_id, column_index)`.
     pub fn take_table_header_click(&mut self) -> Option<(WidgetId, usize)> {
         self.pending_table_header_click.take()
@@ -5368,9 +5378,35 @@ impl Ui {
             -1
         };
         if idx >= 0 && (idx as usize) < n_rows {
+            let col_hit = {
+                let columns = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Table { columns, style, scroll_x, frozen_cols, .. }) => {
+                        Some((columns.clone(), *style, *scroll_x, *frozen_cols))
+                    }
+                    _ => None,
+                };
+                columns.and_then(|(columns, style, scroll_x, frozen_cols)| {
+                    let mut cx = bounds.x + style.padding;
+                    for (i, col) in columns.iter().enumerate() {
+                        let ox = if i < frozen_cols { cx } else { cx - scroll_x };
+                        let w = col.width.max(1.0);
+                        if x >= ox && x < ox + w {
+                            return Some(i);
+                        }
+                        cx += w;
+                    }
+                    Some(0)
+                })
+            };
             if let Some(w) = self.widgets.get_mut(&id) {
-                if let Kind::Table { selected_row, .. } = &mut w.kind {
+                if let Kind::Table {
+                    selected_row,
+                    selected_col,
+                    ..
+                } = &mut w.kind
+                {
                     *selected_row = Some(idx as usize);
+                    *selected_col = col_hit;
                 }
             }
         }
@@ -9871,7 +9907,51 @@ impl Ui {
     }
 
 
+    /// Recursively hide a widget and all descendants (scene nodes + aux/chrome/label).
+    /// Used so inactive Tabs pages do not leak painted children.
+    fn hide_widget_subtree(&mut self, scene: &mut Scene, id: WidgetId) {
+        let (node, chrome, label, aux, children) = match self.widgets.get(&id) {
+            Some(w) => {
+                let children = match &w.kind {
+                    Kind::Column { children, .. }
+                    | Kind::Row { children, .. }
+                    | Kind::Toolbar { children, .. }
+                    | Kind::Panel { children, .. }
+                    | Kind::StatusBar { children, .. }
+                    | Kind::Splitter { children, .. }
+                    | Kind::ScrollArea { children, .. }
+                    | Kind::ContextMenu { children, .. }
+                    | Kind::Tabs { children, .. }
+                    | Kind::Badge { children, .. }
+                    | Kind::Tooltip { children, .. }
+                    | Kind::Form { children, .. }
+                    | Kind::Grid { children, .. }
+                    | Kind::Spin { children, .. } => children.clone(),
+                    _ => Vec::new(),
+                };
+                (w.node, w.chrome_node, w.label_node, w.aux.clone(), children)
+            }
+            None => return,
+        };
+        if let Some(n) = node {
+            scene.set_visible(n, false);
+        }
+        if let Some(n) = chrome {
+            scene.set_visible(n, false);
+        }
+        if let Some(n) = label {
+            scene.set_visible(n, false);
+        }
+        for &n in &aux {
+            scene.set_visible(n, false);
+        }
+        for child in children {
+            self.hide_widget_subtree(scene, child);
+        }
+    }
+
     fn layout_tabs(&mut self, scene: &mut Scene, id: WidgetId) {
+
         let Some(Widget {
             kind:
                 Kind::Tabs {
@@ -9935,10 +10015,8 @@ impl Ui {
                     child_id,
                     Rect::new(ox, content_y, w, content_h),
                 );
-            } else if let Some(w) = self.widgets.get(&child_id) {
-                if let Some(n) = w.node {
-                    scene.set_visible(n, false);
-                }
+            } else {
+                self.hide_widget_subtree(scene, child_id);
             }
         }
         let _ = titles;
@@ -10414,6 +10492,8 @@ impl Ui {
             for (i, child) in children.into_iter().enumerate() {
                 if let Some(sel) = selected_tab {
                     if i != sel {
+                        // Enforce every frame: inactive pages (incl. Table aux) stay hidden.
+                        self.hide_widget_subtree(scene, child);
                         continue;
                     }
                 }
@@ -11374,6 +11454,7 @@ impl Ui {
                     columns,
                     rows,
                     selected_row,
+                    selected_col: _,
                     scroll_y,
                     scroll_x,
                     frozen_cols,
@@ -11468,7 +11549,7 @@ impl Ui {
         for slot in 0..count {
             let ri = first + slot;
             let Some(row) = rows.get(ri) else { break };
-            let base = ncols + slot * (1 + ncols);
+            let base = ncols + slot * (1 + 2 * ncols);
             let y = body_top + ri as f32 * style.row_height - scroll_y;
             if !virtualized
                 && (y + style.row_height < body_top - style.row_height
@@ -15300,7 +15381,16 @@ impl Ui {
             }
             _ => return,
         };
-        let popup_w = style.popup_width.max(host_bounds.width);
+        let mut label_w = 0.0f32;
+        for it in &items {
+            let (tw, _) = self.font.measure_line(&it.label, style.size);
+            label_w = label_w.max(tw);
+        }
+        let popup_w = style
+            .popup_width
+            .max(host_bounds.width)
+            .max(label_w + 28.0)
+            .max(style.min_width);
         let popup_h = style.item_height * items.len().max(1) as f32;
         let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, popup_w, popup_h);
         self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg);
@@ -16908,6 +16998,7 @@ impl Ui {
         scene.set_bounds(node, bounds);
         scene.set_fill(node, style.bg);
         scene.set_mask(node, None);
+        scene.set_clip(node, Some(bounds));
         scene.set_visible(node, true);
         self.apply_corner_radius(scene, node, true);
 
@@ -16981,10 +17072,10 @@ impl Ui {
                     // paint_trend_tile uses fill for under-curve; use b as fill, c as line
                     // Re-paint over solid bg: allocate fill as under-curve on b, line on c
                     let inset = Rect::new(
-                        body.x + 2.0,
-                        body.y + 2.0,
-                        (body.width - 4.0).max(4.0),
-                        (body.height - 4.0).max(4.0),
+                        body.x + 4.0,
+                        body.y + 6.0,
+                        (body.width - 8.0).max(4.0),
+                        (body.height - 12.0).max(4.0),
                     );
                     self.paint_trend_tile(scene, inset, points, *ts, b, c);
                 }
@@ -17596,6 +17687,7 @@ impl FlexBuilder<'_> {
                     columns,
                     rows,
                     selected_row: None,
+                    selected_col: None,
                     scroll_y: 0.0,
                     scroll_x: 0.0,
                     frozen_cols: 0,
@@ -18197,6 +18289,7 @@ impl FlexBuilder<'_> {
                     columns,
                     rows,
                     selected_row: None,
+                    selected_col: None,
                     scroll_y: 0.0,
                     scroll_x: 0.0,
                     frozen_cols: 0,
@@ -19287,7 +19380,8 @@ impl TabsBuilder<'_> {
                 padding: style.padding,
                 gap: style.gap,
                 cross_align: style.cross_align,
-                background: None,
+                // Opaque page fill so inactive siblings cannot show through gaps.
+                background: Some(style.content_bg),
             }
         };
         let id = self.ui.alloc_container(Kind::Column {
@@ -19735,6 +19829,80 @@ mod tests {
         assert!(ui.pointer_scroll(&scene, lb.x + 10.0, lb.y + 10.0, 0.0, 40.0));
         ui.sync(&mut scene);
         assert!(scene.get(lnode).unwrap().clip.is_some());
+    }
+
+    #[test]
+    fn table_paints_all_body_rows_with_cell_bg_aux_stride() {
+        // Regression: cell_bg doubled aux stride; old paint used 1+ncols and only
+        // the last row stayed visible when nodes overlapped.
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut table = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 400.0,
+                height: 220.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                table = col.table(
+                    vec![
+                        TableColumn::new("id", 60.0),
+                        TableColumn::new("name", 120.0),
+                    ],
+                    vec![
+                        vec!["1".into(), "Alice".into()],
+                        vec!["2".into(), "Bob".into()],
+                        vec!["3".into(), "Carol".into()],
+                    ],
+                    TableStyle {
+                        width: 360.0,
+                        height: 160.0,
+                        header_height: 28.0,
+                        row_height: 26.0,
+                        ..TableStyle::default()
+                    },
+                );
+            },
+        );
+        ui.set_table_cell_bg(
+            table,
+            vec![
+                vec![None, None],
+                vec![None, Some(Color::rgb(0xe6, 0x7e, 0x22))],
+                vec![None, None],
+            ],
+        );
+        ui.sync(&mut scene);
+        let w = ui.widgets.get(&table).expect("table");
+        let ncols = 2usize;
+        let n_rows = 3usize;
+        // header labels + per-row (bg + cell_bg*ncols + text*ncols)
+        let expected_aux = ncols + n_rows * (1 + 2 * ncols);
+        assert!(
+            w.aux.len() >= expected_aux,
+            "aux len {} < expected {}",
+            w.aux.len(),
+            expected_aux
+        );
+        let host = w.node.expect("host");
+        let bounds = scene.get(host).expect("bounds").bounds;
+        let mut visible_textish = 0usize;
+        for &n in &w.aux {
+            if let Some(node) = scene.get(n) {
+                if node.visible && node.mask.is_some() {
+                    // body text sits below header
+                    if node.bounds.y >= bounds.y + 28.0 - 1.0 {
+                        visible_textish += 1;
+                    }
+                }
+            }
+        }
+        // 3 rows × 2 cols = 6 body text labels should be visible
+        assert!(
+            visible_textish >= 6,
+            "expected >=6 visible body text masks, got {visible_textish}"
+        );
     }
 
     #[test]
