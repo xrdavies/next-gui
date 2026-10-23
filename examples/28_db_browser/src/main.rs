@@ -1,7 +1,8 @@
 //! DB Browser for SQLite–style example (`e28_db_browser`).
 //!
 //! Soft↔GPU: Space when nothing focused. Theme: toolbar button.
-//! `NEXT_GUI_DB_BROWSER_QA=1` dumps `/tmp/next-gui-db-browser.ppm` after first paint then exits.
+//! `NEXT_GUI_DB_BROWSER_QA=1` dumps a PPM after first paint then exits (default `/tmp/next-gui-db-browser.ppm`;
+//! override with `NEXT_GUI_DB_BROWSER_QA_OUT`). `NEXT_GUI_DB_BROWSER_QA_TAB=pragmas|charts|…` selects the tab.
 //!
 //! ```bash
 //! cargo run -p e28_db_browser
@@ -258,7 +259,17 @@ impl Demo {
             std::process::exit(1);
         });
         let theme = Theme::dark();
-        let state = AppState::new_with_demo();
+        let mut state = AppState::new_with_demo();
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            state.tab = match tab.to_ascii_lowercase().as_str() {
+                "browse" => MainTab::Browse,
+                "pragmas" => MainTab::Pragmas,
+                "sql" | "execute" => MainTab::ExecuteSql,
+                "charts" => MainTab::Charts,
+                "log" => MainTab::SqlLog,
+                _ => MainTab::Structure,
+            };
+        }
         let built = build_ui(font.clone(), theme, width, height, &state);
         let clear = clear_color(&theme);
         let qa_exit = std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some();
@@ -1044,8 +1055,20 @@ impl AppCallbacks for Demo {
                 y,
                 ..
             } => {
-                if self.ui.pointer_pressed(&mut self.scene, x as f32, y as f32) {
+                // Buttons: pointer_pressed only focuses (returns false). Mirror
+                // e11/e15 — hit_widget + is_button so Theme/New/Open toggle on
+                // plain pointer click, not only focus+Enter.
+                let xf = x as f32;
+                let yf = y as f32;
+                if self.ui.pointer_pressed(&mut self.scene, xf, yf) {
                     self.after_ui(ctx);
+                    return;
+                }
+                if let Some(hit) = self.ui.hit_widget(&self.scene, xf, yf) {
+                    if self.ui.is_button(hit) {
+                        self.handle_button(hit);
+                        self.after_ui(ctx);
+                    }
                 }
             }
             Event::PointerButton {
@@ -1143,9 +1166,10 @@ impl AppCallbacks for Demo {
 
         if self.qa_exit && !self.qa_done {
             self.qa_done = true;
-            let path = "/tmp/next-gui-db-browser.ppm";
+            let path = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT")
+                .unwrap_or_else(|_| "/tmp/next-gui-db-browser.ppm".into());
             if let Some((pixels, w, h)) = self.backend.frame_pixels() {
-                match write_ppm(path, pixels, w, h) {
+                match write_ppm(&path, pixels, w, h) {
                     Ok(()) => eprintln!("NEXT_GUI_DB_BROWSER_QA: wrote {path}"),
                     Err(e) => eprintln!("NEXT_GUI_DB_BROWSER_QA: write failed: {e}"),
                 }

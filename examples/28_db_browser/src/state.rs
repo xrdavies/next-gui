@@ -126,11 +126,11 @@ impl AppState {
                     .find(|o| o.kind == ObjectKind::Table)
                     .map(|o| o.name.clone())
                 {
-                    state.browse_table = Some(t.clone());
-                    state.chart_table = Some(t);
+                    state.browse_table = Some(t);
                     let _ = state.refresh_browse();
-                    let _ = state.refresh_chart();
                 }
+                state.pick_chart_source();
+                let _ = state.refresh_chart();
                 let _ = state.refresh_pragmas();
             }
             Err(e) => {
@@ -141,6 +141,8 @@ impl AppState {
                     state.path = ":memory:".into();
                     state.path_draft = state.path.clone();
                     let _ = state.refresh_schema();
+                    state.pick_chart_source();
+                    let _ = state.refresh_chart();
                     let _ = state.refresh_pragmas();
                 }
             }
@@ -310,11 +312,46 @@ impl AppState {
             self.ddl_draft = obj.sql.clone().unwrap_or_default();
             if matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
                 self.browse_table = Some(obj.name.clone());
-                self.chart_table = Some(obj.name);
                 let _ = self.refresh_browse();
-                let _ = self.refresh_chart();
             }
         }
+    }
+
+
+    /// Prefer `products.price` (demo), else first table that yields a numeric series for `chart_column`.
+    pub fn pick_chart_source(&mut self) {
+        self.chart_column = if self.chart_column.trim().is_empty() {
+            "price".into()
+        } else {
+            self.chart_column.clone()
+        };
+        let names = self
+            .schema
+            .iter()
+            .filter(|o| o.kind == ObjectKind::Table)
+            .map(|o| o.name.clone())
+            .collect::<Vec<_>>();
+        let preferred = ["products", "order_items", "orders"];
+        let mut chosen = None;
+        for pref in preferred {
+            if names.iter().any(|n| n == pref) {
+                chosen = Some(pref.to_string());
+                break;
+            }
+        }
+        if chosen.is_none() {
+            if let Some(conn) = self.conn.as_ref() {
+                for name in &names {
+                    if let Ok(pts) = db::numeric_series(conn, name, self.chart_column.trim(), 8) {
+                        if !pts.is_empty() {
+                            chosen = Some(name.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        self.chart_table = chosen.or_else(|| names.first().cloned());
     }
 
     pub fn table_names(&self) -> Vec<String> {
@@ -342,7 +379,7 @@ impl AppState {
             .iter()
             .find(|o| o.kind == ObjectKind::Table)
             .map(|o| o.name.clone());
-        self.chart_table = self.browse_table.clone();
+        self.pick_chart_source();
         self.refresh_browse()?;
         self.refresh_chart()?;
         self.status_msg = format!("Opened {}", self.path);
@@ -376,8 +413,8 @@ impl AppState {
         self.refresh_schema()?;
         self.refresh_pragmas()?;
         self.browse_table = Some("products".into());
-        self.chart_table = Some("products".into());
         self.chart_column = "price".into();
+        self.pick_chart_source();
         self.refresh_browse()?;
         self.refresh_chart()?;
         self.status_msg = format!("Demo DB ready at {}", self.path);
@@ -406,5 +443,26 @@ fn open_or_create_demo(path: &PathBuf) -> Result<Connection, String> {
         let conn = db::create_new(path.to_str().unwrap())?;
         db::seed_demo(&conn)?;
         Ok(conn)
+    }
+}
+
+#[cfg(test)]
+mod chart_default_tests {
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn pick_chart_prefers_products_price() {
+        let state = AppState::new_with_demo();
+        assert_eq!(state.chart_table.as_deref(), Some("products"));
+        assert_eq!(state.chart_column, "price");
+        assert!(
+            !state.chart_points.is_empty(),
+            "expected numeric price series, got {:?}",
+            state.chart_points
+        );
+        // prices in seed: 19.9, 49.5, 9.99, 120.0
+        assert!(state.chart_points.iter().any(|v| *v > 10.0));
+        let _ = db::default_demo_path();
     }
 }
