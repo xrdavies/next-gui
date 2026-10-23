@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "DB Browser for SQLite–style example (rusqlite + next-gui Theme)"
+description = "DB Browser for SQLite–style example (rusqlite + next-gui Theme, DB4S parity)"
 
 [[bin]]
 name = "e28_db_browser"
@@ -20,6 +20,7 @@ next-gui-ui = { workspace = true }
 next-gui-text = { workspace = true }
 next-gui-layout = { workspace = true }
 rusqlite = { version = "0.32", features = ["bundled"] }
+rfd = "0.13.0"
 
 [dev-dependencies]
 tempfile = "3"

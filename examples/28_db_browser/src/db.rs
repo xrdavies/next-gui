@@ -72,6 +72,48 @@ pub fn open_path(path: &str) -> Result<Connection, String> {
     }
 }
 
+/// Open an existing DB read-only (no CREATE).
+pub fn open_readonly(path: &str) -> Result<Connection, String> {
+    if path == ":memory:" || path.is_empty() {
+        return Err("read-only open requires a file path".into());
+    }
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY;
+    Connection::open_with_flags(path, flags).map_err(|e| e.to_string())
+}
+
+/// Begin a deferred write transaction (DB4S Write Changes model).
+pub fn begin_deferred(conn: &Connection) -> Result<(), String> {
+    // If already in a txn, ignore.
+    let _ = conn.execute_batch("COMMIT");
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+}
+
+/// COMMIT pending edits and open a fresh transaction.
+pub fn commit_and_begin(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+}
+
+/// ROLLBACK pending edits and open a fresh transaction.
+pub fn rollback_and_begin(conn: &Connection) -> Result<(), String> {
+    let _ = conn.execute_batch("ROLLBACK");
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+}
+
+/// Copy DB file to a new path (Save Database As). Caller should close/reopen.
+pub fn copy_database_file(src: &str, dst: &str) -> Result<(), String> {
+    if src == ":memory:" || src.is_empty() {
+        return Err("cannot Save As an in-memory database to a file without dump".into());
+    }
+    if let Some(parent) = Path::new(dst).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    fs::copy(src, dst).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Create a new empty file DB (truncate if exists).
 pub fn create_new(path: &str) -> Result<Connection, String> {
     if path != ":memory:" {
@@ -348,8 +390,31 @@ fn query_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> {
 }
 
 pub fn vacuum(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch("VACUUM").map_err(|e| e.to_string())
+    // VACUUM cannot run inside a transaction.
+    let _ = conn.execute_batch("COMMIT");
+    conn.execute_batch("VACUUM").map_err(|e| e.to_string())?;
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
 }
+
+pub fn pragma_check(conn: &Connection, name: &str) -> Result<QueryResult, String> {
+    execute_sql(conn, &format!("PRAGMA {name}"))
+}
+
+pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
+    let schema = list_schema(conn)?;
+    let mut rows = Vec::new();
+    for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
+        let n = count_rows(conn, &obj.name).unwrap_or(-1);
+        rows.push(vec![obj.name.clone(), n.to_string()]);
+    }
+    Ok(QueryResult {
+        columns: vec!["table".into(), "rows".into()],
+        rows,
+        rows_affected: None,
+        truncated: false,
+    })
+}
+
 
 pub fn count_rows(conn: &Connection, table: &str) -> Result<i64, String> {
     let sql = format!("SELECT COUNT(*) FROM {}", quote_ident(table));

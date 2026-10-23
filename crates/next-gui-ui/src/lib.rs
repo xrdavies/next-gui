@@ -628,7 +628,7 @@ impl Default for TreeStyle {
 pub struct TableColumn {
     /// Header title.
     pub title: String,
-    /// Column width (px). Resize is stubbed — width is fixed.
+    /// Column width (px). Header click reports column index; resize still stubbed.
     pub width: f32,
 }
 
@@ -2183,6 +2183,8 @@ pub struct Ui {
     pending_breadcrumb_click: Option<(WidgetId, usize)>,
     /// Last Pagination page change; drained by [`Ui::take_pagination_change`].
     pending_pagination_change: Option<(WidgetId, usize)>,
+    /// Last Table header column click; drained by [`Ui::take_table_header_click`].
+    pending_table_header_click: Option<(WidgetId, usize)>,
     /// Queued notification toasts (global overlay).
     notifications: Vec<NotificationItem>,
     /// Next notification id.
@@ -2283,6 +2285,7 @@ impl Ui {
             pending_drawer_action: None,
             pending_breadcrumb_click: None,
             pending_pagination_change: None,
+            pending_table_header_click: None,
             notifications: Vec::new(),
             next_notification_id: 1,
             notification_style: NotificationStyle::from_theme(&Theme::dark()),
@@ -4167,6 +4170,11 @@ impl Ui {
         }
     }
 
+    /// Drain last Table header click as `(table_id, column_index)`.
+    pub fn take_table_header_click(&mut self) -> Option<(WidgetId, usize)> {
+        self.pending_table_header_click.take()
+    }
+
     /// Set table row selection.
     pub fn set_table_selected_row(&mut self, id: WidgetId, row: Option<usize>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -5279,15 +5287,25 @@ impl Ui {
             .unwrap_or_else(Rect::empty);
         let body_top = bounds.y + style.header_height;
         if y < body_top {
-            // header click — no-op (column resize stub)
-            let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
-            self.drag = Some(DragState::Scroll {
-                area: id,
-                start_x: x,
-                start_y: y,
-                start_scroll_x: sx,
-                start_scroll_y: scroll_y,
-            });
+            // Header click → column index for sort / resize hooks.
+            let columns = match self.widgets.get(&id).map(|w| &w.kind) {
+                Some(Kind::Table { columns, style, .. }) => (columns.clone(), *style),
+                _ => return true,
+            };
+            let (columns, style) = columns;
+            let mut cx = bounds.x + style.padding;
+            let mut hit = None;
+            for (i, col) in columns.iter().enumerate() {
+                let w = col.width.max(1.0);
+                if x >= cx && x < cx + w {
+                    hit = Some(i);
+                    break;
+                }
+                cx += w;
+            }
+            if let Some(ci) = hit.or_else(|| columns.first().map(|_| 0)) {
+                self.pending_table_header_click = Some((id, ci));
+            }
             return true;
         }
         let local_y = y - body_top + sy;
