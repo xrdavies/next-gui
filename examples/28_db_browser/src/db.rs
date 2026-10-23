@@ -1118,6 +1118,43 @@ mod tests {
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(dump);
     }
+
+    #[test]
+    fn sqlcipher_linked() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(
+            cipher_is_linked(&conn),
+            "bundled-sqlcipher-vendored-openssl should expose cipher_version"
+        );
+    }
+
+    #[test]
+    fn sqlcipher_key_roundtrip() {
+        let dir = std::env::temp_dir().join(format!(
+            "e28-cipher-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("enc.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            assert!(cipher_is_linked(&conn));
+            apply_cipher_key(&conn, "secret", 4096, 256000).unwrap();
+            conn.execute_batch("CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);")
+                .unwrap();
+        }
+        let conn2 = Connection::open(&path).unwrap();
+        apply_cipher_key(&conn2, "secret", 4096, 256000).unwrap();
+        let n: i64 = conn2
+            .query_row("SELECT x FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 42);
+        let _ = fs::remove_dir_all(dir);
+    }
+
 }
 
 /// Options for Export → Database to SQL file (DB4S ExportSqlDialog).
@@ -1252,6 +1289,12 @@ pub fn looks_like_sqlite(path: &Path) -> Result<bool, String> {
     Ok(&buf[..15] == b"SQLite format 3")
 }
 
+/// True when this build links SQLCipher (`PRAGMA cipher_version` works).
+pub fn cipher_is_linked(conn: &Connection) -> bool {
+    conn.query_row("PRAGMA cipher_version;", [], |r| r.get::<_, String>(0))
+        .is_ok()
+}
+
 /// Apply SQLCipher key settings. On stock bundled SQLite this returns a clear error.
 pub fn apply_cipher_key(
     conn: &Connection,
@@ -1263,15 +1306,15 @@ pub fn apply_cipher_key(
     let probe = conn.query_row("PRAGMA cipher_version;", [], |r| r.get::<_, String>(0));
     match probe {
         Ok(ver) => {
-            conn.pragma_update(None, "key", passphrase)
-                .map_err(|e| e.to_string())?;
+            // SQLCipher 4: page size / KDF before key when configuring a new DB.
             if page_size > 0 {
                 let _ = conn.pragma_update(None, "cipher_page_size", page_size);
             }
             if kdf_iter > 0 {
                 let _ = conn.pragma_update(None, "kdf_iter", kdf_iter);
             }
-            // Verify
+            conn.pragma_update(None, "key", passphrase)
+                .map_err(|e| e.to_string())?;
             conn.query_row("SELECT count(*) FROM sqlite_master;", [], |r| {
                 r.get::<_, i64>(0)
             })
@@ -1377,4 +1420,65 @@ pub fn try_pretty_json(text: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+/// Export current connection into a new SQLCipher-encrypted file (`sqlcipher_export`).
+pub fn encrypt_database_to(
+    conn: &Connection,
+    dest: &Path,
+    passphrase: &str,
+    page_size: i64,
+    kdf_iter: i64,
+) -> Result<(), String> {
+    if !cipher_is_linked(conn) {
+        return Err("SQLCipher not linked".into());
+    }
+    let dest_s = dest.to_string_lossy().replace('\'', "''");
+    let pass = passphrase.replace('\'', "''");
+    let attach = format!("ATTACH DATABASE '{dest_s}' AS encrypted KEY '{pass}';");
+    conn.execute_batch(&attach).map_err(|e| e.to_string())?;
+    if page_size > 0 {
+        let _ = conn.execute_batch(&format!(
+            "PRAGMA encrypted.cipher_page_size = {page_size};"
+        ));
+    }
+    if kdf_iter > 0 {
+        let _ = conn.execute_batch(&format!("PRAGMA encrypted.kdf_iter = {kdf_iter};"));
+    }
+    conn.execute_batch("SELECT sqlcipher_export('encrypted');")
+        .map_err(|e| format!("sqlcipher_export: {e}"))?;
+    conn.execute_batch("DETACH DATABASE encrypted;")
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Load a SQLite extension (.so/.dylib/.dll). Requires `load_extension` feature.
+pub fn load_extension(conn: &Connection, path: &str, entry: Option<&str>) -> Result<(), String> {
+    // rusqlite marks extension loading unsafe; caller controls path/entry.
+    unsafe {
+        conn.load_extension_enable().map_err(|e| e.to_string())?;
+        let r = match entry {
+            Some(e) if !e.is_empty() => conn.load_extension(path, Some(e)),
+            _ => conn.load_extension(path, None::<&str>),
+        };
+        let _ = conn.load_extension_disable();
+        r.map_err(|e| e.to_string())
+    }
+}
+
+/// Human-readable schema report for Print Schema.
+pub fn schema_report(conn: &Connection) -> Result<String, String> {
+    let schema = list_schema(conn)?;
+    let mut out = String::from("-- Schema report (e28 / DB4S Print Schema)\n");
+    out.push_str(&format!("-- Generated for connection\n\n"));
+    for obj in &schema {
+        out.push_str(&format!("-- {:?} `{}`\n", obj.kind, obj.name));
+        if let Some(sql) = &obj.sql {
+            if !sql.is_empty() {
+                out.push_str(sql.trim());
+                out.push_str(";\n\n");
+            }
+        }
+    }
+    Ok(out)
 }

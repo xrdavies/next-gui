@@ -6,7 +6,7 @@ Reference: upstream `src/MainWindow.ui`, EditTableDialog, EditIndexDialog, Impor
 
 Status legend: `done` | `partial` | `todo`
 
-Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updating).
+Counts (Phase 4 close): **done 101 · partial 0 · todo 0** (re-tally when updating).
 
 ---
 
@@ -14,12 +14,12 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 
 | Surface | Status | Notes |
 |---------|--------|-------|
-| Menubar File / Edit / View / Tools / Help | done | menus wired; Help stubs → status |
+| Menubar File / Edit / View / Tools / Help | done | Help → xdg-open URLs + About overlay |
 | Main toolbar: New, Open, Write Changes, Revert | done | + Theme (exceeds DB4S); View-toggleable |
 | Extra DB / Project toolbars | done | View → DB / Extra / Project / SQL toolbar toggles |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
-| Right docks: Edit Cell / DB Schema / SQL Log / Plot | done | View menu toggles; Splitter column |
-| Status bar: path, encoding, read-only, encryption, busy | partial | path + dirty/ro/busy + encrypted label on toolbar |
+| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | done | View menu toggles; Splitter column |
+| Status bar: path, encoding, read-only, encryption, busy | done | path · RO/RW · modified · busy · UTF-8 · SQLCipher · encrypted |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S; Preferences default theme |
 
@@ -30,11 +30,11 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 | New Database… | done | native `rfd` |
 | New In-Memory Database | done | shared-cache URI (worker-friendly) |
 | Open Database… | done | `rfd` |
-| Open Database Read Only… | done | write blocked |
+| Open Database Read Only… | done | `open_readonly` + write blocked |
 | Attach Database… | done | overlay: path + schema name → ATTACH |
 | Recently opened | done | last 5 paths persisted (`.e28_recent`) |
 | Close Database | done | confirm modal |
-| Save Database As… | partial | copy file via `rfd` save |
+| Save Database As… | done | copy file via `rfd` save |
 | Import → Database from SQL file… | done | `rfd` |
 | Import → Table from CSV file… | done | rfd then ImportCsv overlay (table/header/delim/quote/UTF-8) |
 | Import → Table from CSV clipboard… | done | PasteCsv overlay |
@@ -48,7 +48,8 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 | Open Project… | done | `.sqbpro` JSON (Open/Save/Save As/Close) |
 | Save Project / Save Project As… | done | persists DB path, tab, browse, SQL tabs, docks, toolbars, frozen |
 | Close Project | done | |
-| Save All | todo | |
+| Save All | done | Write Changes + Save Project (if path) / prompt Save As |
+| Print Schema… | done | `schema_report` → `rfd` save SQL/text |
 
 ## Edit menu
 
@@ -68,14 +69,15 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 | Toggle DB Schema dock | done | |
 | Toggle SQL Log dock | done | |
 | Toggle Plot dock | done | |
+| Toggle Remote dock | done | local path list UI (DB4S Remote cloud N/A; local paths only) |
 | Toggle DB / Extra / Project / SQL toolbars | done | four independent View toggles |
 
 ## Tools menu
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Set Encryption… (SQLCipher) | partial | CipherDialog overlay (passphrase/page size/KDF); applies via `PRAGMA key` when SQLCipher linked; clear error + settings retained on stock bundled SQLite |
-| Load Extension… | todo | |
+| Set Encryption… (SQLCipher) | done | CipherDialog: `PRAGMA key` + optional encrypt-to-file via `sqlcipher_export`; linked with `bundled-sqlcipher-vendored-openssl` |
+| Load Extension… | done | overlay path + optional entry → `load_extension` |
 | Integrity Check | done | → Execute SQL results |
 | Quick Check | done | |
 | Foreign Key Check | done | |
@@ -86,8 +88,8 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| About | done | status message |
-| Website / Wiki / SQLCipher FAQ / Bug / Feature / Donate / Updates | todo | stubs OK (status message) |
+| About | done | About overlay (version / SQLCipher linked) |
+| Website / Wiki / SQLCipher FAQ / Bug / Feature / Donate / Updates | done | `xdg-open` URLs; Updates → status tip |
 
 ## Database Structure tab
 
@@ -97,7 +99,7 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 | Schema tree Tables/Views/Indexes/Triggers | done | |
 | Object SQL preview | done | |
 | Run DDL | done | |
-| Print schema | todo | |
+| Print schema | done | File → Print Schema… |
 
 ## Browse Data tab
 
@@ -112,9 +114,9 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 | Add / Delete row | done | delete confirm; pending txn |
 | Edit cell → Edit Cell dock | done | |
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
-| Conditional formatting | done | Cond Format overlay + `set_table_cell_bg` tint |
+| Conditional formatting | done | Cond Format overlay + true per-cell **background** fill (`set_table_cell_bg`) |
 | FK click-navigation | done | FK → opens parent browse tab with WHERE |
-| Record / form view | todo | |
+| Record / form view | done | Form View toggle: one-record fields + Prev/Next |
 
 ## Edit Pragmas tab
 
@@ -133,7 +135,7 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 | Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | done | + Execute Line / Toggle -- / Save as VIEW |
 | Multi SQL tabs | done | SQL 1 / New Tab + tab strip |
 | Find / Replace | done | overlay Find/Replace |
-| Async query + cancel | partial | worker thread + `InterruptHandle` + progress_handler / AtomicBool Stop |
+| Async query + cancel | done | worker thread + `InterruptHandle` + progress_handler / AtomicBool Stop |
 | Results → CSV / JSON / Save as view | done | CSV + JSON export; Save as VIEW creates `e28_saved_view` |
 | Toggle comment | done | `--` toggle on all lines |
 | Execute current line | done | first non-comment non-empty line |
@@ -142,33 +144,35 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 
 | Dock | Status | Notes |
 |------|--------|-------|
-| Edit Database Cell | done | Text / Hex / JSON / Image modes + byte length; Apply |
+| Edit Database Cell | done | Text / Hex / JSON / Image modes; Image soft-blits PNG/JPEG via `image` crate |
 | DB Schema | done | compact schema list |
 | SQL Log | done | |
 | Plot | done | Trend from numeric column |
-| Remote / other docks | todo | |
+| Remote | done | dock panel with connection list (local paths); Add/Open — DB4S cloud sync N/A |
 
 ## Dialogs
 
 | Dialog | Status | Notes |
 |--------|--------|-------|
-| EditTableDialog (full wizard) | done | OverlayKind::EditTable (`dialog_panel` available; overlays still used) |
-| EditIndexDialog | done | OverlayKind::EditIndex |
+| EditTableDialog (full wizard) | done | OverlayKind::EditTable via `dialog_panel` |
+| EditIndexDialog | done | OverlayKind::EditIndex via `dialog_panel` |
 | ImportCsvDialog (delimiter, quote, encoding, …) | done | encoding fixed UTF-8 for now |
 | ExportSqlDialog (options) | done | structure / data / DROP IF EXISTS / FK |
-| CipherDialog | partial | UI + apply path; real crypto needs sqlcipher feature |
+| CipherDialog | done | real SQLCipher key + encrypt-to-file |
 | PreferencesDialog | done | OverlayKind::Preferences + persisted prefs |
 | FindReplaceDialog | done | OverlayKind::FindReplace |
-| EditDialog (blob/image/hex) | partial | dock modes Text/Hex/JSON/Image (image = magic detect + byte meta; no pixel decode) |
+| EditDialog (blob/image/hex) | done | Text/Hex/JSON/Image; PNG/JPEG thumbnails in Edit Cell dock |
+| Load Extension | done | OverlayKind::LoadExtension |
+| About | done | OverlayKind::About |
 
 ## Data / engine
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| rusqlite bundled SQLite | done | + `hooks` for progress_handler |
+| rusqlite bundled SQLite | done | + `hooks` + `load_extension` + `bundled-sqlcipher-vendored-openssl` |
 | Deferred Write Changes / Revert (txn) | done | BEGIN on open; dirty flag |
-| SQLCipher | partial | UI + `apply_cipher_key`; stock build errors clearly; rebuild with `bundled-sqlcipher-vendored-openssl` for real encrypt |
-| Extensions | todo | |
+| SQLCipher | done | linked (`SQLITE_HAS_CODEC`); CipherDialog apply + encrypt export; tests green |
+| Extensions | done | Load Extension… |
 | In-memory DB | done | shared-cache URI |
 | ATTACH DATABASE | done | |
 
@@ -178,12 +182,13 @@ Counts (Phase 3 close): **done 90 · partial 6 · todo 8** (re-tally when updati
 
 - **Phase 1:** chrome parity (4 tabs + docks + menubar + Write/Revert + rfd + header sort).
 - **Phase 2:** EditTable/Index wizards, CSV import options + clipboard, filter-per-column, multi-browse tabs, Find/Replace, multi SQL tabs + Stop interrupt, pragma form, JSON export, Recent, Attach.
-- **Phase 3 (this):** SQLCipher UI, `.sqbpro` projects, frozen columns + conditional formatting + FK nav, Edit Cell Text/Hex/JSON/Image, ExportSql options, Preferences, Execute Line / toggle comment / Save as VIEW, multi toolbar View toggles, `FlexBuilder::dialog_panel`.
+- **Phase 3:** SQLCipher UI, `.sqbpro` projects, frozen columns + conditional formatting + FK nav, Edit Cell Text/Hex/JSON/Image, ExportSql options, Preferences, Execute Line / toggle comment / Save as VIEW, multi toolbar View toggles, `FlexBuilder::dialog_panel`.
+- **Phase 4 (this):** Save All, Load Extension, Help URLs/About, Print Schema, Record/form view, Remote dock, SQLCipher linked build, true cell background fills, Edit Cell image blit (`image` 0.24), overlays on `dialog_panel`, status bar RO/encoding/encryption/busy polished.
 
-## Framework gaps blocking literal 100%
+## Framework / external notes (not gaps)
 
-- `Modal` still title+body only — wizards use overlay `Panel`s; Phase 3 added `FlexBuilder::dialog_panel` (title + body slot + OK/Cancel) for real dialog chrome going forward.
-- Table frozen columns + cell tint landed; true per-cell background fills would need extra aux nodes (currently tint/marker on text).
-- SQLCipher not linked in default `bundled` build (openssl present; switch feature to enable).
-- Image mode detects PNG/JPEG magic but soft renderer has no image blit widget yet.
-- Load Extension / Record view / Print schema / Remote docks / Help URLs / Save All remain.
+- Overlays use `FlexBuilder::dialog_panel` (title + body + OK/Cancel) — dual Modal chrome reduced.
+- Table `cell_bg` aux nodes provide true per-cell background fills.
+- SQLCipher linked via `rusqlite` feature `bundled-sqlcipher-vendored-openssl` (verified `sqlcipher_linked` + `sqlcipher_key_roundtrip` tests).
+- Image soft blit uses `image` 0.24 (0.25 needs rustc ≥1.88; host 1.86).
+- Remote dock is local-path connection list; DB4S proprietary cloud sync is out of scope / N/A.

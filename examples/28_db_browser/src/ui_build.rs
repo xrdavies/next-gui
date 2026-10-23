@@ -5,7 +5,7 @@ use next_gui_scene::{Color, Scene};
 use next_gui_text::Font;
 use next_gui_ui::{
     AlertTone, ChartStyle, ChartTile, ColumnStyle, ListStyle, MenuItem, MenuStyle, ModalStyle,
-    PanelStyle, RowStyle, SelectStyle, SplitterStyle, StatusBarStyle, SwitchStyle, TableColumn,
+    PanelStyle, RowStyle, SelectStyle, SplitterStyle, ImageStyle, StatusBarStyle, SwitchStyle, TableColumn,
     TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme, ThemeMode, ToolbarStyle, TreeNode,
     TreeStyle, TrendStyle, Ui, WidgetId,
 };
@@ -35,6 +35,8 @@ pub mod mid {
     pub const FILE_EXIT: u64 = 19;
     pub const FILE_PROJECT_SAVE_AS: u64 = 20;
     pub const FILE_PROJECT_CLOSE: u64 = 21;
+    pub const FILE_SAVE_ALL: u64 = 22;
+    pub const FILE_PRINT_SCHEMA: u64 = 23;
     pub const FILE_RECENT_BASE: u64 = 100; // 100..104
 
     pub const EDIT_CREATE_TABLE: u64 = 30;
@@ -52,6 +54,7 @@ pub mod mid {
     pub const VIEW_TB_EXTRA: u64 = 46;
     pub const VIEW_TB_PROJECT: u64 = 47;
     pub const VIEW_TB_SQL: u64 = 48;
+    pub const VIEW_DOCK_REMOTE: u64 = 49;
 
     pub const TOOLS_ENCRYPT: u64 = 50;
     pub const TOOLS_EXT: u64 = 51;
@@ -63,6 +66,12 @@ pub mod mid {
 
     pub const HELP_ABOUT: u64 = 60;
     pub const HELP_WIKI: u64 = 61;
+    pub const HELP_WEBSITE: u64 = 62;
+    pub const HELP_SQLCIPHER: u64 = 63;
+    pub const HELP_BUG: u64 = 64;
+    pub const HELP_FEATURE: u64 = 65;
+    pub const HELP_DONATE: u64 = 66;
+    pub const HELP_UPDATES: u64 = 67;
 }
 
 #[allow(dead_code)]
@@ -184,6 +193,17 @@ pub struct BuiltUi {
     pub edit_meta: WidgetId,
     pub toolbar_extra: WidgetId,
     pub toolbar_project: WidgetId,
+    pub ov_ext_path: WidgetId,
+    pub ov_ext_entry: WidgetId,
+    pub btn_form_view: WidgetId,
+    pub btn_form_prev: WidgetId,
+    pub btn_form_next: WidgetId,
+    pub form_fields: Vec<WidgetId>,
+    pub edit_image: WidgetId,
+    pub remote_list: WidgetId,
+    pub remote_draft: WidgetId,
+    pub btn_remote_add: WidgetId,
+    pub btn_remote_open: WidgetId,
 }
 
 pub fn clear_color(theme: &Theme) -> Color {
@@ -372,6 +392,17 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut edit_meta = z;
     let mut toolbar_extra = z;
     let mut toolbar_project = z;
+    let mut ov_ext_path = z;
+    let mut ov_ext_entry = z;
+    let mut btn_form_view = z;
+    let mut btn_form_prev = z;
+    let mut btn_form_next = z;
+    let mut form_fields: Vec<WidgetId> = Vec::new();
+    let mut edit_image = z;
+    let mut remote_list = z;
+    let mut remote_draft = z;
+    let mut btn_remote_add = z;
+    let mut btn_remote_open = z;
 
     let win_w = width as f32;
     let win_h = height as f32;
@@ -439,6 +470,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE, "Save Project"));
     file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE_AS, "Save Project As…"));
     file_items.push(MenuItem::new(mid::FILE_PROJECT_CLOSE, "Close Project"));
+    file_items.push(MenuItem::new(mid::FILE_SAVE_ALL, "Save All"));
+    file_items.push(MenuItem::new(mid::FILE_PRINT_SCHEMA, "Print Schema…"));
     file_items.push(MenuItem::new(mid::FILE_EXIT, "Exit"));
 
     ui.column(col_style, |col| {
@@ -462,6 +495,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                     MenuItem::new(mid::VIEW_DOCK_SCHEMA, format!("{}DB Schema", check(state.dock_schema))),
                     MenuItem::new(mid::VIEW_DOCK_LOG, format!("{}SQL Log", check(state.dock_log))),
                     MenuItem::new(mid::VIEW_DOCK_PLOT, format!("{}Plot", check(state.dock_plot))),
+                    MenuItem::new(mid::VIEW_DOCK_REMOTE, format!("{}Remote", check(state.dock_remote))),
                     MenuItem::new(mid::VIEW_TB_DB, format!("{}DB Toolbar", check(state.toolbar_db))),
                     MenuItem::new(mid::VIEW_TB_EXTRA, format!("{}Extra DB Toolbar", check(state.toolbar_extra))),
                     MenuItem::new(mid::VIEW_TB_PROJECT, format!("{}Project Toolbar", check(state.toolbar_project))),
@@ -474,7 +508,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 "Tools",
                 vec![
                     MenuItem::new(mid::TOOLS_ENCRYPT, "Set Encryption…"),
-                    MenuItem::disabled(mid::TOOLS_EXT, "Load Extension…"),
+                    MenuItem::new(mid::TOOLS_EXT, "Load Extension…"),
                     MenuItem::new(mid::TOOLS_INTEGRITY, "Integrity Check"),
                     MenuItem::new(mid::TOOLS_QUICK, "Quick Check"),
                     MenuItem::new(mid::TOOLS_FK, "Foreign Key Check"),
@@ -486,8 +520,14 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             menu_help = tb.menu(
                 "Help",
                 vec![
-                    MenuItem::new(mid::HELP_ABOUT, "About"),
-                    MenuItem::new(mid::HELP_WIKI, "Wiki (stub)"),
+                    MenuItem::new(mid::HELP_ABOUT, "About DB Browser"),
+                    MenuItem::new(mid::HELP_WEBSITE, "Website"),
+                    MenuItem::new(mid::HELP_WIKI, "Wiki"),
+                    MenuItem::new(mid::HELP_SQLCIPHER, "SQLCipher FAQ"),
+                    MenuItem::new(mid::HELP_BUG, "Bug Report"),
+                    MenuItem::new(mid::HELP_FEATURE, "Feature Request"),
+                    MenuItem::new(mid::HELP_DONATE, "Donate"),
+                    MenuItem::new(mid::HELP_UPDATES, "Check for Updates"),
                 ],
                 menu_style,
             );
@@ -570,6 +610,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 OverlayKind::Preferences => "Preferences",
                 OverlayKind::ExportSql => "Export Database to SQL",
                 OverlayKind::CondFormat => "Conditional Formatting",
+                OverlayKind::LoadExtension => "Load Extension",
+                OverlayKind::About => "About",
             };
             let mut ov_col = ColumnStyle::from_theme(&theme);
             ov_col.width = shell_w - 40.0;
@@ -599,7 +641,18 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             area_s.height = 160.0;
             let sw = SwitchStyle::from_theme(&theme);
 
-            col.panel(title, panel, |p| {
+            let primary = match kind {
+                OverlayKind::FindReplace | OverlayKind::About => "Close",
+                OverlayKind::ImportCsv | OverlayKind::PasteCsv => "Import",
+                OverlayKind::Attach => "Attach",
+                OverlayKind::ExportSql => "Export…",
+                OverlayKind::CondFormat => "Add Rule",
+                OverlayKind::Cipher => "Apply Key",
+                OverlayKind::LoadExtension => "Load",
+                _ => "Save",
+            };
+            let (_ov_panel, ok_id, cancel_id) =
+                col.dialog_panel(title, panel, primary, "Cancel", |p| {
                 p.column(ov_col, |c| {
                     match kind {
                         OverlayKind::EditTable => {
@@ -765,6 +818,11 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                             } else {
                                 "Status: not encrypted / key not applied"
                             });
+                            c.text(if state.cipher_linked {
+                                "Apply Key runs PRAGMA key; optional Save dialog writes encrypted copy."
+                            } else {
+                                "SQLCipher not linked — rebuild with bundled-sqlcipher-vendored-openssl."
+                            });
                         }
                         OverlayKind::Preferences => {
                             c.row(row, |r| {
@@ -790,8 +848,28 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                             ov_export_fk = c.switch_styled("Keep/check foreign keys", state.export_keep_fk, sw);
                             c.text("OK writes via Save dialog after options are set.");
                         }
+                        OverlayKind::LoadExtension => {
+                            c.text("Load a SQLite extension (.so / .dylib / .dll)");
+                            c.row(row, |r| {
+                                r.text("Path");
+                                ov_ext_path = r.text_input_styled(&state.ext_path, "/path/to/ext.so", wide_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Entry (optional)");
+                                ov_ext_entry = r.text_input_styled(&state.ext_entry, "sqlite3_extension_init", wide_s);
+                            });
+                        }
+                        OverlayKind::About => {
+                            c.text("DB Browser for SQLite — next-gui e28");
+                            c.text(format!(
+                                "SQLCipher: {}",
+                                if state.cipher_linked { "linked" } else { "not linked" }
+                            ));
+                            c.text("Parity target: 100% DB4S feature + UI");
+                            c.text("https://sqlitebrowser.org/");
+                        }
                         OverlayKind::CondFormat => {
-                            c.text("Rule: when cell matches, tint cell text");
+                            c.text("Rule: when cell matches, fill cell background");
                             c.row(row, |r| {
                                 r.text("Column");
                                 ov_cond_col = r.text_input_styled(&state.cond_col, "col", name_s);
@@ -814,20 +892,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                             c.text(format!("Rules: {}", state.cond_rules.len()));
                         }
                     }
-                    c.row(row, |r| {
-                        ov_btn_ok = r.tool_button(match kind {
-                            OverlayKind::FindReplace => "Close",
-                            OverlayKind::ImportCsv | OverlayKind::PasteCsv => "Import",
-                            OverlayKind::Attach => "Attach",
-                            OverlayKind::ExportSql => "Export…",
-                            OverlayKind::CondFormat => "Add Rule",
-                            OverlayKind::Cipher => "Apply Key",
-                            _ => "Save",
-                        });
-                        ov_btn_cancel = r.tool_button("Cancel");
-                    });
                 });
             });
+            ov_btn_ok = ok_id;
+            ov_btn_cancel = cancel_id;
         } else {
             // —— Main + docks ——
             let table_names = state.table_names();
@@ -1094,6 +1162,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                 btn_freeze = row.tool_button(format!("Freeze {}", state.frozen_cols));
                                 btn_cond_fmt = row.tool_button("Cond Format…");
                                 btn_fk_nav = row.tool_button("FK →");
+                                btn_form_view = row.tool_button(match state.browse_view {
+                                    crate::state::BrowseViewMode::Table => "Form View",
+                                    crate::state::BrowseViewMode::Form => "Table View",
+                                });
                             });
                             // Per-column filters
                             if !col_names.is_empty() {
@@ -1110,8 +1182,51 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                     }
                                 });
                             }
-                            browse_table =
-                                p.table(browse_cols.clone(), browse_rows.clone(), browse_table_style);
+                            match state.browse_view {
+                                crate::state::BrowseViewMode::Table => {
+                                    browse_table = p.table(
+                                        browse_cols.clone(),
+                                        browse_rows.clone(),
+                                        browse_table_style,
+                                    );
+                                }
+                                crate::state::BrowseViewMode::Form => {
+                                    let b = state.browse();
+                                    let row_i = b.sel_row.unwrap_or(0);
+                                    let res = b.result.as_ref();
+                                    p.row(tool_row, |row| {
+                                        btn_form_prev = row.tool_button("◀ Prev");
+                                        btn_form_next = row.tool_button("Next ▶");
+                                        let n = res.map(|r| r.rows.len()).unwrap_or(0);
+                                        row.text(format!(
+                                            "Record {} / {}",
+                                            if n == 0 { 0 } else { row_i + 1 },
+                                            n
+                                        ));
+                                    });
+                                    if let Some(res) = res {
+                                        let cells = res.rows.get(row_i);
+                                        for (ci, cname) in res.columns.iter().enumerate() {
+                                            let val = cells
+                                                .and_then(|r| r.get(ci))
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            p.row(tool_row, |row| {
+                                                row.text(cname.as_str());
+                                                let id = row.text_input_styled(
+                                                    &val,
+                                                    cname.as_str(),
+                                                    filter_style,
+                                                );
+                                                form_fields.push(id);
+                                            });
+                                        }
+                                    } else {
+                                        p.text("No rows — Apply a table first");
+                                    }
+                                    browse_table = WidgetId(0);
+                                }
+                            }
                             p.text_styled(
                                 format!(
                                     "Tip: header sort · filters · Freeze={} · Cond rules={} · FK → parent",
@@ -1289,6 +1404,29 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                                     format!(" · {}", state.edit_image_kind)
                                                 }
                                             ));
+                                            if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
+                                                let mut istyle = ImageStyle::from_theme(&theme);
+                                                istyle.width = (*w as f32).min(160.0) + 8.0;
+                                                istyle.height = (*h as f32).min(160.0) + 24.0;
+                                                edit_image = c.image_rgba_caption(
+                                                    *w,
+                                                    *h,
+                                                    px,
+                                                    format!("{}×{}", w, h),
+                                                    istyle,
+                                                );
+                                            } else if matches!(
+                                                state.edit_mode,
+                                                crate::state::EditCellMode::Image
+                                            ) {
+                                                let mut istyle = ImageStyle::from_theme(&theme);
+                                                istyle.width = 160.0;
+                                                istyle.height = 48.0;
+                                                edit_image = c.image_placeholder(
+                                                    "No PNG/JPEG in cell",
+                                                    istyle,
+                                                );
+                                            }
                                             if let Some(row) = state.browse().sel_row {
                                                 c.text(format!("Browse row #{row}"));
                                             } else {
@@ -1328,6 +1466,36 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                         });
                                     });
                                 }
+                                DockKind::Remote => {
+                                    tb.page(DockKind::Remote.title(), |p| {
+                                        p.column(dock_col, |c| {
+                                            c.text("Remote / connection list");
+                                            c.text_styled(
+                                                "DB4S cloud Remote is not used here — local paths only.",
+                                                theme.colors.text_secondary,
+                                                11.0,
+                                            );
+                                            let items = if state.remote_paths.is_empty() {
+                                                vec!["(no paths — add below)".into()]
+                                            } else {
+                                                state.remote_paths.clone()
+                                            };
+                                            remote_list = c.list(items, list_style);
+                                            c.row(tool_row, |r| {
+                                                remote_draft = r.text_input_styled(
+                                                    &state.remote_draft,
+                                                    "path or file URL",
+                                                    edit_val_style,
+                                                );
+                                            });
+                                            c.row(tool_row, |r| {
+                                                btn_remote_add = r.tool_button("Add");
+                                                btn_remote_open = r.tool_button("Open");
+                                            });
+                                        });
+                                    });
+                                }
+
                             }
                         }
                     });
@@ -1351,11 +1519,12 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         state.path.clone()
     };
     let flags = format!(
-        "{}{}{}{}",
+        "{}{}{}{} · UTF-8 · {}",
         if state.read_only { "RO" } else { "RW" },
         if state.dirty { " · modified" } else { "" },
         if state.sql_busy { " · busy" } else { "" },
-        " · UTF-8 · not encrypted"
+        if state.cipher_linked { " · SQLCipher" } else { "" },
+        if state.cipher_active { "encrypted" } else { "not encrypted" },
     );
     let status_msg = state.status_msg.clone();
     let status_fg = theme.colors.text_secondary;
@@ -1562,6 +1731,17 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         edit_meta,
         toolbar_extra,
         toolbar_project,
+        ov_ext_path,
+        ov_ext_entry,
+        btn_form_view,
+        btn_form_prev,
+        btn_form_next,
+        form_fields,
+        edit_image,
+        remote_list,
+        remote_draft,
+        btn_remote_add,
+        btn_remote_open,
     }
 }
 
