@@ -4245,7 +4245,7 @@ impl Ui {
         }
     }
 
-    /// Set optional per-cell foreground tint used for conditional formatting.
+    /// Set optional per-cell background fill used for conditional formatting.
     pub fn set_table_cell_bg(&mut self, id: WidgetId, cell_bg: Vec<Vec<Option<Color>>>) {
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::Table { cell_bg: dest, .. } = &mut w.kind {
@@ -11419,8 +11419,8 @@ impl Ui {
         } else {
             (0, rows.len())
         };
-        // aux: [header x ncols] + window slots [row_bg + cells x ncols]
-        let needed = ncols + count * (1 + ncols);
+        // aux: [header x ncols] + window slots [row_bg + cell_bg x ncols + cell_text x ncols]
+        let needed = ncols + count * (1 + 2 * ncols);
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
@@ -11474,7 +11474,7 @@ impl Ui {
                 && (y + style.row_height < body_top - style.row_height
                     || y > bounds.y + bounds.height + style.row_height)
             {
-                for k in 0..(1 + ncols) {
+                for k in 0..(1 + 2 * ncols) {
                     if let Some(&n) = aux.get(base + k) {
                         scene.set_visible(n, false);
                     }
@@ -11508,17 +11508,30 @@ impl Ui {
                     .get(ri)
                     .and_then(|r| r.get(ci))
                     .and_then(|c| *c);
-                let display = if fmt.is_some() {
-                    format!("●{}", cell)
-                } else {
-                    cell.to_string()
-                };
-                let (_, mask) = self.font.rasterize_text(&display, style.size, None);
                 let ox = if ci < frozen_cols { cx } else { cx - scroll_x };
-                if let Some(&lab) = aux.get(base + 1 + ci) {
+                let visible = ci < frozen_cols || ox + col.width > bounds.x + style.padding;
+                // cell background node
+                if let Some(&cbg) = aux.get(base + 1 + ci) {
+                    if visible {
+                        if let Some(fill) = fmt {
+                            scene.set_bounds(
+                                cbg,
+                                Rect::new(ox, y, col.width.max(1.0), style.row_height),
+                            );
+                            scene.set_fill(cbg, fill);
+                            scene.set_mask(cbg, None);
+                            scene.set_visible(cbg, true);
+                        } else {
+                            scene.set_visible(cbg, false);
+                        }
+                    } else {
+                        scene.set_visible(cbg, false);
+                    }
+                }
+                let (_, mask) = self.font.rasterize_text(cell, style.size, None);
+                if let Some(&lab) = aux.get(base + 1 + ncols + ci) {
                     let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
                     let max_w = (col.width - 8.0).max(4.0);
-                    let visible = ci < frozen_cols || ox + col.width > bounds.x + style.padding;
                     if visible {
                         scene.set_bounds(
                             lab,
@@ -11531,8 +11544,9 @@ impl Ui {
                         );
                         let fg = if is_sel {
                             style.selected_fg
-                        } else if let Some(c) = fmt {
-                            c
+                        } else if fmt.is_some() {
+                            // Contrasting text on filled cell
+                            Color::rgb(0x10, 0x10, 0x18)
                         } else {
                             style.fg
                         };
@@ -11549,8 +11563,9 @@ impl Ui {
                 cx += col.width;
             }
         }
+
         // Hide leftover slots beyond current window
-        let used = ncols + count * (1 + ncols);
+        let used = ncols + count * (1 + 2 * ncols);
         for i in used..aux.len() {
             if let Some(&n) = aux.get(i) {
                 scene.set_visible(n, false);

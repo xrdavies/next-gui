@@ -50,6 +50,7 @@ pub enum DockKind {
     Schema = 1,
     Log = 2,
     Plot = 3,
+    Remote = 4,
 }
 
 impl DockKind {
@@ -59,6 +60,7 @@ impl DockKind {
             1 => DockKind::Schema,
             2 => DockKind::Log,
             3 => DockKind::Plot,
+            4 => DockKind::Remote,
             _ => DockKind::EditCell,
         }
     }
@@ -74,8 +76,15 @@ impl DockKind {
             DockKind::Schema => "DB Schema",
             DockKind::Log => "SQL Log",
             DockKind::Plot => "Plot",
+            DockKind::Remote => "Remote",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowseViewMode {
+    Table = 0,
+    Form = 1,
 }
 
 /// Full-window overlay wizards (Modal cannot host custom controls).
@@ -91,6 +100,8 @@ pub enum OverlayKind {
     Preferences,
     ExportSql,
     CondFormat,
+    LoadExtension,
+    About,
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +270,17 @@ pub struct AppState {
     pub cond_op_idx: usize,
     pub cond_value: String,
     pub cond_color: String,
+    pub dock_remote: bool,
+    pub browse_view: BrowseViewMode,
+    #[allow(dead_code)]
+    pub form_field_idx: usize,
+    pub ext_path: String,
+    pub ext_entry: String,
+    pub remote_paths: Vec<String>,
+    pub remote_sel: usize,
+    pub remote_draft: String,
+    pub edit_image_rgba: Option<(u32, u32, Vec<u8>)>,
+    pub cipher_linked: bool,
 }
 
 pub struct SqlJob {
@@ -303,6 +325,7 @@ impl AppState {
                 state.pick_chart_source();
                 let _ = state.refresh_chart();
                 let _ = state.refresh_pragmas();
+                state.probe_cipher_linked();
             }
             Err(e) => {
                 state.status_msg = format!("Demo DB failed: {e}; using in-memory");
@@ -316,6 +339,7 @@ impl AppState {
                     state.pick_chart_source();
                     let _ = state.refresh_chart();
                     let _ = state.refresh_pragmas();
+                    state.probe_cipher_linked();
                 }
             }
         }
@@ -421,6 +445,16 @@ impl AppState {
             cond_op_idx: 0,
             cond_value: String::new(),
             cond_color: "E67E22".into(),
+            dock_remote: false,
+            browse_view: BrowseViewMode::Table,
+            form_field_idx: 0,
+            ext_path: String::new(),
+            ext_entry: String::new(),
+            remote_paths: Vec::new(),
+            remote_sel: 0,
+            remote_draft: String::new(),
+            edit_image_rgba: None,
+            cipher_linked: false,
         }
     }
 
@@ -477,6 +511,9 @@ impl AppState {
         }
         if self.dock_plot {
             v.push(DockKind::Plot);
+        }
+        if self.dock_remote {
+            v.push(DockKind::Remote);
         }
         v
     }
@@ -1017,6 +1054,7 @@ impl AppState {
         if self.path != ":memory:" && !self.path.is_empty() {
             self.push_recent(&self.path.clone());
         }
+        self.probe_cipher_linked();
         Ok(())
     }
 
@@ -1037,6 +1075,7 @@ impl AppState {
         let conn = db::open_readonly(path)?;
         self.log_sql(format!("-- open read-only {path}"));
         self.adopt_conn(conn, path.to_string(), true)?;
+        self.probe_cipher_linked();
         self.status_msg = format!("Opened read-only {path}");
         Ok(())
     }
@@ -1809,5 +1848,170 @@ impl AppState {
         let _ = filter;
         self.status_msg = format!("FK → {}.{} = {}", fk.to_table, fk.to_col, val);
         Ok(())
+    }
+}
+
+impl AppState {
+    pub fn probe_cipher_linked(&mut self) {
+        if let Some(conn) = self.conn.as_ref() {
+            self.cipher_linked = db::cipher_is_linked(conn);
+        } else {
+            self.cipher_linked = false;
+        }
+    }
+
+    pub fn save_all(&mut self) -> Result<(), String> {
+        if self.conn.is_some() && self.dirty {
+            self.write_changes()?;
+        }
+        if let Some(pp) = self.project_path.clone() {
+            self.save_project(std::path::Path::new(&pp))?;
+        }
+        // Persist open SQL tabs to sidecar next to DB when no project
+        if self.project_path.is_none() && !self.path.is_empty() && self.path != ":memory:" {
+            let side = std::path::Path::new(&self.path).with_extension("e28.sqltabs");
+            let mut body = String::new();
+            for (i, tab) in self.sql_tabs.iter().enumerate() {
+                body.push_str(&format!("-- tab {}\n{}\n", i + 1, tab));
+            }
+            std::fs::write(&side, body).map_err(|e| e.to_string())?;
+            self.status_msg = format!("Save All: DB + SQL tabs → {}", side.display());
+        } else {
+            self.status_msg = "Save All complete".into();
+        }
+        let _ = self.prefs.save();
+        Ok(())
+    }
+
+    pub fn load_extension_apply(&mut self) -> Result<(), String> {
+        let path = self.ext_path.trim().to_string();
+        if path.is_empty() {
+            return Err("Extension path required".into());
+        }
+        let entry = self.ext_entry.trim().to_string();
+        let entry_opt = if entry.is_empty() { None } else { Some(entry.as_str()) };
+        {
+            let conn = self.conn.as_ref().ok_or("No database open")?;
+            db::load_extension(conn, &path, entry_opt)?;
+        }
+        self.log_sql(format!("-- load_extension {path}"));
+        self.status_msg = format!("Loaded extension {path}");
+        Ok(())
+    }
+
+    pub fn print_schema_to(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let report = {
+            let conn = self.conn.as_ref().ok_or("No database open")?;
+            db::schema_report(conn)?
+        };
+        std::fs::write(path, report).map_err(|e| e.to_string())?;
+        self.status_msg = format!("Schema report → {}", path.display());
+        Ok(())
+    }
+
+    pub fn toggle_browse_view(&mut self) {
+        self.browse_view = match self.browse_view {
+            BrowseViewMode::Table => BrowseViewMode::Form,
+            BrowseViewMode::Form => BrowseViewMode::Table,
+        };
+        self.status_msg = format!("Browse view: {:?}", self.browse_view);
+    }
+
+    pub fn form_next_record(&mut self) {
+        let b = self.browse_mut();
+        let n = b.result.as_ref().map(|r| r.rows.len()).unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        let cur = b.sel_row.unwrap_or(0);
+        b.sel_row = Some((cur + 1).min(n - 1));
+    }
+
+    pub fn form_prev_record(&mut self) {
+        let b = self.browse_mut();
+        let cur = b.sel_row.unwrap_or(0);
+        b.sel_row = Some(cur.saturating_sub(1));
+    }
+
+    pub fn decode_edit_image(&mut self) {
+        self.edit_image_rgba = None;
+        let raw = match self.edit_mode {
+            EditCellMode::Hex => db::from_hex(&self.edit_value).unwrap_or_default(),
+            _ => self.edit_value.as_bytes().to_vec(),
+        };
+        // Also try from browse cell raw if current value is placeholder
+        let bytes = if raw.starts_with(b"[") && self.edit_image_kind.len() > 0 {
+            // re-fetch from selection
+            let b = self.browse();
+            let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
+                return;
+            };
+            let ci = b.sel_col.unwrap_or(0);
+            res.rows
+                .get(ri)
+                .and_then(|r| r.get(ci))
+                .map(|s| s.as_bytes().to_vec())
+                .unwrap_or(raw)
+        } else {
+            raw
+        };
+        if !(db::looks_like_png(&bytes) || db::looks_like_jpeg(&bytes)) {
+            return;
+        }
+        if let Ok(img) = image::load_from_memory(&bytes) {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            // Downscale to max 160px for dock
+            let max_side = 160u32;
+            let (tw, th) = if w > max_side || h > max_side {
+                let scale = (max_side as f32 / w.max(h) as f32).min(1.0);
+                (
+                    ((w as f32) * scale).round().max(1.0) as u32,
+                    ((h as f32) * scale).round().max(1.0) as u32,
+                )
+            } else {
+                (w, h)
+            };
+            let resized = if tw != w || th != h {
+                image::imageops::resize(&rgba, tw, th, image::imageops::FilterType::Triangle)
+            } else {
+                rgba
+            };
+            self.edit_image_rgba = Some((tw, th, resized.into_raw()));
+            self.edit_binary_len = bytes.len();
+        }
+    }
+
+    pub fn apply_cipher_encrypt_file(&mut self, dest: &std::path::Path) -> Result<(), String> {
+        let page: i64 = self.cipher_page_size.trim().parse().unwrap_or(4096);
+        let kdf: i64 = self.cipher_kdf_iter.trim().parse().unwrap_or(256_000);
+        {
+            let conn = self.conn.as_ref().ok_or("No database open")?;
+            db::encrypt_database_to(conn, dest, &self.cipher_passphrase, page, kdf)?;
+        }
+        self.cipher_active = true;
+        self.status_msg = format!("Encrypted copy → {}", dest.display());
+        Ok(())
+    }
+
+    pub fn remote_add_path(&mut self) {
+        let p = self.remote_draft.trim().to_string();
+        if p.is_empty() {
+            return;
+        }
+        if !self.remote_paths.contains(&p) {
+            self.remote_paths.push(p);
+        }
+        self.remote_draft.clear();
+        self.status_msg = format!("Remote list: {} path(s) (local-only)", self.remote_paths.len());
+    }
+
+    pub fn remote_open_selected(&mut self) -> Result<(), String> {
+        let path = self
+            .remote_paths
+            .get(self.remote_sel)
+            .cloned()
+            .ok_or_else(|| "No remote path selected".to_string())?;
+        self.open_path(&path)
     }
 }

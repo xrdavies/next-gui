@@ -252,6 +252,17 @@ struct BuiltUiIds {
     btn_cond_fmt: WidgetId,
     toolbar_extra: WidgetId,
     toolbar_project: WidgetId,
+    ov_ext_path: WidgetId,
+    ov_ext_entry: WidgetId,
+    btn_form_view: WidgetId,
+    btn_form_prev: WidgetId,
+    btn_form_next: WidgetId,
+    form_fields: Vec<WidgetId>,
+    edit_image: WidgetId,
+    remote_list: WidgetId,
+    remote_draft: WidgetId,
+    btn_remote_add: WidgetId,
+    btn_remote_open: WidgetId,
 }
 
 impl From<&BuiltUi> for BuiltUiIds {
@@ -363,6 +374,17 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_cond_fmt: b.btn_cond_fmt,
             toolbar_extra: b.toolbar_extra,
             toolbar_project: b.toolbar_project,
+            ov_ext_path: b.ov_ext_path,
+            ov_ext_entry: b.ov_ext_entry,
+            btn_form_view: b.btn_form_view,
+            btn_form_prev: b.btn_form_prev,
+            btn_form_next: b.btn_form_next,
+            form_fields: b.form_fields.clone(),
+            edit_image: b.edit_image,
+            remote_list: b.remote_list,
+            remote_draft: b.remote_draft,
+            btn_remote_add: b.btn_remote_add,
+            btn_remote_open: b.btn_remote_open,
         }
     }
 }
@@ -401,6 +423,19 @@ impl Demo {
                 "cond" | "condformat" => {
                     state.overlay = Some(OverlayKind::CondFormat);
                     MainTab::Browse
+                }
+                "form" => {
+                    state.browse_view = crate::state::BrowseViewMode::Form;
+                    MainTab::Browse
+                }
+                "remote" => {
+                    state.dock_remote = true;
+                    state.dock_focus = DockKind::Remote;
+                    MainTab::Browse
+                }
+                "about" => {
+                    state.overlay = Some(OverlayKind::About);
+                    MainTab::Structure
                 }
                 // legacy aliases → docks / structure
                 "charts" | "plot" => {
@@ -692,6 +727,19 @@ impl Demo {
                     }
                 }
             }
+            OverlayKind::LoadExtension => {
+                if self.ids.ov_ext_path.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_ext_path) {
+                        self.state.ext_path = v.to_string();
+                    }
+                }
+                if self.ids.ov_ext_entry.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_ext_entry) {
+                        self.state.ext_entry = v.to_string();
+                    }
+                }
+            }
+            OverlayKind::About => {}
             OverlayKind::CondFormat => {
                 if self.ids.ov_cond_col.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_cond_col) {
@@ -796,6 +844,12 @@ impl Demo {
             self.rebuild = true;
             false
         }
+    }
+
+    fn open_url(&mut self, url: &str) {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        self.state.status_msg = format!("Opened {url}");
+        self.rebuild = true;
     }
 
     fn stub(&mut self, msg: &str) {
@@ -1138,12 +1192,6 @@ impl Demo {
             mid::TOOLS_FK => self.action_tool_check("foreign_key_check"),
             mid::TOOLS_OPTIMIZE => self.action_tool_check("optimize"),
             mid::TOOLS_ROWCOUNTS => self.action_row_counts(),
-            mid::HELP_ABOUT => {
-                self.state.status_msg =
-                    "next-gui DB Browser — DB4S parity goal · see PARITY.md".into();
-                self.rebuild = true;
-            }
-            mid::HELP_WIKI => self.stub("Help Wiki link"),
             mid::FILE_ATTACH => {
                 if let Some(path) = file_dlg::pick_open_db() {
                     self.state.attach_path = path.display().to_string();
@@ -1203,7 +1251,57 @@ impl Demo {
                 self.state.toolbar_sql = !self.state.toolbar_sql;
                 self.rebuild = true;
             }
-            mid::TOOLS_EXT => self.stub(&format!("menu item {item}")),
+            mid::TOOLS_EXT => {
+                self.state.overlay = Some(OverlayKind::LoadExtension);
+                self.rebuild = true;
+            }
+            mid::FILE_SAVE_ALL => {
+                match self.state.save_all() {
+                    Ok(()) => self.clear_error(),
+                    Err(e) => self.set_error(e),
+                }
+                self.rebuild = true;
+            }
+            mid::FILE_PRINT_SCHEMA => {
+                if !self.require_conn() {
+                    return;
+                }
+                let path = file_dlg::pick_save_sql()
+                    .unwrap_or_else(|| PathBuf::from("/tmp/e28_schema.sql"));
+                match self.state.print_schema_to(&path) {
+                    Ok(()) => self.clear_error(),
+                    Err(e) => self.set_error(e),
+                }
+                self.rebuild = true;
+            }
+            mid::VIEW_DOCK_REMOTE => {
+                self.state.dock_remote = !self.state.dock_remote;
+                if self.state.dock_remote {
+                    self.state.dock_focus = DockKind::Remote;
+                }
+                self.rebuild = true;
+            }
+            mid::HELP_ABOUT => {
+                self.state.overlay = Some(OverlayKind::About);
+                self.rebuild = true;
+            }
+            mid::HELP_WEBSITE => self.open_url("https://sqlitebrowser.org/"),
+            mid::HELP_WIKI => self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/wiki"),
+            mid::HELP_SQLCIPHER => {
+                self.open_url("https://www.zetetic.net/sqlcipher/sqlcipher-api/")
+            }
+            mid::HELP_BUG => {
+                self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/issues")
+            }
+            mid::HELP_FEATURE => {
+                self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/issues")
+            }
+            mid::HELP_DONATE => self.open_url("https://sqlitebrowser.org/donate/"),
+            mid::HELP_UPDATES => {
+                self.state.status_msg =
+                    "Updates: use your package manager or sqlitebrowser.org downloads".into();
+                self.rebuild = true;
+            }
             x if (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&x) => {
                 let idx = (x - mid::FILE_RECENT_BASE) as usize;
                 if let Some(path) = self.state.recent.get(idx).cloned() {
@@ -1243,6 +1341,21 @@ impl Demo {
                 Some(OverlayKind::Cipher) => {
                     let r = self.state.apply_cipher_overlay();
                     if r.is_ok() {
+                        // Optional: export encrypted copy (DB4S CipherDialog "Encrypt database").
+                        if let Some(dest) = file_dlg::pick_save_db() {
+                            match self.state.apply_cipher_encrypt_file(&dest) {
+                                Ok(()) => {
+                                    self.state.status_msg = format!(
+                                        "Key applied; encrypted copy → {}",
+                                        dest.display()
+                                    );
+                                }
+                                Err(e) => {
+                                    self.state.status_msg =
+                                        format!("Key applied; encrypt-to-file: {e}");
+                                }
+                            }
+                        }
                         self.state.overlay = None;
                     }
                     r
@@ -1260,6 +1373,17 @@ impl Demo {
                 }
                 Some(OverlayKind::CondFormat) => {
                     self.state.add_cond_format_rule();
+                    Ok(())
+                }
+                Some(OverlayKind::LoadExtension) => {
+                    let r = self.state.load_extension_apply();
+                    if r.is_ok() {
+                        self.state.overlay = None;
+                    }
+                    r
+                }
+                Some(OverlayKind::About) => {
+                    self.state.overlay = None;
                     Ok(())
                 }
                 None => Ok(()),
@@ -1626,6 +1750,46 @@ impl Demo {
         }
         if id == self.ids.btn_edit_image {
             self.state.set_edit_mode(crate::state::EditCellMode::Image);
+            self.state.decode_edit_image();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_form_view {
+            self.state.toggle_browse_view();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_form_prev {
+            self.state.form_prev_record();
+            self.state.sync_edit_cell_from_selection();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_form_next {
+            self.state.form_next_record();
+            self.state.sync_edit_cell_from_selection();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_remote_add {
+            self.snapshot_inputs();
+            if self.ids.remote_draft.0 != 0 {
+                if let Some(v) = self.ui.text_input_value(self.ids.remote_draft) {
+                    self.state.remote_draft = v.to_string();
+                }
+            }
+            self.state.remote_add_path();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_remote_open {
+            if let Some(i) = self.ui.list_selected(self.ids.remote_list) {
+                self.state.remote_sel = i;
+            }
+            match self.state.remote_open_selected() {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
             self.rebuild = true;
             return;
         }
@@ -1766,6 +1930,9 @@ impl Demo {
                 self.last_browse_row = Some(row);
                 self.state.browse_mut().sel_row = Some(row);
                 self.state.sync_edit_cell_from_selection();
+                if matches!(self.state.edit_mode, crate::state::EditCellMode::Image) {
+                    self.state.decode_edit_image();
+                }
                 dirty = true;
             }
         }
