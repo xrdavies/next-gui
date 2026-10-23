@@ -1,41 +1,21 @@
 # e28_db_browser — DB Browser for SQLite (next-gui)
 
-Example that mirrors **DB Browser for SQLite (DB4S)** workflows using `rusqlite` (bundled) and next-gui Theme tokens.
+**Goal:** 100% feature + UI parity with [DB Browser for SQLite](https://sqlitebrowser.org/) (DB4S), with Theme so the UI can meet or exceed DB4S visually.
+
+See **[PARITY.md](./PARITY.md)** for the exhaustive checklist (`done` / `partial` / `todo`). There is no “limitations excused” list — gaps are tracked as parity work.
 
 ## Run
 
 ```bash
 cargo run -p e28_db_browser
 NEXT_GUI_DB_BROWSER_QA=1 cargo run -p e28_db_browser   # Soft PPM → /tmp/next-gui-db-browser.ppm
+NEXT_GUI_DB_BROWSER_QA_TAB=browse|pragmas|sql cargo run -p e28_db_browser
 ```
 
-On first launch the example opens/creates `examples/28_db_browser/sample.db` with a small demo schema (customers / products / orders).
+On first launch the example opens/creates `examples/28_db_browser/sample.db` with a small demo schema.
 
-Controls: **Space** Soft↔GPU (when unfocused), toolbar **Theme** light/dark, Esc quits (or closes modal).
+**Chrome (DB4S-aligned):** File/Edit/View/Tools/Help menubar · New/Open/Write Changes/Revert toolbar · exactly **4** main tabs (Structure / Browse / Pragmas / Execute SQL) · right docks Edit Cell / Schema / Log / Plot (View menu) · Theme light/dark · Soft↔GPU (Space).
 
-## Features
+**Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK).
 
-| Area | Status |
-|------|--------|
-| New / Open / Close / Demo DB | Done (path TextInput; no OS file dialog) |
-| Vacuum (compact) | Done |
-| Structure tree (tables/views/indexes/triggers) | Done |
-| Create table / Run DDL / Drop object | Done (confirm Modal) |
-| Browse Data grid + WHERE filter | Done |
-| Add / delete row / edit cell | Done (rowid-based; views read-only) |
-| Execute SQL + results + error Alert | Done |
-| SQL log | Done |
-| Edit Pragmas | Done (grid + value field) |
-| CSV import/export | Done (path TextInput) |
-| SQL dump import/export | Done |
-| Charts (Trend + Gauge from numeric column) | Done |
-| Theme light/dark + Soft/GPU | Done |
-
-## Limitations
-
-- No SQLCipher / encryption UI.
-- No native OS file picker (`rfd`); enter paths in the toolbar / Import-Export field.
-- Table header click does **not** sort (next-gui Table header is a stub). Put a column name in **Edit cell → column** and press **Apply** to ORDER BY (toggle ASC/DESC on repeat).
-- No frozen columns, conditional formatting, or FK click-navigation.
-- Long-running query cancel is not implemented (SQLite calls are synchronous on the UI thread).
-- PropertyGrid text cells are not inline-editable; use the pragma **Value** field or Select/Bool toggles.
+Native file pickers use `rfd` (falls back when cancelled / headless).
