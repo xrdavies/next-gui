@@ -4,6 +4,8 @@
 //! `NEXT_GUI_DB_BROWSER_QA=1` dumps a PPM after first paint then exits.
 
 mod db;
+mod project;
+mod prefs;
 mod file_dlg;
 mod state;
 mod ui_build;
@@ -222,6 +224,34 @@ struct BuiltUiIds {
     ov_btn_find: WidgetId,
     ov_btn_repl: WidgetId,
     ov_btn_repl_all: WidgetId,
+    ov_cipher_pass: WidgetId,
+    ov_cipher_page: WidgetId,
+    ov_cipher_kdf: WidgetId,
+    ov_prefs_font: WidgetId,
+    ov_prefs_theme: WidgetId,
+    ov_prefs_confirm: WidgetId,
+    ov_prefs_delim: WidgetId,
+    ov_frozen: WidgetId,
+    ov_export_struct: WidgetId,
+    ov_export_data: WidgetId,
+    ov_export_drop: WidgetId,
+    ov_export_fk: WidgetId,
+    ov_cond_col: WidgetId,
+    ov_cond_op: WidgetId,
+    ov_cond_val: WidgetId,
+    ov_cond_color: WidgetId,
+    btn_sql_line: WidgetId,
+    btn_sql_comment: WidgetId,
+    btn_sql_view: WidgetId,
+    btn_edit_text: WidgetId,
+    btn_edit_hex: WidgetId,
+    btn_edit_json: WidgetId,
+    btn_edit_image: WidgetId,
+    btn_fk_nav: WidgetId,
+    btn_freeze: WidgetId,
+    btn_cond_fmt: WidgetId,
+    toolbar_extra: WidgetId,
+    toolbar_project: WidgetId,
 }
 
 impl From<&BuiltUi> for BuiltUiIds {
@@ -305,6 +335,34 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_btn_find: b.ov_btn_find,
             ov_btn_repl: b.ov_btn_repl,
             ov_btn_repl_all: b.ov_btn_repl_all,
+            ov_cipher_pass: b.ov_cipher_pass,
+            ov_cipher_page: b.ov_cipher_page,
+            ov_cipher_kdf: b.ov_cipher_kdf,
+            ov_prefs_font: b.ov_prefs_font,
+            ov_prefs_theme: b.ov_prefs_theme,
+            ov_prefs_confirm: b.ov_prefs_confirm,
+            ov_prefs_delim: b.ov_prefs_delim,
+            ov_frozen: b.ov_frozen,
+            ov_export_struct: b.ov_export_struct,
+            ov_export_data: b.ov_export_data,
+            ov_export_drop: b.ov_export_drop,
+            ov_export_fk: b.ov_export_fk,
+            ov_cond_col: b.ov_cond_col,
+            ov_cond_op: b.ov_cond_op,
+            ov_cond_val: b.ov_cond_val,
+            ov_cond_color: b.ov_cond_color,
+            btn_sql_line: b.btn_sql_line,
+            btn_sql_comment: b.btn_sql_comment,
+            btn_sql_view: b.btn_sql_view,
+            btn_edit_text: b.btn_edit_text,
+            btn_edit_hex: b.btn_edit_hex,
+            btn_edit_json: b.btn_edit_json,
+            btn_edit_image: b.btn_edit_image,
+            btn_fk_nav: b.btn_fk_nav,
+            btn_freeze: b.btn_freeze,
+            btn_cond_fmt: b.btn_cond_fmt,
+            toolbar_extra: b.toolbar_extra,
+            toolbar_project: b.toolbar_project,
         }
     }
 }
@@ -326,6 +384,23 @@ impl Demo {
                 "wizard" | "table" => {
                     state.open_create_table_wizard();
                     MainTab::Structure
+                }
+                "cipher" | "encrypt" => {
+                    state.overlay = Some(OverlayKind::Cipher);
+                    MainTab::Structure
+                }
+                "prefs" | "preferences" => {
+                    state.sync_prefs_drafts();
+                    state.overlay = Some(OverlayKind::Preferences);
+                    MainTab::Structure
+                }
+                "exportsql" | "export" => {
+                    state.overlay = Some(OverlayKind::ExportSql);
+                    MainTab::Structure
+                }
+                "cond" | "condformat" => {
+                    state.overlay = Some(OverlayKind::CondFormat);
+                    MainTab::Browse
                 }
                 // legacy aliases → docks / structure
                 "charts" | "plot" => {
@@ -546,6 +621,96 @@ impl Demo {
                 if self.ids.ov_attach_schema.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_attach_schema) {
                         self.state.attach_schema = v.to_string();
+                    }
+                }
+            }
+            OverlayKind::Cipher => {
+                if self.ids.ov_cipher_pass.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cipher_pass) {
+                        self.state.cipher_passphrase = v.to_string();
+                    }
+                }
+                if self.ids.ov_cipher_page.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cipher_page) {
+                        self.state.cipher_page_size = v.to_string();
+                    }
+                }
+                if self.ids.ov_cipher_kdf.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cipher_kdf) {
+                        self.state.cipher_kdf_iter = v.to_string();
+                    }
+                }
+            }
+            OverlayKind::Preferences => {
+                if self.ids.ov_prefs_font.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_prefs_font) {
+                        self.state.prefs_font_size = v.to_string();
+                    }
+                }
+                if self.ids.ov_prefs_theme.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_theme) {
+                        self.state.prefs_theme_dark = on;
+                    }
+                }
+                if self.ids.ov_prefs_confirm.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_confirm) {
+                        self.state.prefs_confirm_drops = on;
+                    }
+                }
+                if self.ids.ov_prefs_delim.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_prefs_delim) {
+                        self.state.prefs_csv_delim = v.to_string();
+                    }
+                }
+                if self.ids.ov_frozen.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_frozen) {
+                        if let Ok(n) = v.trim().parse::<usize>() {
+                            self.state.frozen_cols = n;
+                        }
+                    }
+                }
+            }
+            OverlayKind::ExportSql => {
+                if self.ids.ov_export_struct.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_struct) {
+                        self.state.export_structure = on;
+                    }
+                }
+                if self.ids.ov_export_data.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_data) {
+                        self.state.export_data = on;
+                    }
+                }
+                if self.ids.ov_export_drop.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_drop) {
+                        self.state.export_drop = on;
+                    }
+                }
+                if self.ids.ov_export_fk.0 != 0 {
+                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_fk) {
+                        self.state.export_keep_fk = on;
+                    }
+                }
+            }
+            OverlayKind::CondFormat => {
+                if self.ids.ov_cond_col.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cond_col) {
+                        self.state.cond_col = v.to_string();
+                    }
+                }
+                if self.ids.ov_cond_op.0 != 0 {
+                    if let Some(i) = self.ui.select_selected(self.ids.ov_cond_op) {
+                        self.state.cond_op_idx = i;
+                    }
+                }
+                if self.ids.ov_cond_val.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cond_val) {
+                        self.state.cond_value = v.to_string();
+                    }
+                }
+                if self.ids.ov_cond_color.0 != 0 {
+                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cond_color) {
+                        self.state.cond_color = v.to_string();
                     }
                 }
             }
@@ -777,17 +942,50 @@ impl Demo {
         if !self.require_conn() {
             return;
         }
+        self.state.overlay = Some(OverlayKind::ExportSql);
+        self.rebuild = true;
+    }
+
+    fn action_export_sql_do(&mut self) {
         if self.state.dirty {
             let _ = self.state.write_changes();
         }
         let path = file_dlg::pick_save_sql().unwrap_or_else(|| PathBuf::from("/tmp/e28_dump.sql"));
-        match dbmod::export_sql_dump(self.state.conn.as_ref().unwrap(), &path) {
+        match self.state.export_sql_with_options(&path) {
             Ok(()) => {
                 self.state.io_path = path.display().to_string();
                 self.state.log_sql(format!("-- dump {}", path.display()));
-                self.state.status_msg = format!("Dumped SQL {}", path.display());
+                self.state.overlay = None;
                 self.clear_error();
             }
+            Err(e) => self.set_error(e),
+        }
+        self.rebuild = true;
+    }
+
+    fn action_project_open(&mut self) {
+        let path = file_dlg::pick_open_project().unwrap_or_else(|| PathBuf::from("/tmp/e28.sqbpro"));
+        match self.state.open_project(&path) {
+            Ok(()) => self.clear_error(),
+            Err(e) => self.set_error(e),
+        }
+        self.rebuild = true;
+    }
+
+    fn action_project_save(&mut self, save_as: bool) {
+        let path = if !save_as {
+            if let Some(p) = self.state.project_path.clone() {
+                PathBuf::from(p)
+            } else {
+                file_dlg::pick_save_project()
+                    .unwrap_or_else(|| crate::project::default_project_name(&self.state.path))
+            }
+        } else {
+            file_dlg::pick_save_project()
+                .unwrap_or_else(|| crate::project::default_project_name(&self.state.path))
+        };
+        match self.state.save_project(&path) {
+            Ok(()) => self.clear_error(),
             Err(e) => self.set_error(e),
         }
         self.rebuild = true;
@@ -973,11 +1171,39 @@ impl Demo {
                 }
                 self.rebuild = true;
             }
-            mid::FILE_PROJECT_OPEN
-            | mid::FILE_PROJECT_SAVE
-            | mid::EDIT_PREFS
-            | mid::TOOLS_ENCRYPT
-            | mid::TOOLS_EXT => self.stub(&format!("menu item {item}")),
+            mid::FILE_PROJECT_OPEN => self.action_project_open(),
+            mid::FILE_PROJECT_SAVE => self.action_project_save(false),
+            mid::FILE_PROJECT_SAVE_AS => self.action_project_save(true),
+            mid::FILE_PROJECT_CLOSE => {
+                self.state.close_project();
+                self.rebuild = true;
+            }
+            mid::EDIT_PREFS => {
+                self.state.sync_prefs_drafts();
+                self.state.overlay = Some(OverlayKind::Preferences);
+                self.rebuild = true;
+            }
+            mid::TOOLS_ENCRYPT => {
+                self.state.overlay = Some(OverlayKind::Cipher);
+                self.rebuild = true;
+            }
+            mid::VIEW_TB_DB => {
+                self.state.toolbar_db = !self.state.toolbar_db;
+                self.rebuild = true;
+            }
+            mid::VIEW_TB_EXTRA => {
+                self.state.toolbar_extra = !self.state.toolbar_extra;
+                self.rebuild = true;
+            }
+            mid::VIEW_TB_PROJECT => {
+                self.state.toolbar_project = !self.state.toolbar_project;
+                self.rebuild = true;
+            }
+            mid::VIEW_TB_SQL => {
+                self.state.toolbar_sql = !self.state.toolbar_sql;
+                self.rebuild = true;
+            }
+            mid::TOOLS_EXT => self.stub(&format!("menu item {item}")),
             x if (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&x) => {
                 let idx = (x - mid::FILE_RECENT_BASE) as usize;
                 if let Some(path) = self.state.recent.get(idx).cloned() {
@@ -1004,7 +1230,8 @@ impl Demo {
         }
         if id == self.ids.ov_btn_ok {
             self.snapshot_inputs();
-            let res = match self.state.overlay {
+            let kind = self.state.overlay;
+            let res = match kind {
                 Some(OverlayKind::EditTable) => self.state.apply_table_wizard(),
                 Some(OverlayKind::EditIndex) => self.state.apply_index_wizard(),
                 Some(OverlayKind::ImportCsv) | Some(OverlayKind::PasteCsv) => self.state.apply_csv_import(),
@@ -1013,10 +1240,48 @@ impl Demo {
                     self.state.overlay = None;
                     Ok(())
                 }
+                Some(OverlayKind::Cipher) => {
+                    let r = self.state.apply_cipher_overlay();
+                    if r.is_ok() {
+                        self.state.overlay = None;
+                    }
+                    r
+                }
+                Some(OverlayKind::Preferences) => {
+                    let r = self.state.apply_prefs_overlay();
+                    if r.is_ok() {
+                        self.state.overlay = None;
+                    }
+                    r
+                }
+                Some(OverlayKind::ExportSql) => {
+                    self.action_export_sql_do();
+                    return true;
+                }
+                Some(OverlayKind::CondFormat) => {
+                    self.state.add_cond_format_rule();
+                    Ok(())
+                }
                 None => Ok(()),
             };
             match res {
-                Ok(()) => self.clear_error(),
+                Ok(()) => {
+                    if !matches!(kind, Some(OverlayKind::CondFormat) | Some(OverlayKind::FindReplace)) {
+                        if matches!(
+                            kind,
+                            Some(OverlayKind::EditTable)
+                                | Some(OverlayKind::EditIndex)
+                                | Some(OverlayKind::ImportCsv)
+                                | Some(OverlayKind::PasteCsv)
+                                | Some(OverlayKind::Attach)
+                                | Some(OverlayKind::Cipher)
+                                | Some(OverlayKind::Preferences)
+                        ) {
+                            self.state.overlay = None;
+                        }
+                    }
+                    self.clear_error();
+                }
                 Err(e) => self.set_error(e),
             }
             self.rebuild = true;
@@ -1296,6 +1561,81 @@ impl Demo {
                 self.rebuild = true;
                 return;
             }
+        }
+        if id == self.ids.btn_sql_line {
+            self.snapshot_inputs();
+            match self.state.execute_current_line() {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_sql_comment {
+            self.snapshot_inputs();
+            self.state.toggle_sql_line_comment();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_sql_view {
+            self.snapshot_inputs();
+            match self.state.save_results_as_view("e28_saved_view") {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_freeze {
+            self.state.frozen_cols = if self.state.frozen_cols == 0 { 1 } else { 0 };
+            self.state.status_msg = format!("Frozen columns = {}", self.state.frozen_cols);
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_cond_fmt {
+            if self.state.cond_col.is_empty() {
+                self.state.cond_col = self.state.edit_col.clone();
+            }
+            self.state.overlay = Some(OverlayKind::CondFormat);
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_fk_nav {
+            self.snapshot_inputs();
+            match self.state.navigate_fk() {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_edit_text {
+            self.state.set_edit_mode(crate::state::EditCellMode::Text);
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_edit_hex {
+            self.state.set_edit_mode(crate::state::EditCellMode::Hex);
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_edit_json {
+            self.state.set_edit_mode(crate::state::EditCellMode::Json);
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_edit_image {
+            self.state.set_edit_mode(crate::state::EditCellMode::Image);
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.toolbar_project {
+            self.action_project_open();
+            return;
+        }
+        if id == self.ids.toolbar_extra {
+            self.action_tool_check("integrity_check");
+            return;
         }
         if id == self.ids.btn_sql_run {
             self.snapshot_inputs();

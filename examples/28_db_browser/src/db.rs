@@ -1119,3 +1119,262 @@ mod tests {
         let _ = fs::remove_file(dump);
     }
 }
+
+/// Options for Export → Database to SQL file (DB4S ExportSqlDialog).
+#[derive(Debug, Clone)]
+pub struct ExportSqlOptions {
+    pub structure: bool,
+    pub data: bool,
+    pub drop_if_exists: bool,
+    pub keep_fk: bool,
+}
+
+impl Default for ExportSqlOptions {
+    fn default() -> Self {
+        Self {
+            structure: true,
+            data: true,
+            drop_if_exists: false,
+            keep_fk: true,
+        }
+    }
+}
+
+pub fn export_sql_dump_opts(
+    conn: &Connection,
+    path: &Path,
+    opts: &ExportSqlOptions,
+) -> Result<(), String> {
+    let mut f = File::create(path).map_err(|e| e.to_string())?;
+    if opts.keep_fk {
+        writeln!(f, "PRAGMA foreign_keys=OFF;").map_err(|e| e.to_string())?;
+    }
+    writeln!(f, "BEGIN TRANSACTION;").map_err(|e| e.to_string())?;
+    let schema = list_schema(conn)?;
+    if opts.structure {
+        for obj in &schema {
+            if opts.drop_if_exists {
+                let kind = match obj.kind {
+                    ObjectKind::Table => "TABLE",
+                    ObjectKind::View => "VIEW",
+                    ObjectKind::Index => "INDEX",
+                    ObjectKind::Trigger => "TRIGGER",
+                };
+                writeln!(
+                    f,
+                    "DROP {} IF EXISTS {};",
+                    kind,
+                    quote_ident(&obj.name)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            if let Some(sql) = &obj.sql {
+                if !sql.is_empty() {
+                    writeln!(f, "{};", sql.trim().trim_end_matches(';'))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    if opts.data {
+        for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
+            let q = browse_table(conn, &obj.name, None, false, None, 100_000)?;
+            let cols = q
+                .columns
+                .iter()
+                .map(|c| quote_ident(c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            for row in &q.rows {
+                let vals = row
+                    .iter()
+                    .map(|v| {
+                        if v.is_empty() {
+                            "NULL".to_string()
+                        } else {
+                            format!("'{}'", v.replace('\'', "''"))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(
+                    f,
+                    "INSERT INTO {} ({cols}) VALUES ({vals});",
+                    quote_ident(&obj.name)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    writeln!(f, "COMMIT;").map_err(|e| e.to_string())?;
+    if opts.keep_fk {
+        writeln!(f, "PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Foreign-key metadata for a table column (to parent table/col).
+#[derive(Debug, Clone)]
+pub struct FkRef {
+    pub from_col: String,
+    pub to_table: String,
+    pub to_col: String,
+}
+
+pub fn list_foreign_keys(conn: &Connection, table: &str) -> Result<Vec<FkRef>, String> {
+    let sql = format!("PRAGMA foreign_key_list({})", quote_ident(table));
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(FkRef {
+                from_col: r.get::<_, String>(3)?,
+                to_table: r.get::<_, String>(2)?,
+                to_col: r.get::<_, String>(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// Detect whether a file looks like a plain SQLite DB (vs SQLCipher / unknown).
+pub fn looks_like_sqlite(path: &Path) -> Result<bool, String> {
+    let mut f = File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = [0u8; 16];
+    use std::io::Read;
+    let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+    if n < 16 {
+        return Ok(false);
+    }
+    Ok(&buf[..15] == b"SQLite format 3")
+}
+
+/// Apply SQLCipher key settings. On stock bundled SQLite this returns a clear error.
+pub fn apply_cipher_key(
+    conn: &Connection,
+    passphrase: &str,
+    page_size: i64,
+    kdf_iter: i64,
+) -> Result<(), String> {
+    // Probe for SQLCipher support
+    let probe = conn.query_row("PRAGMA cipher_version;", [], |r| r.get::<_, String>(0));
+    match probe {
+        Ok(ver) => {
+            conn.pragma_update(None, "key", passphrase)
+                .map_err(|e| e.to_string())?;
+            if page_size > 0 {
+                let _ = conn.pragma_update(None, "cipher_page_size", page_size);
+            }
+            if kdf_iter > 0 {
+                let _ = conn.pragma_update(None, "kdf_iter", kdf_iter);
+            }
+            // Verify
+            conn.query_row("SELECT count(*) FROM sqlite_master;", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map_err(|e| format!("Cipher key rejected: {e}"))?;
+            let _ = ver;
+            Ok(())
+        }
+        Err(_) => Err(
+            "SQLCipher not linked in this build (rusqlite bundled SQLite). \
+             Cipher settings were saved; rebuild with feature \
+             bundled-sqlcipher-vendored-openssl for real encrypt/decrypt."
+                .into(),
+        ),
+    }
+}
+
+/// Hex-encode bytes for Edit Cell hex mode.
+pub fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02X}"));
+    }
+    s
+}
+
+pub fn from_hex(s: &str) -> Result<Vec<u8>, String> {
+    let clean: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    if clean.len() % 2 != 0 {
+        return Err("hex length must be even".into());
+    }
+    let mut out = Vec::with_capacity(clean.len() / 2);
+    let bytes = clean.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let h = std::str::from_utf8(&bytes[i..i + 2]).map_err(|e| e.to_string())?;
+        out.push(u8::from_str_radix(h, 16).map_err(|e| e.to_string())?);
+        i += 2;
+    }
+    Ok(out)
+}
+
+pub fn looks_like_png(bytes: &[u8]) -> bool {
+    bytes.len() >= 8 && &bytes[..8] == b"\x89PNG\r\n\x1a\n"
+}
+
+pub fn looks_like_jpeg(bytes: &[u8]) -> bool {
+    bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
+}
+
+pub fn try_pretty_json(text: &str) -> Option<String> {
+    let t = text.trim();
+    if !(t.starts_with('{') || t.starts_with('[')) {
+        return None;
+    }
+    // Minimal pretty-printer (indent on braces/brackets/commas).
+    let mut out = String::new();
+    let mut indent = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for c in t.chars() {
+        if in_str {
+            out.push(c);
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_str = true;
+                out.push(c);
+            }
+            '{' | '[' => {
+                out.push(c);
+                indent += 1;
+                out.push('\n');
+                for _ in 0..indent {
+                    out.push_str("  ");
+                }
+            }
+            '}' | ']' => {
+                indent = (indent - 1).max(0);
+                out.push('\n');
+                for _ in 0..indent {
+                    out.push_str("  ");
+                }
+                out.push(c);
+            }
+            ',' => {
+                out.push(c);
+                out.push('\n');
+                for _ in 0..indent {
+                    out.push_str("  ");
+                }
+            }
+            ':' => out.push_str(": "),
+            c if c.is_whitespace() => {}
+            c => out.push(c),
+        }
+    }
+    Some(out)
+}

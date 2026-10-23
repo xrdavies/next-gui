@@ -20,3 +20,5 @@
 
 # Local QA artifacts
 /tmp/
+examples/28_db_browser/.e28_recent
+examples/28_db_browser/.e28_prefs

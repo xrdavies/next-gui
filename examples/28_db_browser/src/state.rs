@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{Connection, InterruptHandle};
 
 use crate::db::{
-    self, ColDef, CsvImportOptions, ObjectKind, QueryResult, SchemaObject, COLUMN_TYPES,
+    self, ColDef, CsvImportOptions, ExportSqlOptions, ObjectKind, QueryResult, SchemaObject,
+    COLUMN_TYPES,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,10 @@ pub enum OverlayKind {
     FindReplace,
     Attach,
     PasteCsv,
+    Cipher,
+    Preferences,
+    ExportSql,
+    CondFormat,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +112,7 @@ pub struct BrowseTabState {
     pub result: Option<QueryResult>,
     pub rowids: Vec<i64>,
     pub sel_row: Option<usize>,
+    pub sel_col: Option<usize>,
 }
 
 impl BrowseTabState {
@@ -122,8 +128,27 @@ impl BrowseTabState {
             result: None,
             rowids: Vec::new(),
             sel_row: None,
+            sel_col: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCellMode {
+    Text = 0,
+    Hex = 1,
+    Json = 2,
+    Image = 3,
+}
+
+#[derive(Debug, Clone)]
+pub struct CondFormatRule {
+    pub column: String,
+    /// 0== 1!= 2contains 3> 4<
+    pub op: usize,
+    pub value: String,
+    /// RGB packed 0xRRGGBB for cell tint
+    pub color_rgb: u32,
 }
 
 pub struct AppState {
@@ -205,6 +230,35 @@ pub struct AppState {
 
     pub confirm_kind: ConfirmKind,
     pub confirm_open: bool,
+
+    // Phase 3
+    pub project_path: Option<String>,
+    pub prefs: crate::prefs::Prefs,
+    pub frozen_cols: usize,
+    pub cond_rules: Vec<CondFormatRule>,
+    pub edit_mode: EditCellMode,
+    pub edit_binary_len: usize,
+    pub edit_image_kind: String,
+    pub toolbar_db: bool,
+    pub toolbar_extra: bool,
+    pub toolbar_project: bool,
+    pub toolbar_sql: bool,
+    pub cipher_passphrase: String,
+    pub cipher_page_size: String,
+    pub cipher_kdf_iter: String,
+    pub cipher_active: bool,
+    pub export_structure: bool,
+    pub export_data: bool,
+    pub export_drop: bool,
+    pub export_keep_fk: bool,
+    pub prefs_font_size: String,
+    pub prefs_theme_dark: bool,
+    pub prefs_confirm_drops: bool,
+    pub prefs_csv_delim: String,
+    pub cond_col: String,
+    pub cond_op_idx: usize,
+    pub cond_value: String,
+    pub cond_color: String,
 }
 
 pub struct SqlJob {
@@ -227,6 +281,7 @@ impl AppState {
         let demo = db::default_demo_path();
         let mut state = Self::empty();
         state.load_recent();
+        state.sync_prefs_drafts();
         match open_or_create_demo(&demo) {
             Ok(conn) => {
                 state.path = demo.display().to_string();
@@ -339,6 +394,33 @@ impl AppState {
             recent: VecDeque::new(),
             confirm_kind: ConfirmKind::None,
             confirm_open: false,
+            project_path: None,
+            prefs: crate::prefs::Prefs::load(),
+            frozen_cols: 0,
+            cond_rules: Vec::new(),
+            edit_mode: EditCellMode::Text,
+            edit_binary_len: 0,
+            edit_image_kind: String::new(),
+            toolbar_db: true,
+            toolbar_extra: true,
+            toolbar_project: true,
+            toolbar_sql: true,
+            cipher_passphrase: String::new(),
+            cipher_page_size: "4096".into(),
+            cipher_kdf_iter: "256000".into(),
+            cipher_active: false,
+            export_structure: true,
+            export_data: true,
+            export_drop: false,
+            export_keep_fk: true,
+            prefs_font_size: "13".into(),
+            prefs_theme_dark: true,
+            prefs_confirm_drops: true,
+            prefs_csv_delim: ",".into(),
+            cond_col: String::new(),
+            cond_op_idx: 0,
+            cond_value: String::new(),
+            cond_color: "E67E22".into(),
         }
     }
 
@@ -607,24 +689,6 @@ impl AppState {
             order_note
         );
         Ok(())
-    }
-
-    pub fn sync_edit_cell_from_selection(&mut self) {
-        let (cols, cells) = {
-            let t = self.browse();
-            let Some(row) = t.sel_row else { return };
-            let Some(res) = t.result.as_ref() else { return };
-            let Some(cells) = res.rows.get(row).cloned() else { return };
-            (res.columns.clone(), cells)
-        };
-        if self.edit_col.trim().is_empty() {
-            if let Some(c0) = cols.first() {
-                self.edit_col = c0.clone();
-            }
-        }
-        if let Some(ci) = cols.iter().position(|c| c == &self.edit_col) {
-            self.edit_value = cells.get(ci).cloned().unwrap_or_default();
-        }
     }
 
     pub fn refresh_chart(&mut self) -> Result<(), String> {
@@ -1392,5 +1456,358 @@ mod chart_default_tests {
         let ddl = db::create_table_ddl("t", &cols);
         assert!(ddl.contains("CREATE TABLE"));
         assert!(ddl.contains("PRIMARY KEY"));
+    }
+}
+
+impl AppState {
+    pub fn sync_prefs_drafts(&mut self) {
+        self.prefs_font_size = format!("{}", self.prefs.font_size as i32);
+        self.prefs_theme_dark = self.prefs.default_theme_dark;
+        self.prefs_confirm_drops = self.prefs.confirm_drops;
+        self.prefs_csv_delim = self.prefs.csv_delimiter.to_string();
+        self.frozen_cols = self.prefs.frozen_cols_default;
+    }
+
+    pub fn apply_prefs_overlay(&mut self) -> Result<(), String> {
+        let fs: f32 = self
+            .prefs_font_size
+            .trim()
+            .parse()
+            .map_err(|_| "font size must be a number".to_string())?;
+        self.prefs.font_size = fs.clamp(9.0, 28.0);
+        self.prefs.default_theme_dark = self.prefs_theme_dark;
+        self.prefs.confirm_drops = self.prefs_confirm_drops;
+        if let Some(c) = self.prefs_csv_delim.chars().next() {
+            self.prefs.csv_delimiter = if c == 't' { '\t' } else { c };
+        }
+        self.prefs.frozen_cols_default = self.frozen_cols;
+        self.prefs.save()?;
+        self.status_msg = format!(
+            "Preferences saved (font {}, theme {})",
+            self.prefs.font_size,
+            if self.prefs.default_theme_dark {
+                "dark"
+            } else {
+                "light"
+            }
+        );
+        Ok(())
+    }
+
+    pub fn apply_cipher_overlay(&mut self) -> Result<(), String> {
+        let Some(conn) = self.conn.as_ref() else {
+            return Err("No database open".into());
+        };
+        let page: i64 = self.cipher_page_size.trim().parse().unwrap_or(4096);
+        let kdf: i64 = self.cipher_kdf_iter.trim().parse().unwrap_or(256_000);
+        match db::apply_cipher_key(conn, &self.cipher_passphrase, page, kdf) {
+            Ok(()) => {
+                self.cipher_active = true;
+                self.status_msg = "Encryption key applied (SQLCipher)".into();
+                Ok(())
+            }
+            Err(e) => {
+                // Still record settings for project/prefs persistence.
+                self.status_msg = e.clone();
+                Err(e)
+            }
+        }
+    }
+
+    pub fn export_sql_with_options(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let Some(conn) = self.conn.as_ref() else {
+            return Err("No database open".into());
+        };
+        let opts = ExportSqlOptions {
+            structure: self.export_structure,
+            data: self.export_data,
+            drop_if_exists: self.export_drop,
+            keep_fk: self.export_keep_fk,
+        };
+        if !opts.structure && !opts.data {
+            return Err("Select structure and/or data".into());
+        }
+        db::export_sql_dump_opts(conn, path, &opts)?;
+        self.status_msg = format!("Exported SQL → {}", path.display());
+        Ok(())
+    }
+
+    pub fn save_project(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let pf = crate::project::ProjectFile::from_state(self);
+        pf.save(path)?;
+        self.project_path = Some(path.display().to_string());
+        self.status_msg = format!("Project saved → {}", path.display());
+        Ok(())
+    }
+
+    pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let pf = crate::project::ProjectFile::load(path)?;
+        if !pf.db_path.is_empty() && pf.db_path != ":memory:" {
+            self.open_path(&pf.db_path)?;
+        }
+        pf.apply_to(self);
+        self.project_path = Some(path.display().to_string());
+        let _ = self.refresh_browse();
+        self.status_msg = format!("Project opened ← {}", path.display());
+        Ok(())
+    }
+
+    pub fn close_project(&mut self) {
+        self.project_path = None;
+        self.status_msg = "Project closed".into();
+    }
+
+    pub fn execute_current_line(&mut self) -> Result<(), String> {
+        let sql = self.sql_tabs.get(self.sql_tab_idx).cloned().unwrap_or_default();
+        // Use caret approximation: first non-empty line, or whole editor if single statement-ish.
+        let line = sql
+            .lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty() && !l.starts_with("--"))
+            .unwrap_or("")
+            .to_string();
+        if line.is_empty() {
+            return Err("No current line to execute".into());
+        }
+        self.sql_tabs[self.sql_tab_idx] = format!("{line}\n");
+        // Keep other tabs; temporarily run just the line via start_sql_job path
+        let saved = self.sql_tabs[self.sql_tab_idx].clone();
+        self.sql_tabs[self.sql_tab_idx] = if line.ends_with(';') {
+            line.clone()
+        } else {
+            format!("{line};")
+        };
+        let r = self.start_sql_job();
+        self.sql_tabs[self.sql_tab_idx] = saved;
+        r
+    }
+
+    pub fn toggle_sql_line_comment(&mut self) {
+        let Some(sql) = self.sql_tabs.get_mut(self.sql_tab_idx) else {
+            return;
+        };
+        let mut out = String::new();
+        for line in sql.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("--") {
+                // uncomment
+                let rest = trimmed.trim_start_matches('-').trim_start_matches('-');
+                let rest = rest.strip_prefix(' ').unwrap_or(rest);
+                let indent_len = line.len() - trimmed.len();
+                out.push_str(&line[..indent_len]);
+                out.push_str(rest);
+            } else if !trimmed.is_empty() {
+                out.push_str("-- ");
+                out.push_str(line);
+            } else {
+                out.push_str(line);
+            }
+            out.push('\n');
+        }
+        *sql = out;
+        self.status_msg = "Toggled -- comments on SQL tab".into();
+    }
+
+    pub fn save_results_as_view(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("View name required".into());
+        }
+        let sql = self
+            .sql_tabs
+            .get(self.sql_tab_idx)
+            .cloned()
+            .unwrap_or_default();
+        let body = sql.trim().trim_end_matches(';');
+        if body.is_empty() {
+            return Err("SQL editor empty".into());
+        }
+        let ddl = format!(
+            "CREATE VIEW IF NOT EXISTS {} AS {}",
+            db::quote_ident(name),
+            body
+        );
+        {
+            let conn = self.conn.as_ref().ok_or("No database open")?;
+            conn.execute_batch(&ddl).map_err(|e| e.to_string())?;
+        }
+        self.dirty = true;
+        self.log_sql(&ddl);
+        self.refresh_schema()?;
+        self.status_msg = format!("Created VIEW {name}");
+        Ok(())
+    }
+
+    pub fn add_cond_format_rule(&mut self) {
+        let col = if self.cond_col.is_empty() {
+            self.edit_col.clone()
+        } else {
+            self.cond_col.clone()
+        };
+        if col.is_empty() {
+            self.status_msg = "Pick a column for conditional formatting".into();
+            return;
+        }
+        let rgb = u32::from_str_radix(self.cond_color.trim_start_matches('#'), 16).unwrap_or(0xE67E22);
+        self.cond_rules.push(CondFormatRule {
+            column: col,
+            op: self.cond_op_idx,
+            value: self.cond_value.clone(),
+            color_rgb: rgb,
+        });
+        self.status_msg = format!("Added format rule ({} rules)", self.cond_rules.len());
+    }
+
+    pub fn cell_format_colors(&self) -> Vec<Vec<Option<next_gui_scene::Color>>> {
+        let Some(res) = self.browse().result.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(res.rows.len());
+        for row in &res.rows {
+            let mut cols = Vec::with_capacity(res.columns.len());
+            for (ci, cname) in res.columns.iter().enumerate() {
+                let val = row.get(ci).map(|s| s.as_str()).unwrap_or("");
+                let mut tint = None;
+                for rule in &self.cond_rules {
+                    if &rule.column != cname {
+                        continue;
+                    }
+                    let hit = match rule.op {
+                        1 => val != rule.value,
+                        2 => val.contains(&rule.value),
+                        3 => {
+                            let a = val.parse::<f64>().ok();
+                            let b = rule.value.parse::<f64>().ok();
+                            matches!((a, b), (Some(a), Some(b)) if a > b)
+                        }
+                        4 => {
+                            let a = val.parse::<f64>().ok();
+                            let b = rule.value.parse::<f64>().ok();
+                            matches!((a, b), (Some(a), Some(b)) if a < b)
+                        }
+                        _ => val == rule.value,
+                    };
+                    if hit {
+                        let r = ((rule.color_rgb >> 16) & 0xff) as u8;
+                        let g = ((rule.color_rgb >> 8) & 0xff) as u8;
+                        let b = (rule.color_rgb & 0xff) as u8;
+                        tint = Some(next_gui_scene::Color::rgb(r, g, b));
+                        break;
+                    }
+                }
+                cols.push(tint);
+            }
+            out.push(cols);
+        }
+        out
+    }
+
+    pub fn sync_edit_cell_from_selection(&mut self) {
+        let b = self.browse();
+        let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
+            return;
+        };
+        let ci = b.sel_col.unwrap_or(0);
+        let col = res.columns.get(ci).cloned().unwrap_or_default();
+        let val = res
+            .rows
+            .get(ri)
+            .and_then(|r| r.get(ci))
+            .cloned()
+            .unwrap_or_default();
+        self.edit_col = col;
+        self.edit_binary_len = val.len();
+        self.edit_image_kind.clear();
+        // Detect JSON / image magic in UTF-8 or raw-ish
+        let bytes = val.as_bytes();
+        if db::looks_like_png(bytes) {
+            self.edit_image_kind = "PNG".into();
+            self.edit_mode = EditCellMode::Image;
+            self.edit_value = format!("[PNG image, {} bytes]", bytes.len());
+        } else if db::looks_like_jpeg(bytes) {
+            self.edit_image_kind = "JPEG".into();
+            self.edit_mode = EditCellMode::Image;
+            self.edit_value = format!("[JPEG image, {} bytes]", bytes.len());
+        } else if matches!(self.edit_mode, EditCellMode::Hex) {
+            self.edit_value = db::to_hex(bytes);
+        } else if matches!(self.edit_mode, EditCellMode::Json) {
+            self.edit_value = db::try_pretty_json(&val).unwrap_or(val);
+        } else {
+            self.edit_mode = EditCellMode::Text;
+            self.edit_value = val;
+        }
+    }
+
+    pub fn set_edit_mode(&mut self, mode: EditCellMode) {
+        // Re-interpret current value when switching modes.
+        let raw = match self.edit_mode {
+            EditCellMode::Hex => db::from_hex(&self.edit_value)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_else(|| self.edit_value.clone()),
+            _ => self.edit_value.clone(),
+        };
+        self.edit_mode = mode;
+        match mode {
+            EditCellMode::Text => {
+                self.edit_value = raw;
+                self.edit_binary_len = self.edit_value.len();
+            }
+            EditCellMode::Hex => {
+                self.edit_value = db::to_hex(raw.as_bytes());
+                self.edit_binary_len = raw.len();
+            }
+            EditCellMode::Json => {
+                self.edit_value = db::try_pretty_json(&raw).unwrap_or(raw);
+                self.edit_binary_len = self.edit_value.len();
+            }
+            EditCellMode::Image => {
+                let b = raw.as_bytes();
+                self.edit_binary_len = b.len();
+                if db::looks_like_png(b) {
+                    self.edit_image_kind = "PNG".into();
+                } else if db::looks_like_jpeg(b) {
+                    self.edit_image_kind = "JPEG".into();
+                } else {
+                    self.edit_image_kind = "unknown".into();
+                }
+                self.edit_value = format!(
+                    "[{} image preview unavailable in soft render; {} bytes]",
+                    self.edit_image_kind, self.edit_binary_len
+                );
+            }
+        }
+    }
+
+    pub fn navigate_fk(&mut self) -> Result<(), String> {
+        let table = self
+            .browse()
+            .table
+            .clone()
+            .ok_or_else(|| "No browse table".to_string())?;
+        let col = self.edit_col.clone();
+        let val = self.edit_value.clone();
+        if col.is_empty() {
+            return Err("Select a cell first".into());
+        }
+        let fks = {
+            let conn = self.conn.as_ref().ok_or("No database open")?;
+            db::list_foreign_keys(conn, &table)?
+        };
+        let Some(fk) = fks.into_iter().find(|f| f.from_col == col) else {
+            return Err(format!("Column {col} has no foreign key"));
+        };
+        // Open / focus browse tab on parent table filtered to PK
+        let filter = format!("{} = '{}'", db::quote_ident(&fk.to_col), val.replace('\'', "''"));
+        // reuse quote via format carefully — use bound style in browse
+        let where_sql = format!("{} = '{}'", fk.to_col, val.replace('\'', "''"));
+        self.browse_tabs.push(BrowseTabState::new(Some(fk.to_table.clone())));
+        self.browse_tab_idx = self.browse_tabs.len() - 1;
+        self.browse_mut().filter = where_sql;
+        self.tab = MainTab::Browse;
+        self.refresh_browse()?;
+        let _ = filter;
+        self.status_msg = format!("FK → {}.{} = {}", fk.to_table, fk.to_col, val);
+        Ok(())
     }
 }

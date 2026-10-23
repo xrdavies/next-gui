@@ -33,6 +33,8 @@ pub mod mid {
     pub const FILE_PROJECT_OPEN: u64 = 17;
     pub const FILE_PROJECT_SAVE: u64 = 18;
     pub const FILE_EXIT: u64 = 19;
+    pub const FILE_PROJECT_SAVE_AS: u64 = 20;
+    pub const FILE_PROJECT_CLOSE: u64 = 21;
     pub const FILE_RECENT_BASE: u64 = 100; // 100..104
 
     pub const EDIT_CREATE_TABLE: u64 = 30;
@@ -46,6 +48,10 @@ pub mod mid {
     pub const VIEW_DOCK_LOG: u64 = 42;
     pub const VIEW_DOCK_PLOT: u64 = 43;
     pub const VIEW_THEME: u64 = 44;
+    pub const VIEW_TB_DB: u64 = 45;
+    pub const VIEW_TB_EXTRA: u64 = 46;
+    pub const VIEW_TB_PROJECT: u64 = 47;
+    pub const VIEW_TB_SQL: u64 = 48;
 
     pub const TOOLS_ENCRYPT: u64 = 50;
     pub const TOOLS_EXT: u64 = 51;
@@ -149,6 +155,35 @@ pub struct BuiltUi {
     pub ov_btn_find: WidgetId,
     pub ov_btn_repl: WidgetId,
     pub ov_btn_repl_all: WidgetId,
+    pub ov_cipher_pass: WidgetId,
+    pub ov_cipher_page: WidgetId,
+    pub ov_cipher_kdf: WidgetId,
+    pub ov_prefs_font: WidgetId,
+    pub ov_prefs_theme: WidgetId,
+    pub ov_prefs_confirm: WidgetId,
+    pub ov_prefs_delim: WidgetId,
+    pub ov_frozen: WidgetId,
+    pub ov_export_struct: WidgetId,
+    pub ov_export_data: WidgetId,
+    pub ov_export_drop: WidgetId,
+    pub ov_export_fk: WidgetId,
+    pub ov_cond_col: WidgetId,
+    pub ov_cond_op: WidgetId,
+    pub ov_cond_val: WidgetId,
+    pub ov_cond_color: WidgetId,
+    pub btn_sql_line: WidgetId,
+    pub btn_sql_comment: WidgetId,
+    pub btn_sql_view: WidgetId,
+    pub btn_edit_text: WidgetId,
+    pub btn_edit_hex: WidgetId,
+    pub btn_edit_json: WidgetId,
+    pub btn_edit_image: WidgetId,
+    pub btn_fk_nav: WidgetId,
+    pub btn_freeze: WidgetId,
+    pub btn_cond_fmt: WidgetId,
+    pub edit_meta: WidgetId,
+    pub toolbar_extra: WidgetId,
+    pub toolbar_project: WidgetId,
 }
 
 pub fn clear_color(theme: &Theme) -> Color {
@@ -308,6 +343,35 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut ov_btn_find = z;
     let mut ov_btn_repl = z;
     let mut ov_btn_repl_all = z;
+    let mut ov_cipher_pass = z;
+    let mut ov_cipher_page = z;
+    let mut ov_cipher_kdf = z;
+    let mut ov_prefs_font = z;
+    let mut ov_prefs_theme = z;
+    let mut ov_prefs_confirm = z;
+    let mut ov_prefs_delim = z;
+    let mut ov_frozen = z;
+    let mut ov_export_struct = z;
+    let mut ov_export_data = z;
+    let mut ov_export_drop = z;
+    let mut ov_export_fk = z;
+    let mut ov_cond_col = z;
+    let mut ov_cond_op = z;
+    let mut ov_cond_val = z;
+    let mut ov_cond_color = z;
+    let mut btn_sql_line = z;
+    let mut btn_sql_comment = z;
+    let mut btn_sql_view = z;
+    let mut btn_edit_text = z;
+    let mut btn_edit_hex = z;
+    let mut btn_edit_json = z;
+    let mut btn_edit_image = z;
+    let mut btn_fk_nav = z;
+    let mut btn_freeze = z;
+    let mut btn_cond_fmt = z;
+    let mut edit_meta = z;
+    let mut toolbar_extra = z;
+    let mut toolbar_project = z;
 
     let win_w = width as f32;
     let win_h = height as f32;
@@ -371,8 +435,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         };
         file_items.push(MenuItem::new(mid::FILE_RECENT_BASE + i as u64, format!("Recent: {short}")));
     }
-    file_items.push(MenuItem::disabled(mid::FILE_PROJECT_OPEN, "Open Project…"));
-    file_items.push(MenuItem::disabled(mid::FILE_PROJECT_SAVE, "Save Project"));
+    file_items.push(MenuItem::new(mid::FILE_PROJECT_OPEN, "Open Project…"));
+    file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE, "Save Project"));
+    file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE_AS, "Save Project As…"));
+    file_items.push(MenuItem::new(mid::FILE_PROJECT_CLOSE, "Close Project"));
     file_items.push(MenuItem::new(mid::FILE_EXIT, "Exit"));
 
     ui.column(col_style, |col| {
@@ -385,7 +451,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                     MenuItem::new(mid::EDIT_CREATE_INDEX, "Create Index…"),
                     MenuItem::new(mid::EDIT_MODIFY, "Modify Object…"),
                     MenuItem::new(mid::EDIT_DELETE, "Delete Object…"),
-                    MenuItem::disabled(mid::EDIT_PREFS, "Preferences…"),
+                    MenuItem::new(mid::EDIT_PREFS, "Preferences…"),
                 ],
                 menu_style,
             );
@@ -396,6 +462,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                     MenuItem::new(mid::VIEW_DOCK_SCHEMA, format!("{}DB Schema", check(state.dock_schema))),
                     MenuItem::new(mid::VIEW_DOCK_LOG, format!("{}SQL Log", check(state.dock_log))),
                     MenuItem::new(mid::VIEW_DOCK_PLOT, format!("{}Plot", check(state.dock_plot))),
+                    MenuItem::new(mid::VIEW_TB_DB, format!("{}DB Toolbar", check(state.toolbar_db))),
+                    MenuItem::new(mid::VIEW_TB_EXTRA, format!("{}Extra DB Toolbar", check(state.toolbar_extra))),
+                    MenuItem::new(mid::VIEW_TB_PROJECT, format!("{}Project Toolbar", check(state.toolbar_project))),
+                    MenuItem::new(mid::VIEW_TB_SQL, format!("{}SQL Toolbar", check(state.toolbar_sql))),
                     MenuItem::new(mid::VIEW_THEME, "Toggle Theme Light/Dark"),
                 ],
                 menu_style,
@@ -403,7 +473,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             menu_tools = tb.menu(
                 "Tools",
                 vec![
-                    MenuItem::disabled(mid::TOOLS_ENCRYPT, "Set Encryption…"),
+                    MenuItem::new(mid::TOOLS_ENCRYPT, "Set Encryption…"),
                     MenuItem::disabled(mid::TOOLS_EXT, "Load Extension…"),
                     MenuItem::new(mid::TOOLS_INTEGRITY, "Integrity Check"),
                     MenuItem::new(mid::TOOLS_QUICK, "Quick Check"),
@@ -423,29 +493,54 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             );
         });
 
-        col.toolbar(main_tb, |tb| {
-            btn_new = tb.tool_button("New");
-            btn_open = tb.tool_button("Open");
-            btn_write = tb.tool_button("Write Changes");
-            btn_revert = tb.tool_button("Revert");
-            btn_theme = tb.tool_button("Theme");
-            tb.spacer(12.0, 1.0);
-            let dirty = if state.dirty { "● modified" } else { "○ clean" };
-            let ro = if state.read_only { " · read-only" } else { "" };
-            let busy = if state.sql_busy { " · busy" } else { "" };
-            tb.text_styled(
-                format!(
-                    "{}{ro} · {dirty}{busy}",
-                    if state.path.is_empty() {
-                        "(no database)"
-                    } else {
-                        &state.path
-                    }
-                ),
-                theme.colors.text_secondary,
-                12.0,
-            );
-        });
+        if state.toolbar_db {
+            col.toolbar(main_tb, |tb| {
+                btn_new = tb.tool_button("New");
+                btn_open = tb.tool_button("Open");
+                btn_write = tb.tool_button("Write Changes");
+                btn_revert = tb.tool_button("Revert");
+                btn_theme = tb.tool_button("Theme");
+                tb.spacer(12.0, 1.0);
+                let dirty = if state.dirty { "● modified" } else { "○ clean" };
+                let ro = if state.read_only { " · read-only" } else { "" };
+                let busy = if state.sql_busy { " · busy" } else { "" };
+                let enc = if state.cipher_active { " · encrypted" } else { " · not encrypted" };
+                tb.text_styled(
+                    format!(
+                        "{}{ro} · {dirty}{busy}{enc}",
+                        if state.path.is_empty() {
+                            "(no database)"
+                        } else {
+                            &state.path
+                        }
+                    ),
+                    theme.colors.text_secondary,
+                    12.0,
+                );
+            });
+        }
+        if state.toolbar_extra {
+            let mut extra_tb = main_tb;
+            extra_tb.height = 30.0;
+            col.toolbar(extra_tb, |tb| {
+                toolbar_extra = tb.tool_button("Vacuum");
+                tb.tool_button("Integrity");
+                tb.text_styled("Extra DB", theme.colors.text_secondary, 11.0);
+            });
+        }
+        if state.toolbar_project {
+            let mut proj_tb = main_tb;
+            proj_tb.height = 30.0;
+            col.toolbar(proj_tb, |tb| {
+                toolbar_project = tb.tool_button("Open Project");
+                tb.tool_button("Save Project");
+                let label = state
+                    .project_path
+                    .as_deref()
+                    .unwrap_or("(no project)");
+                tb.text_styled(label, theme.colors.text_secondary, 11.0);
+            });
+        }
 
         if let Some(kind) = state.overlay {
             // —— Overlay wizard panel ——
@@ -471,6 +566,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 OverlayKind::PasteCsv => "Import CSV from Clipboard",
                 OverlayKind::FindReplace => "Find / Replace",
                 OverlayKind::Attach => "Attach Database",
+                OverlayKind::Cipher => "Set Encryption (SQLCipher)",
+                OverlayKind::Preferences => "Preferences",
+                OverlayKind::ExportSql => "Export Database to SQL",
+                OverlayKind::CondFormat => "Conditional Formatting",
             };
             let mut ov_col = ColumnStyle::from_theme(&theme);
             ov_col.width = shell_w - 40.0;
@@ -649,12 +748,80 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                     r.text_input_styled(&state.attach_schema, "schema", name_s);
                             });
                         }
+                        OverlayKind::Cipher => {
+                            c.text("SQLCipher passphrase + page size + KDF iterations");
+                            c.row(row, |r| {
+                                r.text("Passphrase");
+                                ov_cipher_pass = r.text_input_styled(&state.cipher_passphrase, "key", wide_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Page size");
+                                ov_cipher_page = r.text_input_styled(&state.cipher_page_size, "4096", name_s);
+                                r.text("KDF iter");
+                                ov_cipher_kdf = r.text_input_styled(&state.cipher_kdf_iter, "256000", name_s);
+                            });
+                            c.text(if state.cipher_active {
+                                "Status: key applied"
+                            } else {
+                                "Status: not encrypted / key not applied"
+                            });
+                        }
+                        OverlayKind::Preferences => {
+                            c.row(row, |r| {
+                                r.text("Font size");
+                                ov_prefs_font = r.text_input_styled(&state.prefs_font_size, "13", name_s);
+                            });
+                            ov_prefs_theme = c.switch_styled("Default dark theme", state.prefs_theme_dark, sw);
+                            ov_prefs_confirm = c.switch_styled("Confirm drops", state.prefs_confirm_drops, sw);
+                            c.row(row, |r| {
+                                r.text("CSV delimiter");
+                                ov_prefs_delim = r.text_input_styled(&state.prefs_csv_delim, ",", name_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Default frozen cols");
+                                ov_frozen = r.text_input_styled(&format!("{}", state.frozen_cols), "0", name_s);
+                            });
+                        }
+                        OverlayKind::ExportSql => {
+                            c.text("Choose what to include in the SQL dump");
+                            ov_export_struct = c.switch_styled("Export structure", state.export_structure, sw);
+                            ov_export_data = c.switch_styled("Export data", state.export_data, sw);
+                            ov_export_drop = c.switch_styled("DROP IF EXISTS before create", state.export_drop, sw);
+                            ov_export_fk = c.switch_styled("Keep/check foreign keys", state.export_keep_fk, sw);
+                            c.text("OK writes via Save dialog after options are set.");
+                        }
+                        OverlayKind::CondFormat => {
+                            c.text("Rule: when cell matches, tint cell text");
+                            c.row(row, |r| {
+                                r.text("Column");
+                                ov_cond_col = r.text_input_styled(&state.cond_col, "col", name_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Op");
+                                ov_cond_op = r.select(
+                                    vec![String::from("=="), String::from("!="), String::from("contains"), String::from(">"), String::from("<")],
+                                    Some(state.cond_op_idx),
+                                    "op",
+                                    type_sel,
+                                );
+                                r.text("Value");
+                                ov_cond_val = r.text_input_styled(&state.cond_value, "value", name_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Color #RRGGBB");
+                                ov_cond_color = r.text_input_styled(&state.cond_color, "E67E22", name_s);
+                            });
+                            c.text(format!("Rules: {}", state.cond_rules.len()));
+                        }
                     }
                     c.row(row, |r| {
                         ov_btn_ok = r.tool_button(match kind {
                             OverlayKind::FindReplace => "Close",
                             OverlayKind::ImportCsv | OverlayKind::PasteCsv => "Import",
                             OverlayKind::Attach => "Attach",
+                            OverlayKind::ExportSql => "Export…",
+                            OverlayKind::CondFormat => "Add Rule",
+                            OverlayKind::Cipher => "Apply Key",
                             _ => "Save",
                         });
                         ov_btn_cancel = r.tool_button("Cancel");
@@ -924,6 +1091,9 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                 btn_browse_go = row.tool_button("Apply");
                                 btn_add_row = row.tool_button("New Record");
                                 btn_del_row = row.tool_button("Delete Record");
+                                btn_freeze = row.tool_button(format!("Freeze {}", state.frozen_cols));
+                                btn_cond_fmt = row.tool_button("Cond Format…");
+                                btn_fk_nav = row.tool_button("FK →");
                             });
                             // Per-column filters
                             if !col_names.is_empty() {
@@ -943,7 +1113,11 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                             browse_table =
                                 p.table(browse_cols.clone(), browse_rows.clone(), browse_table_style);
                             p.text_styled(
-                                "Tip: header click sorts · column filters → LIKE · + Tab opens another table",
+                                format!(
+                                    "Tip: header sort · filters · Freeze={} · Cond rules={} · FK → parent",
+                                    state.frozen_cols,
+                                    state.cond_rules.len()
+                                ),
                                 theme.colors.text_secondary,
                                 12.0,
                             );
@@ -1022,20 +1196,25 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                         });
 
                         tb.page(MainTab::ExecuteSql.title(), |p| {
-                            p.toolbar(sql_tb, |tb| {
-                                btn_sql_new_tab = tb.tool_button("New Tab");
-                                btn_sql_open = tb.tool_button("Open SQL");
-                                btn_sql_save = tb.tool_button("Save SQL");
-                                btn_sql_run = tb.tool_button("Execute");
-                                btn_sql_stop = tb.tool_button("Stop");
-                                btn_sql_find = tb.tool_button("Find");
-                                tb.spacer(8.0, 1.0);
-                                tb.text_styled(
-                                    format!("SQL {}", state.sql_tab_idx + 1),
-                                    theme.colors.text_secondary,
-                                    12.0,
-                                );
-                            });
+                            if state.toolbar_sql {
+                                p.toolbar(sql_tb, |tb| {
+                                    btn_sql_new_tab = tb.tool_button("New Tab");
+                                    btn_sql_open = tb.tool_button("Open SQL");
+                                    btn_sql_save = tb.tool_button("Save SQL");
+                                    btn_sql_run = tb.tool_button("Execute");
+                                    btn_sql_line = tb.tool_button("Execute Line");
+                                    btn_sql_stop = tb.tool_button("Stop");
+                                    btn_sql_find = tb.tool_button("Find");
+                                    btn_sql_comment = tb.tool_button("Toggle --");
+                                    btn_sql_view = tb.tool_button("Save as VIEW");
+                                    tb.spacer(8.0, 1.0);
+                                    tb.text_styled(
+                                        format!("SQL {}", state.sql_tab_idx + 1),
+                                        theme.colors.text_secondary,
+                                        12.0,
+                                    );
+                                });
+                            }
                             // SQL editor tabs as buttons
                             p.row(tool_row, |row| {
                                 for i in 0..state.sql_tabs.len() {
@@ -1082,6 +1261,12 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                                 "column",
                                                 edit_col_style,
                                             );
+                                            c.row(tool_row, |r| {
+                                                btn_edit_text = r.tool_button("Text");
+                                                btn_edit_hex = r.tool_button("Hex");
+                                                btn_edit_json = r.tool_button("JSON");
+                                                btn_edit_image = r.tool_button("Image");
+                                            });
                                             c.text("Value");
                                             edit_value = c.text_input_styled(
                                                 &state.edit_value,
@@ -1089,6 +1274,21 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                                 edit_val_style,
                                             );
                                             btn_edit_cell = c.tool_button("Apply");
+                                            let mode = match state.edit_mode {
+                                                crate::state::EditCellMode::Text => "Text",
+                                                crate::state::EditCellMode::Hex => "Hex",
+                                                crate::state::EditCellMode::Json => "JSON",
+                                                crate::state::EditCellMode::Image => "Image",
+                                            };
+                                            edit_meta = c.text(format!(
+                                                "Mode {mode} · {} bytes{}",
+                                                state.edit_binary_len,
+                                                if state.edit_image_kind.is_empty() {
+                                                    String::new()
+                                                } else {
+                                                    format!(" · {}", state.edit_image_kind)
+                                                }
+                                            ));
                                             if let Some(row) = state.browse().sel_row {
                                                 c.text(format!("Browse row #{row}"));
                                             } else {
@@ -1186,6 +1386,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             if browse_table.0 != 0 {
                 let _ = ui.set_table_selected_row(browse_table, Some(row));
             }
+        }
+        if browse_table.0 != 0 {
+            ui.set_table_frozen_cols(browse_table, state.frozen_cols);
+            ui.set_table_cell_bg(browse_table, state.cell_format_colors());
         }
 
     }
@@ -1329,6 +1533,35 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         ov_btn_find,
         ov_btn_repl,
         ov_btn_repl_all,
+        ov_cipher_pass,
+        ov_cipher_page,
+        ov_cipher_kdf,
+        ov_prefs_font,
+        ov_prefs_theme,
+        ov_prefs_confirm,
+        ov_prefs_delim,
+        ov_frozen,
+        ov_export_struct,
+        ov_export_data,
+        ov_export_drop,
+        ov_export_fk,
+        ov_cond_col,
+        ov_cond_op,
+        ov_cond_val,
+        ov_cond_color,
+        btn_sql_line,
+        btn_sql_comment,
+        btn_sql_view,
+        btn_edit_text,
+        btn_edit_hex,
+        btn_edit_json,
+        btn_edit_image,
+        btn_fk_nav,
+        btn_freeze,
+        btn_cond_fmt,
+        edit_meta,
+        toolbar_extra,
+        toolbar_project,
     }
 }
 
