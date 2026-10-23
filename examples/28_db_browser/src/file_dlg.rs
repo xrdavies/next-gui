@@ -51,3 +51,17 @@ pub fn pick_save_json() -> Option<PathBuf> {
         .set_title("Export JSON")
         .save_file()
 }
+
+pub fn pick_open_project() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("DB4S project", &["sqbpro", "json"])
+        .set_title("Open Project")
+        .pick_file()
+}
+
+pub fn pick_save_project() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("DB4S project", &["sqbpro"])
+        .set_title("Save Project")
+        .save_file()
+}

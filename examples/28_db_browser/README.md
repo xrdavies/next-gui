@@ -9,7 +9,7 @@ See **[PARITY.md](./PARITY.md)** for the exhaustive checklist (`done` / `partial
 ```bash
 cargo run -p e28_db_browser
 NEXT_GUI_DB_BROWSER_QA=1 cargo run -p e28_db_browser   # Soft PPM → /tmp/next-gui-db-browser.ppm
-NEXT_GUI_DB_BROWSER_QA_TAB=browse|pragmas|sql|wizard cargo run -p e28_db_browser
+NEXT_GUI_DB_BROWSER_QA_TAB=browse|pragmas|sql|wizard|cipher|prefs|exportsql|cond cargo run -p e28_db_browser
 ```
 
 On first launch the example opens/creates `examples/28_db_browser/sample.db` with a small demo schema.
