@@ -30,6 +30,7 @@ members = [
     "examples/25_immediate_viewport",
     "examples/26_office_p2",
     "examples/27_theme_tokens",
+    "examples/28_db_browser",
 ]
 
 [workspace.package]

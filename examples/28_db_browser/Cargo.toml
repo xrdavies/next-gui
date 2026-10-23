@@ -1,0 +1,25 @@
+[package]
+name = "e28_db_browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "DB Browser for SQLite–style example (rusqlite + next-gui Theme)"
+
+[[bin]]
+name = "e28_db_browser"
+path = "src/main.rs"
+
+[dependencies]
+next-gui-platform = { workspace = true }
+next-gui-scene = { workspace = true }
+next-gui-render = { workspace = true }
+next-gui-render-soft = { workspace = true }
+next-gui-render-gpu = { workspace = true }
+next-gui-ui = { workspace = true }
+next-gui-text = { workspace = true }
+next-gui-layout = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"
