@@ -5,7 +5,7 @@ use next_gui_scene::{Color, Scene};
 use next_gui_text::Font;
 use next_gui_ui::{
     AlertTone, ChartStyle, ChartTile, ColumnStyle, ListStyle, ModalStyle, PropertyRow, PropertyValue,
-    RowStyle, SelectStyle, SplitterStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle,
+    RowStyle, SelectStyle, SplitterStyle, StatusBarStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle,
     TextInputStyle, Theme, ThemeMode, ToolbarStyle, TreeNode, TreeStyle, TrendStyle, Ui, WidgetId,
 };
 
@@ -155,10 +155,17 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
 
     let win_w = width as f32;
     let win_h = height as f32;
+    // StatusBar is a root strip at the window bottom. Its laid-out height is
+    // style.height.max(flex_content) — body (~22px) + padding overflows a 28px
+    // bar past win_h and clips glyphs. Use 13px text_styled + STATUS_H ≥ measure,
+    // and shrink the shell so the Column never overlaps the strip.
+    const STATUS_H: f32 = 44.0;
     let shell_w = (win_w - 16.0).max(960.0);
-    let shell_h = (win_h - 40.0).max(640.0);
-    let content_h = shell_h - 110.0;
+    let shell_h = (win_h - STATUS_H - 8.0).max(600.0);
+    // Column: pad 6*2 + gap*2 + toolbar 40 + io 32 ≈ 92 (no status inside).
+    let content_h = (shell_h - 100.0).max(360.0);
     let inner_w = shell_w - 40.0;
+    let tab_page_h = (content_h - 40.0).max(320.0);
 
     let table_names = state.table_names();
     let browse_opts: Vec<String> = if table_names.is_empty() {
@@ -242,34 +249,25 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     } else {
         state.chart_points.clone()
     };
-    let chart_tiles = vec![
-        ChartTile::trend(
-            format!(
-                "{} · {}",
-                state.chart_table.as_deref().unwrap_or("—"),
-                state.chart_column
-            ),
-            chart_points,
-            TrendStyle::from_theme(&theme),
+    let n_pts = state.chart_points.len();
+    let chart_tiles = vec![ChartTile::trend(
+        format!(
+            "{} · {} ({} samples)",
+            state.chart_table.as_deref().unwrap_or("—"),
+            state.chart_column,
+            n_pts
         ),
-        ChartTile::gauge(
-            "points",
-            state.chart_points.len() as f32,
-            0.0,
-            64.0,
-            "",
-            "samples",
-            ui.gauge_style(),
-        ),
-    ];
+        chart_points,
+        TrendStyle::from_theme(&theme),
+    )];
     let theme_label = match theme.mode {
-        ThemeMode::Dark => "Theme: Light",
-        ThemeMode::Light => "Theme: Dark",
+        ThemeMode::Dark => "Theme",
+        ThemeMode::Light => "Theme",
     };
 
     let mut col_style = ui.column_style();
     col_style.x = 8.0;
-    col_style.y = 6.0;
+    col_style.y = 4.0;
     col_style.width = shell_w;
     col_style.height = shell_h;
     col_style.padding = 6.0;
@@ -279,19 +277,22 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut tb_style = ToolbarStyle::from_theme(&theme);
     tb_style.width = shell_w - 12.0;
     tb_style.height = 40.0;
+    tb_style.padding = 4.0;
 
     let mut path_style = TextInputStyle::from_theme(&theme);
-    path_style.width = 320.0;
+    path_style.width = 280.0;
+    path_style.height = 28.0;
 
     let mut io_row = RowStyle::from_theme(&theme);
     io_row.width = shell_w - 12.0;
-    io_row.height = 34.0;
+    io_row.height = 32.0;
     io_row.gap = 8.0;
     io_row.padding = 0.0;
     io_row.cross_align = CrossAlign::Center;
 
     let mut io_path_style = TextInputStyle::from_theme(&theme);
-    io_path_style.width = 280.0;
+    io_path_style.width = 260.0;
+    io_path_style.height = 28.0;
 
     let mut tabs_style = TabsStyle::from_theme(&theme);
     tabs_style.width = shell_w - 12.0;
@@ -299,7 +300,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
 
     let mut split_style = SplitterStyle::from_theme(&theme);
     split_style.width = inner_w;
-    split_style.height = content_h - 48.0;
+    split_style.height = (tab_page_h - 16.0).max(280.0);
     split_style.axis = Axis::Vertical;
     split_style.ratio = 0.32;
 
@@ -307,11 +308,11 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let right_w = inner_w * 0.68 - 8.0;
     let mut tree_style = TreeStyle::from_theme(&theme);
     tree_style.width = tree_w;
-    tree_style.height = content_h - 64.0;
+    tree_style.height = (tab_page_h - 32.0).max(240.0);
 
     let right_col = ColumnStyle {
         width: right_w,
-        height: content_h - 64.0,
+        height: (tab_page_h - 32.0).max(240.0),
         padding: 4.0,
         gap: 6.0,
         cross_align: CrossAlign::Start,
@@ -350,11 +351,13 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
 
     let mut browse_table_style = TableStyle::from_theme(&theme);
     browse_table_style.width = inner_w;
-    browse_table_style.height = content_h - 120.0;
+    browse_table_style.height = (tab_page_h - 100.0).max(200.0);
 
+    // Size grid to rows (not the full tab page) so Value/Apply sit just under it.
     let mut pragma_style = ui.property_grid_style();
     pragma_style.width = inner_w;
-    pragma_style.height = content_h - 100.0;
+    let pragma_rows_h = (state.pragmas.len() as f32 + 1.0) * pragma_style.row_height + 24.0;
+    pragma_style.height = pragma_rows_h.clamp(160.0, (tab_page_h - 120.0).max(160.0));
     pragma_style.key_width = 180.0;
 
     let mut sql_area_style = TextAreaStyle::from_theme(&theme);
@@ -362,19 +365,20 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     sql_area_style.height = 150.0;
     let mut sql_table_style = TableStyle::from_theme(&theme);
     sql_table_style.width = inner_w;
-    sql_table_style.height = content_h - 260.0;
+    sql_table_style.height = (tab_page_h - 240.0).max(160.0);
 
-    let mut chart_row = browse_row;
+    let chart_row = browse_row;
     let mut chart_col_style = TextInputStyle::from_theme(&theme);
     chart_col_style.width = 140.0;
     let mut chart_style = ChartStyle::from_theme(&theme);
     chart_style.width = inner_w;
-    chart_style.height = content_h - 90.0;
-    chart_style.columns = 2;
+    chart_style.height = (tab_page_h - 56.0).max(280.0);
+    chart_style.columns = 1;
+    chart_style.padding = 10.0;
 
     let mut list_style = ListStyle::from_theme(&theme);
     list_style.width = inner_w;
-    list_style.height = content_h - 60.0;
+    list_style.height = (tab_page_h - 40.0).max(200.0);
 
     let roots_for_tree = roots;
     let browse_opts_a = browse_opts.clone();
@@ -382,7 +386,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
 
     ui.column(col_style, |col| {
         col.toolbar(tb_style, |tb| {
-            tb.text("DB Browser");
+            tb.text_styled("DB Browser", theme.colors.text_primary, 14.0);
             btn_new = tb.tool_button("New");
             btn_demo = tb.tool_button("Demo");
             btn_open = tb.tool_button("Open");
@@ -395,7 +399,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         });
 
         col.row(io_row, |row| {
-            row.text("Import/Export");
+            row.text_styled("Import/Export", theme.colors.text_secondary, 13.0);
             io_path = row.text_input_styled(&state.io_path, "csv/sql path…", io_path_style);
             btn_import_csv = row.tool_button("Import CSV");
             btn_export_csv = row.tool_button("Export CSV");
@@ -464,7 +468,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             });
 
             tb.page(MainTab::Pragmas.title(), |p| {
-                p.text("Select a pragma row, type the new value, then Apply (Bool click toggles).");
+                p.text("Select a row, enter Value below, then Apply. Bool/Select: click cell to toggle.");
                 pragma_grid = p.property_grid(pragma_rows.clone(), pragma_style);
                 p.row(browse_row, |row| {
                     row.text("Value");
@@ -513,6 +517,38 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         });
     });
 
+    // Root StatusBar anchored to the window bottom (not a Column child) so flex
+    // measure growth cannot push glyphs past win_h. Height must be ≥ text+pad.
+    let mut status_style = StatusBarStyle::from_theme(&theme);
+    status_style.x = 0.0;
+    status_style.y = win_h - STATUS_H;
+    status_style.width = win_w;
+    status_style.height = STATUS_H;
+    status_style.padding = 6.0;
+    status_style.gap = 8.0;
+    // Top-align label so rasterize mask expands downward *inside* the bar
+    // (Center + expand-past-win_h was clipping descenders at the window edge).
+    status_style.cross_align = CrossAlign::Start;
+    let path = if state.path.is_empty() {
+        "(no database)".to_string()
+    } else {
+        state.path.clone()
+    };
+    let backend = if state.conn.is_some() {
+        "sqlite"
+    } else {
+        "closed"
+    };
+    let status_msg = state.status_msg.clone();
+    let status_fg = theme.colors.text_secondary;
+    ui.status_bar(status_style, |bar| {
+        status = bar.text_styled(
+            format!("{path} · {backend} · {status_msg}"),
+            status_fg,
+            13.0,
+        );
+    });
+
     let _ = ui.set_tabs_selected(tabs, state.tab.index());
     let _ = ui.set_tree_expanded(tree, 1, true);
     let _ = ui.set_tree_expanded(tree, 2, true);
@@ -525,29 +561,6 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             let _ = ui.set_tree_selected(tree, Some(10_000 + idx as u64));
         }
     }
-
-    let mut status_style = ui.status_bar_style();
-    status_style.x = 0.0;
-    status_style.y = win_h - 28.0;
-    status_style.width = win_w;
-    status_style.height = 28.0;
-    ui.status_bar(status_style, |bar| {
-        let path = if state.path.is_empty() {
-            "(no database)"
-        } else {
-            state.path.as_str()
-        };
-        status = bar.text(format!(
-            "{} · {} · {}",
-            path,
-            if state.conn.is_some() {
-                "sqlite"
-            } else {
-                "closed"
-            },
-            state.status_msg
-        ));
-    });
 
     let (modal_title, modal_body, modal_primary) = match state.confirm_kind {
         ConfirmKind::DropObject => (
