@@ -44,3 +44,10 @@ pub fn pick_save_sql() -> Option<PathBuf> {
         .set_title("Save SQL")
         .save_file()
 }
+
+pub fn pick_save_json() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("JSON", &["json"])
+        .set_title("Export JSON")
+        .save_file()
+}

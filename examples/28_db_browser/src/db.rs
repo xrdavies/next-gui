@@ -2,7 +2,7 @@
 //! SQLite helpers for the DB Browser example (rusqlite, bundled).
 
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params_from_iter, Connection, OpenFlags};
@@ -61,6 +61,39 @@ pub struct ColumnInfo {
     pub default_value: Option<String>,
     pub pk: bool,
 }
+
+/// Editable column definition for Create/Modify Table wizard.
+#[derive(Debug, Clone)]
+pub struct ColDef {
+    pub name: String,
+    pub type_name: String,
+    pub pk: bool,
+    pub notnull: bool,
+    pub unique: bool,
+    pub default_value: String,
+}
+
+impl ColDef {
+    pub fn new(name: impl Into<String>, type_name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            type_name: type_name.into(),
+            pk: false,
+            notnull: false,
+            unique: false,
+            default_value: String::new(),
+        }
+    }
+}
+
+pub const COLUMN_TYPES: &[&str] = &[
+    "INTEGER",
+    "TEXT",
+    "REAL",
+    "BLOB",
+    "NUMERIC",
+    "VARCHAR(255)",
+];
 
 /// Open connection (file or `:memory:`).
 pub fn open_path(path: &str) -> Result<Connection, String> {
@@ -596,53 +629,302 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-/// Parse a simple CSV file into header + rows.
-pub fn import_csv_parse(path: &Path) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let f = File::open(path).map_err(|e| e.to_string())?;
-    let reader = BufReader::new(f);
-    let mut lines = reader.lines();
-    let header_line = lines
-        .next()
-        .ok_or_else(|| "empty CSV".to_string())?
-        .map_err(|e| e.to_string())?;
-    let columns = parse_csv_line(&header_line);
-    let mut rows = Vec::new();
-    for line in lines {
-        let line = line.map_err(|e| e.to_string())?;
-        if line.trim().is_empty() {
-            continue;
+#[derive(Debug, Clone)]
+pub struct CsvImportOptions {
+    pub has_header: bool,
+    pub delimiter: char,
+    pub quote: Option<char>,
+}
+
+impl Default for CsvImportOptions {
+    fn default() -> Self {
+        Self {
+            has_header: true,
+            delimiter: ',',
+            quote: Some('"'),
         }
-        rows.push(parse_csv_line(&line));
+    }
+}
+
+/// Parse a CSV file into header + rows (comma / header defaults).
+pub fn import_csv_parse(path: &Path) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    import_csv_parse_opts(path, &CsvImportOptions::default())
+}
+
+/// Parse CSV with delimiter / quote / header options.
+pub fn import_csv_parse_opts(
+    path: &Path,
+    opts: &CsvImportOptions,
+) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    let raw = fs::read(path).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&raw);
+    import_csv_from_text(&text, opts)
+}
+
+/// Parse CSV text (clipboard / file contents).
+pub fn import_csv_from_text(
+    text: &str,
+    opts: &CsvImportOptions,
+) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let first = lines
+        .next()
+        .ok_or_else(|| "empty CSV".to_string())?;
+    let first_cols = parse_csv_line_opts(first, opts.delimiter, opts.quote);
+    let (columns, mut rows) = if opts.has_header {
+        (first_cols, Vec::new())
+    } else {
+        let cols = (0..first_cols.len())
+            .map(|i| format!("column{i}"))
+            .collect::<Vec<_>>();
+        (cols, vec![first_cols])
+    };
+    for line in lines {
+        rows.push(parse_csv_line_opts(line, opts.delimiter, opts.quote));
     }
     Ok((columns, rows))
 }
 
 fn parse_csv_line(line: &str) -> Vec<String> {
+    parse_csv_line_opts(line, ',', Some('"'))
+}
+
+fn parse_csv_line_opts(line: &str, delim: char, quote: Option<char>) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut in_quotes = false;
     let mut chars = line.chars().peekable();
+    let q = quote.unwrap_or('\0');
+    while let Some(c) = chars.next() {
+        if quote.is_some() && c == q {
+            if in_quotes {
+                if chars.peek() == Some(&q) {
+                    cur.push(q);
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                in_quotes = true;
+            }
+        } else if c == delim && !in_quotes {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// Export browse/result rows as a JSON array of objects.
+pub fn export_json(path: &Path, columns: &[String], rows: &[Vec<String>]) -> Result<(), String> {
+    let mut f = File::create(path).map_err(|e| e.to_string())?;
+    writeln!(f, "[").map_err(|e| e.to_string())?;
+    for (ri, row) in rows.iter().enumerate() {
+        write!(f, "  {{").map_err(|e| e.to_string())?;
+        for (ci, col) in columns.iter().enumerate() {
+            if ci > 0 {
+                write!(f, ", ").map_err(|e| e.to_string())?;
+            }
+            let val = row.get(ci).map(|s| s.as_str()).unwrap_or("");
+            write!(
+                f,
+                "{}: {}",
+                json_escape_key(col),
+                json_escape_value(val)
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if ri + 1 < rows.len() {
+            writeln!(f, "}},").map_err(|e| e.to_string())?;
+        } else {
+            writeln!(f, "}}").map_err(|e| e.to_string())?;
+        }
+    }
+    writeln!(f, "]").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn json_escape_key(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn json_escape_value(s: &str) -> String {
+    if s.is_empty() {
+        return "null".into();
+    }
+    if let Ok(n) = s.parse::<i64>() {
+        return n.to_string();
+    }
+    if let Ok(n) = s.parse::<f64>() {
+        if n.is_finite() {
+            return format!("{n}");
+        }
+    }
+    format!(
+        "\"{}\"",
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    )
+}
+
+/// ATTACH DATABASE.
+pub fn attach_database(conn: &Connection, path: &str, schema: &str) -> Result<(), String> {
+    let sql = format!(
+        "ATTACH DATABASE {} AS {}",
+        quote_literal(path),
+        quote_ident(schema)
+    );
+    conn.execute_batch(&sql).map_err(|e| e.to_string())
+}
+
+fn quote_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Build CREATE TABLE DDL from column defs.
+pub fn create_table_ddl(name: &str, cols: &[ColDef]) -> String {
+    let mut parts = Vec::new();
+    let mut pk_cols = Vec::new();
+    for c in cols {
+        let ty = if c.type_name.trim().is_empty() {
+            "TEXT"
+        } else {
+            c.type_name.trim()
+        };
+        let mut piece = format!("{} {}", quote_ident(&c.name), ty);
+        if c.pk {
+            pk_cols.push(quote_ident(&c.name));
+        }
+        if c.notnull {
+            piece.push_str(" NOT NULL");
+        }
+        if c.unique && !c.pk {
+            piece.push_str(" UNIQUE");
+        }
+        if !c.default_value.trim().is_empty() {
+            piece.push_str(" DEFAULT ");
+            piece.push_str(c.default_value.trim());
+        }
+        parts.push(piece);
+    }
+    if pk_cols.len() == 1 {
+        let pk_name = cols
+            .iter()
+            .find(|c| c.pk)
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        for (i, c) in cols.iter().enumerate() {
+            if c.name == pk_name {
+                let ty = if c.type_name.trim().is_empty() {
+                    "INTEGER"
+                } else {
+                    c.type_name.trim()
+                };
+                let mut piece = format!("{} {} PRIMARY KEY", quote_ident(&c.name), ty);
+                if !c.default_value.trim().is_empty() {
+                    piece.push_str(" DEFAULT ");
+                    piece.push_str(c.default_value.trim());
+                }
+                parts[i] = piece;
+            }
+        }
+    } else if pk_cols.len() > 1 {
+        parts.push(format!("PRIMARY KEY ({})", pk_cols.join(", ")));
+    }
+    format!(
+        "CREATE TABLE {} (\n  {}\n)",
+        quote_ident(name),
+        parts.join(",\n  ")
+    )
+}
+
+/// Recreate table with new schema (DB4S-style modify): rename → create → copy → drop.
+pub fn recreate_table(
+    conn: &Connection,
+    old_name: &str,
+    new_name: &str,
+    cols: &[ColDef],
+) -> Result<(), String> {
+    let tmp = format!("__e28_old_{old_name}");
+    let ddl = create_table_ddl(new_name, cols);
+    conn.execute_batch(&format!(
+        "ALTER TABLE {} RENAME TO {}",
+        quote_ident(old_name),
+        quote_ident(&tmp)
+    ))
+    .map_err(|e| e.to_string())?;
+    if let Err(e) = conn.execute_batch(&ddl) {
+        let _ = conn.execute_batch(&format!(
+            "ALTER TABLE {} RENAME TO {}",
+            quote_ident(&tmp),
+            quote_ident(old_name)
+        ));
+        return Err(e.to_string());
+    }
+    let old_cols = table_columns(conn, &tmp).unwrap_or_default();
+    let common: Vec<String> = cols
+        .iter()
+        .filter(|c| old_cols.iter().any(|o| o.name == c.name))
+        .map(|c| quote_ident(&c.name))
+        .collect();
+    if !common.is_empty() {
+        let list = common.join(", ");
+        let sql = format!(
+            "INSERT INTO {} ({list}) SELECT {list} FROM {}",
+            quote_ident(new_name),
+            quote_ident(&tmp)
+        );
+        if let Err(e) = conn.execute_batch(&sql) {
+            let _ = conn.execute_batch(&format!("DROP TABLE {}", quote_ident(new_name)));
+            let _ = conn.execute_batch(&format!(
+                "ALTER TABLE {} RENAME TO {}",
+                quote_ident(&tmp),
+                quote_ident(old_name)
+            ));
+            return Err(e.to_string());
+        }
+    }
+    conn.execute_batch(&format!("DROP TABLE {}", quote_ident(&tmp)))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Split SQL into statements (naive ; outside quotes).
+pub fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '"' => {
-                if in_quotes {
-                    if chars.peek() == Some(&'"') {
-                        cur.push('"');
-                        chars.next();
-                    } else {
-                        in_quotes = false;
-                    }
-                } else {
-                    in_quotes = true;
-                }
+            '\'' if !in_double => {
+                in_single = !in_single;
+                cur.push(c);
             }
-            ',' if !in_quotes => {
-                out.push(std::mem::take(&mut cur));
+            '"' if !in_single => {
+                in_double = !in_double;
+                cur.push(c);
+            }
+            ';' if !in_single && !in_double => {
+                let t = cur.trim().to_string();
+                if !t.is_empty() {
+                    out.push(t);
+                }
+                cur.clear();
             }
             _ => cur.push(c),
         }
     }
-    out.push(cur);
+    let t = cur.trim().to_string();
+    if !t.is_empty() {
+        out.push(t);
+    }
     out
 }
 

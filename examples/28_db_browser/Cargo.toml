@@ -19,7 +19,7 @@ next-gui-render-gpu = { workspace = true }
 next-gui-ui = { workspace = true }
 next-gui-text = { workspace = true }
 next-gui-layout = { workspace = true }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 rfd = "0.13.0"
 
 [dev-dependencies]

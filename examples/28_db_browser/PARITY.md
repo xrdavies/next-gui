@@ -6,7 +6,7 @@ Reference: upstream `src/MainWindow.ui`, EditTableDialog, EditIndexDialog, Impor
 
 Status legend: `done` | `partial` | `todo`
 
-Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updating).
+Counts (Phase 2 close): **done 69 · partial 4 · todo 20** (re-tally when updating).
 
 ---
 
@@ -14,11 +14,11 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 
 | Surface | Status | Notes |
 |---------|--------|-------|
-| Menubar File / Edit / View / Tools / Help | done | Phase 1: menus wired; some items stub → status / later dialog |
+| Menubar File / Edit / View / Tools / Help | done | menus wired; remaining stubs → status |
 | Main toolbar: New, Open, Write Changes, Revert | done | + Theme (exceeds DB4S) |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
 | Right docks: Edit Cell / DB Schema / SQL Log / Plot | done | View menu toggles; Splitter column |
-| Status bar: path, encoding, read-only, encryption, busy | partial | path + dirty/ro + msg; encoding/encryption/busy stubs |
+| Status bar: path, encoding, read-only, encryption, busy | partial | path + dirty/ro/busy + UTF-8 / not encrypted labels |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S |
 
@@ -26,23 +26,23 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| New Database… | done | native `rfd` + fallback path |
-| New In-Memory Database | done | |
+| New Database… | done | native `rfd` |
+| New In-Memory Database | done | shared-cache URI (worker-friendly) |
 | Open Database… | done | `rfd` |
-| Open Database Read Only… | partial | opens read-only flag; write blocked |
-| Attach Database… | todo | |
-| Recently opened | todo | |
+| Open Database Read Only… | done | write blocked |
+| Attach Database… | done | overlay: path + schema name → ATTACH |
+| Recently opened | done | last 5 paths persisted (`.e28_recent`) |
 | Close Database | done | confirm modal |
 | Save Database As… | partial | copy file via `rfd` save |
 | Import → Database from SQL file… | done | `rfd` |
-| Import → Table from CSV file… | done | `rfd`; wizard options later |
-| Import → Table from CSV clipboard… | todo | |
+| Import → Table from CSV file… | done | rfd then ImportCsv overlay (table/header/delim/quote/UTF-8) |
+| Import → Table from CSV clipboard… | done | PasteCsv overlay |
 | Export → Database to SQL file… | done | `rfd` |
 | Export → Table(s) as CSV… | done | current browse table |
-| Export → Table(s) to JSON… | todo | |
+| Export → Table(s) to JSON… | done | browse result → JSON array |
 | Write Changes | done | COMMIT + re-BEGIN |
 | Revert Changes | done | ROLLBACK + re-BEGIN |
-| Compact Database (VACUUM) | done | Tools + File |
+| Compact Database (VACUUM) | done | |
 | Exit | done | |
 | Open / Save / Close Project | todo | `.sqbpro` |
 | Save All | todo | |
@@ -51,9 +51,9 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Create Table… | partial | quick name+cols; full EditTableDialog wizard todo |
-| Create Index… | partial | simple CREATE INDEX DDL path |
-| Modify Object… | todo | EditTable / EditIndex dialogs |
+| Create Table… | done | EditTable overlay wizard (cols PK/NN/Unique/Default, reorder) |
+| Create Index… | done | EditIndex overlay (name/table/cols/unique) |
+| Modify Object… | done | prefills EditTable / EditIndex from selection |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | todo | PreferencesDialog |
 
@@ -83,14 +83,14 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| About | done | status / modal text |
+| About | done | status message |
 | Website / Wiki / SQLCipher FAQ / Bug / Feature / Donate / Updates | todo | stubs OK (status message) |
 
 ## Database Structure tab
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | Modify stub |
+| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | wizards + Modify wired |
 | Schema tree Tables/Views/Indexes/Triggers | done | |
 | Object SQL preview | done | |
 | Run DDL | done | |
@@ -104,8 +104,8 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 | Filter / WHERE | done | |
 | Data grid | done | |
 | Header-click sort | done | next-gui-ui `take_table_header_click` |
-| Filter-per-column | todo | |
-| Multi browse tabs | todo | |
+| Filter-per-column | done | row of inputs → LIKE in WHERE |
+| Multi browse tabs | done | + Tab / tab buttons |
 | Add / Delete row | done | delete confirm; pending txn |
 | Edit cell → Edit Cell dock | done | |
 | Frozen columns | todo | |
@@ -117,9 +117,9 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Scroll form of pragmas | partial | PropertyGrid + Value/Apply; closer form layout Phase 2 |
-| Save / Apply pragmas | done | |
-| Bool / Select editors | done | |
+| Scroll form of pragmas | done | labeled rows: Select/Switch/TextInput |
+| Save / Apply pragmas | done | Save Pragmas button |
+| Bool / Select editors | done | journal_mode / synchronous / FK switches |
 
 ## Execute SQL tab
 
@@ -127,10 +127,11 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 |---------|--------|-------|
 | SQL editor | done | |
 | Execute / message / results table | done | |
-| Toolbar: Open Tab, Open/Save file, Execute, Execute Line, Stop, Find/Replace, Results export | partial | Execute + Open/Save SQL file + New Tab stub; Stop/Find later |
-| Multi SQL tabs | partial | nested Tabs + New Tab adds editor slot (single active body Phase 1) |
-| Async query + cancel | todo | |
-| Results → CSV / JSON / Save as view | partial | CSV via export path |
+| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | done | Execute Line still stub |
+| Multi SQL tabs | done | SQL 1 / New Tab + tab strip |
+| Find / Replace | done | overlay Find/Replace |
+| Async query + cancel | partial | worker thread + `InterruptHandle` + progress_handler / AtomicBool Stop |
+| Results → CSV / JSON / Save as view | partial | CSV + JSON export; Save as view todo |
 | Toggle comment | todo | |
 
 ## Docks
@@ -138,39 +139,46 @@ Counts (Phase 1 close): **done 50 · partial 9 · todo 32** (re-tally when updat
 | Dock | Status | Notes |
 |------|--------|-------|
 | Edit Database Cell | done | column + value + Apply; follows browse selection |
-| DB Schema | done | compact schema list / tree mirror |
+| DB Schema | done | compact schema list |
 | SQL Log | done | |
 | Plot | done | Trend from numeric column |
 | Remote / other docks | todo | |
 
-## Dialogs (Phase 2+)
+## Dialogs
 
-| Dialog | Status |
-|--------|--------|
-| EditTableDialog (full wizard) | todo |
-| EditIndexDialog | todo |
-| ImportCsvDialog (delimiter, quote, encoding, …) | todo |
-| ExportSqlDialog (options) | todo |
-| CipherDialog | todo |
-| PreferencesDialog | todo |
-| FindReplaceDialog | todo |
-| EditDialog (blob/image/hex) | todo |
+| Dialog | Status | Notes |
+|--------|--------|-------|
+| EditTableDialog (full wizard) | done | OverlayKind::EditTable (Modal cannot host custom children) |
+| EditIndexDialog | done | OverlayKind::EditIndex |
+| ImportCsvDialog (delimiter, quote, encoding, …) | done | encoding fixed UTF-8 for now |
+| ExportSqlDialog (options) | todo | dump path only |
+| CipherDialog | todo | |
+| PreferencesDialog | todo | |
+| FindReplaceDialog | done | OverlayKind::FindReplace |
+| EditDialog (blob/image/hex) | todo | |
 
 ## Data / engine
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| rusqlite bundled SQLite | done | |
+| rusqlite bundled SQLite | done | + `hooks` for progress_handler |
 | Deferred Write Changes / Revert (txn) | done | BEGIN on open; dirty flag |
 | SQLCipher | todo | |
 | Extensions | todo | |
-| In-memory DB | done | |
+| In-memory DB | done | shared-cache URI |
+| ATTACH DATABASE | done | |
 
 ---
 
 ## Phase map
 
-- **Phase 1 (this):** chrome parity (4 tabs + docks + menubar + Write/Revert + rfd + header sort) — see commits on `feat/sqlitebrowser-example`.
-- **Phase 2:** EditTable/Index wizards, CSV import options, filter-per-column, multi-browse tabs, Find/Replace, pragma form polish.
-- **Phase 3:** SQLCipher, async cancel, frozen columns, conditional formatting, FK nav, projects, JSON export, clipboard CSV.
+- **Phase 1:** chrome parity (4 tabs + docks + menubar + Write/Revert + rfd + header sort).
+- **Phase 2 (this):** EditTable/Index wizards, CSV import options + clipboard, filter-per-column, multi-browse tabs, Find/Replace, multi SQL tabs + Stop interrupt, pragma form, JSON export, Recent, Attach.
+- **Phase 3:** SQLCipher, projects (`.sqbpro`), frozen columns, conditional formatting, FK nav, blob/image editor, ExportSql options, Preferences, Execute Line / toggle comment, Save as view.
 
+## Framework gaps blocking 100%
+
+- `Modal` / `Drawer` accept title+body only — no custom child widgets → wizards use full-window `OverlayKind` panels (functional parity; not pixel-identical dialog chrome).
+- No native multi-document toolbar set (DB / Extra / Project) — single toolbar.
+- Table widget has no frozen-column / conditional-format APIs yet.
+- Blob/image/hex cell editor needs richer media widgets.
