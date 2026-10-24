@@ -49,10 +49,10 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.86"
-      - name: System libs (winit / softbuffer / wgpu)
+      - name: System libs (winit / softbuffer / wgpu / GTK for rfd)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk libgtk-3-dev
       - name: cargo check (workspace, default features)
         run: cargo check --workspace
       - name: cargo test (workspace; GUI tests skip without DISPLAY)
@@ -86,10 +86,10 @@ jobs:
         with:
           toolchain: "1.86"
           components: clippy
-      - name: System libs
+      - name: System libs (incl. GTK for e28 rfd)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev fonts-noto-cjk libgtk-3-dev
       # No GUI event loop — clippy is compile-time only.
       # Soft/core (+ ui) crates: deny warnings. Full workspace: advisory (Office/GPU examples may warn).
       - name: clippy Field Soft / core (-D warnings)
