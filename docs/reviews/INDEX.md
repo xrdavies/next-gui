@@ -14,7 +14,11 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-
+| R-20261024-42aab06eff27-F01 | open | P0 | grok | PR #3 / all | PR #3 | e28 db::copy_database_file / state::save_as | Save As omits committed WAL pages; actual copy helper reproduced missing row | [F01](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f01) | — | — |
+| R-20261024-42aab06eff27-F02 | open | P0 | grok | PR #3 / all | PR #3 | e28 query_sql / SQL dump exporters | SQL export silently caps each table at 500 rows | [F02](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f02) | — | — |
+| R-20261024-42aab06eff27-F03 | open | P0 | grok | PR #3 / all | PR #3 | e28 cell_to_string / SQL dump exporters | SQL export changes empty TEXT to NULL and BLOB bytes to display labels | [F03](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f03) | — | — |
+| R-20261024-2c8b7c24dff7-F01 | open | P1 | grok | shared UI / main | f3765eaf | UI layout_tabs / paint_widget | Inactive tab descendants remain painted; candidate fix exists only in PR #3 | [F01](R-20261024-2c8b7c24dff7.md#r-20261024-2c8b7c24dff7-f01) | — | — |
+| R-20261024-2c8b7c24dff7-F02 | open | P2 | grok | shared renderer / main | d5796554 | render encode_node | Rounded clipping changes original geometry; Soft pixel regression reproduced | [F02](R-20261024-2c8b7c24dff7.md#r-20261024-2c8b7c24dff7-f02) | — | — |
 | R-20261018-ded2d152ebca-F01 | verified | P1 | codex | macOS / non-Linux compile | 2c0c9f06a1db | platform Linux probe helper and test guards | Unguarded X11/Wayland helper broke macOS builds; target guards repaired | [F01](R-20261018-ded2d152ebca.md#r-20261018-ded2d152ebca-f01) | 11bbe29a2a27 | 11bbe29a2a27 |
 | R-20261018-7c9427cf6006-F03 | verified | P1 | grok | shared / macOS observed | P0 exit; a69e733 / 7c9427c contracts; 33700c4 caller migration | e13 map_key / Escape handler | e13 idle Escape exits; consumed Escape keeps examples alive | [F03](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f03) | 2c0c9f06a1db | 11bbe29a2a27 |
 | R-20261018-7c9427cf6006-F04 | verified | P1 | grok | shared GPU / Metal observed | 69e6fb2 | render-gpu surface format/blit | Native Surface colors match tested Soft/readback paths | [F04](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f04) | 33700c4d0fe5 | 0e892e6f7b78 |
@@ -30,7 +34,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
-
+| 2026-10-24 | main `2c8b7c24dff7`; history since `d84207275ff4` | Codex | issues — framework MVP assessment; 2 main findings; 28 isolated Rust tests + 16 tooling tests pass; current remote CI green; local workspace/GUI acceptance unavailable | [Report](R-20261024-2c8b7c24dff7.md) |
+| 2026-10-24 | PR #3 selected paths at `42aab06eff27` | Codex | issues — 3 save/export data-safety findings; WAL helper and value encoding reproduced; source trace proves 500-row cap; full PR GUI/integration not run | [Report](R-20261024-42aab06eff27.md) |
 | 2026-10-19 | `ec880768d8e4..d84207275ff4` | Codex | pass — F02 verified; forced-X11 path inspected and compiled on Linux; headless platform tests, 60 macOS tests, clippy, feature checks and 17 builds/GUI Escape checks pass | [Report](R-20261019-d84207275ff4.md) |
 | 2026-10-19 | `a8163f8b34e7..7aa661f2b219` | Codex | issues — headless/tool guards and worker deadline checked; F02 reopened for mixed Wayland/X11; 60 tests, clippy, macOS checks and 17 builds/GUI Escape checks pass | [Report](R-20261019-7aa661f2b219.md) |
 | 2026-10-18 | `24e0008bf5dc..ded2d152ebca` | Codex | issues — original three behavior findings verified; macOS build regression fixed in 11bbe29; 60 tests, clippy, macOS checks and 17 builds/GUI Escape checks pass; Linux test-environment finding open | [Report](R-20261018-ded2d152ebca.md) |
