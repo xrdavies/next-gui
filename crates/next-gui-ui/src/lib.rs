@@ -5385,17 +5385,17 @@ impl Ui {
                     }
                     _ => None,
                 };
-                columns.and_then(|(columns, style, scroll_x, frozen_cols)| {
+                columns.map(|(columns, style, scroll_x, frozen_cols)| {
                     let mut cx = bounds.x + style.padding;
                     for (i, col) in columns.iter().enumerate() {
                         let ox = if i < frozen_cols { cx } else { cx - scroll_x };
                         let w = col.width.max(1.0);
                         if x >= ox && x < ox + w {
-                            return Some(i);
+                            return i;
                         }
                         cx += w;
                     }
-                    Some(0)
+                    0
                 })
             };
             if let Some(w) = self.widgets.get_mut(&id) {
