@@ -628,7 +628,7 @@ impl Default for TreeStyle {
 pub struct TableColumn {
     /// Header title.
     pub title: String,
-    /// Column width (px). Header click reports column index; resize still stubbed.
+    /// Column width (px). Drag a header's right edge to resize it.
     pub width: f32,
 }
 
@@ -640,6 +640,43 @@ impl TableColumn {
             width,
         }
     }
+}
+
+// Shared geometry keeps painting, sorting and resizing aligned behind frozen columns.
+fn table_column_rects(
+    bounds: Rect,
+    columns: &[TableColumn],
+    padding: f32,
+    scroll_x: f32,
+    frozen: usize,
+) -> Vec<(f32, Rect)> {
+    let left = bounds.x + padding;
+    let frozen_width: f32 = columns.iter().take(frozen).map(|c| c.width.max(1.0)).sum();
+    let mut x = left;
+    columns
+        .iter()
+        .enumerate()
+        .map(|(i, col)| {
+            let width = col.width.max(1.0);
+            let origin = if i < frozen { x } else { x - scroll_x };
+            let clip_left = if i < frozen {
+                left
+            } else {
+                left + frozen_width
+            };
+            let viewport = Rect::new(
+                clip_left,
+                bounds.y,
+                ((bounds.x + bounds.width) - padding - clip_left).max(0.0),
+                bounds.height,
+            );
+            x += width;
+            (
+                origin,
+                Rect::new(origin, bounds.y, width, bounds.height).intersect(&viewport),
+            )
+        })
+        .collect()
 }
 
 /// Style for a basic Table.
@@ -2050,6 +2087,12 @@ impl Widget {
 
 #[derive(Debug, Clone)]
 enum DragState {
+    TableColumn {
+        table: WidgetId,
+        column: usize,
+        start_x: f32,
+        start_width: f32,
+    },
     Splitter {
         splitter: WidgetId,
         start_pos: f32,
@@ -3230,6 +3273,12 @@ impl Ui {
             return self.update_tooltip_hover_xy(x, y);
         };
         match drag {
+            DragState::TableColumn {
+                table,
+                column,
+                start_x,
+                start_width,
+            } => self.set_table_column_width(table, column, start_width + x - start_x),
             DragState::Splitter {
                 splitter,
                 start_pos,
@@ -4237,6 +4286,57 @@ impl Ui {
         self.pending_table_header_click.take()
     }
 
+    /// Current table column widths, including pointer resizing.
+    pub fn table_column_widths(&self, id: WidgetId) -> Option<Vec<f32>> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { columns, .. }) => Some(columns.iter().map(|c| c.width).collect()),
+            _ => None,
+        }
+    }
+
+    /// Resize a column, with a 24 px minimum. Rejects non-finite widths.
+    pub fn set_table_column_width(&mut self, id: WidgetId, column: usize, width: f32) -> bool {
+        if !width.is_finite() {
+            return false;
+        }
+        let Some(Widget {
+            kind: Kind::Table { columns, .. },
+            ..
+        }) = self.widgets.get_mut(&id)
+        else {
+            return false;
+        };
+        let Some(col) = columns.get_mut(column) else {
+            return false;
+        };
+        let width = width.max(24.0);
+        if col.width == width {
+            return false;
+        }
+        col.width = width;
+        let (sx, sy) = self.table_scroll_offset(id).unwrap();
+        self.set_any_scroll(id, sx, sy);
+        true
+    }
+
+    /// Table viewport offset, for preserving position across UI rebuilds.
+    pub fn table_scroll_offset(&self, id: WidgetId) -> Option<(f32, f32)> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table {
+                scroll_x, scroll_y, ..
+            }) => Some((*scroll_x, *scroll_y)),
+            _ => None,
+        }
+    }
+
+    /// Restore a table viewport offset, clamped to its current content.
+    pub fn set_table_scroll_offset(&mut self, id: WidgetId, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() || !self.is_table(id) {
+            return false;
+        }
+        self.set_any_scroll(id, x, y)
+    }
+
     /// Set table row selection.
     pub fn set_table_selected_row(&mut self, id: WidgetId, row: Option<usize>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -4275,9 +4375,17 @@ impl Ui {
     /// Pin the first `n` columns (horizontal freeze).
     pub fn set_table_frozen_cols(&mut self, id: WidgetId, n: usize) {
         if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Table { frozen_cols, .. } = &mut w.kind {
-                *frozen_cols = n;
+            if let Kind::Table {
+                frozen_cols,
+                columns,
+                ..
+            } = &mut w.kind
+            {
+                *frozen_cols = n.min(columns.len());
             }
+        }
+        if let Some((sx, sy)) = self.table_scroll_offset(id) {
+            self.set_table_scroll_offset(id, sx, sy);
         }
     }
 
@@ -4292,10 +4400,8 @@ impl Ui {
 
     /// Horizontal scroll offset for a table.
     pub fn set_table_scroll_x(&mut self, id: WidgetId, sx: f32) {
-        if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Table { scroll_x, .. } = &mut w.kind {
-                *scroll_x = sx.max(0.0);
-            }
+        if let Some((_, sy)) = self.table_scroll_offset(id) {
+            self.set_table_scroll_offset(id, sx, sy);
         }
     }
 
@@ -4363,6 +4469,15 @@ impl Ui {
         }
         let Some(id) = self.focus else {
             return false;
+        };
+        let key = if key == UiKey::Space
+            && matches!(
+                self.widgets.get(&id).map(|w| &w.kind),
+                Some(Kind::TextInput { .. } | Kind::TextArea { .. })
+            ) {
+            UiKey::Char(' ')
+        } else {
+            key
         };
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::TextInput { .. }) => self.key_text_input(id, key),
@@ -5375,24 +5490,33 @@ impl Ui {
             .and_then(|n| scene.get(n).map(|n| n.bounds))
             .unwrap_or_else(Rect::empty);
         let body_top = bounds.y + style.header_height;
+        let Some(Kind::Table {
+            columns,
+            scroll_x,
+            frozen_cols,
+            ..
+        }) = self.widgets.get(&id).map(|w| &w.kind)
+        else {
+            return false;
+        };
+        let cells = table_column_rects(bounds, columns, style.padding, *scroll_x, *frozen_cols);
+        let column_hit = cells
+            .iter()
+            .position(|(_, clip)| !clip.is_empty() && x >= clip.x && x < (clip.x + clip.width));
         if y < body_top {
-            // Header click → column index for sort / resize hooks.
-            let columns = match self.widgets.get(&id).map(|w| &w.kind) {
-                Some(Kind::Table { columns, style, .. }) => (columns.clone(), *style),
-                _ => return true,
-            };
-            let (columns, style) = columns;
-            let mut cx = bounds.x + style.padding;
-            let mut hit = None;
-            for (i, col) in columns.iter().enumerate() {
-                let w = col.width.max(1.0);
-                if x >= cx && x < cx + w {
-                    hit = Some(i);
-                    break;
+            for (i, (origin, clip)) in cells.iter().enumerate() {
+                let edge = origin + columns[i].width;
+                if !clip.is_empty() && edge <= (clip.x + clip.width) && (x - edge).abs() <= 4.0 {
+                    self.drag = Some(DragState::TableColumn {
+                        table: id,
+                        column: i,
+                        start_x: x,
+                        start_width: columns[i].width,
+                    });
+                    return true;
                 }
-                cx += w;
             }
-            if let Some(ci) = hit.or_else(|| columns.first().map(|_| 0)) {
+            if let Some(ci) = column_hit {
                 self.pending_table_header_click = Some((id, ci));
             }
             return true;
@@ -5404,26 +5528,6 @@ impl Ui {
             -1
         };
         if idx >= 0 && (idx as usize) < n_rows {
-            let col_hit = {
-                let columns = match self.widgets.get(&id).map(|w| &w.kind) {
-                    Some(Kind::Table { columns, style, scroll_x, frozen_cols, .. }) => {
-                        Some((columns.clone(), *style, *scroll_x, *frozen_cols))
-                    }
-                    _ => None,
-                };
-                columns.map(|(columns, style, scroll_x, frozen_cols)| {
-                    let mut cx = bounds.x + style.padding;
-                    for (i, col) in columns.iter().enumerate() {
-                        let ox = if i < frozen_cols { cx } else { cx - scroll_x };
-                        let w = col.width.max(1.0);
-                        if x >= ox && x < ox + w {
-                            return i;
-                        }
-                        cx += w;
-                    }
-                    0
-                })
-            };
             if let Some(w) = self.widgets.get_mut(&id) {
                 if let Kind::Table {
                     selected_row,
@@ -5432,7 +5536,7 @@ impl Ui {
                 } = &mut w.kind
                 {
                     *selected_row = Some(idx as usize);
-                    *selected_col = col_hit;
+                    *selected_col = column_hit;
                 }
             }
         }
@@ -11561,36 +11665,36 @@ impl Ui {
             scene.set_visible(chrome, true);
         }
 
-        let frozen_w: f32 = columns.iter().take(frozen_cols).map(|c| c.width).sum();
-        let mut x = bounds.x + style.padding;
+        let cells = table_column_rects(bounds, &columns, style.padding, scroll_x, frozen_cols);
         for (ci, col) in columns.iter().enumerate() {
-            let ox = if ci < frozen_cols { x } else { x - scroll_x };
+            let (ox, clip) = cells[ci];
             let (_, mask) = self.font.rasterize_text(&col.title, style.size, None);
             if let Some(&lab) = aux.get(ci) {
-                let ly =
-                    bounds.y + ((style.header_height - mask.height as f32) * 0.5).max(0.0);
-                let visible = ci < frozen_cols
-                    || ox + col.width > bounds.x + style.padding + frozen_w - 1.0;
-                if visible {
-                    scene.set_bounds(
-                        lab,
-                        Rect::new(ox + 4.0, ly, mask.width as f32, mask.height as f32),
-                    );
-                    scene.set_fill(lab, style.header_fg);
-                    scene.set_mask(
-                        lab,
-                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
-                    );
-                    scene.set_visible(lab, true);
-                } else {
-                    scene.set_visible(lab, false);
-                }
+                let ly = bounds.y + ((style.header_height - mask.height as f32) * 0.5).max(0.0);
+                scene.set_bounds(
+                    lab,
+                    Rect::new(ox + 4.0, ly, mask.width as f32, mask.height as f32),
+                );
+                scene.set_clip(
+                    lab,
+                    Some(clip.intersect(&Rect::new(
+                        bounds.x,
+                        bounds.y,
+                        bounds.width,
+                        style.header_height,
+                    ))),
+                );
+                scene.set_fill(lab, style.header_fg);
+                scene.set_mask(
+                    lab,
+                    Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                );
+                scene.set_visible(lab, !clip.is_empty());
             }
-            x += col.width;
         }
-        let _ = frozen_w;
 
         let body_top = bounds.y + style.header_height;
+        let body_clip = Rect::new(bounds.x, body_top, bounds.width, body_h);
         for slot in 0..count {
             let ri = first + slot;
             let Some(row) = rows.get(ri) else { break };
@@ -11609,6 +11713,7 @@ impl Ui {
             }
             let is_sel = selected_row == Some(ri);
             if let Some(&bg) = aux.get(base) {
+                scene.set_clip(bg, Some(body_clip));
                 scene.set_bounds(
                     bg,
                     Rect::new(
@@ -11627,17 +11732,15 @@ impl Ui {
                     scene.set_visible(bg, false);
                 }
             }
-            let mut cx = bounds.x + style.padding;
             for (ci, col) in columns.iter().enumerate() {
                 let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
-                let fmt = cell_bg
-                    .get(ri)
-                    .and_then(|r| r.get(ci))
-                    .and_then(|c| *c);
-                let ox = if ci < frozen_cols { cx } else { cx - scroll_x };
-                let visible = ci < frozen_cols || ox + col.width > bounds.x + style.padding;
+                let fmt = cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c);
+                let (ox, clip) = cells[ci];
+                let clip = clip.intersect(&body_clip);
+                let visible = !clip.is_empty();
                 // cell background node
                 if let Some(&cbg) = aux.get(base + 1 + ci) {
+                    scene.set_clip(cbg, Some(clip));
                     if visible {
                         if let Some(fill) = fmt {
                             scene.set_bounds(
@@ -11656,6 +11759,7 @@ impl Ui {
                 }
                 let (_, mask) = self.font.rasterize_text(cell, style.size, None);
                 if let Some(&lab) = aux.get(base + 1 + ncols + ci) {
+                    scene.set_clip(lab, Some(clip));
                     let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
                     let max_w = (col.width - 8.0).max(4.0);
                     if visible {
@@ -11686,7 +11790,6 @@ impl Ui {
                         scene.set_visible(lab, false);
                     }
                 }
-                cx += col.width;
             }
         }
 
@@ -17719,7 +17822,7 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Basic text table (header + rows; row select; column resize stubbed).
+    /// Basic text table with row selection and draggable column widths.
     pub fn table(
         &mut self,
         columns: Vec<TableColumn>,
@@ -19979,6 +20082,99 @@ mod tests {
         assert!(ui.pointer_scroll(&scene, lb.x + 10.0, lb.y + 10.0, 0.0, 40.0));
         ui.sync(&mut scene);
         assert!(scene.get(lnode).unwrap().clip.is_some());
+    }
+
+    #[test]
+    fn text_widgets_accept_named_space_keys() {
+        let mut ui = Ui::new();
+        let mut input = WidgetId(0);
+        let mut area = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            input = c.text_input("value");
+            area = c.text_area("SELECT", "SQL", TextAreaStyle::default());
+        });
+        ui.set_focus(Some(input));
+        assert!(ui.key_input(UiKey::Space));
+        assert_eq!(ui.text_input_value(input), Some(" "));
+        ui.set_focus(Some(area));
+        assert!(ui.key_input(UiKey::Space));
+        assert!(ui.key_input(UiKey::Char('1')));
+        assert_eq!(ui.text_area_value(area), Some("SELECT 1"));
+    }
+
+    #[test]
+    fn table_scroll_freeze_resize_and_clipping_share_geometry() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut table = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 400.0,
+                ..ColumnStyle::default()
+            },
+            |c| {
+                table = c.table(
+                    (0..5)
+                        .map(|i| TableColumn::new(format!("long header {i}"), 100.0))
+                        .collect(),
+                    vec![vec!["long cell text".into(); 5]; 20],
+                    TableStyle {
+                        width: 320.0,
+                        height: 160.0,
+                        padding: 0.0,
+                        ..TableStyle::default()
+                    },
+                );
+            },
+        );
+        ui.set_table_frozen_cols(table, 1);
+        ui.set_table_scroll_offset(table, 150.0, 13.0);
+        ui.sync(&mut scene);
+        let w = ui.widgets.get(&table).unwrap();
+        let bounds = scene.get(w.node.unwrap()).unwrap().bounds;
+        let header_height = match &w.kind {
+            Kind::Table { style, .. } => style.header_height,
+            _ => unreachable!(),
+        };
+        // The second column is hidden; the visible third column begins at x + 100.
+        ui.pointer_pressed(&mut scene, bounds.x + 120.0, bounds.y + 10.0);
+        assert_eq!(ui.take_table_header_click(), Some((table, 2)));
+        ui.pointer_pressed(&mut scene, bounds.x + 120.0, bounds.y + header_height + 5.0);
+        assert_eq!(ui.table_selected_col(table), Some(2));
+        ui.pointer_released();
+        ui.pointer_pressed(&mut scene, bounds.x + 50.0, bounds.y + 10.0);
+        assert_eq!(ui.take_table_header_click(), Some((table, 0)));
+        // Resize the visible third column without sorting it.
+        ui.pointer_pressed(&mut scene, bounds.x + 150.0, bounds.y + 10.0);
+        assert!(ui.is_dragging());
+        assert_eq!(ui.take_table_header_click(), None);
+        assert!(ui.pointer_moved(bounds.x + 190.0, bounds.y + 10.0));
+        ui.pointer_released();
+        assert_eq!(ui.table_column_widths(table).unwrap()[2], 140.0);
+        assert!(!ui.set_table_column_width(table, 2, f32::NAN));
+        assert!(!ui.set_table_scroll_offset(table, f32::INFINITY, 0.0));
+        ui.sync(&mut scene);
+        let w = ui.widgets.get(&table).unwrap();
+        let hidden_header = scene.get(w.aux[1]).unwrap();
+        assert!(!hidden_header.visible);
+        let header_clip = scene.get(w.aux[2]).unwrap().clip.unwrap();
+        assert_eq!(header_clip.x, bounds.x + 100.0);
+        assert_eq!(header_clip.width, 90.0);
+        let body_clip = scene.get(w.aux[5 + 1 + 5 + 2]).unwrap().clip.unwrap();
+        assert_eq!(body_clip.x, bounds.x + 100.0);
+        assert_eq!(body_clip.y, bounds.y + header_height);
+        // Encoder must crop the glyph masks, not only their layout bounds.
+        scene.mark_full_dirty(500.0, 600.0);
+        let dirty = scene.take_dirty();
+        let cmds = next_gui_render::encode_scene(&scene, &dirty);
+        for cmd in cmds {
+            if let next_gui_render::DrawCommand::BlitAlpha { x, width, .. } = cmd {
+                let edge = (bounds.x + 100.0) as i32;
+                assert!(x >= edge || x + width as i32 <= edge);
+            }
+        }
+        ui.set_table_column_width(table, 2, -1.0);
+        assert_eq!(ui.table_column_widths(table).unwrap()[2], 24.0);
     }
 
     #[test]
