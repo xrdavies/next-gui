@@ -2,9 +2,11 @@
 
 **Goal:** 100% feature + UI parity with [DB Browser for SQLite](https://sqlitebrowser.org/) (sqlitebrowser / DB4S), with next-gui Theme so the UI can meet or exceed DB4S visually. Items marked `partial` or `todo` are remaining compatibility work. This is an example, not a certified DB4S replacement.
 
-Reference: upstream `src/MainWindow.ui`, EditTableDialog, EditIndexDialog, ImportCsvDialog, ExportSqlDialog, CipherDialog, PreferencesDialog, FindReplaceDialog, PlotDock, EditDialog, TableBrowser.
+Reference: upstream **v3.13.1** `src/MainWindow.ui`, EditTableDialog, EditIndexDialog, ImportCsvDialog, ExportSqlDialog, CipherDialog, PreferencesDialog, FindReplaceDialog, PlotDock, EditDialog, TableBrowser.
 
-Status legend: `done` | `partial` | `todo`
+Status legend: `done` = implemented local subset, not upstream parity or native acceptance; `partial` = known missing or defective behavior; `todo` = absent.
+
+**Current audit:** [2026-10-25 page inventory, framework gaps and reproducible findings](../../docs/reviews/R-20261025-b90d5a7b4143.md). This supersedes earlier completeness claims. Source and Soft framebuffer review covered four main pages, five docks and all 13 overlay kinds; native OS input acceptance remains unavailable.
 
 The earlier “done 101 / partial 0” claim was not supported by acceptance tests. The review below distinguishes implemented local workflows from upstream compatibility. See the 2026-10-25 review in `docs/reviews/INDEX.md`.
 
@@ -14,12 +16,12 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Surface | Status | Notes |
 |---------|--------|-------|
-| Menubar File / Edit / View / Tools / Help | done | Native URL opener on macOS/Linux/Windows; launch failures are reported |
+| Menubar File / Edit / View / Tools / Help | partial | Flat in-window menus; no native menu, nested submenus or application shortcut system. |
 | Main toolbar: New, Open, Write Changes, Revert | done | + Theme (exceeds DB4S); View-toggleable |
-| Extra DB / Project toolbars | done | View → DB / Extra / Project / SQL toolbar toggles |
+| Extra DB / Project toolbars | partial | Local subset; no upstream movable toolbar/overflow behavior. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
-| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | done | View menu toggles; Splitter column |
-| Status bar: path, encoding, read-only, encryption, busy | done | path · RO/RW · modified · busy · UTF-8 · SQLCipher · encrypted |
+| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; no independent floating/docking panes or persisted splitter positions. |
+| Status bar: path, encoding, read-only, encryption, busy | partial | Encoding is hardcoded UTF-8 instead of read from PRAGMA encoding. |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S; Preferences default theme |
 
@@ -44,22 +46,22 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Write Changes | done | COMMIT + re-BEGIN |
 | Revert Changes | done | ROLLBACK + re-BEGIN |
 | Compact Database (VACUUM) | done | |
-| Exit | done | |
+| Exit | partial | DB writes guarded; unsaved SQL/editor drafts are not guarded (F02). |
 | Open Project… | partial | Example JSON only; Unicode and malformed-input validation; upstream DB4S XML is rejected |
 | Save Project / Save Project As… | partial | Example JSON; all browse tabs, filters/sort/pages plus SQL tabs/docks/toolbars; relative database paths resolved from project; no upstream XML compatibility |
-| Close Project | done | |
+| Close Project | partial | Clears project path only; no unsaved project/SQL state prompt (F02). |
 | Save All | done | Prompt for project destination if missing; cancellation has no fallback write; commit DB and save JSON project |
-| Print Schema… | done | `schema_report` → `rfd` save SQL/text |
+| Print Schema… | partial | Exports schema text to a file; no print dialog or print preview. |
 
 ## Edit menu
 
 | Action | Status | Notes |
 |--------|--------|-------|
 | Create Table… | partial | Basic column PK/NN/Unique/Default; full DB4S constraint editor remains |
-| Create Index… | done | EditIndex overlay (name/table/cols/unique) |
+| Create Index… | partial | Basic name/table/raw column SQL/unique; no structured order/expression/partial-index editor. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; definition changes/reordering and expression/partial indexes require explicit SQL |
 | Delete Object… | done | confirm + DROP |
-| Preferences… | done | font size / default theme / confirm drops / CSV delim / frozen default → `~/.config/e28_db_browser/prefs.json` |
+| Preferences… | partial | Five options only; project does not retain conditional rules/plot settings; canceled frozen-column edits can leak (F11). |
 
 ## View menu
 
@@ -96,9 +98,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | wizards + Modify wired |
-| Schema tree Tables/Views/Indexes/Triggers | done | |
+| Schema tree Tables/Views/Indexes/Triggers | partial | Main schema only; no attached/temp schema navigation, column/detail tree or object context actions. |
 | Object SQL preview | done | |
-| Run DDL | done | |
+| Run DDL | partial | Synchronous execution on UI thread; long DDL can block interaction. |
 | Print schema | done | File → Print Schema… |
 
 ## Browse Data tab
@@ -107,47 +109,47 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | Table selector | done | |
 | Filter / WHERE | done | |
-| Data grid | done | 500-row pages with Prev/Next; full exports independent of visible page |
-| Header-click sort | done | next-gui-ui `take_table_header_click` |
-| Filter-per-column | done | row of inputs → LIKE in WHERE |
-| Multi browse tabs | done | + Tab / tab buttons |
+| Data grid | partial | 500-row pages; shared column resize/clip/scroll fix added. No range selection, bulk copy/paste, visible scrollbars, inline editor, hiding/reorder or total-count navigation. |
+| Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort only, no clear/multi-sort UI. |
+| Filter-per-column | partial | LIKE-substring inputs in a separate fixed row; not aligned with resized/scrolled columns, no DB4S operator parser. |
+| Multi browse tabs | partial | Add/switch only; no close, reorder or overflow. Many tabs exceed available width. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
-| Edit cell → Edit Cell dock | done | Raw selected values; Hex writes BLOB, empty text stays text, unchanged NULL/numbers retain type; views/WITHOUT ROWID/shadowed rowid not edited |
+| Edit cell → Edit Cell dock | partial | Typed reads for rowid tables; edited numeric values become TEXT on no-affinity/BLOB columns, NULL/empty distinction cannot be chosen (F06). |
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
-| Conditional formatting | done | Cond Format overlay + true per-cell **background** fill (`set_table_cell_bg`) |
-| FK click-navigation | done | FK → opens parent browse tab with WHERE |
-| Record / form view | done | Prev/Next and field buttons select Edit Cell dock; no non-saving editable fields |
+| Conditional formatting | partial | Background only; rules global by column name, cannot edit/remove, not saved in projects (F11). |
+| FK click-navigation | partial | Fails on implicit parent PK; ignores composite-key grouping and typed values (F05). |
+| Record / form view | partial | Page-local record navigation; fields are unscrollable rows and overflow for wide schemas (F10). |
 
 ## Edit Pragmas tab
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Scroll form of pragmas | done | labeled rows: Select/Switch/TextInput |
-| Save / Apply pragmas | done | Save Pragmas button |
+| Scroll form of pragmas | partial | Actually a fixed Column with ten PRAGMA keys; no scroll container or full upstream setting list. |
+| Save / Apply pragmas | partial | auto_vacuum may remain unchanged while status says applied (F03); values need read-back validation. |
 | Bool / Select editors | done | journal_mode / synchronous / FK switches |
 
 ## Execute SQL tab
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| SQL editor | done | Unicode caret and IME composition/commit/cancel; native input-method acceptance still pending |
-| Execute / message / results table | done | |
-| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | done | + Execute Line / Toggle -- / Save as VIEW |
-| Multi SQL tabs | done | SQL 1 / New Tab + tab strip |
+| SQL editor | partial | Shared plain TextArea: no pointer caret placement, Select All/selection, scrolling, undo/redo, syntax, completion or line numbers (F01); Space fixed. |
+| Execute / message / results table | partial | Only final statement preview, at most 500 displayed rows; one global result across SQL tabs (F09). |
+| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Actions exist; Open SQL replaces unsaved draft without prompt, unsupported shortcuts ignored (F02). |
+| Multi SQL tabs | partial | Add/switch only; drafts separated, results not; no close/reorder/overflow or dirty markers. |
 | Find / Replace | partial | Text search/replace works; no visual match selection, current replacement is first match |
 | Async query + cancel | done | Live connection moves to worker; Write/Revert/keys/ATTACH shared; completion polled on redraw; Stop interrupts |
-| Results → CSV / JSON / Save as view | done | Full last-result snapshot export without rerunning SQL; CSV/JSON buttons below editor; Save as VIEW wired |
-| Toggle comment | done | `--` toggle on all lines |
+| Results → CSV / JSON / Save as view | partial | Full snapshot export works; Save as VIEW uses current editor and a fixed name, not the displayed result query (F09). |
+| Toggle comment | partial | All physical lines only; no selected-block handling. Removing comments strips all leading hyphens, not exactly two. |
 | Execute current line | done | Uses Unicode caret position; never replaces editor contents; one physical line |
 
 ## Docks
 
 | Dock | Status | Notes |
 |------|--------|-------|
-| Edit Database Cell | done | Text / Hex / JSON / Image modes; Image soft-blits PNG/JPEG via `image` crate |
-| DB Schema | done | compact schema list |
-| SQL Log | done | |
-| Plot | done | Trend from numeric column |
+| Edit Database Cell | partial | Single-line TextInput for Text/Hex/JSON; no Set NULL, import/export, XML/RTL/evaluation or full binary editor (F06). |
+| DB Schema | partial | Flat main-schema list; no column tree, filter or SQL insertion. |
+| SQL Log | partial | Last 200 manually logged strings; async batches log first line only, no all-SQL trace/category filters/export (F13). |
+| Plot | partial | One numeric-column trend, first 64 samples; text becomes zero and query errors are swallowed (F07); no X/Y1/Y2 or query result source. |
 | Remote | partial | Local path list; cloud protocol/auth/sync not implemented |
 
 ## Dialogs
@@ -155,13 +157,13 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Dialog | Status | Notes |
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
-| EditIndexDialog | done | OverlayKind::EditIndex via `dialog_panel` |
+| EditIndexDialog | partial | Basic raw columns entry/unique; no partial clause or structured column order UI. |
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | Strict UTF-8 only; multiline quoting supported |
-| ExportSqlDialog (options) | done | structure / data / DROP IF EXISTS / FK |
-| CipherDialog | done | Unlock existing encrypted file or export encrypted copy; no in-place rekey |
-| PreferencesDialog | done | OverlayKind::Preferences + persisted prefs |
-| FindReplaceDialog | done | OverlayKind::FindReplace |
-| EditDialog (blob/image/hex) | done | Text/Hex/JSON/Image; PNG/JPEG thumbnails in Edit Cell dock |
+| ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
+| CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
+| PreferencesDialog | partial | Only font/theme/drop confirmation/CSV delimiter/frozen count; full upstream preferences absent. |
+| FindReplaceDialog | partial | Find does not select/show match; Replace ignores the found position (F04); no regex/case/word/backwards/selection controls. |
+| EditDialog (blob/image/hex) | partial | Basic text/hex/JSON and 24-cell mosaic image preview; no full raster/image controls (F12). |
 | Load Extension | done | OverlayKind::LoadExtension |
 | About | done | OverlayKind::About |
 
@@ -171,7 +173,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | rusqlite bundled SQLite | done | + `hooks` + `load_extension` + `bundled-sqlcipher-vendored-openssl` |
 | Deferred Write Changes / Revert (txn) | done | BEGIN on open; dirty flag |
-| SQLCipher | done | linked (`SQLITE_HAS_CODEC`); CipherDialog apply + encrypt export; tests green |
+| SQLCipher | partial | Core unlock/encrypted export tested; upstream compatibility controls/rekey/decrypt absent. |
 | Extensions | done | Load Extension… |
 | In-memory DB | done | Isolated connection, shared with worker by ownership transfer |
 | ATTACH DATABASE | partial | Usable from SQL on the live connection; attached-schema tree/browse selector remains |
@@ -183,7 +185,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - **Phase 1:** chrome parity (4 tabs + docks + menubar + Write/Revert + rfd + header sort).
 - **Phase 2:** EditTable/Index wizards, CSV import options + clipboard, filter-per-column, multi-browse tabs, Find/Replace, multi SQL tabs + Stop interrupt, pragma form, JSON export, Recent, Attach.
 - **Phase 3:** SQLCipher UI, `.sqbpro` projects, frozen columns + conditional formatting + FK nav, Edit Cell Text/Hex/JSON/Image, ExportSql options, Preferences, Execute Line / toggle comment / Save as VIEW, multi toolbar View toggles, `FlexBuilder::dialog_panel`.
-- **Phase 4:** Save All, Load Extension, Help URLs/About, Print Schema, Record/form view, Remote dock, SQLCipher linked build, true cell background fills, Edit Cell image blit (`image` 0.24), overlays on `dialog_panel`, status bar RO/encoding/encryption/busy polished.
+- **Phase 4:** Save All, Load Extension, Help URLs/About, Print Schema, Record/form view, Remote dock, SQLCipher linked build, true cell background fills, Edit Cell image decode (`image` 0.24) and shared Image preview, overlays on `dialog_panel`, status bar RO/encoding/encryption/busy polished.
 - **Phase 4b (visual QA):** Table aux stride bug (only last row painted); Tabs recursive hide (Pragma bleed); Menu popup width; light clear/menubar; Remote dock default on; SQL log ellipsis; Plot clip/padding; Edit Cell col sync; Form toggle; Comment button label.
 
 ## Framework / external notes
@@ -191,7 +193,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - Overlays use `FlexBuilder::dialog_panel` (title + body + OK/Cancel) — dual Modal chrome reduced.
 - Table `cell_bg` aux nodes provide true per-cell background fills.
 - SQLCipher linked via `rusqlite` feature `bundled-sqlcipher-vendored-openssl` (verified `sqlcipher_linked` + `sqlcipher_key_roundtrip` tests).
-- Image soft blit uses `image` 0.24 (0.25 needs rustc ≥1.88; host 1.86).
+- Image decoding uses `image` 0.24; rendering uses next-gui `Image`, currently a 24-cell mosaic rather than a full RGBA blit (F12).
 - Remote currently means a local-path connection list. Cloud compatibility remains unimplemented; no claim about the upstream service license or protocol is made.
 
 ## 2026-10-25 verification and boundaries
@@ -211,3 +213,10 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - Toolbar Vacuum, Integrity and Save Project are connected. Dialog actions fit above the status bar. Confirm-drops preference is respected.
 - TextArea accepts IME preedit/commit/cancel through the shared UI API. Secret inputs remain masked and cannot copy their value.
 - JSON projects retain all browse tabs and reject saving an in-memory database until Save As gives it a durable path.
+
+## Framework completion started in this audit
+
+- `cb727d7`: shared Table header-edge resizing; scroll/frozen-aware sorting and hit tests; separate cell/header/body clipping; width and bounded viewport getter/setters; named Space input for TextInput/TextArea.
+- `b90d5a7`: e28 keeps widths and viewport in rebuilds/projects, preserves wizard column definitions on selection, and rejects unsupported command chords instead of inserting letters.
+- Remaining framework gaps and application ownership are tracked as NG-01 through NG-10 in the linked audit. No new dependency was added.
+- Remote UI is a local-path list. [Upstream announced DBHub.io shutdown for February 2025](https://sqlitebrowser.org/blog/dbhub-shutdown/); restoring that hosted service is not an actionable parity target without a replacement service.

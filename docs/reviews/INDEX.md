@@ -14,6 +14,22 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
+| R-20261025-b90d5a7b4143-F01 | open | P1 | grok | e28 / shared | existing branch | see report | 长 SQL 无法正常定位、滚动和选区 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | — | — |
+| R-20261025-b90d5a7b4143-F02 | open | P1 | grok | e28 / shared | existing branch | see report | 退出和打开 SQL 文件会丢弃未保存草稿 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | — | — |
+| R-20261025-b90d5a7b4143-F03 | open | P1 | grok | e28 / shared | existing branch | see report | PRAGMA 未生效却显示应用成功 | [F03](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f03) | — | — |
+| R-20261025-b90d5a7b4143-F04 | open | P1 | grok | e28 / shared | existing branch | see report | Replace 替换第一处，而不是 Find Next 找到的匹配 | [F04](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f04) | — | — |
+| R-20261025-b90d5a7b4143-F05 | open | P1 | grok | e28 / shared | existing branch | see report | 合法的隐式/复合外键导航失败或返回错误父记录 | [F05](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f05) | — | — |
+| R-20261025-b90d5a7b4143-F06 | open | P1 | grok | e28 / shared | existing branch | see report | 单元格类型会改变，错误的 Hex 草稿会被悄悄丢弃 | [F06](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f06) | — | — |
+| R-20261025-b90d5a7b4143-F07 | open | P1 | grok | e28 / shared | existing branch | see report | Plot 把文本画成 0 并隐藏数据库错误 | [F07](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f07) | — | — |
+| R-20261025-b90d5a7b4143-F08 | open | P1 | grok | e28 / shared | existing branch | see report | CSV 导入新表后保留旧表过滤条件，结果为空 | [F08](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f08) | — | — |
+| R-20261025-b90d5a7b4143-F09 | open | P1 | grok | e28 / shared | existing branch | see report | SQL Tab 共用结果且 Save as VIEW 与显示结果不绑定 | [F09](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f09) | — | — |
+| R-20261025-b90d5a7b4143-F10 | open | P1 | grok | e28 / shared | existing branch | see report | 窄窗口与宽表/多 Tab 的控件超出可见区域 | [F10](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f10) | — | — |
+| R-20261025-b90d5a7b4143-F11 | open | P2 | grok | e28 / shared | existing branch | see report | 条件格式、偏好设置与项目状态不一致 | [F11](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f11) | — | — |
+| R-20261025-b90d5a7b4143-F12 | open | P2 | grok | e28 / shared | existing branch | see report | 图片预览是 24 格马赛克，无法检查原始图像 | [F12](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f12) | — | — |
+| R-20261025-b90d5a7b4143-F13 | open | P2 | grok | e28 / shared | existing branch | see report | SQL Log 不能反映实际执行的完整 SQL | [F13](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f13) | — | — |
+| R-20261025-b90d5a7b4143-F14 | verified | P1 | codex | e28 / shared | existing branch | see report | Table resize/clip/hit and named Space repaired | [F14](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f14) | cb727d7 | b90d5a7b4143 |
+| R-20261025-b90d5a7b4143-F15 | verified | P1 | codex | e28 / shared | existing branch | see report | Grid rebuild, wizard column drafts and literal sort repaired | [F15](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f15) | b90d5a7 | b90d5a7b4143 |
 | R-20261024-42aab06eff27-F01 | verified | P0 | grok | PR #3 / all | PR #3 | e28 db::copy_database_file / state::save_as | Save As omits committed WAL pages; actual copy helper reproduced missing row | [F01](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f01) | efefc068d21b | efefc068d21b |
 | R-20261024-42aab06eff27-F02 | verified | P0 | grok | PR #3 / all | PR #3 | e28 query_sql / SQL dump exporters | SQL export silently caps each table at 500 rows | [F02](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f02) | efefc068d21b | efefc068d21b |
 | R-20261024-42aab06eff27-F03 | verified | P0 | grok | PR #3 / all | PR #3 | e28 cell_to_string / SQL dump exporters | SQL export changes empty TEXT to NULL and BLOB bytes to display labels | [F03](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f03) | efefc068d21b | efefc068d21b |
