@@ -133,6 +133,8 @@ mod tests {
         browse.filter = "id>1".into();
         browse.offset = 500;
         browse.order_col = Some("name".into());
+        browse.column_widths = vec![100.0, 180.0];
+        browse.scroll = (15.0, 40.0);
         let project = ProjectFile {
             db_path: "数据库.db".into(),
             browse_tabs: vec![browse],
@@ -146,6 +148,8 @@ mod tests {
         assert_eq!(restored.browse_tabs[0].offset, 500);
         assert_eq!(restored.browse_tabs[0].order_col.as_deref(), Some("name"));
         assert_eq!(restored.browse_tabs[0].filter, "id>1");
+        assert_eq!(restored.browse_tabs[0].column_widths, vec![100.0, 180.0]);
+        assert_eq!(restored.browse_tabs[0].scroll, (15.0, 40.0));
         fs::write(&path, "<sqlb_project/>").unwrap();
         assert!(ProjectFile::load(&path).is_err());
         fs::write(&path, "{}").unwrap();

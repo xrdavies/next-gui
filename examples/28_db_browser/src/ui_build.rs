@@ -1637,6 +1637,9 @@ pub fn build_ui(
     if ov_cipher_pass.0 != 0 {
         ui.set_text_input_secret(ov_cipher_pass, true);
     }
+    if ov_list.0 != 0 {
+        ui.set_list_selected(ov_list, Some(state.wizard_col_sel));
+    }
     if state.overlay.is_none() {
         let _ = ui.set_tabs_selected(tabs, state.tab.index());
         if docks_on && dock_tabs.0 != 0 {
@@ -1664,6 +1667,18 @@ pub fn build_ui(
         if browse_table.0 != 0 {
             ui.set_table_frozen_cols(browse_table, state.frozen_cols);
             ui.set_table_cell_bg(browse_table, state.cell_format_colors());
+            for (column, width) in state.browse().column_widths.iter().enumerate() {
+                ui.set_table_column_width(browse_table, column, *width);
+            }
+            let (x, y) = state.browse().scroll;
+            ui.set_table_scroll_offset(browse_table, x, y);
+        }
+        if sql_table.0 != 0 {
+            for (column, width) in state.sql_column_widths.iter().enumerate() {
+                ui.set_table_column_width(sql_table, column, *width);
+            }
+            let (x, y) = state.sql_scroll;
+            ui.set_table_scroll_offset(sql_table, x, y);
         }
     }
 

@@ -80,6 +80,7 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
                 return Some(UiKey::SelectAll);
             }
         }
+        return None;
     }
     if matches!(key, KeyCode::Tab) {
         return Some(if modifiers.shift {
@@ -427,6 +428,30 @@ impl Demo {
                     state.open_create_table_wizard();
                     MainTab::Structure
                 }
+                "index" => {
+                    state.open_create_index_wizard();
+                    MainTab::Structure
+                }
+                "csv" | "paste" | "attach" | "find" | "extension" => {
+                    state.overlay = Some(match tab.as_str() {
+                        "csv" => OverlayKind::ImportCsv,
+                        "paste" => OverlayKind::PasteCsv,
+                        "attach" => OverlayKind::Attach,
+                        "find" => OverlayKind::FindReplace,
+                        _ => OverlayKind::LoadExtension,
+                    });
+                    MainTab::Structure
+                }
+                "schema" => {
+                    state.dock_focus = DockKind::Schema;
+                    MainTab::Structure
+                }
+                "frozen" => {
+                    state.frozen_cols = 1;
+                    state.browse_mut().column_widths = vec![240.0; 20];
+                    state.browse_mut().scroll = (300.0, 0.0);
+                    MainTab::Browse
+                }
                 "cipher" | "encrypt" => {
                     state.overlay = Some(OverlayKind::Cipher);
                     MainTab::Structure
@@ -533,6 +558,15 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        if let Some(widths) = self.ui.table_column_widths(self.ids.browse_table) {
+            self.state.browse_mut().column_widths = widths;
+            self.state.browse_mut().scroll =
+                self.ui.table_scroll_offset(self.ids.browse_table).unwrap();
+        }
+        if let Some(widths) = self.ui.table_column_widths(self.ids.sql_table) {
+            self.state.sql_column_widths = widths;
+            self.state.sql_scroll = self.ui.table_scroll_offset(self.ids.sql_table).unwrap();
+        }
         if self.ids.ddl_area.0 != 0 {
             if let Some(v) = self.ui.text_area_value(self.ids.ddl_area) {
                 self.state.ddl_draft = v.to_string();
@@ -669,6 +703,7 @@ impl Demo {
                         self.state.wizard_col_sel = i;
                         self.last_wizard_list = Some(i);
                         self.rebuild = true;
+                        return;
                     }
                 }
                 self.flush_wizard_col();
@@ -2062,6 +2097,8 @@ impl Demo {
                 let tab = self.state.browse_mut();
                 if tab.table.as_ref() != Some(name) {
                     tab.col_filters.clear();
+                    tab.column_widths.clear();
+                    tab.scroll = (0.0, 0.0);
                     tab.result = None;
                     tab.offset = 0;
                 }
@@ -2152,10 +2189,6 @@ impl Demo {
             let Some(col_name) = res.columns.get(col_idx).cloned() else {
                 return;
             };
-            let col_name = col_name
-                .trim_end_matches(" ▲")
-                .trim_end_matches(" ▼")
-                .to_string();
             {
                 let tab = self.state.browse_mut();
                 tab.offset = 0;
@@ -2591,8 +2624,8 @@ impl AppCallbacks for Demo {
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
         if self.state.sql_busy {
+            self.snapshot_inputs();
             if self.state.poll_sql_job() {
-                self.snapshot_inputs();
                 self.rebuild = true;
                 self.do_rebuild();
             } else {
@@ -2649,6 +2682,95 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn table_wizard_selection_keeps_each_columns_definition() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.open_create_table_wizard();
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_col_name, "record_id");
+        demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.wizard_cols[0].name, "record_id");
+        assert_eq!(demo.state.wizard_cols[1].name, "name");
+        assert_eq!(demo.state.wizard_cols[1].type_name, "TEXT");
+        assert!(!demo.state.wizard_cols[1].pk);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.list_selected(demo.ids.ov_list), Some(1));
+        assert_eq!(demo.ui.text_input_value(demo.ids.ov_col_name), Some("name"));
+    }
+
+    #[test]
+    fn command_shortcuts_do_not_insert_literal_letters() {
+        let command = Modifiers {
+            meta: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(map_key(KeyCode::Char('z'), command), None);
+        assert_eq!(map_key(KeyCode::Char('s'), command), None);
+        assert_eq!(map_key(KeyCode::Char('a'), command), Some(UiKey::SelectAll));
+        assert_eq!(
+            map_key(KeyCode::Space, Modifiers::default()),
+            Some(UiKey::Space)
+        );
+    }
+
+    #[test]
+    fn browse_rebuild_preserves_resized_columns_and_viewport() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(
+            "CREATE TABLE t(a, b, c, d, e, f); WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO t SELECT x,x,x,x,x,x FROM n; COMMIT; BEGIN;"
+        ).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.refresh_browse().unwrap();
+        demo.state.tab = MainTab::Browse;
+        demo.do_rebuild();
+        for column in 0..6 {
+            demo.ui
+                .set_table_column_width(demo.ids.browse_table, column, 240.0);
+        }
+        demo.ui
+            .set_table_scroll_offset(demo.ids.browse_table, 150.0, 200.0);
+        demo.snapshot_inputs();
+        demo.state.browse_mut().sel_row = Some(10);
+        demo.do_rebuild();
+        assert_eq!(
+            demo.ui.table_column_widths(demo.ids.browse_table),
+            Some(vec![240.0; 6])
+        );
+        assert_eq!(
+            demo.ui.table_scroll_offset(demo.ids.browse_table),
+            Some((150.0, 200.0))
+        );
+
+        // Sorting uses the SQL identifier, not the decorated heading label.
+        demo.state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE TABLE arrows(\"score ▲\"); INSERT INTO arrows VALUES(2),(1);")
+            .unwrap();
+        demo.state.browse_mut().table = Some("arrows".into());
+        demo.state.browse_mut().result = None;
+        demo.state.browse_mut().column_widths.clear();
+        demo.state.browse_mut().scroll = (0.0, 0.0);
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        let bounds = demo
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table))
+            .unwrap()
+            .bounds;
+        demo.ui
+            .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
+        demo.poll_header_sort();
+        assert_eq!(demo.state.browse().order_col.as_deref(), Some("score ▲"));
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "1");
+    }
 
     #[test]
     fn record_dialog_buttons_fit_and_drop_preference_is_applied() {

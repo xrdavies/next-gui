@@ -122,6 +122,10 @@ pub struct BrowseTabState {
     pub offset: usize,
     pub order_col: Option<String>,
     pub order_desc: bool,
+    #[serde(default)]
+    pub column_widths: Vec<f32>,
+    #[serde(default)]
+    pub scroll: (f32, f32),
     #[serde(skip)]
     pub result: Option<QueryResult>,
     #[serde(skip)]
@@ -143,6 +147,8 @@ impl BrowseTabState {
             offset: 0,
             order_col: None,
             order_desc: false,
+            column_widths: Vec::new(),
+            scroll: (0.0, 0.0),
             result: None,
             rowids: Vec::new(),
             sel_row: None,
@@ -230,6 +236,8 @@ pub struct AppState {
     pub sql_tabs: Vec<String>,
     pub sql_tab_idx: usize,
     pub sql_result: Option<QueryResult>,
+    pub sql_column_widths: Vec<f32>,
+    pub sql_scroll: (f32, f32),
     pub sql_message: String,
     pub sql_busy: bool,
     pub sql_cancel: Arc<AtomicBool>,
@@ -417,6 +425,8 @@ impl AppState {
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
             sql_tab_idx: 0,
             sql_result: None,
+            sql_column_widths: Vec::new(),
+            sql_scroll: (0.0, 0.0),
             sql_message: "Ready — Execute SQL to see results.".into(),
             sql_busy: false,
             sql_cancel: Arc::new(AtomicBool::new(false)),
@@ -1634,6 +1644,8 @@ impl AppState {
     }
 
     fn finish_sql_result(&mut self, result: Result<QueryResult, String>) -> Result<(), String> {
+        self.sql_column_widths.clear();
+        self.sql_scroll = (0.0, 0.0);
         let _ = self.refresh_schema();
         let _ = self.refresh_browse();
         match result {
