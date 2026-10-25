@@ -4,10 +4,10 @@ use next_gui_layout::{Axis, CrossAlign};
 use next_gui_scene::{Color, Scene};
 use next_gui_text::Font;
 use next_gui_ui::{
-    AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, ListStyle, MenuItem, MenuStyle, ModalStyle,
-    PanelStyle, RowStyle, SelectStyle, SplitterStyle, ImageStyle, StatusBarStyle, SwitchStyle, TableColumn,
-    TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme, ToolbarStyle, TreeNode,
-    TreeStyle, TrendStyle, Ui, WidgetId,
+    AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, ImageStyle, ListStyle, MenuItem,
+    MenuStyle, ModalStyle, PanelStyle, RowStyle, SelectStyle, SplitterStyle, StatusBarStyle,
+    SwitchStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme,
+    ToolbarStyle, TreeNode, TreeStyle, TrendStyle, Ui, WidgetId,
 };
 
 use crate::db::ObjectKind;
@@ -102,6 +102,8 @@ pub struct BuiltUi {
     pub browse_select: WidgetId,
     pub browse_filter: WidgetId,
     pub btn_browse_go: WidgetId,
+    pub btn_page_prev: WidgetId,
+    pub btn_page_next: WidgetId,
     pub btn_add_row: WidgetId,
     pub btn_del_row: WidgetId,
     pub browse_table: WidgetId,
@@ -120,6 +122,8 @@ pub struct BuiltUi {
     pub btn_sql_save: WidgetId,
     pub btn_sql_find: WidgetId,
     pub btn_sql_stop: WidgetId,
+    pub btn_sql_csv: WidgetId,
+    pub btn_sql_json: WidgetId,
     pub sql_table: WidgetId,
     pub sql_alert: WidgetId,
     pub dock_tabs: WidgetId,
@@ -136,6 +140,8 @@ pub struct BuiltUi {
     pub modal: WidgetId,
     // Overlay widgets
     pub ov_name: WidgetId,
+    pub insert_values: Vec<WidgetId>,
+    pub insert_modes: Vec<WidgetId>,
     pub ov_list: WidgetId,
     pub ov_col_name: WidgetId,
     pub ov_col_type: WidgetId,
@@ -193,6 +199,8 @@ pub struct BuiltUi {
     pub edit_meta: WidgetId,
     pub toolbar_extra: WidgetId,
     pub toolbar_project: WidgetId,
+    pub btn_project_save: WidgetId,
+    pub btn_integrity: WidgetId,
     pub ov_ext_path: WidgetId,
     pub ov_ext_entry: WidgetId,
     pub btn_form_view: WidgetId,
@@ -267,10 +275,20 @@ fn result_columns(cols: &[String], fallback: &[&str]) -> Vec<TableColumn> {
     }
     let n = cols.len().max(1);
     let w = (720.0 / n as f32).clamp(72.0, 200.0);
-    cols.iter().map(|c| TableColumn::new(c.clone(), w)).collect()
+    cols.iter()
+        .map(|c| TableColumn::new(c.clone(), w))
+        .collect()
 }
 
-pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppState) -> BuiltUi {
+pub fn build_ui(
+    font: Font,
+    mut theme: Theme,
+    width: u32,
+    height: u32,
+    state: &AppState,
+) -> BuiltUi {
+    theme.typography.input = state.prefs.font_size;
+    theme.typography.button_sm = state.prefs.font_size;
     let mut scene = Scene::new();
     let mut ui = Ui::with_font(font);
     ui.set_theme(theme);
@@ -301,6 +319,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut browse_select = z;
     let mut browse_filter = z;
     let mut btn_browse_go = z;
+    let mut btn_page_prev = z;
+    let mut btn_page_next = z;
     let mut btn_add_row = z;
     let mut btn_del_row = z;
     let mut browse_table = z;
@@ -319,6 +339,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut btn_sql_save = z;
     let mut btn_sql_find = z;
     let mut btn_sql_stop = z;
+    let mut btn_sql_csv = z;
+    let mut btn_sql_json = z;
     let mut sql_table = z;
     let mut sql_alert = z;
     let mut dock_tabs = z;
@@ -333,6 +355,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut chart = z;
     let mut status = z;
     let mut ov_name = z;
+    let mut insert_values = Vec::new();
+    let mut insert_modes = Vec::new();
     let mut ov_list = z;
     let mut ov_col_name = z;
     let mut ov_col_type = z;
@@ -390,6 +414,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
     let mut edit_meta = z;
     let mut toolbar_extra = z;
     let mut toolbar_project = z;
+    let mut btn_project_save = z;
+    let mut btn_integrity = z;
     let mut ov_ext_path = z;
     let mut ov_ext_entry = z;
     let mut btn_form_view = z;
@@ -467,7 +493,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         } else {
             p.clone()
         };
-        file_items.push(MenuItem::new(mid::FILE_RECENT_BASE + i as u64, format!("Recent: {short}")));
+        file_items.push(MenuItem::new(
+            mid::FILE_RECENT_BASE + i as u64,
+            format!("Recent: {short}"),
+        ));
     }
     file_items.push(MenuItem::new(mid::FILE_PROJECT_OPEN, "Open Project…"));
     file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE, "Save Project"));
@@ -567,7 +596,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             extra_tb.height = 30.0;
             col.toolbar(extra_tb, |tb| {
                 toolbar_extra = tb.tool_button("Vacuum");
-                tb.tool_button("Integrity");
+                btn_integrity = tb.tool_button("Integrity");
                 tb.text_styled("Extra DB", theme.colors.text_secondary, 11.0);
             });
         }
@@ -576,7 +605,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             proj_tb.height = 30.0;
             col.toolbar(proj_tb, |tb| {
                 toolbar_project = tb.tool_button("Open Project");
-                tb.tool_button("Save Project");
+                btn_project_save = tb.tool_button("Save Project");
                 let label = state
                     .project_path
                     .as_deref()
@@ -589,8 +618,9 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             // —— Overlay wizard panel ——
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
-            panel.height = content_h;
+            panel.height = content_h - 50.0;
             let title = match kind {
+                OverlayKind::InsertRow => "New Record",
                 OverlayKind::EditTable => {
                     if state.wizard_table_original.is_some() {
                         "Modify Table"
@@ -609,7 +639,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 OverlayKind::PasteCsv => "Import CSV from Clipboard",
                 OverlayKind::FindReplace => "Find / Replace",
                 OverlayKind::Attach => "Attach Database",
-                OverlayKind::Cipher => "Set Encryption (SQLCipher)",
+                OverlayKind::Cipher => if state.cipher_open_path.is_some() { "Open Encrypted Database" } else { "Export Encrypted Copy" },
                 OverlayKind::Preferences => "Preferences",
                 OverlayKind::ExportSql => "Export Database to SQL",
                 OverlayKind::CondFormat => "Conditional Formatting",
@@ -618,7 +648,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             };
             let mut ov_col = ColumnStyle::from_theme(&theme);
             ov_col.width = shell_w - 40.0;
-            ov_col.height = content_h - 40.0;
+            ov_col.height = panel.height - panel.title_height - 68.0;
             ov_col.padding = 8.0;
             ov_col.gap = 6.0;
             ov_col.cross_align = CrossAlign::Start;
@@ -650,7 +680,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 OverlayKind::Attach => "Attach",
                 OverlayKind::ExportSql => "Export…",
                 OverlayKind::CondFormat => "Add Rule",
-                OverlayKind::Cipher => "Apply Key",
+                OverlayKind::Cipher => if state.cipher_open_path.is_some() { "Unlock" } else { "Export…" },
                 OverlayKind::LoadExtension => "Load",
                 _ => "Save",
             };
@@ -658,6 +688,20 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                 col.dialog_panel(title, panel, primary, "Cancel", |p| {
                 p.column(ov_col, |c| {
                     match kind {
+                        OverlayKind::InsertRow => {
+                            let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+                            scroll.width = shell_w - 64.0;
+                            scroll.height = ov_col.height - 24.0;
+                            c.scroll_area(scroll, |fields| {
+                                for (i, column) in state.insert_columns.iter().enumerate() {
+                                    fields.row(row, |r| {
+                                        r.text(format!("{} ({})", column.name, column.type_name));
+                                        insert_modes.push(r.select(["Default", "NULL", "Value"], Some(state.insert_modes[i]), "mode", type_sel));
+                                        insert_values.push(r.text_input_styled(&state.insert_values[i], column.default_value.as_deref().unwrap_or("value"), wide_s));
+                                    });
+                                }
+                            });
+                        }
                         OverlayKind::EditTable => {
                             c.row(row, |r| {
                                 r.text("Table name");
@@ -817,12 +861,12 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                 ov_cipher_kdf = r.text_input_styled(&state.cipher_kdf_iter, "256000", name_s);
                             });
                             c.text(if state.cipher_active {
-                                "Status: key applied"
+                                "Status: current database encrypted"
                             } else {
                                 "Status: not encrypted / key not applied"
                             });
                             c.text(if state.cipher_linked {
-                                "Apply Key runs PRAGMA key; optional Save dialog writes encrypted copy."
+                                "Open: unlock with this key. Tools: export to a new encrypted file."
                             } else {
                                 "SQLCipher not linked — rebuild with bundled-sqlcipher-vendored-openssl."
                             });
@@ -840,7 +884,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                             });
                             c.row(row, |r| {
                                 r.text("Default frozen cols");
-                                ov_frozen = r.text_input_styled(&format!("{}", state.frozen_cols), "0", name_s);
+                                ov_frozen = r.text_input_styled(format!("{}", state.frozen_cols), "0", name_s);
                             });
                         }
                         OverlayKind::ExportSql => {
@@ -996,6 +1040,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             tabs_style.height = content_h - 4.0;
             tabs_style.content_bg = theme.colors.content_bg;
             tabs_style.strip_bg = theme.colors.strip_bg;
+            tabs_style.active_fg = theme.colors.text_primary;
 
             let mut struct_tb = ToolbarStyle::from_theme(&theme);
             struct_tb.width = main_w - 24.0;
@@ -1062,6 +1107,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             dock_tabs_style.height = content_h - 4.0;
             dock_tabs_style.content_bg = theme.colors.content_bg;
             dock_tabs_style.strip_bg = theme.colors.strip_bg;
+            dock_tabs_style.active_fg = theme.colors.text_primary;
 
             let mut dock_col = ColumnStyle::from_theme(&theme);
             dock_col.width = dock_w.max(200.0) - 16.0;
@@ -1201,6 +1247,9 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                 btn_freeze = row.tool_button(format!("Freeze {}", state.frozen_cols));
                                 btn_cond_fmt = row.tool_button("Cond Format…");
                                 btn_fk_nav = row.tool_button("FK →");
+                                btn_page_prev = row.tool_button("◀ Page");
+                                row.text(format!("{}", state.browse().offset / crate::db::DEFAULT_LIMIT + 1));
+                                btn_page_next = row.tool_button("Page ▶");
                             });
                             // Per-column filters
                             if !col_names.is_empty() {
@@ -1248,11 +1297,7 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                                                 .unwrap_or_default();
                                             p.row(tool_row, |row| {
                                                 row.text(cname.as_str());
-                                                let id = row.text_input_styled(
-                                                    &val,
-                                                    cname.as_str(),
-                                                    filter_style,
-                                                );
+                                                let id = row.tool_button(format!("{}: {}", cname, val));
                                                 form_fields.push(id);
                                             });
                                         }
@@ -1400,6 +1445,10 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
                             let mut alert_s = AlertStyle::from_theme(&theme);
                             alert_s.width = main_w - 24.0;
                             sql_alert = p.alert_styled(tone, msg, false, alert_s);
+                            p.row(tool_row, |row| {
+                                btn_sql_csv = row.tool_button("Results → CSV");
+                                btn_sql_json = row.tool_button("Results → JSON");
+                            });
                             sql_table = p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style);
                         });
                     });
@@ -1568,8 +1617,16 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         if state.read_only { "RO" } else { "RW" },
         if state.dirty { " · modified" } else { "" },
         if state.sql_busy { " · busy" } else { "" },
-        if state.cipher_linked { " · SQLCipher" } else { "" },
-        if state.cipher_active { "encrypted" } else { "not encrypted" },
+        if state.cipher_linked {
+            " · SQLCipher"
+        } else {
+            ""
+        },
+        if state.cipher_active {
+            "encrypted"
+        } else {
+            "not encrypted"
+        },
     );
     let status_msg = state.status_msg.clone();
     let status_fg = theme.colors.text_secondary;
@@ -1577,6 +1634,9 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         status = bar.text_styled(format!("{path} · {flags} · {status_msg}"), status_fg, 12.0);
     });
 
+    if ov_cipher_pass.0 != 0 {
+        ui.set_text_input_secret(ov_cipher_pass, true);
+    }
     if state.overlay.is_none() {
         let _ = ui.set_tabs_selected(tabs, state.tab.index());
         if docks_on && dock_tabs.0 != 0 {
@@ -1584,28 +1644,27 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
             let _ = ui.set_tabs_selected(dock_tabs, focus_idx);
         }
         if tree.0 != 0 {
-            let _ = ui.set_tree_expanded(tree, 1, true);
-            let _ = ui.set_tree_expanded(tree, 2, true);
+            ui.set_tree_expanded(tree, 1, true);
+            ui.set_tree_expanded(tree, 2, true);
             if let Some(sel) = &state.selected {
                 if let Some(idx) = state
                     .schema
                     .iter()
                     .position(|o| o.name == sel.name && o.kind == sel.kind)
                 {
-                    let _ = ui.set_tree_selected(tree, Some(10_000 + idx as u64));
+                    ui.set_tree_selected(tree, Some(10_000 + idx as u64));
                 }
             }
         }
         if let Some(row) = state.browse().sel_row {
             if browse_table.0 != 0 {
-                let _ = ui.set_table_selected_row(browse_table, Some(row));
+                ui.set_table_selected_row(browse_table, Some(row));
             }
         }
         if browse_table.0 != 0 {
             ui.set_table_frozen_cols(browse_table, state.frozen_cols);
             ui.set_table_cell_bg(browse_table, state.cell_format_colors());
         }
-
     }
 
     let (modal_title, modal_body, modal_primary) = match state.confirm_kind {
@@ -1686,6 +1745,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         browse_select,
         browse_filter,
         btn_browse_go,
+        btn_page_prev,
+        btn_page_next,
         btn_add_row,
         btn_del_row,
         browse_table,
@@ -1704,6 +1765,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         btn_sql_save,
         btn_sql_find,
         btn_sql_stop,
+        btn_sql_csv,
+        btn_sql_json,
         sql_table,
         sql_alert,
         dock_tabs,
@@ -1719,6 +1782,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         status,
         modal,
         ov_name,
+        insert_values,
+        insert_modes,
         ov_list,
         ov_col_name,
         ov_col_type,
@@ -1776,6 +1841,8 @@ pub fn build_ui(font: Font, theme: Theme, width: u32, height: u32, state: &AppSt
         edit_meta,
         toolbar_extra,
         toolbar_project,
+        btn_project_save,
+        btn_integrity,
         ov_ext_path,
         ov_ext_entry,
         btn_form_view,

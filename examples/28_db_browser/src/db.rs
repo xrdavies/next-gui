@@ -2,7 +2,7 @@
 //! SQLite helpers for the DB Browser example (rusqlite, bundled).
 
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params_from_iter, Connection, OpenFlags};
@@ -50,6 +50,7 @@ pub struct QueryResult {
     pub rows: Vec<Vec<String>>,
     pub rows_affected: Option<u64>,
     pub truncated: bool,
+    pub export_rows: Option<std::sync::Arc<tempfile::NamedTempFile>>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,14 +87,7 @@ impl ColDef {
     }
 }
 
-pub const COLUMN_TYPES: &[&str] = &[
-    "INTEGER",
-    "TEXT",
-    "REAL",
-    "BLOB",
-    "NUMERIC",
-    "VARCHAR(255)",
-];
+pub const COLUMN_TYPES: &[&str] = &["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC", "VARCHAR(255)"];
 
 /// Open connection (file or `:memory:`).
 pub fn open_path(path: &str) -> Result<Connection, String> {
@@ -116,48 +110,59 @@ pub fn open_readonly(path: &str) -> Result<Connection, String> {
 
 /// Begin a deferred write transaction (DB4S Write Changes model).
 pub fn begin_deferred(conn: &Connection) -> Result<(), String> {
-    // If already in a txn, ignore.
-    let _ = conn.execute_batch("COMMIT");
-    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+    if conn.is_autocommit() {
+        conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Include schema/PRAGMA writes and attached databases, not just changed row counts.
+pub fn has_pending_changes(conn: &Connection) -> Result<bool, String> {
+    conn.transaction_state(None)
+        .map(|state| state == rusqlite::TransactionState::Write)
+        .map_err(|e| e.to_string())
 }
 
 /// COMMIT pending edits and open a fresh transaction.
 pub fn commit_and_begin(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
-    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+    if !conn.is_autocommit() {
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    }
+    begin_deferred(conn)
 }
 
 /// ROLLBACK pending edits and open a fresh transaction.
 pub fn rollback_and_begin(conn: &Connection) -> Result<(), String> {
-    let _ = conn.execute_batch("ROLLBACK");
-    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+    if !conn.is_autocommit() {
+        conn.execute_batch("ROLLBACK").map_err(|e| e.to_string())?;
+    }
+    begin_deferred(conn)
 }
 
-/// Copy DB file to a new path (Save Database As). Caller should close/reopen.
-pub fn copy_database_file(src: &str, dst: &str) -> Result<(), String> {
-    if src == ":memory:" || src.is_empty() {
-        return Err("cannot Save As an in-memory database to a file without dump".into());
+/// Snapshot the live database, including WAL pages, to a new destination.
+pub fn copy_database_file(conn: &Connection, dst: &Path) -> Result<(), String> {
+    if dst.exists() {
+        return Err("Save As requires a new path; existing databases are never overwritten".into());
     }
-    if let Some(parent) = Path::new(dst).parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-    }
-    fs::copy(src, dst).map_err(|e| e.to_string())?;
+    let parent = dst
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    conn.backup(rusqlite::DatabaseName::Main, file.path(), None)
+        .map_err(|e| e.to_string())?;
+    file.persist_noclobber(dst).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Create a new empty file DB (truncate if exists).
+/// Create a new empty DB; never truncate an existing database.
 pub fn create_new(path: &str) -> Result<Connection, String> {
     if path != ":memory:" {
-        if let Some(parent) = Path::new(path).parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-        }
-        if Path::new(path).exists() {
-            fs::remove_file(path).map_err(|e| e.to_string())?;
-        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
     }
     open_path(path)
 }
@@ -235,7 +240,7 @@ pub fn list_schema(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT type, name, tbl_name, sql FROM sqlite_master
-             WHERE name NOT LIKE 'sqlite_%'
+             WHERE name NOT GLOB 'sqlite_*'
              ORDER BY CASE type
                 WHEN 'table' THEN 0
                 WHEN 'view' THEN 1
@@ -312,7 +317,7 @@ fn cell_to_string(value: rusqlite::types::ValueRef<'_>) -> String {
     }
 }
 
-const DEFAULT_LIMIT: usize = 500;
+pub const DEFAULT_LIMIT: usize = 500;
 
 /// Browse a table/view with optional ORDER BY, WHERE filter, and limit.
 pub fn browse_table(
@@ -322,6 +327,7 @@ pub fn browse_table(
     order_desc: bool,
     filter: Option<&str>,
     limit: usize,
+    offset: usize,
 ) -> Result<QueryResult, String> {
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
     let mut sql = format!("SELECT * FROM {}", quote_ident(table));
@@ -338,8 +344,50 @@ pub fn browse_table(
             sql.push_str(" ASC");
         }
     }
-    sql.push_str(&format!(" LIMIT {limit}"));
-    execute_sql(conn, &sql)
+    sql.push_str(&format!(
+        " LIMIT {} OFFSET {offset}",
+        limit.saturating_add(1)
+    ));
+    query_preview(conn, &sql, limit)
+}
+
+fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResult, String> {
+    // Browse filters must never execute a second statement or write to the database.
+    let mut batch = rusqlite::Batch::new(conn, sql);
+    let mut stmt = batch
+        .next()
+        .map_err(|e| e.to_string())?
+        .ok_or("Empty browse query")?;
+    if !stmt.readonly() || batch.next().map_err(|e| e.to_string())?.is_some() {
+        return Err("Browse requires a single read-only statement".into());
+    }
+    let columns = stmt
+        .column_names()
+        .iter()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>();
+    let mut query = stmt.query([]).map_err(|e| e.to_string())?;
+    let mut rows = Vec::new();
+    let mut truncated = false;
+    while let Some(row) = query.next().map_err(|e| e.to_string())? {
+        if rows.len() == limit {
+            truncated = true;
+            break;
+        }
+        rows.push(
+            (0..columns.len())
+                .map(|i| row.get_ref(i).map(cell_to_string))
+                .collect::<rusqlite::Result<_>>()
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(QueryResult {
+        columns,
+        rows,
+        rows_affected: None,
+        truncated,
+        export_rows: None,
+    })
 }
 
 /// Run arbitrary SQL. For multi-statement scripts, only the last result set is returned;
@@ -350,83 +398,58 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
         return Err("empty SQL".into());
     }
 
-    // Prefer query when the (last non-empty) statement looks like a SELECT/WITH/PRAGMA that returns rows.
-    let last = sql
-        .split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .last()
-        .unwrap_or(sql);
-    let head = last
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    let returns_rows = matches!(
-        head.as_str(),
-        "select" | "with" | "pragma" | "explain" | "values"
-    );
-
-    if returns_rows && !sql.contains(';') {
-        return query_sql(conn, sql);
-    }
-
-    if returns_rows && sql.matches(';').count() == 0 {
-        return query_sql(conn, sql);
-    }
-
-    // Multi-statement or DML/DDL: execute_batch then optionally re-query last SELECT.
-    if !returns_rows {
-        conn.execute_batch(sql).map_err(|e| e.to_string())?;
-        let affected = conn.changes();
-        return Ok(QueryResult {
-            columns: vec!["rows_affected".into()],
-            rows: vec![vec![affected.to_string()]],
-            rows_affected: Some(affected),
-            truncated: false,
+    let mut batch = rusqlite::Batch::new(conn, sql);
+    let mut result = None;
+    while let Some(mut stmt) = batch.next().map_err(|e| e.to_string())? {
+        let columns: Vec<String> = stmt
+            .column_names()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let col_count = columns.len();
+        let readonly = stmt.readonly();
+        let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
+        let mut export_rows = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+        let mut output = std::io::BufWriter::new(&mut export_rows);
+        let mut rows = Vec::new();
+        let mut truncated = false;
+        while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
+            let values = (0..col_count)
+                .map(|i| json_value(row.get_ref(i).map_err(|e| e.to_string())?))
+                .collect::<Result<Vec<_>, String>>()?;
+            serde_json::to_writer(&mut output, &values).map_err(|e| e.to_string())?;
+            writeln!(output).map_err(|e| e.to_string())?;
+            if rows.len() == DEFAULT_LIMIT {
+                truncated = true;
+                continue;
+            }
+            let mut cells = Vec::with_capacity(col_count);
+            for i in 0..col_count {
+                cells.push(cell_to_string(row.get_ref(i).map_err(|e| e.to_string())?));
+            }
+            rows.push(cells);
+        }
+        output.flush().map_err(|e| e.to_string())?;
+        drop(output);
+        result = Some(QueryResult {
+            export_rows: Some(std::sync::Arc::new(export_rows)),
+            columns,
+            rows,
+            rows_affected: (!readonly).then(|| conn.changes()),
+            truncated,
         });
     }
-
-    // Mixed script ending in SELECT: run everything then query the last statement alone.
-    let before = sql[..sql.rfind(last).unwrap_or(0)].trim_end_matches(';').trim();
-    if !before.is_empty() {
-        conn.execute_batch(before).map_err(|e| e.to_string())?;
-    }
-    query_sql(conn, last)
-}
-
-fn query_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> {
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-    let columns: Vec<String> = stmt.column_names().iter().map(|s| (*s).to_string()).collect();
-    let col_count = columns.len();
-    let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
-    let mut rows = Vec::new();
-    let mut truncated = false;
-    while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
-        if rows.len() >= DEFAULT_LIMIT {
-            truncated = true;
-            break;
-        }
-        let mut cells = Vec::with_capacity(col_count);
-        for i in 0..col_count {
-            cells.push(cell_to_string(row.get_ref(i).map_err(|e| e.to_string())?));
-        }
-        rows.push(cells);
-    }
-    Ok(QueryResult {
-        columns,
-        rows,
-        rows_affected: None,
-        truncated,
-    })
+    result.ok_or_else(|| "No SQL statement to execute".into())
 }
 
 pub fn vacuum(conn: &Connection) -> Result<(), String> {
     // VACUUM cannot run inside a transaction.
-    let _ = conn.execute_batch("COMMIT");
-    conn.execute_batch("VACUUM").map_err(|e| e.to_string())?;
-    conn.execute_batch("BEGIN").map_err(|e| e.to_string())
+    if !conn.is_autocommit() {
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    }
+    let result = conn.execute_batch("VACUUM").map_err(|e| e.to_string());
+    begin_deferred(conn)?;
+    result
 }
 
 pub fn pragma_check(conn: &Connection, name: &str) -> Result<QueryResult, String> {
@@ -441,6 +464,7 @@ pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
         rows.push(vec![obj.name.clone(), n.to_string()]);
     }
     Ok(QueryResult {
+        export_rows: None,
         columns: vec!["table".into(), "rows".into()],
         rows,
         rows_affected: None,
@@ -448,14 +472,18 @@ pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
     })
 }
 
-
 pub fn count_rows(conn: &Connection, table: &str) -> Result<i64, String> {
     let sql = format!("SELECT COUNT(*) FROM {}", quote_ident(table));
     conn.query_row(&sql, [], |r| r.get(0))
         .map_err(|e| e.to_string())
 }
 
-pub fn insert_row(conn: &Connection, table: &str, columns: &[String], values: &[String]) -> Result<u64, String> {
+pub fn insert_row(
+    conn: &Connection,
+    table: &str,
+    columns: &[String],
+    values: &[String],
+) -> Result<u64, String> {
     if columns.len() != values.len() {
         return Err("column/value length mismatch".into());
     }
@@ -494,7 +522,7 @@ pub fn update_cell(
     table: &str,
     rowid: i64,
     column: &str,
-    value: &str,
+    value: &rusqlite::types::Value,
 ) -> Result<u64, String> {
     let sql = format!(
         "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
@@ -513,7 +541,17 @@ pub fn browse_with_rowid(
     order_desc: bool,
     filter: Option<&str>,
     limit: usize,
+    offset: usize,
 ) -> Result<QueryResult, String> {
+    if conn
+        .prepare(&format!("SELECT * FROM {}", quote_ident(table)))
+        .map_err(|e| e.to_string())?
+        .column_names()
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case("rowid") || c.eq_ignore_ascii_case("__rowid__"))
+    {
+        return Err("Grid editing requires an unshadowed rowid".into());
+    }
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
     let mut sql = format!("SELECT rowid AS __rowid__, * FROM {}", quote_ident(table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
@@ -525,8 +563,11 @@ pub fn browse_with_rowid(
         sql.push_str(&quote_ident(col));
         sql.push_str(if order_desc { " DESC" } else { " ASC" });
     }
-    sql.push_str(&format!(" LIMIT {limit}"));
-    execute_sql(conn, &sql)
+    sql.push_str(&format!(
+        " LIMIT {} OFFSET {offset}",
+        limit.saturating_add(1)
+    ));
+    query_preview(conn, &sql, limit)
 }
 
 pub fn drop_object(conn: &Connection, kind: ObjectKind, name: &str) -> Result<(), String> {
@@ -592,8 +633,11 @@ pub fn read_pragma(conn: &Connection, key: &str) -> Result<String, String> {
 }
 
 pub fn write_pragma(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
-    let sql = format!("PRAGMA {key} = {value}");
-    conn.execute_batch(&sql).map_err(|e| e.to_string())
+    if !PRAGMA_KEYS.contains(&key) {
+        return Err("Unsupported pragma".into());
+    }
+    conn.pragma_update(None, key, value)
+        .map_err(|e| e.to_string())
 }
 
 pub fn read_all_pragmas(conn: &Connection) -> Vec<(String, String)> {
@@ -609,8 +653,16 @@ pub fn read_all_pragmas(conn: &Connection) -> Vec<(String, String)> {
 /// Very small CSV writer (RFC4180-ish quoting).
 pub fn export_csv(path: &Path, columns: &[String], rows: &[Vec<String>]) -> Result<(), String> {
     let mut f = File::create(path).map_err(|e| e.to_string())?;
-    writeln!(f, "{}", columns.iter().map(|c| csv_escape(c)).collect::<Vec<_>>().join(","))
-        .map_err(|e| e.to_string())?;
+    writeln!(
+        f,
+        "{}",
+        columns
+            .iter()
+            .map(|c| csv_escape(c))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+    .map_err(|e| e.to_string())?;
     for row in rows {
         let line = (0..columns.len())
             .map(|i| csv_escape(row.get(i).map(|s| s.as_str()).unwrap_or("")))
@@ -657,7 +709,7 @@ pub fn import_csv_parse_opts(
     opts: &CsvImportOptions,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let raw = fs::read(path).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&raw);
+    let text = String::from_utf8(raw).map_err(|e| format!("CSV must be UTF-8: {e}"))?;
     import_csv_from_text(&text, opts)
 }
 
@@ -666,110 +718,262 @@ pub fn import_csv_from_text(
     text: &str,
     opts: &CsvImportOptions,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
-    let first = lines
-        .next()
-        .ok_or_else(|| "empty CSV".to_string())?;
-    let first_cols = parse_csv_line_opts(first, opts.delimiter, opts.quote);
-    let (columns, mut rows) = if opts.has_header {
-        (first_cols, Vec::new())
-    } else {
-        let cols = (0..first_cols.len())
-            .map(|i| format!("column{i}"))
-            .collect::<Vec<_>>();
-        (cols, vec![first_cols])
-    };
-    for line in lines {
-        rows.push(parse_csv_line_opts(line, opts.delimiter, opts.quote));
-    }
-    Ok((columns, rows))
-}
-
-fn parse_csv_line(line: &str) -> Vec<String> {
-    parse_csv_line_opts(line, ',', Some('"'))
-}
-
-fn parse_csv_line_opts(line: &str, delim: char, quote: Option<char>) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    let q = quote.unwrap_or('\0');
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut closed = false;
+    let mut chars = text.trim_start_matches('\u{feff}').chars().peekable();
     while let Some(c) = chars.next() {
-        if quote.is_some() && c == q {
-            if in_quotes {
-                if chars.peek() == Some(&q) {
-                    cur.push(q);
+        if quoted {
+            if Some(c) == opts.quote {
+                if chars.peek() == Some(&c) {
+                    field.push(c);
                     chars.next();
                 } else {
-                    in_quotes = false;
+                    quoted = false;
+                    closed = true;
                 }
             } else {
-                in_quotes = true;
+                field.push(c);
             }
-        } else if c == delim && !in_quotes {
-            out.push(std::mem::take(&mut cur));
+        } else if Some(c) == opts.quote && field.is_empty() && !closed {
+            quoted = true;
+        } else if c == opts.delimiter {
+            record.push(std::mem::take(&mut field));
+            closed = false;
+        } else if c == '\n' || c == '\r' {
+            if c == '\r' && chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            record.push(std::mem::take(&mut field));
+            records.push(std::mem::take(&mut record));
+            closed = false;
+        } else if closed {
+            return Err("Unexpected text after CSV closing quote".into());
         } else {
-            cur.push(c);
+            field.push(c);
         }
     }
-    out.push(cur);
-    out
+    if quoted {
+        return Err("Unterminated CSV quoted field".into());
+    }
+    if !field.is_empty() || !record.is_empty() || closed {
+        record.push(field);
+        records.push(record);
+    }
+    if records.is_empty() {
+        return Err("empty CSV".into());
+    }
+    let columns = if opts.has_header {
+        records.remove(0)
+    } else {
+        (0..records[0].len())
+            .map(|i| format!("column{i}"))
+            .collect()
+    };
+    if columns
+        .iter()
+        .enumerate()
+        .any(|(i, c)| c.is_empty() || columns[..i].iter().any(|p| p.eq_ignore_ascii_case(c)))
+        || records.iter().any(|r| r.len() != columns.len())
+    {
+        return Err("CSV needs nonempty headers and the same number of fields in every row".into());
+    }
+    Ok((columns, records))
 }
 
-/// Export browse/result rows as a JSON array of objects.
-pub fn export_json(path: &Path, columns: &[String], rows: &[Vec<String>]) -> Result<(), String> {
-    let mut f = File::create(path).map_err(|e| e.to_string())?;
-    writeln!(f, "[").map_err(|e| e.to_string())?;
-    for (ri, row) in rows.iter().enumerate() {
-        write!(f, "  {{").map_err(|e| e.to_string())?;
-        for (ci, col) in columns.iter().enumerate() {
-            if ci > 0 {
-                write!(f, ", ").map_err(|e| e.to_string())?;
-            }
-            let val = row.get(ci).map(|s| s.as_str()).unwrap_or("");
-            write!(
-                f,
-                "{}: {}",
-                json_escape_key(col),
-                json_escape_value(val)
-            )
-            .map_err(|e| e.to_string())?;
+pub fn guard_output_path(conn: &Connection, path: &Path) -> Result<(), String> {
+    let resolve = |p: &Path| {
+        p.canonicalize().or_else(|_| {
+            let parent = p
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            parent
+                .canonicalize()
+                .map(|parent| parent.join(p.file_name().unwrap_or_default()))
+        })
+    };
+    let destination = resolve(path).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("PRAGMA database_list")
+        .map_err(|e| e.to_string())?;
+    let files = stmt
+        .query_map([], |row| row.get::<_, String>(2))
+        .map_err(|e| e.to_string())?;
+    for file in files {
+        let file = file.map_err(|e| e.to_string())?;
+        if file.is_empty() {
+            continue;
         }
-        if ri + 1 < rows.len() {
-            writeln!(f, "}},").map_err(|e| e.to_string())?;
-        } else {
-            writeln!(f, "}}").map_err(|e| e.to_string())?;
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            if resolve(Path::new(&format!("{file}{suffix}"))).ok().as_ref() == Some(&destination) {
+                return Err("Export cannot overwrite an open database or its journal files".into());
+            }
         }
     }
-    writeln!(f, "]").map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn json_escape_key(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+/// Export the complete filtered table, independent of the grid preview limit.
+pub fn export_table(
+    conn: &Connection,
+    table: &str,
+    filter: Option<&str>,
+    path: &Path,
+    json: bool,
+) -> Result<(), String> {
+    guard_output_path(conn, path)?;
+    let mut sql = format!("SELECT * FROM {}", quote_ident(table));
+    if let Some(filter) = filter.filter(|s| !s.is_empty()) {
+        sql.push_str(&format!(" WHERE {filter}"));
+    }
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut out = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    if json {
+        write!(out, "[").map_err(|e| e.to_string())?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            columns
+                .iter()
+                .map(|s| csv_escape(s))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    let mut first = true;
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let mut values = Vec::new();
+        let mut object = serde_json::Map::new();
+        for (i, col) in columns.iter().enumerate() {
+            use rusqlite::types::ValueRef;
+            let value = row.get_ref(i).map_err(|e| e.to_string())?;
+            let display = match value {
+                ValueRef::Blob(v) => format!("X'{}'", to_hex(v)),
+                _ => cell_to_string(value),
+            };
+            if json {
+                let value = json_value(value)?;
+                object.insert(col.clone(), value);
+            } else {
+                values.push(csv_escape(&display));
+            }
+        }
+        if json {
+            if !first {
+                write!(out, ",").map_err(|e| e.to_string())?;
+            }
+            serde_json::to_writer(&mut out, &object).map_err(|e| e.to_string())?;
+        } else {
+            writeln!(out, "{}", values.join(",")).map_err(|e| e.to_string())?;
+        }
+        first = false;
+    }
+    if json {
+        writeln!(out, "]").map_err(|e| e.to_string())?;
+    }
+    out.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
-fn json_escape_value(s: &str) -> String {
-    if s.is_empty() {
-        return "null".into();
+fn json_value(value: rusqlite::types::ValueRef<'_>) -> Result<serde_json::Value, String> {
+    use rusqlite::types::ValueRef;
+    Ok(match value {
+        ValueRef::Null => serde_json::Value::Null,
+        ValueRef::Integer(v) => v.into(),
+        ValueRef::Real(v) => serde_json::Number::from_f64(v)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| v.to_string().into()),
+        ValueRef::Text(v) => String::from_utf8_lossy(v).into_owned().into(),
+        ValueRef::Blob(v) => format!("X'{}'", to_hex(v)).into(),
+    })
+}
+
+/// Export the completed SQL result snapshot without executing the SQL again.
+pub fn export_query_result(
+    conn: &Connection,
+    result: &QueryResult,
+    path: &Path,
+    json: bool,
+) -> Result<(), String> {
+    guard_output_path(conn, path)?;
+    let source = result
+        .export_rows
+        .as_ref()
+        .ok_or("Execute SQL before exporting results")?;
+    if result.columns.is_empty() {
+        return Err("The statement returned no columns".into());
     }
-    if let Ok(n) = s.parse::<i64>() {
-        return n.to_string();
+    if json
+        && result
+            .columns
+            .iter()
+            .enumerate()
+            .any(|(i, c)| result.columns[..i].contains(c))
+    {
+        return Err("JSON needs unique column names; use SQL aliases or export CSV".into());
     }
-    if let Ok(n) = s.parse::<f64>() {
-        if n.is_finite() {
-            return format!("{n}");
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut out = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    if json {
+        write!(out, "[").map_err(|e| e.to_string())?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            result
+                .columns
+                .iter()
+                .map(|c| csv_escape(c))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    for (i, line) in std::io::BufReader::new(source.reopen().map_err(|e| e.to_string())?)
+        .lines()
+        .enumerate()
+    {
+        let values: Vec<serde_json::Value> =
+            serde_json::from_str(&line.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        if json {
+            if i > 0 {
+                write!(out, ",").map_err(|e| e.to_string())?;
+            }
+            let object: serde_json::Map<_, _> =
+                result.columns.iter().cloned().zip(values).collect();
+            serde_json::to_writer(&mut out, &object).map_err(|e| e.to_string())?;
+        } else {
+            let values = values
+                .into_iter()
+                .map(|v| match v {
+                    serde_json::Value::Null => String::new(),
+                    serde_json::Value::String(s) => s,
+                    v => v.to_string(),
+                })
+                .map(|s| csv_escape(&s))
+                .collect::<Vec<_>>();
+            writeln!(out, "{}", values.join(",")).map_err(|e| e.to_string())?;
         }
     }
-    format!(
-        "\"{}\"",
-        s.replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-    )
+    if json {
+        writeln!(out, "]").map_err(|e| e.to_string())?;
+    }
+    out.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// ATTACH DATABASE.
@@ -812,29 +1016,13 @@ pub fn create_table_ddl(name: &str, cols: &[ColDef]) -> String {
         }
         parts.push(piece);
     }
-    if pk_cols.len() == 1 {
-        let pk_name = cols
-            .iter()
-            .find(|c| c.pk)
-            .map(|c| c.name.clone())
-            .unwrap_or_default();
-        for (i, c) in cols.iter().enumerate() {
-            if c.name == pk_name {
-                let ty = if c.type_name.trim().is_empty() {
-                    "INTEGER"
-                } else {
-                    c.type_name.trim()
-                };
-                let mut piece = format!("{} {} PRIMARY KEY", quote_ident(&c.name), ty);
-                if !c.default_value.trim().is_empty() {
-                    piece.push_str(" DEFAULT ");
-                    piece.push_str(c.default_value.trim());
-                }
-                parts[i] = piece;
-            }
+    match pk_cols.len() {
+        0 => {}
+        1 => {
+            let index = cols.iter().position(|c| c.pk).unwrap();
+            parts[index].push_str(" PRIMARY KEY");
         }
-    } else if pk_cols.len() > 1 {
-        parts.push(format!("PRIMARY KEY ({})", pk_cols.join(", ")));
+        _ => parts.push(format!("PRIMARY KEY ({})", pk_cols.join(", "))),
     }
     format!(
         "CREATE TABLE {} (\n  {}\n)",
@@ -843,89 +1031,101 @@ pub fn create_table_ddl(name: &str, cols: &[ColDef]) -> String {
     )
 }
 
-/// Recreate table with new schema (DB4S-style modify): rename → create → copy → drop.
+/// Apply native ALTER operations so SQLite preserves constraints and dependencies.
 pub fn recreate_table(
     conn: &Connection,
     old_name: &str,
     new_name: &str,
     cols: &[ColDef],
 ) -> Result<(), String> {
-    let tmp = format!("__e28_old_{old_name}");
-    let ddl = create_table_ddl(new_name, cols);
-    conn.execute_batch(&format!(
-        "ALTER TABLE {} RENAME TO {}",
-        quote_ident(old_name),
-        quote_ident(&tmp)
-    ))
-    .map_err(|e| e.to_string())?;
-    if let Err(e) = conn.execute_batch(&ddl) {
-        let _ = conn.execute_batch(&format!(
-            "ALTER TABLE {} RENAME TO {}",
-            quote_ident(&tmp),
-            quote_ident(old_name)
-        ));
-        return Err(e.to_string());
-    }
-    let old_cols = table_columns(conn, &tmp).unwrap_or_default();
-    let common: Vec<String> = cols
-        .iter()
-        .filter(|c| old_cols.iter().any(|o| o.name == c.name))
-        .map(|c| quote_ident(&c.name))
-        .collect();
-    if !common.is_empty() {
-        let list = common.join(", ");
-        let sql = format!(
-            "INSERT INTO {} ({list}) SELECT {list} FROM {}",
-            quote_ident(new_name),
-            quote_ident(&tmp)
-        );
-        if let Err(e) = conn.execute_batch(&sql) {
-            let _ = conn.execute_batch(&format!("DROP TABLE {}", quote_ident(new_name)));
-            let _ = conn.execute_batch(&format!(
-                "ALTER TABLE {} RENAME TO {}",
-                quote_ident(&tmp),
-                quote_ident(old_name)
-            ));
-            return Err(e.to_string());
+    let existing = table_columns(conn, old_name)?;
+    for col in cols {
+        if let Some(old) = existing.iter().find(|c| c.name == col.name) {
+            if !old.type_name.eq_ignore_ascii_case(&col.type_name)
+                || old.pk != col.pk
+                || old.notnull != col.notnull
+                || old.default_value.as_deref().unwrap_or("") != col.default_value
+                || col.unique
+            {
+                return Err("Changing existing column definitions requires an explicit SQL migration; the wizard preserves existing constraints".into());
+            }
+        } else if col.pk || col.unique {
+            return Err("SQLite ALTER cannot add PRIMARY KEY or UNIQUE columns".into());
         }
     }
-    conn.execute_batch(&format!("DROP TABLE {}", quote_ident(&tmp)))
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    // A renamed column has no identity in this form; never guess and drop its data.
+    let added: Vec<_> = cols
+        .iter()
+        .filter(|c| !existing.iter().any(|o| o.name == c.name))
+        .collect();
+    let removed: Vec<_> = existing
+        .iter()
+        .filter(|c| !cols.iter().any(|o| o.name == c.name))
+        .collect();
+    if !added.is_empty() && !removed.is_empty() {
+        return Err("Use ALTER TABLE RENAME COLUMN in Execute SQL to rename a column".into());
+    }
+    let retained: Vec<_> = existing
+        .iter()
+        .filter(|c| cols.iter().any(|o| o.name == c.name))
+        .map(|c| &c.name)
+        .collect();
+    let requested: Vec<_> = cols
+        .iter()
+        .filter(|c| existing.iter().any(|o| o.name == c.name))
+        .map(|c| &c.name)
+        .collect();
+    if retained != requested {
+        return Err("Reordering existing columns requires an explicit SQL migration".into());
+    }
+    with_savepoint(conn, || {
+        for col in added {
+            let ddl = create_table_ddl("unused", std::slice::from_ref(col));
+            let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
+            conn.execute_batch(&format!(
+                "ALTER TABLE {} ADD COLUMN {definition}",
+                quote_ident(old_name)
+            ))
+            .map_err(|e| e.to_string())?;
+        }
+        for col in removed {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {} DROP COLUMN {}",
+                quote_ident(old_name),
+                quote_ident(&col.name)
+            ))
+            .map_err(|e| e.to_string())?;
+        }
+        if old_name != new_name {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {} RENAME TO {}",
+                quote_ident(old_name),
+                quote_ident(new_name)
+            ))
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
 }
 
-/// Split SQL into statements (naive ; outside quotes).
-pub fn split_sql_statements(sql: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut chars = sql.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' if !in_double => {
-                in_single = !in_single;
-                cur.push(c);
-            }
-            '"' if !in_single => {
-                in_double = !in_double;
-                cur.push(c);
-            }
-            ';' if !in_single && !in_double => {
-                let t = cur.trim().to_string();
-                if !t.is_empty() {
-                    out.push(t);
-                }
-                cur.clear();
-            }
-            _ => cur.push(c),
+pub fn with_savepoint<T>(
+    conn: &Connection,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    conn.execute_batch("SAVEPOINT e28_operation")
+        .map_err(|e| e.to_string())?;
+    match action().and_then(|value| {
+        conn.execute_batch("RELEASE e28_operation")
+            .map_err(|e| e.to_string())?;
+        Ok(value)
+    }) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            conn.execute_batch("ROLLBACK TO e28_operation; RELEASE e28_operation")
+                .map_err(|e| format!("{error}; rollback failed: {e}"))?;
+            Err(error)
         }
     }
-    let t = cur.trim().to_string();
-    if !t.is_empty() {
-        out.push(t);
-    }
-    out
 }
 
 pub fn import_csv_into_table(
@@ -935,85 +1135,92 @@ pub fn import_csv_into_table(
     rows: &[Vec<String>],
     create_if_missing: bool,
 ) -> Result<u64, String> {
-    if create_if_missing {
-        let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
-                [table],
-                |_| Ok(true),
-            )
-            .unwrap_or(false);
-        if !exists {
-            let ddl = columns
-                .iter()
-                .map(|c| format!("{} TEXT", quote_ident(c)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            create_table_simple(conn, table, &ddl)?;
+    with_savepoint(conn, || {
+        if create_if_missing {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !exists {
+                let ddl = columns
+                    .iter()
+                    .map(|c| format!("{} TEXT", quote_ident(c)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                create_table_simple(conn, table, &ddl)?;
+            }
         }
-    }
-    let mut n = 0u64;
-    for row in rows {
-        let mut vals = Vec::with_capacity(columns.len());
-        for i in 0..columns.len() {
-            vals.push(row.get(i).cloned().unwrap_or_default());
+        let mut n = 0u64;
+        for row in rows {
+            if row.len() != columns.len() {
+                return Err("CSV row has the wrong number of fields".into());
+            }
+            let mut vals = Vec::with_capacity(columns.len());
+            for i in 0..columns.len() {
+                vals.push(row.get(i).cloned().unwrap_or_default());
+            }
+            n += insert_row(conn, table, columns, &vals)?;
         }
-        n += insert_row(conn, table, columns, &vals)?;
-    }
-    Ok(n)
+        Ok(n)
+    })
 }
 
 /// SQL dump (schema + data) similar to `.dump`.
 pub fn export_sql_dump(conn: &Connection, path: &Path) -> Result<(), String> {
-    let mut f = File::create(path).map_err(|e| e.to_string())?;
-    writeln!(f, "BEGIN TRANSACTION;").map_err(|e| e.to_string())?;
-    let schema = list_schema(conn)?;
-    for obj in &schema {
-        if let Some(sql) = &obj.sql {
-            if !sql.is_empty() {
-                writeln!(f, "{};", sql.trim().trim_end_matches(';')).map_err(|e| e.to_string())?;
-            }
-        }
-    }
-    for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
-        let q = browse_table(conn, &obj.name, None, false, None, 100_000)?;
-        let cols = q
-            .columns
-            .iter()
-            .map(|c| quote_ident(c))
-            .collect::<Vec<_>>()
-            .join(", ");
-        for row in &q.rows {
-            let vals = row
-                .iter()
-                .map(|v| {
-                    if v.is_empty() {
-                        "NULL".to_string()
-                    } else {
-                        format!("'{}'", v.replace('\'', "''"))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            writeln!(
-                f,
-                "INSERT INTO {} ({cols}) VALUES ({vals});",
-                quote_ident(&obj.name)
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
-    writeln!(f, "COMMIT;").map_err(|e| e.to_string())?;
-    Ok(())
+    export_sql_dump_opts(conn, path, &ExportSqlOptions::default())
 }
 
 pub fn import_sql_file(conn: &Connection, path: &Path) -> Result<(), String> {
     let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    conn.execute_batch(&text).map_err(|e| e.to_string())
+    with_savepoint(conn, || {
+        conn.execute_batch("PRAGMA defer_foreign_keys=ON")
+            .map_err(|e| e.to_string())?;
+        let mut batch = rusqlite::Batch::new(conn, &text);
+        loop {
+            let control = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = control.clone();
+            conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
+                if matches!(
+                    ctx.action,
+                    rusqlite::hooks::AuthAction::Transaction { .. }
+                        | rusqlite::hooks::AuthAction::Savepoint { .. }
+                        | rusqlite::hooks::AuthAction::Pragma {
+                            pragma_name: "foreign_keys",
+                            ..
+                        }
+                ) {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                rusqlite::hooks::Authorization::Allow
+            }));
+            let next = batch.next();
+            conn.authorizer(
+                None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>,
+            );
+            let Some(mut stmt) = next.map_err(|e| e.to_string())? else {
+                break;
+            };
+            // Dump transaction wrappers must not commit the user's other pending edits.
+            if control.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
+            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+            while rows.next().map_err(|e| e.to_string())?.is_some() {}
+        }
+        Ok(())
+    })
 }
 
 /// Numeric series from a column for charts (first N finite values).
-pub fn numeric_series(conn: &Connection, table: &str, column: &str, limit: usize) -> Result<Vec<f32>, String> {
+pub fn numeric_series(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    limit: usize,
+) -> Result<Vec<f32>, String> {
     let sql = format!(
         "SELECT CAST({} AS REAL) FROM {} WHERE typeof({}) IN ('integer','real') OR CAST({} AS REAL) IS NOT NULL LIMIT {limit}",
         quote_ident(column),
@@ -1056,15 +1263,319 @@ mod tests {
     }
 
     #[test]
+    fn sql_import_is_atomic_and_does_not_commit_pending_edits() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE existing(v); BEGIN; INSERT INTO existing VALUES(1);")
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("import.sql");
+        fs::write(&path, "-- dump\nPRAGMA foreign_keys=OFF; BEGIN; CREATE TABLE imported(v); INSERT INTO imported VALUES('a;b'); COMMIT;").unwrap();
+        import_sql_file(&conn, &path).unwrap();
+        assert_eq!(count_rows(&conn, "imported").unwrap(), 1);
+        rollback_and_begin(&conn).unwrap();
+        assert_eq!(count_rows(&conn, "existing").unwrap(), 0);
+        assert!(count_rows(&conn, "imported").is_err());
+        fs::write(
+            &path,
+            "CREATE TABLE broken(v); INSERT INTO missing VALUES(1);",
+        )
+        .unwrap();
+        assert!(import_sql_file(&conn, &path).is_err());
+        assert!(count_rows(&conn, "broken").is_err());
+    }
+
+    #[test]
+    fn csv_multiline_and_atomic_import() {
+        let options = CsvImportOptions::default();
+        let (cols, rows) = import_csv_from_text(
+            "name,note\r\n中文,\"line 1\nline 2\"\r\nempty,\"\"\r\n",
+            &options,
+        )
+        .unwrap();
+        assert_eq!(rows[0][1], "line 1\nline 2");
+        assert_eq!(rows[1][1], "");
+        assert!(import_csv_from_text("a,b\n\"unterminated", &options).is_err());
+        assert!(import_csv_from_text("a,b\n1,2,3", &options).is_err());
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(name TEXT UNIQUE, note TEXT); BEGIN;")
+            .unwrap();
+        let mut duplicates = rows.clone();
+        duplicates.push(rows[0].clone());
+        assert!(import_csv_into_table(&conn, "t", &cols, &duplicates, false).is_err());
+        assert_eq!(count_rows(&conn, "t").unwrap(), 0);
+        import_csv_into_table(&conn, "t", &cols, &rows, false).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT typeof(note) FROM t WHERE name='empty'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "text"
+        );
+    }
+
+    #[test]
+    fn table_alter_keeps_constraints_triggers_and_foreign_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY, v TEXT UNIQUE CHECK(length(v)>0)); CREATE TABLE child(p REFERENCES parent(id)); CREATE INDEX ix ON parent(v); CREATE TRIGGER tr AFTER INSERT ON parent BEGIN INSERT INTO child VALUES(new.id); END; INSERT INTO parent VALUES(1,'one'); BEGIN;").unwrap();
+        let mut cols: Vec<_> = table_columns(&conn, "parent")
+            .unwrap()
+            .into_iter()
+            .map(|c| ColDef {
+                name: c.name,
+                type_name: c.type_name,
+                pk: c.pk,
+                notnull: c.notnull,
+                unique: false,
+                default_value: c.default_value.unwrap_or_default(),
+            })
+            .collect();
+        cols.push(ColDef::new("extra", "TEXT"));
+        recreate_table(&conn, "parent", "renamed", &cols).unwrap();
+        conn.execute("INSERT INTO renamed(id,v) VALUES(2,'two')", [])
+            .unwrap();
+        assert_eq!(count_rows(&conn, "child").unwrap(), 2);
+        assert!(conn
+            .execute("INSERT INTO renamed(id,v) VALUES(3,'one')", [])
+            .is_err());
+        assert!(conn
+            .execute("INSERT INTO renamed(id,v) VALUES(3,'')", [])
+            .is_err());
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name='child'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("renamed"));
+        cols[1].type_name = "BLOB".into();
+        assert!(recreate_table(&conn, "renamed", "oops", &cols).is_err());
+        assert_eq!(count_rows(&conn, "renamed").unwrap(), 2);
+    }
+
+    #[test]
+    fn complete_table_exports_keep_more_than_preview_limit() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v); WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<601) INSERT INTO t SELECT x FROM c;").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rows.json");
+        export_table(&conn, "t", None, &path, true).unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(rows.len(), 601);
+        assert_eq!(rows[600]["v"], 601);
+        export_table(&conn, "t", Some("v>500"), &path, false).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap().lines().count(), 102);
+    }
+
+    #[test]
+    fn sql_result_export_keeps_full_typed_snapshot_without_reexecuting() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v); WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<601) INSERT INTO t SELECT x FROM c;").unwrap();
+        let result = execute_sql(
+            &conn,
+            "UPDATE t SET v=v+1 RETURNING v, NULL AS n, '' AS empty, X'00FF' AS bytes",
+        )
+        .unwrap();
+        assert!(result.truncated);
+        assert_eq!(result.rows.len(), 500);
+        conn.execute("DELETE FROM t", []).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("result.json");
+        export_query_result(&conn, &result, &path, true).unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(rows.len(), 601);
+        assert_eq!(rows[600]["v"], 602);
+        assert!(rows[0]["n"].is_null());
+        assert_eq!(rows[0]["empty"], "");
+        assert_eq!(rows[0]["bytes"], "X'00FF'");
+        export_query_result(&conn, &result, &path, false).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 602);
+        assert_eq!(count_rows(&conn, "t").unwrap(), 0);
+        let result = execute_sql(&conn, "SELECT 1 AS v, 2 AS v").unwrap();
+        assert!(export_query_result(&conn, &result, &path, true).is_err());
+        assert!(execute_sql(&conn, "SELECT 9e999").is_ok());
+    }
+
+    #[test]
+    fn encrypted_export_preserves_source_and_custom_settings() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(42); PRAGMA user_version=7;")
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("encrypted.db");
+        encrypt_database_to(&conn, &path, "secret", 8192, 1000).unwrap();
+        assert!(!looks_like_sqlite(&path).unwrap());
+        let restored = Connection::open(&path).unwrap();
+        apply_cipher_key(&restored, "secret", 8192, 1000).unwrap();
+        assert_eq!(read_pragma(&restored, "user_version").unwrap(), "7");
+        assert_eq!(count_rows(&restored, "t").unwrap(), 1);
+        assert!(encrypt_database_to(&conn, &path, "secret", 8192, 1000).is_err());
+        assert_eq!(count_rows(&conn, "t").unwrap(), 1);
+    }
+
+    #[test]
+    fn save_as_copies_wal_and_memory_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("wal.db");
+        let conn = Connection::open(&src).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE t(v); PRAGMA wal_checkpoint(TRUNCATE); INSERT INTO t VALUES (42);").unwrap();
+        let dst = dir.path().join("copy.db");
+        copy_database_file(&conn, &dst).unwrap();
+        assert_eq!(
+            Connection::open(&dst)
+                .unwrap()
+                .query_row("SELECT v FROM t", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+        assert!(copy_database_file(&conn, &src).is_err());
+        assert!(create_new(src.to_str().unwrap()).is_err());
+        let mem = Connection::open_in_memory().unwrap();
+        mem.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('memory');")
+            .unwrap();
+        let dst = dir.path().join("memory.db");
+        copy_database_file(&mem, &dst).unwrap();
+        assert_eq!(
+            Connection::open(dst)
+                .unwrap()
+                .query_row("SELECT v FROM t", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "memory"
+        );
+    }
+
+    #[test]
+    fn exports_reject_open_database_and_journal_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE t(v); PRAGMA journal_mode=WAL;")
+            .unwrap();
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let dest = PathBuf::from(format!("{}{suffix}", path.display()));
+            assert!(guard_output_path(&conn, &dest).is_err(), "{suffix}");
+        }
+        assert!(guard_output_path(&conn, &dir.path().join("export.sql")).is_ok());
+    }
+
+    #[test]
+    fn generated_rowid_is_not_used_as_an_edit_or_dump_identity() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v, rowid GENERATED ALWAYS AS (1)); INSERT INTO t(_rowid_,v) VALUES(7,'first'),(9,'second');").unwrap();
+        assert!(browse_with_rowid(&conn, "t", None, false, None, 500, 0).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let dump = dir.path().join("dump.sql");
+        export_sql_dump(&conn, &dump).unwrap();
+        let restored = Connection::open_in_memory().unwrap();
+        restored
+            .execute_batch(&fs::read_to_string(dump).unwrap())
+            .unwrap();
+        assert_eq!(
+            restored
+                .query_row("SELECT v FROM t WHERE _rowid_=9", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            "second"
+        );
+    }
+
+    #[test]
+    fn browse_filter_cannot_execute_a_second_statement() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(1)")
+            .unwrap();
+        let filter = Some("1; DELETE FROM t; --");
+        assert!(browse_table(&conn, "t", None, false, filter, 500, 0).is_err());
+        assert!(browse_with_rowid(&conn, "t", None, false, filter, 500, 0).is_err());
+        assert_eq!(count_rows(&conn, "t").unwrap(), 1);
+    }
+
+    #[test]
+    fn dump_roundtrip_preserves_all_rows_types_triggers_and_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = Connection::open_in_memory().unwrap();
+        source.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, v, g GENERATED ALWAYS AS (id+1)); CREATE TABLE log(v); CREATE TRIGGER audit AFTER INSERT ON t BEGIN INSERT INTO log VALUES (new.id); END;").unwrap();
+        for i in 0..601 {
+            source.execute("INSERT INTO t(v) VALUES (?1)", [i]).unwrap();
+        }
+        for v in [
+            rusqlite::types::Value::Null,
+            rusqlite::types::Value::Text("".into()),
+            rusqlite::types::Value::Text("quote'中文\0tail".into()),
+            rusqlite::types::Value::Blob(vec![0, 255, 39]),
+            rusqlite::types::Value::Real(1.0),
+            rusqlite::types::Value::Real(f64::INFINITY),
+        ] {
+            source.execute("INSERT INTO t(v) VALUES (?1)", [v]).unwrap();
+        }
+        source
+            .execute_batch("INSERT INTO t(id) VALUES (1000); DELETE FROM t WHERE id=1000;")
+            .unwrap();
+        for opts in [
+            ExportSqlOptions::default(),
+            ExportSqlOptions {
+                drop_if_exists: true,
+                ..Default::default()
+            },
+        ] {
+            let path = dir.path().join("dump.sql");
+            export_sql_dump_opts(&source, &path, &opts).unwrap();
+            let dest = Connection::open_in_memory().unwrap();
+            dest.execute_batch(&fs::read_to_string(&path).unwrap())
+                .unwrap();
+            for table in ["t", "log", "sqlite_sequence"] {
+                let read = |conn: &Connection| {
+                    let mut stmt = conn
+                        .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                        .unwrap();
+                    let n = stmt.column_count();
+                    stmt.query_map([], |r| {
+                        (0..n)
+                            .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+                };
+                assert_eq!(read(&source), read(&dest), "table {table}");
+            }
+            dest.execute("INSERT INTO t(v) VALUES (0)", []).unwrap();
+            assert_eq!(dest.last_insert_rowid(), 1001);
+        }
+    }
+
+    #[test]
+    fn sql_batch_handles_quotes_comments_triggers_and_returning() {
+        let conn = Connection::open_in_memory().unwrap();
+        let result = execute_sql(&conn, "-- heading;\n CREATE TABLE t(v); CREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE t SET v=v||';'; END; INSERT INTO t VALUES ('a;b'); SELECT v FROM t; -- trailing;").unwrap();
+        assert_eq!(result.rows, vec![vec!["a;b;".to_string()]]);
+        let result = execute_sql(&conn, "INSERT INTO t VALUES ('c') RETURNING v;").unwrap();
+        assert_eq!(result.rows, vec![vec!["c".to_string()]]);
+        assert_eq!(count_rows(&conn, "t").unwrap(), 2);
+        begin_deferred(&conn).unwrap();
+        conn.execute("INSERT INTO t VALUES ('pending')", [])
+            .unwrap();
+        begin_deferred(&conn).unwrap();
+        rollback_and_begin(&conn).unwrap();
+        assert_eq!(count_rows(&conn, "t").unwrap(), 2);
+    }
+
+    #[test]
     fn seed_and_browse() {
         let (path, conn) = tmp_db();
         seed_demo(&conn).unwrap();
         let schema = list_schema(&conn).unwrap();
         assert!(schema.iter().any(|o| o.name == "customers"));
         assert!(schema.iter().any(|o| o.kind == ObjectKind::View));
-        let q = browse_table(&conn, "products", Some("price"), true, None, 10).unwrap();
+        let q = browse_table(&conn, "products", Some("price"), true, None, 10, 0).unwrap();
         assert!(q.columns.contains(&"sku".into()));
         assert!(!q.rows.is_empty());
+        let preview = browse_table(&conn, "products", None, false, None, 2, 0).unwrap();
+        assert_eq!(preview.rows.len(), 2);
+        assert!(preview.truncated);
         let n = count_rows(&conn, "customers").unwrap();
         assert_eq!(n, 3);
         drop(conn);
@@ -1085,7 +1596,10 @@ mod tests {
         export_csv(
             &csv_path,
             &["a".into(), "b".into()],
-            &[vec!["1".into(), "hello, world".into()], vec!["2".into(), "x\"y".into()]],
+            &[
+                vec!["1".into(), "hello, world".into()],
+                vec!["2".into(), "x\"y".into()],
+            ],
         )
         .unwrap();
         let (cols, rows) = import_csv_parse(&csv_path).unwrap();
@@ -1095,7 +1609,7 @@ mod tests {
 
         let (db_path, conn) = tmp_db();
         import_csv_into_table(&conn, "imported", &cols, &rows, true).unwrap();
-        let q = browse_table(&conn, "imported", None, false, None, 10).unwrap();
+        let q = browse_table(&conn, "imported", None, false, None, 10, 0).unwrap();
         assert_eq!(q.rows.len(), 2);
         drop(conn);
         let _ = fs::remove_file(db_path);
@@ -1154,7 +1668,6 @@ mod tests {
         assert_eq!(n, 42);
         let _ = fs::remove_dir_all(dir);
     }
-
 }
 
 /// Options for Export → Database to SQL file (DB4S ExportSqlDialog).
@@ -1182,64 +1695,119 @@ pub fn export_sql_dump_opts(
     path: &Path,
     opts: &ExportSqlOptions,
 ) -> Result<(), String> {
-    let mut f = File::create(path).map_err(|e| e.to_string())?;
+    guard_output_path(conn, path)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut f = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let snapshot = if conn.is_autocommit() {
+        Some(conn.unchecked_transaction().map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    let schema = list_schema(conn)?;
+    if schema.iter().any(|o| {
+        o.sql
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_uppercase()
+            .starts_with("CREATE VIRTUAL TABLE")
+    }) {
+        return Err("SQL dump of virtual tables is unsupported; use Save Database As".into());
+    }
     if opts.keep_fk {
         writeln!(f, "PRAGMA foreign_keys=OFF;").map_err(|e| e.to_string())?;
     }
     writeln!(f, "BEGIN TRANSACTION;").map_err(|e| e.to_string())?;
-    let schema = list_schema(conn)?;
     if opts.structure {
-        for obj in &schema {
-            if opts.drop_if_exists {
-                let kind = match obj.kind {
-                    ObjectKind::Table => "TABLE",
-                    ObjectKind::View => "VIEW",
-                    ObjectKind::Index => "INDEX",
-                    ObjectKind::Trigger => "TRIGGER",
-                };
+        if opts.drop_if_exists {
+            for obj in schema.iter().rev() {
                 writeln!(
                     f,
                     "DROP {} IF EXISTS {};",
-                    kind,
+                    obj.kind.sql_type(),
                     quote_ident(&obj.name)
                 )
                 .map_err(|e| e.to_string())?;
             }
+        }
+        for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
             if let Some(sql) = &obj.sql {
-                if !sql.is_empty() {
-                    writeln!(f, "{};", sql.trim().trim_end_matches(';'))
-                        .map_err(|e| e.to_string())?;
-                }
+                writeln!(f, "{};", sql.trim().trim_end_matches(';')).map_err(|e| e.to_string())?;
             }
         }
     }
     if opts.data {
         for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
-            let q = browse_table(conn, &obj.name, None, false, None, 100_000)?;
-            let cols = q
-                .columns
+            // table_info excludes generated columns, which cannot be inserted into.
+            let mut cols: Vec<String> = table_columns(conn, &obj.name)?
                 .iter()
-                .map(|c| quote_ident(c))
-                .collect::<Vec<_>>()
-                .join(", ");
-            for row in &q.rows {
-                let vals = row
-                    .iter()
-                    .map(|v| {
-                        if v.is_empty() {
-                            "NULL".to_string()
-                        } else {
-                            format!("'{}'", v.replace('\'', "''"))
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                .map(|c| quote_ident(&c.name))
+                .collect();
+            let all_columns: Vec<String> = conn
+                .prepare(&format!("SELECT * FROM {}", quote_ident(&obj.name)))
+                .map_err(|e| e.to_string())?
+                .column_names()
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            // Preserve implicit rowids where an unshadowed alias is available.
+            for alias in ["rowid", "_rowid_", "oid"] {
+                if !all_columns.iter().any(|c| c.eq_ignore_ascii_case(alias))
+                    && conn
+                        .prepare(&format!("SELECT {alias} FROM {}", quote_ident(&obj.name)))
+                        .is_ok()
+                {
+                    cols.insert(0, alias.into());
+                    break;
+                }
+            }
+            let cols = cols.join(", ");
+            let mut stmt = conn
+                .prepare(&format!("SELECT {cols} FROM {}", quote_ident(&obj.name)))
+                .map_err(|e| e.to_string())?;
+            let n = stmt.column_count();
+            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                let values = (0..n)
+                    .map(|i| row.get_ref(i).map(sql_literal))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(|e| e.to_string())?;
                 writeln!(
                     f,
-                    "INSERT INTO {} ({cols}) VALUES ({vals});",
-                    quote_ident(&obj.name)
+                    "INSERT INTO {} ({cols}) VALUES ({});",
+                    quote_ident(&obj.name),
+                    values.join(", ")
                 )
                 .map_err(|e| e.to_string())?;
+            }
+        }
+        if conn
+            .prepare("SELECT name, seq FROM sqlite_sequence")
+            .is_ok()
+        {
+            writeln!(f, "DELETE FROM sqlite_sequence;").map_err(|e| e.to_string())?;
+            let mut stmt = conn
+                .prepare("SELECT name, seq FROM sqlite_sequence")
+                .map_err(|e| e.to_string())?;
+            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                writeln!(
+                    f,
+                    "INSERT INTO sqlite_sequence VALUES ({}, {});",
+                    sql_literal(row.get_ref(0).map_err(|e| e.to_string())?),
+                    sql_literal(row.get_ref(1).map_err(|e| e.to_string())?)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    // Triggers must be created after rows, or restore can change data a second time.
+    if opts.structure {
+        for obj in schema.iter().filter(|o| o.kind != ObjectKind::Table) {
+            if let Some(sql) = &obj.sql {
+                writeln!(f, "{};", sql.trim().trim_end_matches(';')).map_err(|e| e.to_string())?;
             }
         }
     }
@@ -1247,7 +1815,23 @@ pub fn export_sql_dump_opts(
     if opts.keep_fk {
         writeln!(f, "PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
     }
+    drop(snapshot);
+    f.as_file().sync_all().map_err(|e| e.to_string())?;
+    f.persist(path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn sql_literal(value: rusqlite::types::ValueRef<'_>) -> String {
+    use rusqlite::types::ValueRef;
+    match value {
+        ValueRef::Null => "NULL".into(),
+        ValueRef::Integer(v) => v.to_string(),
+        ValueRef::Real(v) if v == f64::INFINITY => "9e999".into(),
+        ValueRef::Real(v) if v == f64::NEG_INFINITY => "-9e999".into(),
+        ValueRef::Real(v) => format!("{v:?}"),
+        ValueRef::Text(v) => format!("CAST(X'{}' AS TEXT)", to_hex(v)),
+        ValueRef::Blob(v) => format!("X'{}'", to_hex(v)),
+    }
 }
 
 /// Foreign-key metadata for a table column (to parent table/col).
@@ -1302,33 +1886,32 @@ pub fn apply_cipher_key(
     page_size: i64,
     kdf_iter: i64,
 ) -> Result<(), String> {
-    // Probe for SQLCipher support
-    let probe = conn.query_row("PRAGMA cipher_version;", [], |r| r.get::<_, String>(0));
-    match probe {
-        Ok(ver) => {
-            // SQLCipher 4: page size / KDF before key when configuring a new DB.
-            if page_size > 0 {
-                let _ = conn.pragma_update(None, "cipher_page_size", page_size);
-            }
-            if kdf_iter > 0 {
-                let _ = conn.pragma_update(None, "kdf_iter", kdf_iter);
-            }
-            conn.pragma_update(None, "key", passphrase)
-                .map_err(|e| e.to_string())?;
-            conn.query_row("SELECT count(*) FROM sqlite_master;", [], |r| {
-                r.get::<_, i64>(0)
-            })
-            .map_err(|e| format!("Cipher key rejected: {e}"))?;
-            let _ = ver;
-            Ok(())
-        }
-        Err(_) => Err(
-            "SQLCipher not linked in this build (rusqlite bundled SQLite). \
-             Cipher settings were saved; rebuild with feature \
-             bundled-sqlcipher-vendored-openssl for real encrypt/decrypt."
-                .into(),
-        ),
+    validate_cipher_settings(passphrase, page_size, kdf_iter)?;
+    if !cipher_is_linked(conn) {
+        return Err("SQLCipher not linked".into());
     }
+    conn.pragma_update(None, "key", passphrase)
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "cipher_page_size", page_size)
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "kdf_iter", kdf_iter)
+        .map_err(|e| e.to_string())?;
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map_err(|e| format!("Cipher key rejected: {e}"))?;
+    Ok(())
+}
+
+fn validate_cipher_settings(passphrase: &str, page_size: i64, kdf_iter: i64) -> Result<(), String> {
+    if passphrase.is_empty()
+        || !(512..=65536).contains(&page_size)
+        || !(page_size as u64).is_power_of_two()
+        || kdf_iter <= 0
+    {
+        return Err("A nonempty key, power-of-two page size (512–65536) and positive KDF iterations are required".into());
+    }
+    Ok(())
 }
 
 /// Hex-encode bytes for Edit Cell hex mode.
@@ -1365,64 +1948,11 @@ pub fn looks_like_jpeg(bytes: &[u8]) -> bool {
 }
 
 pub fn try_pretty_json(text: &str) -> Option<String> {
-    let t = text.trim();
-    if !(t.starts_with('{') || t.starts_with('[')) {
-        return None;
-    }
-    // Minimal pretty-printer (indent on braces/brackets/commas).
-    let mut out = String::new();
-    let mut indent = 0i32;
-    let mut in_str = false;
-    let mut escape = false;
-    for c in t.chars() {
-        if in_str {
-            out.push(c);
-            if escape {
-                escape = false;
-            } else if c == '\\' {
-                escape = true;
-            } else if c == '"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match c {
-            '"' => {
-                in_str = true;
-                out.push(c);
-            }
-            '{' | '[' => {
-                out.push(c);
-                indent += 1;
-                out.push('\n');
-                for _ in 0..indent {
-                    out.push_str("  ");
-                }
-            }
-            '}' | ']' => {
-                indent = (indent - 1).max(0);
-                out.push('\n');
-                for _ in 0..indent {
-                    out.push_str("  ");
-                }
-                out.push(c);
-            }
-            ',' => {
-                out.push(c);
-                out.push('\n');
-                for _ in 0..indent {
-                    out.push_str("  ");
-                }
-            }
-            ':' => out.push_str(": "),
-            c if c.is_whitespace() => {}
-            c => out.push(c),
-        }
-    }
-    Some(out)
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    serde_json::to_string_pretty(&value).ok()
 }
 
-/// Export current connection into a new SQLCipher-encrypted file (`sqlcipher_export`).
+/// Export a new encrypted copy without changing the source key.
 pub fn encrypt_database_to(
     conn: &Connection,
     dest: &Path,
@@ -1430,25 +1960,54 @@ pub fn encrypt_database_to(
     page_size: i64,
     kdf_iter: i64,
 ) -> Result<(), String> {
+    validate_cipher_settings(passphrase, page_size, kdf_iter)?;
     if !cipher_is_linked(conn) {
         return Err("SQLCipher not linked".into());
     }
-    let dest_s = dest.to_string_lossy().replace('\'', "''");
-    let pass = passphrase.replace('\'', "''");
-    let attach = format!("ATTACH DATABASE '{dest_s}' AS encrypted KEY '{pass}';");
-    conn.execute_batch(&attach).map_err(|e| e.to_string())?;
-    if page_size > 0 {
-        let _ = conn.execute_batch(&format!(
-            "PRAGMA encrypted.cipher_page_size = {page_size};"
-        ));
+    if dest.exists() {
+        return Err("Encrypted export requires a new destination".into());
     }
-    if kdf_iter > 0 {
-        let _ = conn.execute_batch(&format!("PRAGMA encrypted.kdf_iter = {kdf_iter};"));
-    }
-    conn.execute_batch("SELECT sqlcipher_export('encrypted');")
-        .map_err(|e| format!("sqlcipher_export: {e}"))?;
-    conn.execute_batch("DETACH DATABASE encrypted;")
+    let parent = dest
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    conn.execute(
+        "ATTACH DATABASE ?1 AS e28_encrypted KEY ?2",
+        rusqlite::params![file.path().to_string_lossy(), passphrase],
+    )
+    .map_err(|e| e.to_string())?;
+    let result = (|| {
+        conn.pragma_update(
+            Some(rusqlite::DatabaseName::Attached("e28_encrypted")),
+            "cipher_page_size",
+            page_size,
+        )
         .map_err(|e| e.to_string())?;
+        conn.pragma_update(
+            Some(rusqlite::DatabaseName::Attached("e28_encrypted")),
+            "kdf_iter",
+            kdf_iter,
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute_batch("SELECT sqlcipher_export('e28_encrypted')")
+            .map_err(|e| e.to_string())?;
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        conn.pragma_update(
+            Some(rusqlite::DatabaseName::Attached("e28_encrypted")),
+            "user_version",
+            version,
+        )
+        .map_err(|e| e.to_string())
+    })();
+    let detach = conn
+        .execute_batch("DETACH DATABASE e28_encrypted")
+        .map_err(|e| e.to_string());
+    result?;
+    detach?;
+    file.persist_noclobber(dest).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1470,7 +2029,7 @@ pub fn load_extension(conn: &Connection, path: &str, entry: Option<&str>) -> Res
 pub fn schema_report(conn: &Connection) -> Result<String, String> {
     let schema = list_schema(conn)?;
     let mut out = String::from("-- Schema report (e28 / DB4S Print Schema)\n");
-    out.push_str(&format!("-- Generated for connection\n\n"));
+    out.push_str("-- Generated for connection\n\n");
     for obj in &schema {
         out.push_str(&format!("-- {:?} `{}`\n", obj.kind, obj.name));
         if let Some(sql) = &obj.sql {

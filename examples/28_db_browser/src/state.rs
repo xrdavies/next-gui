@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rusqlite::{Connection, InterruptHandle};
 
@@ -91,6 +91,7 @@ pub enum BrowseViewMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayKind {
     EditTable,
+    InsertRow,
     EditIndex,
     ImportCsv,
     FindReplace,
@@ -108,21 +109,26 @@ pub enum OverlayKind {
 pub struct SelectedObject {
     pub kind: ObjectKind,
     pub name: String,
-    pub sql: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrowseTabState {
     pub title: String,
     pub table: Option<String>,
     pub filter: String,
     /// Parallel to current result columns; empty = no filter.
     pub col_filters: Vec<String>,
+    #[serde(default)]
+    pub offset: usize,
     pub order_col: Option<String>,
     pub order_desc: bool,
+    #[serde(skip)]
     pub result: Option<QueryResult>,
+    #[serde(skip)]
     pub rowids: Vec<i64>,
+    #[serde(skip)]
     pub sel_row: Option<usize>,
+    #[serde(skip)]
     pub sel_col: Option<usize>,
 }
 
@@ -134,6 +140,7 @@ impl BrowseTabState {
             table,
             filter: String::new(),
             col_filters: Vec::new(),
+            offset: 0,
             order_col: None,
             order_desc: false,
             result: None,
@@ -185,6 +192,9 @@ pub struct AppState {
     pub browse_tab_idx: usize,
     pub edit_col: String,
     pub edit_value: String,
+    pub insert_columns: Vec<db::ColumnInfo>,
+    pub insert_values: Vec<String>,
+    pub insert_modes: Vec<usize>,
 
     // Structure helpers / wizard drafts
     pub ddl_draft: String,
@@ -248,6 +258,7 @@ pub struct AppState {
     pub frozen_cols: usize,
     pub cond_rules: Vec<CondFormatRule>,
     pub edit_mode: EditCellMode,
+    pub edit_original: rusqlite::types::Value,
     pub edit_binary_len: usize,
     pub edit_image_kind: String,
     pub toolbar_db: bool,
@@ -258,6 +269,7 @@ pub struct AppState {
     pub cipher_page_size: String,
     pub cipher_kdf_iter: String,
     pub cipher_active: bool,
+    pub cipher_open_path: Option<(String, bool)>,
     pub export_structure: bool,
     pub export_data: bool,
     pub export_drop: bool,
@@ -284,8 +296,7 @@ pub struct AppState {
 }
 
 pub struct SqlJob {
-    pub done: Arc<AtomicBool>,
-    pub result: Arc<Mutex<Option<Result<QueryResult, String>>>>,
+    handle: std::thread::JoinHandle<(Connection, Result<QueryResult, String>, bool)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,6 +379,9 @@ impl AppState {
             browse_tab_idx: 0,
             edit_col: String::new(),
             edit_value: String::new(),
+            insert_columns: Vec::new(),
+            insert_values: Vec::new(),
+            insert_modes: Vec::new(),
             ddl_draft: String::new(),
             overlay: None,
             wizard_table_name: "new_table".into(),
@@ -423,6 +437,7 @@ impl AppState {
             frozen_cols: 0,
             cond_rules: Vec::new(),
             edit_mode: EditCellMode::Text,
+            edit_original: rusqlite::types::Value::Null,
             edit_binary_len: 0,
             edit_image_kind: String::new(),
             toolbar_db: true,
@@ -433,6 +448,7 @@ impl AppState {
             cipher_page_size: "4096".into(),
             cipher_kdf_iter: "256000".into(),
             cipher_active: false,
+            cipher_open_path: None,
             export_structure: true,
             export_data: true,
             export_drop: false,
@@ -495,11 +511,7 @@ impl AppState {
     }
 
     pub fn any_dock_visible(&self) -> bool {
-        self.dock_edit
-            || self.dock_schema
-            || self.dock_log
-            || self.dock_plot
-            || self.dock_remote
+        self.dock_edit || self.dock_schema || self.dock_log || self.dock_plot || self.dock_remote
     }
 
     pub fn visible_docks(&self) -> Vec<DockKind> {
@@ -599,7 +611,6 @@ impl AppState {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn composed_where(tab: &BrowseTabState) -> Option<String> {
         let mut parts = Vec::new();
         if !tab.filter.trim().is_empty() {
@@ -626,6 +637,19 @@ impl AppState {
         }
     }
 
+    pub fn export_browse(&self, path: &Path, json: bool) -> Result<(), String> {
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        let tab = self.browse();
+        let table = tab.table.as_ref().ok_or("Select a table to export")?;
+        db::export_table(
+            conn,
+            table,
+            Self::composed_where(tab).as_deref(),
+            path,
+            json,
+        )
+    }
+
     pub fn refresh_browse(&mut self) -> Result<(), String> {
         if self.conn.is_none() {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
@@ -634,7 +658,7 @@ impl AppState {
             }
             return Ok(());
         }
-        let (table, order, desc, filter_global, mut col_filters, prev_cols) = {
+        let (table, order, desc, filter_global, mut col_filters, mut prev_cols) = {
             let t = self.browse_mut();
             (
                 t.table.clone(),
@@ -642,7 +666,10 @@ impl AppState {
                 t.order_desc,
                 t.filter.clone(),
                 t.col_filters.clone(),
-                t.result.as_ref().map(|r| r.columns.clone()).unwrap_or_default(),
+                t.result
+                    .as_ref()
+                    .map(|r| r.columns.clone())
+                    .unwrap_or_default(),
             )
         };
         let Some(table) = table else {
@@ -651,6 +678,18 @@ impl AppState {
             t.rowids.clear();
             return Ok(());
         };
+        if prev_cols.is_empty() {
+            prev_cols = self
+                .conn
+                .as_ref()
+                .unwrap()
+                .prepare(&format!("SELECT * FROM {}", db::quote_ident(&table)))
+                .map_err(|e| e.to_string())?
+                .column_names()
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
         let is_view = self
             .schema
             .iter()
@@ -669,18 +708,37 @@ impl AppState {
                 }
             }
         }
-        let where_sql = if parts.is_empty() { None } else { Some(parts.join(" AND ")) };
+        let where_sql = if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" AND "))
+        };
 
+        let offset = self.browse().offset;
         let (result, rowids) = {
             let conn = self.conn.as_ref().unwrap();
             if is_view {
                 (
-                    db::browse_table(conn, &table, order.as_deref(), desc, where_sql.as_deref(), 500)?,
+                    db::browse_table(
+                        conn,
+                        &table,
+                        order.as_deref(),
+                        desc,
+                        where_sql.as_deref(),
+                        db::DEFAULT_LIMIT,
+                        offset,
+                    )?,
                     Vec::new(),
                 )
             } else {
                 match db::browse_with_rowid(
-                    conn, &table, order.as_deref(), desc, where_sql.as_deref(), 500,
+                    conn,
+                    &table,
+                    order.as_deref(),
+                    desc,
+                    where_sql.as_deref(),
+                    db::DEFAULT_LIMIT,
+                    offset,
                 ) {
                     Ok(mut q) => {
                         let mut rowids = Vec::new();
@@ -691,13 +749,23 @@ impl AppState {
                             }
                             q.columns.remove(idx);
                             for row in &mut q.rows {
-                                if idx < row.len() { row.remove(idx); }
+                                if idx < row.len() {
+                                    row.remove(idx);
+                                }
                             }
                         }
                         (q, rowids)
                     }
                     Err(_) => (
-                        db::browse_table(conn, &table, order.as_deref(), desc, where_sql.as_deref(), 500)?,
+                        db::browse_table(
+                            conn,
+                            &table,
+                            order.as_deref(),
+                            desc,
+                            where_sql.as_deref(),
+                            db::DEFAULT_LIMIT,
+                            offset,
+                        )?,
                         Vec::new(),
                     ),
                 }
@@ -711,7 +779,11 @@ impl AppState {
         let order_note = {
             let t = self.browse();
             match &t.order_col {
-                Some(c) => format!(" ORDER BY {} {}", c, if t.order_desc { "DESC" } else { "ASC" }),
+                Some(c) => format!(
+                    " ORDER BY {} {}",
+                    c,
+                    if t.order_desc { "DESC" } else { "ASC" }
+                ),
                 None => String::new(),
             }
         };
@@ -721,14 +793,39 @@ impl AppState {
             t.title = table.clone();
             t.rowids = rowids;
             t.result = Some(result);
+            t.sel_row = None;
+            t.sel_col = None;
         }
+        self.edit_col.clear();
+        self.edit_value.clear();
+        self.edit_original = rusqlite::types::Value::Null;
+        self.edit_image_rgba = None;
         self.status_msg = format!(
-            "Browse {} — {} rows{}{}",
+            "Browse {} — {} rows from {}{}{}",
             table,
             nrows,
-            if truncated { " (truncated)" } else { "" },
+            offset.saturating_add(1),
+            if truncated { " (more pages)" } else { "" },
             order_note
         );
+        Ok(())
+    }
+
+    pub fn browse_page(&mut self, next: bool) -> Result<(), String> {
+        let tab = self.browse_mut();
+        if next && !tab.result.as_ref().is_some_and(|r| r.truncated) {
+            return Ok(());
+        }
+        let old = tab.offset;
+        tab.offset = if next {
+            old.saturating_add(db::DEFAULT_LIMIT)
+        } else {
+            old.saturating_sub(db::DEFAULT_LIMIT)
+        };
+        if let Err(e) = self.refresh_browse() {
+            self.browse_mut().offset = old;
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -759,7 +856,6 @@ impl AppState {
             self.selected = Some(SelectedObject {
                 kind: obj.kind,
                 name: obj.name.clone(),
-                sql: obj.sql.clone(),
             });
             self.ddl_draft = obj.sql.clone().unwrap_or_default();
             if matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
@@ -769,6 +865,56 @@ impl AppState {
                 let _ = self.refresh_browse();
             }
         }
+    }
+
+    pub fn open_insert_row(&mut self) -> Result<(), String> {
+        self.guard_writable()?;
+        let table = self.browse().table.as_ref().ok_or("Select a table")?;
+        self.insert_columns = db::table_columns(self.conn.as_ref().unwrap(), table)?;
+        self.insert_values = vec![String::new(); self.insert_columns.len()];
+        self.insert_modes = vec![0; self.insert_columns.len()];
+        self.overlay = Some(OverlayKind::InsertRow);
+        Ok(())
+    }
+
+    pub fn apply_insert_row(&mut self) -> Result<(), String> {
+        self.guard_writable()?;
+        let table = self.browse().table.as_ref().ok_or("Select a table")?;
+        let mut columns = Vec::new();
+        let mut values = Vec::new();
+        for (i, column) in self.insert_columns.iter().enumerate() {
+            match self.insert_modes[i] {
+                1 => {
+                    columns.push(db::quote_ident(&column.name));
+                    values.push(rusqlite::types::Value::Null);
+                }
+                2 => {
+                    columns.push(db::quote_ident(&column.name));
+                    values.push(rusqlite::types::Value::Text(self.insert_values[i].clone()));
+                }
+                _ => {}
+            }
+        }
+        let sql = if columns.is_empty() {
+            format!("INSERT INTO {} DEFAULT VALUES", db::quote_ident(table))
+        } else {
+            format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                db::quote_ident(table),
+                columns.join(","),
+                vec!["?"; values.len()].join(",")
+            )
+        };
+        self.conn
+            .as_ref()
+            .unwrap()
+            .execute(&sql, rusqlite::params_from_iter(values))
+            .map_err(|e| e.to_string())?;
+        self.mark_dirty();
+        self.refresh_browse()?;
+        self.status_msg = "Record inserted (unwritten)".into();
+        self.overlay = None;
+        Ok(())
     }
 
     pub fn open_create_table_wizard(&mut self) {
@@ -852,22 +998,55 @@ impl AppState {
         if sel.kind != ObjectKind::Index {
             return Err("Select an index object".into());
         }
-        self.wizard_index_name = sel.name.clone();
-        self.wizard_index_original = Some(sel.name.clone());
-        // Best-effort parse FROM sql: CREATE [UNIQUE] INDEX name ON table (cols)
-        let sql = sel.sql.unwrap_or_default();
-        self.wizard_index_unique = sql.to_ascii_uppercase().contains("UNIQUE");
-        if let Some(on) = sql.split(" ON ").nth(1).or_else(|| sql.split(" on ").nth(1)) {
-            let on = on.trim();
-            if let Some(paren) = on.find('(') {
-                self.wizard_index_table = on[..paren].trim().trim_matches('"').to_string();
-                self.wizard_index_cols = on[paren + 1..]
-                    .trim()
-                    .trim_end_matches(';')
-                    .trim_end_matches(')')
-                    .to_string();
-            }
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        let table = self
+            .schema
+            .iter()
+            .find(|o| o.name == sel.name && o.kind == ObjectKind::Index)
+            .and_then(|o| o.tbl_name.clone())
+            .ok_or("Index table missing")?;
+        let (unique, partial): (bool, bool) = conn
+            .query_row(
+                "SELECT \"unique\", partial FROM pragma_index_list(?1) WHERE name=?2",
+                rusqlite::params![table, sel.name],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?;
+        if partial {
+            return Err(
+                "Use Execute SQL to modify a partial index without losing its WHERE clause".into(),
+            );
         }
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, desc, coll FROM pragma_index_xinfo(?1) WHERE key=1 ORDER BY seqno",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([&sel.name], |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, bool>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut columns = Vec::new();
+        for row in rows {
+            let (name, desc, collation) = row.map_err(|e| e.to_string())?;
+            let name = name.ok_or("Use Execute SQL to modify an expression index")?;
+            columns.push(format!(
+                "{} COLLATE {} {}",
+                db::quote_ident(&name),
+                db::quote_ident(&collation),
+                if desc { "DESC" } else { "ASC" }
+            ));
+        }
+        self.wizard_index_name = sel.name.clone();
+        self.wizard_index_original = Some(sel.name);
+        self.wizard_index_table = table;
+        self.wizard_index_unique = unique;
+        self.wizard_index_cols = columns.join(", ");
         self.overlay = Some(OverlayKind::EditIndex);
         Ok(())
     }
@@ -917,10 +1096,12 @@ impl AppState {
             return Err("Index needs name, table, and columns".into());
         }
         let conn = self.conn.as_ref().unwrap();
-        if let Some(orig) = self.wizard_index_original.clone() {
-            let _ = db::drop_object(conn, ObjectKind::Index, &orig);
-        }
-        db::create_index(conn, &name, &table, &cols, self.wizard_index_unique)?;
+        db::with_savepoint(conn, || {
+            if let Some(orig) = self.wizard_index_original.as_ref() {
+                db::drop_object(conn, ObjectKind::Index, orig)?;
+            }
+            db::create_index(conn, &name, &table, &cols, self.wizard_index_unique)
+        })?;
         self.log_sql(format!(
             "CREATE {}INDEX {name} ON {table}({cols})",
             if self.wizard_index_unique {
@@ -967,13 +1148,7 @@ impl AppState {
         } else {
             db::import_csv_parse_opts(Path::new(&self.csv_path), &opts)?
         };
-        let n = db::import_csv_into_table(
-            self.conn.as_ref().unwrap(),
-            &table,
-            &cols,
-            &rows,
-            true,
-        )?;
+        let n = db::import_csv_into_table(self.conn.as_ref().unwrap(), &table, &cols, &rows, true)?;
         self.log_sql(format!("-- import csv → {table} ({n} rows)"));
         self.mark_dirty();
         self.overlay = None;
@@ -1035,8 +1210,19 @@ impl AppState {
         COLUMN_TYPES.iter().map(|s| (*s).to_string()).collect()
     }
 
-    fn adopt_conn(&mut self, conn: Connection, path: String, read_only: bool) -> Result<(), String> {
+    fn adopt_conn(
+        &mut self,
+        conn: Connection,
+        path: String,
+        read_only: bool,
+    ) -> Result<(), String> {
+        self.guard_replace()?;
+        db::list_schema(&conn)?;
         self.conn = Some(conn);
+        self.cipher_active = false;
+        self.cipher_open_path = None;
+        self.selected = None;
+        self.sql_result = None;
         self.path = path;
         self.path_draft = self.path.clone();
         self.read_only = read_only;
@@ -1063,6 +1249,10 @@ impl AppState {
     }
 
     pub fn open_path(&mut self, path: &str) -> Result<(), String> {
+        self.guard_replace()?;
+        if self.request_cipher_open(path, false)? {
+            return Ok(());
+        }
         let conn = db::open_path(path)?;
         let p = if path.is_empty() {
             ":memory:".into()
@@ -1076,6 +1266,10 @@ impl AppState {
     }
 
     pub fn open_readonly_path(&mut self, path: &str) -> Result<(), String> {
+        self.guard_replace()?;
+        if self.request_cipher_open(path, true)? {
+            return Ok(());
+        }
         let conn = db::open_readonly(path)?;
         self.log_sql(format!("-- open read-only {path}"));
         self.adopt_conn(conn, path.to_string(), true)?;
@@ -1085,6 +1279,7 @@ impl AppState {
     }
 
     pub fn create_new_db(&mut self, path: &str) -> Result<(), String> {
+        self.guard_replace()?;
         let conn = db::create_new(path)?;
         self.log_sql(format!("-- create {path}"));
         self.schema.clear();
@@ -1095,6 +1290,7 @@ impl AppState {
     }
 
     pub fn new_memory_db(&mut self) -> Result<(), String> {
+        self.guard_replace()?;
         let conn = open_shared_memory()?;
         self.log_sql("-- new in-memory");
         self.schema.clear();
@@ -1121,12 +1317,32 @@ impl AppState {
     }
 
     pub fn save_as(&mut self, dst: &str) -> Result<(), String> {
-        if self.dirty {
+        if self.sql_busy {
+            return Err("Wait for SQL to finish".into());
+        }
+        if Path::new(dst).exists() {
+            return Err("Save As requires a new path".into());
+        }
+        if self.cipher_active {
+            return Err("Use encrypted export to save an encrypted database".into());
+        }
+        if !self.read_only {
             self.write_changes()?;
         }
-        db::copy_database_file(&self.path, dst)?;
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        db::copy_database_file(conn, Path::new(dst))?;
         self.open_path(dst)?;
         self.status_msg = format!("Saved As {dst}");
+        Ok(())
+    }
+
+    fn guard_replace(&self) -> Result<(), String> {
+        if self.sql_busy {
+            return Err("Stop or finish SQL before changing databases".into());
+        }
+        if self.dirty {
+            return Err("Write Changes or Revert before changing databases".into());
+        }
         Ok(())
     }
 
@@ -1145,6 +1361,9 @@ impl AppState {
         self.path.clear();
         self.read_only = false;
         self.dirty = false;
+        self.cipher_active = false;
+        self.cipher_open_path = None;
+        self.cipher_passphrase.clear();
         self.log_sql("-- close");
         self.status_msg = "Database closed".into();
     }
@@ -1185,7 +1404,9 @@ impl AppState {
             self.recent.pop_back();
         }
         let body = self.recent.iter().cloned().collect::<Vec<_>>().join("\n");
-        let _ = std::fs::write(Self::recent_path(), body);
+        if !cfg!(test) {
+            let _ = std::fs::write(Self::recent_path(), body);
+        }
     }
 
     pub fn find_next_in_sql(&mut self) -> bool {
@@ -1194,7 +1415,10 @@ impl AppState {
             return false;
         }
         let text = self.sql_editor().to_string();
-        let start = self.find_pos.min(text.len());
+        let mut start = self.find_pos.min(text.len());
+        while !text.is_char_boundary(start) {
+            start -= 1;
+        }
         if let Some(rel) = text[start..].find(&needle) {
             self.find_pos = start + rel + needle.len();
             true
@@ -1239,18 +1463,13 @@ impl AppState {
         count
     }
 
-
     pub fn add_browse_tab(&mut self) {
-        let table = self
-            .browse()
-            .table
-            .clone()
-            .or_else(|| {
-                self.schema
-                    .iter()
-                    .find(|o| o.kind == ObjectKind::Table)
-                    .map(|o| o.name.clone())
-            });
+        let table = self.browse().table.clone().or_else(|| {
+            self.schema
+                .iter()
+                .find(|o| o.kind == ObjectKind::Table)
+                .map(|o| o.name.clone())
+        });
         self.browse_tabs.push(BrowseTabState::new(table));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
         let _ = self.refresh_browse();
@@ -1273,6 +1492,7 @@ impl AppState {
 
     pub fn save_pragmas(&mut self) -> Result<(), String> {
         self.guard_writable()?;
+        self.guard_replace()?;
         let pairs: Vec<(String, String)> = self
             .pragmas
             .iter()
@@ -1285,116 +1505,98 @@ impl AppState {
         let mut logs = Vec::new();
         {
             let conn = self.conn.as_ref().unwrap();
-            for (k, v) in &pairs {
-                let vv = v.trim();
-                if vv.is_empty() {
-                    continue;
-                }
-                let out = match k.as_str() {
-                    "foreign_keys" | "recursive_triggers" => {
-                        if matches!(vv.to_ascii_lowercase().as_str(), "1" | "on" | "true") {
-                            "ON"
-                        } else {
-                            "OFF"
-                        }
+            conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+            let result = (|| {
+                for (k, v) in &pairs {
+                    let vv = v.trim();
+                    if vv.is_empty() {
+                        continue;
                     }
-                    _ => vv,
-                };
-                db::write_pragma(conn, k, out)?;
-                logs.push(format!("PRAGMA {k} = {out}"));
-            }
+                    let out = match k.as_str() {
+                        "foreign_keys" | "recursive_triggers" => {
+                            if matches!(vv.to_ascii_lowercase().as_str(), "1" | "on" | "true") {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        }
+                        _ => vv,
+                    };
+                    if self.pragmas.iter().any(|(key, old)| key == k && old == v) {
+                        continue;
+                    }
+                    db::write_pragma(conn, k, out)?;
+                    logs.push(format!("PRAGMA {k} = {out}"));
+                }
+                Ok::<_, String>(())
+            })();
+            db::begin_deferred(conn)?;
+            result?;
         }
         for l in logs {
             self.log_sql(l);
         }
-        self.mark_dirty();
         self.refresh_pragmas()?;
-        self.status_msg = "Pragmas saved (may need Write Changes)".into();
+        self.status_msg = "Pragmas applied".into();
         Ok(())
     }
 
     pub fn run_sql_sync(&mut self) -> Result<(), String> {
         let sql = self.sql_editor().to_string();
-        if sql.trim().is_empty() {
-            return Err("SQL is empty".into());
-        }
-        self.sql_cancel.store(false, Ordering::SeqCst);
-        let conn = self.conn.as_ref().ok_or("No database open")?;
-        // Cooperative cancel via progress handler
-        let cancel = self.sql_cancel.clone();
-        let _ = conn.progress_handler(1000, Some(move || cancel.load(Ordering::SeqCst)));
-        self.sql_interrupt = Some(conn.get_interrupt_handle());
-        self.sql_busy = true;
-        let result = db::execute_sql(conn, &sql);
-        let _ = conn.progress_handler(0, None::<fn() -> bool>);
-        self.sql_busy = false;
-        self.sql_interrupt = None;
-        match result {
-            Ok(res) => {
-                let n = res.rows.len();
-                self.sql_result = Some(res);
-                self.sql_message = format!("OK — {n} result row(s)");
-                self.status_msg = "SQL ok".into();
-                self.error_msg = None;
-                self.log_sql(sql.lines().next().unwrap_or("SQL").to_string());
-                let _ = self.refresh_schema();
-                Ok(())
-            }
-            Err(e) => {
-                self.sql_result = None;
-                self.error_msg = Some(e.clone());
-                self.sql_message = e.clone();
-                self.status_msg = e.clone();
-                Err(e)
-            }
-        }
+        self.run_sql_text_sync(&sql)
     }
 
-    /// Start SQL on a background connection (file path or shared-memory URI) so Stop can interrupt.
+    pub fn run_sql_text_sync(&mut self, sql: &str) -> Result<(), String> {
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        let result = db::execute_sql(conn, sql);
+        self.dirty = !self.read_only && db::has_pending_changes(conn)?;
+        if !self.read_only {
+            db::begin_deferred(conn)?;
+        }
+        self.finish_sql_result(result)
+    }
+
+    /// Move the live connection to the worker so edits, keys and ATTACH share one transaction.
     pub fn start_sql_job(&mut self) -> Result<(), String> {
+        self.start_sql_text(self.sql_editor().to_string())
+    }
+
+    fn start_sql_text(&mut self, sql: String) -> Result<(), String> {
         if self.sql_busy {
             return Err("SQL already running".into());
         }
-        let sql = self.sql_editor().to_string();
         if sql.trim().is_empty() {
             return Err("SQL is empty".into());
         }
-        let path = self.path.clone();
+        let worker = self.conn.take().ok_or("No database open")?;
         let read_only = self.read_only;
         self.sql_cancel.store(false, Ordering::SeqCst);
         let cancel = self.sql_cancel.clone();
-        let done = Arc::new(AtomicBool::new(false));
-        let result: Arc<Mutex<Option<Result<QueryResult, String>>>> =
-            Arc::new(Mutex::new(None));
-        let done_t = done.clone();
-        let result_t = result.clone();
-
-        // Open worker connection
-        let worker = if path == ":memory:" || path.is_empty() {
-            open_shared_memory()?
-        } else if read_only {
-            db::open_readonly(&path)?
-        } else {
-            db::open_path(&path)?
-        };
         self.sql_interrupt = Some(worker.get_interrupt_handle());
         self.sql_busy = true;
         self.sql_message = "Running…".into();
         self.status_msg = "SQL running…".into();
-
-        let sql_for_log = sql.lines().next().unwrap_or("SQL").to_string();
-        std::thread::spawn(move || {
-            let cancel2 = cancel.clone();
-            let _ = worker.progress_handler(500, Some(move || cancel2.load(Ordering::SeqCst)));
-            let res = db::execute_sql(&worker, &sql);
-            let _ = worker.progress_handler(0, None::<fn() -> bool>);
-            if let Ok(mut g) = result_t.lock() {
-                *g = Some(res);
+        self.log_sql(sql.lines().next().unwrap_or("SQL"));
+        let handle = std::thread::spawn(move || {
+            worker.progress_handler(500, Some(move || cancel.load(Ordering::SeqCst)));
+            let mut result = db::execute_sql(&worker, &sql);
+            worker.progress_handler(0, None::<fn() -> bool>);
+            let changed = !read_only && db::has_pending_changes(&worker).unwrap_or(true);
+            if result.is_err() && worker.is_autocommit() && !read_only {
+                result = result.map_err(|e| {
+                    format!(
+                        "{e}; the transaction ended through explicit SQL or a SQLite rollback; check earlier pending edits"
+                    )
+                });
             }
-            done_t.store(true, Ordering::SeqCst);
+            if !read_only {
+                if let Err(e) = db::begin_deferred(&worker) {
+                    result = Err(e);
+                }
+            }
+            (worker, result, changed)
         });
-        self.sql_job = Some(SqlJob { done, result });
-        self.log_sql(sql_for_log);
+        self.sql_job = Some(SqlJob { handle });
         Ok(())
     }
 
@@ -1407,42 +1609,61 @@ impl AppState {
     }
 
     pub fn poll_sql_job(&mut self) -> bool {
-        let Some(job) = self.sql_job.as_ref() else {
-            return false;
-        };
-        if !job.done.load(Ordering::SeqCst) {
+        if !self
+            .sql_job
+            .as_ref()
+            .is_some_and(|j| j.handle.is_finished())
+        {
             return false;
         }
-        let result = job
-            .result
-            .lock()
-            .ok()
-            .and_then(|mut g| g.take())
-            .unwrap_or_else(|| Err("SQL job lost result".into()));
-        self.sql_job = None;
+        let job = self.sql_job.take().unwrap();
         self.sql_busy = false;
         self.sql_interrupt = None;
+        let result = match job.handle.join() {
+            Ok((conn, result, changed)) => {
+                self.conn = Some(conn);
+                self.dirty = changed;
+                result
+            }
+            Err(_) => {
+                Err("SQL worker panicked; connection closed and pending changes rolled back".into())
+            }
+        };
+        let _ = self.finish_sql_result(result);
+        true
+    }
+
+    fn finish_sql_result(&mut self, result: Result<QueryResult, String>) -> Result<(), String> {
+        let _ = self.refresh_schema();
+        let _ = self.refresh_browse();
         match result {
             Ok(res) => {
-                let n = res.rows.len();
+                self.sql_message = format!(
+                    "OK — {} result row(s){}",
+                    res.rows.len(),
+                    if res.truncated {
+                        " (preview limited to 500)"
+                    } else {
+                        ""
+                    }
+                );
                 self.sql_result = Some(res);
-                self.sql_message = format!("OK — {n} result row(s)");
-                self.status_msg = "SQL ok".into();
+                self.status_msg = self.sql_message.clone();
                 self.error_msg = None;
-                let _ = self.refresh_schema();
+                Ok(())
             }
             Err(e) => {
                 self.sql_result = None;
                 self.error_msg = Some(e.clone());
                 self.sql_message = e.clone();
-                self.status_msg = e;
+                self.status_msg = e.clone();
+                Err(e)
             }
         }
-        true
     }
 }
 
-fn open_or_create_demo(path: &PathBuf) -> Result<Connection, String> {
+fn open_or_create_demo(path: &Path) -> Result<Connection, String> {
     if path.exists() {
         db::open_path(path.to_str().unwrap_or(":memory:"))
     } else {
@@ -1453,53 +1674,7 @@ fn open_or_create_demo(path: &PathBuf) -> Result<Connection, String> {
 }
 
 fn open_shared_memory() -> Result<Connection, String> {
-    // Shared-cache URI so a worker connection can see the same :memory: DB.
-    use rusqlite::OpenFlags;
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-        | OpenFlags::SQLITE_OPEN_CREATE
-        | OpenFlags::SQLITE_OPEN_URI;
-    Connection::open_with_flags("file:e28_mem?mode=memory&cache=shared", flags)
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod chart_default_tests {
-    use super::*;
-    use crate::db;
-
-    #[test]
-    fn pick_chart_prefers_products_price() {
-        let state = AppState::new_with_demo();
-        assert_eq!(state.chart_table.as_deref(), Some("products"));
-        assert_eq!(state.chart_column, "price");
-        assert!(!state.chart_points.is_empty());
-        assert!(state.chart_points.iter().any(|v| *v > 10.0));
-        let _ = db::default_demo_path();
-    }
-
-    #[test]
-    fn main_tab_count_is_four() {
-        assert_eq!(MainTab::ExecuteSql.index(), 3);
-        assert_eq!(MainTab::from_index(4), MainTab::Structure);
-    }
-
-    #[test]
-    fn create_table_ddl_smoke() {
-        let cols = vec![
-            ColDef {
-                name: "id".into(),
-                type_name: "INTEGER".into(),
-                pk: true,
-                notnull: false,
-                unique: false,
-                default_value: String::new(),
-            },
-            ColDef::new("name", "TEXT"),
-        ];
-        let ddl = db::create_table_ddl("t", &cols);
-        assert!(ddl.contains("CREATE TABLE"));
-        assert!(ddl.contains("PRIMARY KEY"));
-    }
+    Connection::open_in_memory().map_err(|e| e.to_string())
 }
 
 impl AppState {
@@ -1517,6 +1692,9 @@ impl AppState {
             .trim()
             .parse()
             .map_err(|_| "font size must be a number".to_string())?;
+        if !fs.is_finite() {
+            return Err("font size must be finite".into());
+        }
         self.prefs.font_size = fs.clamp(9.0, 28.0);
         self.prefs.default_theme_dark = self.prefs_theme_dark;
         self.prefs.confirm_drops = self.prefs_confirm_drops;
@@ -1537,24 +1715,47 @@ impl AppState {
         Ok(())
     }
 
-    pub fn apply_cipher_overlay(&mut self) -> Result<(), String> {
-        let Some(conn) = self.conn.as_ref() else {
-            return Err("No database open".into());
-        };
-        let page: i64 = self.cipher_page_size.trim().parse().unwrap_or(4096);
-        let kdf: i64 = self.cipher_kdf_iter.trim().parse().unwrap_or(256_000);
-        match db::apply_cipher_key(conn, &self.cipher_passphrase, page, kdf) {
-            Ok(()) => {
-                self.cipher_active = true;
-                self.status_msg = "Encryption key applied (SQLCipher)".into();
-                Ok(())
-            }
-            Err(e) => {
-                // Still record settings for project/prefs persistence.
-                self.status_msg = e.clone();
-                Err(e)
-            }
+    fn request_cipher_open(&mut self, path: &str, read_only: bool) -> Result<bool, String> {
+        if Path::new(path).is_file()
+            && std::fs::metadata(path).map_err(|e| e.to_string())?.len() > 0
+            && !db::looks_like_sqlite(Path::new(path))?
+        {
+            self.cipher_open_path = Some((path.into(), read_only));
+            self.cipher_passphrase.clear();
+            self.overlay = Some(OverlayKind::Cipher);
+            self.status_msg = "Enter the database key; the current database remains open".into();
+            return Ok(true);
         }
+        Ok(false)
+    }
+
+    pub fn apply_cipher_overlay(&mut self) -> Result<(), String> {
+        self.guard_replace()?;
+        let (path, read_only) = self
+            .cipher_open_path
+            .clone()
+            .ok_or("Select an encrypted database to open")?;
+        let page = self
+            .cipher_page_size
+            .trim()
+            .parse()
+            .map_err(|_| "Invalid page size")?;
+        let kdf = self
+            .cipher_kdf_iter
+            .trim()
+            .parse()
+            .map_err(|_| "Invalid KDF iterations")?;
+        let conn = if read_only {
+            db::open_readonly(&path)?
+        } else {
+            db::open_path(&path)?
+        };
+        db::apply_cipher_key(&conn, &self.cipher_passphrase, page, kdf)?;
+        self.adopt_conn(conn, path, read_only)?;
+        self.cipher_active = true;
+        self.cipher_passphrase.clear();
+        self.status_msg = "Encrypted database opened".into();
+        Ok(())
     }
 
     pub fn export_sql_with_options(&mut self, path: &std::path::Path) -> Result<(), String> {
@@ -1576,7 +1777,20 @@ impl AppState {
     }
 
     pub fn save_project(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let pf = crate::project::ProjectFile::from_state(self);
+        if let Some(conn) = self.conn.as_ref() {
+            db::guard_output_path(conn, path)?;
+        }
+        if self.path == ":memory:" {
+            return Err("Save the in-memory database to a file before saving its project".into());
+        }
+        let mut pf = crate::project::ProjectFile::from_state(self);
+        if !pf.db_path.is_empty() {
+            pf.db_path = Path::new(&pf.db_path)
+                .canonicalize()
+                .map_err(|e| e.to_string())?
+                .display()
+                .to_string();
+        }
         pf.save(path)?;
         self.project_path = Some(path.display().to_string());
         self.status_msg = format!("Project saved → {}", path.display());
@@ -1584,9 +1798,35 @@ impl AppState {
     }
 
     pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let pf = crate::project::ProjectFile::load(path)?;
-        if !pf.db_path.is_empty() && pf.db_path != ":memory:" {
-            self.open_path(&pf.db_path)?;
+        self.guard_replace()?;
+        let mut pf = crate::project::ProjectFile::load(path)?;
+        if !pf.db_path.is_empty()
+            && pf.db_path != ":memory:"
+            && Path::new(&pf.db_path).is_relative()
+        {
+            pf.db_path = path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(&pf.db_path)
+                .display()
+                .to_string();
+        }
+        if pf.db_path.is_empty() || pf.db_path == ":memory:" {
+            self.new_memory_db()?;
+        } else {
+            if !Path::new(&pf.db_path).is_file() {
+                return Err("Project database does not exist".into());
+            }
+            if self.cipher_active && self.path == pf.db_path {
+                // Reuse the already unlocked connection; keys are never stored in projects.
+            } else {
+                if !db::looks_like_sqlite(Path::new(&pf.db_path))? {
+                    return Err(
+                        "Open and unlock the encrypted database before loading its project".into(),
+                    );
+                }
+                self.open_path(&pf.db_path)?;
+            }
         }
         pf.apply_to(self);
         self.project_path = Some(path.display().to_string());
@@ -1600,29 +1840,12 @@ impl AppState {
         self.status_msg = "Project closed".into();
     }
 
-    pub fn execute_current_line(&mut self) -> Result<(), String> {
-        let sql = self.sql_tabs.get(self.sql_tab_idx).cloned().unwrap_or_default();
-        // Use caret approximation: first non-empty line, or whole editor if single statement-ish.
-        let line = sql
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty() && !l.starts_with("--"))
-            .unwrap_or("")
-            .to_string();
-        if line.is_empty() {
-            return Err("No current line to execute".into());
-        }
-        self.sql_tabs[self.sql_tab_idx] = format!("{line}\n");
-        // Keep other tabs; temporarily run just the line via start_sql_job path
-        let saved = self.sql_tabs[self.sql_tab_idx].clone();
-        self.sql_tabs[self.sql_tab_idx] = if line.ends_with(';') {
-            line.clone()
-        } else {
-            format!("{line};")
-        };
-        let r = self.start_sql_job();
-        self.sql_tabs[self.sql_tab_idx] = saved;
-        r
+    pub fn execute_current_line(&mut self, caret: usize) -> Result<(), String> {
+        let sql = self.sql_editor();
+        let byte = sql.char_indices().nth(caret).map_or(sql.len(), |(i, _)| i);
+        let start = sql[..byte].rfind('\n').map_or(0, |i| i + 1);
+        let end = sql[byte..].find('\n').map_or(sql.len(), |i| byte + i);
+        self.start_sql_text(sql[start..end].to_string())
     }
 
     pub fn toggle_sql_line_comment(&mut self) {
@@ -1652,6 +1875,7 @@ impl AppState {
     }
 
     pub fn save_results_as_view(&mut self, name: &str) -> Result<(), String> {
+        self.guard_writable()?;
         let name = name.trim();
         if name.is_empty() {
             return Err("View name required".into());
@@ -1665,14 +1889,10 @@ impl AppState {
         if body.is_empty() {
             return Err("SQL editor empty".into());
         }
-        let ddl = format!(
-            "CREATE VIEW IF NOT EXISTS {} AS {}",
-            db::quote_ident(name),
-            body
-        );
+        let ddl = format!("CREATE VIEW {} AS {}", db::quote_ident(name), body);
         {
             let conn = self.conn.as_ref().ok_or("No database open")?;
-            conn.execute_batch(&ddl).map_err(|e| e.to_string())?;
+            conn.execute(&ddl, []).map_err(|e| e.to_string())?;
         }
         self.dirty = true;
         self.log_sql(&ddl);
@@ -1691,7 +1911,8 @@ impl AppState {
             self.status_msg = "Pick a column for conditional formatting".into();
             return;
         }
-        let rgb = u32::from_str_radix(self.cond_color.trim_start_matches('#'), 16).unwrap_or(0xE67E22);
+        let rgb =
+            u32::from_str_radix(self.cond_color.trim_start_matches('#'), 16).unwrap_or(0xE67E22);
         self.cond_rules.push(CondFormatRule {
             column: col,
             op: self.cond_op_idx,
@@ -1747,79 +1968,105 @@ impl AppState {
 
     pub fn sync_edit_cell_from_selection(&mut self) {
         let b = self.browse();
-        let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
+        let (Some(ri), Some(res), Some(table), Some(conn)) = (
+            b.sel_row,
+            b.result.as_ref(),
+            b.table.as_ref(),
+            self.conn.as_ref(),
+        ) else {
             return;
         };
         let ci = b.sel_col.unwrap_or(0);
-        let col = res.columns.get(ci).cloned().unwrap_or_default();
-        let val = res
-            .rows
-            .get(ri)
-            .and_then(|r| r.get(ci))
-            .cloned()
-            .unwrap_or_default();
-        self.edit_col = col;
-        self.edit_binary_len = val.len();
-        self.edit_image_kind.clear();
-        // Detect JSON / image magic in UTF-8 or raw-ish
-        let bytes = val.as_bytes();
-        if db::looks_like_png(bytes) {
-            self.edit_image_kind = "PNG".into();
-            self.edit_mode = EditCellMode::Image;
-            self.edit_value = format!("[PNG image, {} bytes]", bytes.len());
-        } else if db::looks_like_jpeg(bytes) {
-            self.edit_image_kind = "JPEG".into();
-            self.edit_mode = EditCellMode::Image;
-            self.edit_value = format!("[JPEG image, {} bytes]", bytes.len());
-        } else if matches!(self.edit_mode, EditCellMode::Hex) {
-            self.edit_value = db::to_hex(bytes);
-        } else if matches!(self.edit_mode, EditCellMode::Json) {
-            self.edit_value = db::try_pretty_json(&val).unwrap_or(val);
+        let Some(col) = res.columns.get(ci).cloned() else {
+            return;
+        };
+        let value = if let Some(rowid) = b.rowids.get(ri) {
+            conn.query_row(
+                &format!(
+                    "SELECT {} FROM {} WHERE rowid=?1",
+                    db::quote_ident(&col),
+                    db::quote_ident(table)
+                ),
+                [rowid],
+                |r| r.get::<_, rusqlite::types::Value>(0),
+            )
+            .ok()
         } else {
-            self.edit_mode = EditCellMode::Text;
-            self.edit_value = val;
+            res.rows
+                .get(ri)
+                .and_then(|r| r.get(ci))
+                .cloned()
+                .map(rusqlite::types::Value::Text)
+        };
+        let Some(value) = value else {
+            return;
+        };
+        let mode = if matches!(value, rusqlite::types::Value::Blob(_)) {
+            EditCellMode::Hex
+        } else {
+            EditCellMode::Text
+        };
+        self.edit_col = col;
+        self.edit_original = value;
+        self.edit_mode = mode;
+        self.show_edit_value();
+    }
+
+    fn show_edit_value(&mut self) {
+        use rusqlite::types::Value;
+        let bytes = match &self.edit_original {
+            Value::Blob(v) => v.clone(),
+            Value::Text(v) => v.as_bytes().to_vec(),
+            Value::Integer(v) => v.to_string().into_bytes(),
+            Value::Real(v) => v.to_string().into_bytes(),
+            Value::Null => Vec::new(),
+        };
+        self.edit_binary_len = bytes.len();
+        self.edit_image_rgba = None;
+        self.edit_value = match self.edit_mode {
+            EditCellMode::Hex => db::to_hex(&bytes),
+            EditCellMode::Image => format!("[{} bytes — read-only image preview]", bytes.len()),
+            EditCellMode::Json => db::try_pretty_json(&String::from_utf8_lossy(&bytes))
+                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned()),
+            EditCellMode::Text => String::from_utf8_lossy(&bytes).into_owned(),
+        };
+        if self.edit_mode == EditCellMode::Image {
+            self.decode_edit_image();
+        }
+    }
+
+    pub fn edited_cell_value(&self) -> Result<rusqlite::types::Value, String> {
+        use rusqlite::types::Value;
+        match self.edit_mode {
+            EditCellMode::Hex => db::from_hex(&self.edit_value).map(Value::Blob),
+            EditCellMode::Json
+                if serde_json::from_str::<serde_json::Value>(&self.edit_value).is_err() =>
+            {
+                Err("Invalid JSON".into())
+            }
+            EditCellMode::Image => {
+                Err("Image preview is read-only; use Hex to edit binary data".into())
+            }
+            _ if matches!(self.edit_original, Value::Blob(_)) => {
+                Err("Use Hex to edit binary data without changing its type".into())
+            }
+            _ if matches!(&self.edit_original, Value::Integer(v) if v.to_string() == self.edit_value) => {
+                Ok(self.edit_original.clone())
+            }
+            _ if matches!(&self.edit_original, Value::Real(v) if v.to_string() == self.edit_value) => {
+                Ok(self.edit_original.clone())
+            }
+            _ if self.edit_original == Value::Null && self.edit_value.is_empty() => Ok(Value::Null),
+            _ => Ok(Value::Text(self.edit_value.clone())),
         }
     }
 
     pub fn set_edit_mode(&mut self, mode: EditCellMode) {
-        // Re-interpret current value when switching modes.
-        let raw = match self.edit_mode {
-            EditCellMode::Hex => db::from_hex(&self.edit_value)
-                .ok()
-                .and_then(|b| String::from_utf8(b).ok())
-                .unwrap_or_else(|| self.edit_value.clone()),
-            _ => self.edit_value.clone(),
-        };
-        self.edit_mode = mode;
-        match mode {
-            EditCellMode::Text => {
-                self.edit_value = raw;
-                self.edit_binary_len = self.edit_value.len();
-            }
-            EditCellMode::Hex => {
-                self.edit_value = db::to_hex(raw.as_bytes());
-                self.edit_binary_len = raw.len();
-            }
-            EditCellMode::Json => {
-                self.edit_value = db::try_pretty_json(&raw).unwrap_or(raw);
-                self.edit_binary_len = self.edit_value.len();
-            }
-            EditCellMode::Image => {
-                let b = raw.as_bytes();
-                self.edit_binary_len = b.len();
-                if db::looks_like_png(b) {
-                    self.edit_image_kind = "PNG".into();
-                } else if db::looks_like_jpeg(b) {
-                    self.edit_image_kind = "JPEG".into();
-                } else {
-                    self.edit_image_kind = "unknown".into();
-                }
-                self.edit_value = format!(
-                    "[{} image preview unavailable in soft render; {} bytes]",
-                    self.edit_image_kind, self.edit_binary_len
-                );
-            }
+        if let Ok(value) = self.edited_cell_value() {
+            self.edit_original = value;
         }
+        self.edit_mode = mode;
+        self.show_edit_value();
     }
 
     pub fn navigate_fk(&mut self) -> Result<(), String> {
@@ -1840,16 +2087,17 @@ impl AppState {
         let Some(fk) = fks.into_iter().find(|f| f.from_col == col) else {
             return Err(format!("Column {col} has no foreign key"));
         };
-        // Open / focus browse tab on parent table filtered to PK
-        let filter = format!("{} = '{}'", db::quote_ident(&fk.to_col), val.replace('\'', "''"));
-        // reuse quote via format carefully — use bound style in browse
-        let where_sql = format!("{} = '{}'", fk.to_col, val.replace('\'', "''"));
-        self.browse_tabs.push(BrowseTabState::new(Some(fk.to_table.clone())));
+        let filter = format!(
+            "{} = '{}'",
+            db::quote_ident(&fk.to_col),
+            val.replace('\'', "''")
+        );
+        self.browse_tabs
+            .push(BrowseTabState::new(Some(fk.to_table.clone())));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
-        self.browse_mut().filter = where_sql;
+        self.browse_mut().filter = filter;
         self.tab = MainTab::Browse;
         self.refresh_browse()?;
-        let _ = filter;
         self.status_msg = format!("FK → {}.{} = {}", fk.to_table, fk.to_col, val);
         Ok(())
     }
@@ -1871,19 +2119,8 @@ impl AppState {
         if let Some(pp) = self.project_path.clone() {
             self.save_project(std::path::Path::new(&pp))?;
         }
-        // Persist open SQL tabs to sidecar next to DB when no project
-        if self.project_path.is_none() && !self.path.is_empty() && self.path != ":memory:" {
-            let side = std::path::Path::new(&self.path).with_extension("e28.sqltabs");
-            let mut body = String::new();
-            for (i, tab) in self.sql_tabs.iter().enumerate() {
-                body.push_str(&format!("-- tab {}\n{}\n", i + 1, tab));
-            }
-            std::fs::write(&side, body).map_err(|e| e.to_string())?;
-            self.status_msg = format!("Save All: DB + SQL tabs → {}", side.display());
-        } else {
-            self.status_msg = "Save All complete".into();
-        }
-        let _ = self.prefs.save();
+        self.status_msg = "Save All complete".into();
+        self.prefs.save()?;
         Ok(())
     }
 
@@ -1893,7 +2130,11 @@ impl AppState {
             return Err("Extension path required".into());
         }
         let entry = self.ext_entry.trim().to_string();
-        let entry_opt = if entry.is_empty() { None } else { Some(entry.as_str()) };
+        let entry_opt = if entry.is_empty() {
+            None
+        } else {
+            Some(entry.as_str())
+        };
         {
             let conn = self.conn.as_ref().ok_or("No database open")?;
             db::load_extension(conn, &path, entry_opt)?;
@@ -1906,6 +2147,7 @@ impl AppState {
     pub fn print_schema_to(&mut self, path: &std::path::Path) -> Result<(), String> {
         let report = {
             let conn = self.conn.as_ref().ok_or("No database open")?;
+            db::guard_output_path(conn, path)?;
             db::schema_report(conn)?
         };
         std::fs::write(path, report).map_err(|e| e.to_string())?;
@@ -1919,7 +2161,12 @@ impl AppState {
             BrowseViewMode::Form => BrowseViewMode::Table,
         };
         if matches!(self.browse_view, BrowseViewMode::Form) {
-            let n = self.browse().result.as_ref().map(|r| r.rows.len()).unwrap_or(0);
+            let n = self
+                .browse()
+                .result
+                .as_ref()
+                .map(|r| r.rows.len())
+                .unwrap_or(0);
             if n > 0 && self.browse().sel_row.is_none() {
                 self.browse_mut().sel_row = Some(0);
                 self.browse_mut().sel_col = Some(0);
@@ -1928,9 +2175,13 @@ impl AppState {
         }
     }
 
-
     pub fn form_next_record(&mut self) {
-        let n = self.browse().result.as_ref().map(|r| r.rows.len()).unwrap_or(0);
+        let n = self
+            .browse()
+            .result
+            .as_ref()
+            .map(|r| r.rows.len())
+            .unwrap_or(0);
         if n == 0 {
             return;
         }
@@ -1953,25 +2204,9 @@ impl AppState {
 
     pub fn decode_edit_image(&mut self) {
         self.edit_image_rgba = None;
-        let raw = match self.edit_mode {
-            EditCellMode::Hex => db::from_hex(&self.edit_value).unwrap_or_default(),
-            _ => self.edit_value.as_bytes().to_vec(),
-        };
-        // Also try from browse cell raw if current value is placeholder
-        let bytes = if raw.starts_with(b"[") && self.edit_image_kind.len() > 0 {
-            // re-fetch from selection
-            let b = self.browse();
-            let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
-                return;
-            };
-            let ci = b.sel_col.unwrap_or(0);
-            res.rows
-                .get(ri)
-                .and_then(|r| r.get(ci))
-                .map(|s| s.as_bytes().to_vec())
-                .unwrap_or(raw)
-        } else {
-            raw
+        let bytes = match &self.edit_original {
+            rusqlite::types::Value::Blob(v) => v.clone(),
+            _ => return,
         };
         if !(db::looks_like_png(&bytes) || db::looks_like_jpeg(&bytes)) {
             return;
@@ -2001,13 +2236,27 @@ impl AppState {
     }
 
     pub fn apply_cipher_encrypt_file(&mut self, dest: &std::path::Path) -> Result<(), String> {
-        let page: i64 = self.cipher_page_size.trim().parse().unwrap_or(4096);
-        let kdf: i64 = self.cipher_kdf_iter.trim().parse().unwrap_or(256_000);
-        {
-            let conn = self.conn.as_ref().ok_or("No database open")?;
-            db::encrypt_database_to(conn, dest, &self.cipher_passphrase, page, kdf)?;
+        self.guard_replace()?;
+        let page = self
+            .cipher_page_size
+            .trim()
+            .parse()
+            .map_err(|_| "Invalid page size")?;
+        let kdf = self
+            .cipher_kdf_iter
+            .trim()
+            .parse()
+            .map_err(|_| "Invalid KDF iterations")?;
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        if !conn.is_autocommit() {
+            conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
         }
-        self.cipher_active = true;
+        let result = db::encrypt_database_to(conn, dest, &self.cipher_passphrase, page, kdf);
+        if !self.read_only {
+            db::begin_deferred(conn)?;
+        }
+        result?;
+        self.cipher_passphrase.clear();
         self.status_msg = format!("Encrypted copy → {}", dest.display());
         Ok(())
     }
@@ -2021,7 +2270,10 @@ impl AppState {
             self.remote_paths.push(p);
         }
         self.remote_draft.clear();
-        self.status_msg = format!("Remote list: {} path(s) (local-only)", self.remote_paths.len());
+        self.status_msg = format!(
+            "Remote list: {} path(s) (local-only)",
+            self.remote_paths.len()
+        );
     }
 
     pub fn remote_open_selected(&mut self) -> Result<(), String> {
@@ -2031,5 +2283,408 @@ impl AppState {
             .cloned()
             .ok_or_else(|| "No remote path selected".to_string())?;
         self.open_path(&path)
+    }
+}
+
+#[cfg(test)]
+mod chart_default_tests {
+    use super::*;
+    use crate::db;
+
+    fn test_state() -> AppState {
+        let mut state = AppState::empty();
+        state.conn = Some(Connection::open_in_memory().unwrap());
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('saved'); BEGIN;")
+            .unwrap();
+        state.path = ":memory:".into();
+        state
+    }
+
+    fn wait_sql(state: &mut AppState) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline, "SQL worker timed out");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn index_modify_keeps_sort_collation_and_rolls_back_failure() {
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE INDEX ix ON t(v COLLATE NOCASE DESC)")
+            .unwrap();
+        state.refresh_schema().unwrap();
+        state.selected = Some(SelectedObject {
+            kind: ObjectKind::Index,
+            name: "ix".into(),
+        });
+        state.open_modify_index_wizard().unwrap();
+        assert!(state.wizard_index_cols.contains("NOCASE"));
+        assert!(state.wizard_index_cols.contains("DESC"));
+        state.apply_index_wizard().unwrap();
+        state.open_modify_index_wizard().unwrap();
+        state.wizard_index_cols = "missing_column".into();
+        assert!(state.apply_index_wizard().is_err());
+        assert!(db::list_schema(state.conn.as_ref().unwrap())
+            .unwrap()
+            .iter()
+            .any(|o| o.name == "ix"));
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE INDEX partial_ix ON t(v) WHERE v IS NOT NULL")
+            .unwrap();
+        state.refresh_schema().unwrap();
+        state.selected = Some(SelectedObject {
+            kind: ObjectKind::Index,
+            name: "partial_ix".into(),
+        });
+        assert!(state.open_modify_index_wizard().is_err());
+    }
+
+    #[test]
+    fn binary_cell_edit_and_image_use_original_bytes() {
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("DELETE FROM t; INSERT INTO t VALUES (X'00FF27');")
+            .unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        assert_eq!(state.edit_value, "00FF27");
+        state.edit_value = "ff00".into();
+        let value = state.edited_cell_value().unwrap();
+        db::update_cell(
+            state.conn.as_ref().unwrap(),
+            "t",
+            state.browse().rowids[0],
+            "v",
+            &value,
+        )
+        .unwrap();
+        assert_eq!(
+            state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row("SELECT v FROM t", [], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap(),
+            vec![255, 0]
+        );
+        state.set_edit_mode(EditCellMode::Image);
+        assert!(state.edited_cell_value().is_err());
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(2, 2)
+            .write_to(&mut bytes, image::ImageOutputFormat::Png)
+            .unwrap();
+        state.edit_original = rusqlite::types::Value::Blob(bytes.into_inner());
+        state.decode_edit_image();
+        assert_eq!(
+            state.edit_image_rgba.as_ref().map(|(w, h, _)| (*w, *h)),
+            Some((2, 2))
+        );
+    }
+
+    #[test]
+    fn save_as_flushes_pending_memory_data() {
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute("INSERT INTO t VALUES('pending')", [])
+            .unwrap();
+        state.dirty = true;
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("saved.db");
+        state.save_as(dst.to_str().unwrap()).unwrap();
+        assert!(!state.dirty);
+        assert_eq!(
+            db::count_rows(&Connection::open(dst).unwrap(), "t").unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn pragmas_apply_outside_transaction_and_refuse_dirty_edits() {
+        let mut state = test_state();
+        state.refresh_pragmas().unwrap();
+        let i = state
+            .pragmas
+            .iter()
+            .position(|(k, _)| k == "foreign_keys")
+            .unwrap();
+        state.pragma_drafts[i] = "1".into();
+        state.save_pragmas().unwrap();
+        assert_eq!(
+            db::read_pragma(state.conn.as_ref().unwrap(), "foreign_keys").unwrap(),
+            "1"
+        );
+        state.dirty = true;
+        assert!(state.save_pragmas().is_err());
+    }
+
+    #[test]
+    fn async_sql_shares_pending_edits_and_revert() {
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute("INSERT INTO t VALUES ('pending')", [])
+            .unwrap();
+        state.dirty = true;
+        *state.sql_editor_mut() = "INSERT INTO t VALUES ('worker'); SELECT count(*) FROM t;".into();
+        state.start_sql_job().unwrap();
+        assert!(state.new_memory_db().is_err());
+        wait_sql(&mut state);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "3");
+        assert!(state.dirty);
+        state.revert_changes().unwrap();
+        assert_eq!(
+            db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(),
+            1
+        );
+        *state.sql_editor_mut() = "INSERT INTO t VALUES ('committed')".into();
+        state.start_sql_job().unwrap();
+        wait_sql(&mut state);
+        assert!(state.dirty);
+        state.write_changes().unwrap();
+        state.revert_changes().unwrap();
+        assert_eq!(
+            db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn sql_dirty_state_tracks_pragmas_attached_ddl_and_transaction_end() {
+        let mut state = test_state();
+        *state.sql_editor_mut() = "PRAGMA user_version=42".into();
+        state.run_sql_sync().unwrap();
+        assert!(state.dirty);
+        *state.sql_editor_mut() = "ROLLBACK".into();
+        state.start_sql_job().unwrap();
+        wait_sql(&mut state);
+        assert!(!state.dirty);
+        assert_eq!(
+            db::read_pragma(state.conn.as_ref().unwrap(), "user_version").unwrap(),
+            "0"
+        );
+        *state.sql_editor_mut() = "ATTACH ':memory:' AS extra; CREATE TABLE extra.t(v)".into();
+        state.start_sql_job().unwrap();
+        wait_sql(&mut state);
+        assert!(state.dirty);
+        *state.sql_editor_mut() = "COMMIT".into();
+        state.run_sql_sync().unwrap();
+        assert!(!state.dirty);
+        assert!(state
+            .run_sql_text_sync("INSERT INTO t VALUES ('pending'); SELECT * FROM missing;")
+            .is_err());
+        assert!(
+            state.dirty,
+            "a failed batch still has pending successful statements"
+        );
+        state.revert_changes().unwrap();
+        assert_eq!(
+            db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn browse_pages_preserve_row_identity_and_clear_stale_edits() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("DELETE FROM t; WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<601) INSERT INTO t SELECT x FROM c;").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.browse_mut().order_col = Some("v".into());
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 500);
+        state.browse_mut().sel_row = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.browse_page(true).unwrap();
+        let tab = state.browse();
+        assert_eq!(tab.result.as_ref().unwrap().rows.len(), 101);
+        assert_eq!(tab.result.as_ref().unwrap().rows[0][0], "501");
+        assert_eq!(tab.rowids[0], 501);
+        assert!(tab.sel_row.is_none());
+        assert!(state.edit_col.is_empty());
+        state.browse_page(true).unwrap();
+        assert_eq!(state.browse().offset, 500);
+        state.browse_page(false).unwrap();
+        assert_eq!(state.browse().offset, 0);
+    }
+
+    #[test]
+    fn new_record_form_supports_required_values_defaults_null_and_revert() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY, name TEXT NOT NULL, note TEXT DEFAULT 'default'); COMMIT; BEGIN;").unwrap();
+        state.browse_mut().table = Some("records".into());
+        state.open_insert_row().unwrap();
+        assert!(state.apply_insert_row().is_err());
+        state.insert_modes[1] = 2;
+        state.insert_values[1] = "中文 ' name".into();
+        state.apply_insert_row().unwrap();
+        assert!(state.dirty);
+        assert_eq!(
+            state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row("SELECT note FROM records", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "default"
+        );
+        state.open_insert_row().unwrap();
+        state.insert_modes[1] = 2;
+        state.insert_modes[2] = 1;
+        state.apply_insert_row().unwrap();
+        assert_eq!(
+            state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM records WHERE note IS NULL AND name=''",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        state.revert_changes().unwrap();
+        assert_eq!(
+            db::count_rows(state.conn.as_ref().unwrap(), "records").unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn project_resolves_relative_database_and_requires_memory_save_as() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("data.db");
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch("CREATE TABLE t(v)")
+            .unwrap();
+        let path = dir.path().join("project.sqbpro");
+        crate::project::ProjectFile {
+            db_path: "data.db".into(),
+            browse_tabs: vec![
+                BrowseTabState::new(Some("t".into())),
+                BrowseTabState::new(Some("t".into())),
+            ],
+            browse_tab_idx: 1,
+            ..Default::default()
+        }
+        .save(&path)
+        .unwrap();
+        let mut state = test_state();
+        assert!(state
+            .save_project(&dir.path().join("memory.sqbpro"))
+            .is_err());
+        state.open_project(&path).unwrap();
+        assert_eq!(state.browse_tabs.len(), 2);
+        assert_eq!(state.browse_tab_idx, 1);
+        assert_eq!(state.path, database.display().to_string());
+        state.save_project(&path).unwrap();
+        assert!(
+            Path::new(&crate::project::ProjectFile::load(&path).unwrap().db_path).is_absolute()
+        );
+    }
+
+    #[test]
+    fn execute_line_uses_caret_and_preserves_entire_editor() {
+        let mut state = test_state();
+        let sql = "SELECT '中文';\nSELECT 42;\nSELECT 99;";
+        *state.sql_editor_mut() = sql.into();
+        state
+            .execute_current_line("SELECT '中文';\nSELECT".chars().count())
+            .unwrap();
+        wait_sql(&mut state);
+        assert_eq!(state.sql_editor(), sql);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "42");
+    }
+
+    #[test]
+    fn sql_stop_recovers_live_connection() {
+        let mut state = test_state();
+        *state.sql_editor_mut() =
+            "WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c) SELECT sum(x) FROM c"
+                .into();
+        state.start_sql_job().unwrap();
+        state.request_sql_stop();
+        wait_sql(&mut state);
+        assert!(state.error_msg.is_some());
+        assert!(state.conn.is_some());
+        assert_eq!(
+            db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn dirty_database_cannot_be_replaced_and_bad_open_keeps_connection() {
+        let mut state = test_state();
+        state.dirty = true;
+        assert!(state.new_memory_db().is_err());
+        state.dirty = false;
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.db");
+        std::fs::write(&bad, b"not a database").unwrap();
+        state.open_path(bad.to_str().unwrap()).unwrap();
+        assert!(state.apply_cipher_overlay().is_err());
+        assert_eq!(
+            db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn pick_chart_prefers_products_price() {
+        let state = AppState::new_with_demo();
+        assert_eq!(state.chart_table.as_deref(), Some("products"));
+        assert_eq!(state.chart_column, "price");
+        assert!(!state.chart_points.is_empty());
+        assert!(state.chart_points.iter().any(|v| *v > 10.0));
+        let _ = db::default_demo_path();
+    }
+
+    #[test]
+    fn main_tab_count_is_four() {
+        assert_eq!(MainTab::ExecuteSql.index(), 3);
+        assert_eq!(MainTab::from_index(4), MainTab::Structure);
+    }
+
+    #[test]
+    fn create_table_ddl_smoke() {
+        let cols = vec![
+            ColDef {
+                name: "id".into(),
+                type_name: "INTEGER".into(),
+                pk: true,
+                notnull: false,
+                unique: false,
+                default_value: String::new(),
+            },
+            ColDef::new("name", "TEXT"),
+        ];
+        let ddl = db::create_table_ddl("t", &cols);
+        assert!(ddl.contains("CREATE TABLE"));
+        assert!(ddl.contains("PRIMARY KEY"));
     }
 }

@@ -1,4 +1,4 @@
-//! Native file dialogs via `rfd`, with path fallbacks for headless / cancel.
+//! Native file dialogs via `rfd`; cancellation never selects a fallback path.
 
 use std::path::PathBuf;
 
@@ -54,14 +54,14 @@ pub fn pick_save_json() -> Option<PathBuf> {
 
 pub fn pick_open_project() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("DB4S project", &["sqbpro", "json"])
+        .add_filter("e28 JSON project", &["sqbpro", "json"])
         .set_title("Open Project")
         .pick_file()
 }
 
 pub fn pick_save_project() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("DB4S project", &["sqbpro"])
+        .add_filter("e28 JSON project", &["sqbpro"])
         .set_title("Save Project")
         .save_file()
 }

@@ -4,16 +4,17 @@
 //! `NEXT_GUI_DB_BROWSER_QA=1` dumps a PPM after first paint then exits.
 
 mod db;
-mod project;
-mod prefs;
 mod file_dlg;
+mod prefs;
+mod project;
 mod state;
 mod ui_build;
 
 use std::path::PathBuf;
 
 use next_gui_platform::{
-    AppCallbacks, Event, KeyCode, Modifiers, PointerButton, PresentBackend, WindowAttrs, WindowCtx,
+    AppCallbacks, Event, ImeEvent, KeyCode, Modifiers, PointerButton, PresentBackend, WindowAttrs,
+    WindowCtx,
 };
 use next_gui_render::{encode_scene, Renderer};
 use next_gui_render_gpu::{GpuPresentPath, GpuRenderer};
@@ -46,7 +47,11 @@ impl Backend {
         }
     }
 
-    fn render(&mut self, cmds: &[next_gui_render::DrawCommand], dirty: &next_gui_scene::DirtyRegion) {
+    fn render(
+        &mut self,
+        cmds: &[next_gui_render::DrawCommand],
+        dirty: &next_gui_scene::DirtyRegion,
+    ) {
         match self {
             Backend::Soft(s) => s.render(cmds, dirty),
             Backend::Gpu(g) => g.render(cmds, dirty),
@@ -169,6 +174,8 @@ struct BuiltUiIds {
     browse_select: WidgetId,
     browse_filter: WidgetId,
     btn_browse_go: WidgetId,
+    btn_page_prev: WidgetId,
+    btn_page_next: WidgetId,
     btn_add_row: WidgetId,
     btn_del_row: WidgetId,
     browse_table: WidgetId,
@@ -186,6 +193,8 @@ struct BuiltUiIds {
     btn_sql_save: WidgetId,
     btn_sql_find: WidgetId,
     btn_sql_stop: WidgetId,
+    btn_sql_csv: WidgetId,
+    btn_sql_json: WidgetId,
     sql_table: WidgetId,
     dock_tabs: WidgetId,
     edit_col: WidgetId,
@@ -196,6 +205,8 @@ struct BuiltUiIds {
     btn_chart: WidgetId,
     modal: WidgetId,
     ov_name: WidgetId,
+    insert_values: Vec<WidgetId>,
+    insert_modes: Vec<WidgetId>,
     ov_list: WidgetId,
     ov_col_name: WidgetId,
     ov_col_type: WidgetId,
@@ -252,6 +263,8 @@ struct BuiltUiIds {
     btn_cond_fmt: WidgetId,
     toolbar_extra: WidgetId,
     toolbar_project: WidgetId,
+    btn_project_save: WidgetId,
+    btn_integrity: WidgetId,
     ov_ext_path: WidgetId,
     ov_ext_entry: WidgetId,
     btn_form_view: WidgetId,
@@ -291,6 +304,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             browse_select: b.browse_select,
             browse_filter: b.browse_filter,
             btn_browse_go: b.btn_browse_go,
+            btn_page_prev: b.btn_page_prev,
+            btn_page_next: b.btn_page_next,
             btn_add_row: b.btn_add_row,
             btn_del_row: b.btn_del_row,
             browse_table: b.browse_table,
@@ -308,6 +323,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_sql_save: b.btn_sql_save,
             btn_sql_find: b.btn_sql_find,
             btn_sql_stop: b.btn_sql_stop,
+            btn_sql_csv: b.btn_sql_csv,
+            btn_sql_json: b.btn_sql_json,
             sql_table: b.sql_table,
             dock_tabs: b.dock_tabs,
             edit_col: b.edit_col,
@@ -318,6 +335,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_chart: b.btn_chart,
             modal: b.modal,
             ov_name: b.ov_name,
+            insert_values: b.insert_values.clone(),
+            insert_modes: b.insert_modes.clone(),
             ov_list: b.ov_list,
             ov_col_name: b.ov_col_name,
             ov_col_type: b.ov_col_type,
@@ -374,6 +393,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_cond_fmt: b.btn_cond_fmt,
             toolbar_extra: b.toolbar_extra,
             toolbar_project: b.toolbar_project,
+            btn_project_save: b.btn_project_save,
+            btn_integrity: b.btn_integrity,
             ov_ext_path: b.ov_ext_path,
             ov_ext_entry: b.ov_ext_entry,
             btn_form_view: b.btn_form_view,
@@ -388,7 +409,6 @@ impl From<&BuiltUi> for BuiltUiIds {
         }
     }
 }
-
 
 impl Demo {
     fn new(width: u32, height: u32, window_backend: PresentBackend) -> Self {
@@ -426,6 +446,10 @@ impl Demo {
                 }
                 "form" => {
                     state.browse_view = crate::state::BrowseViewMode::Form;
+                    MainTab::Browse
+                }
+                "insert" => {
+                    state.open_insert_row().unwrap();
                     MainTab::Browse
                 }
                 "remote" => {
@@ -467,7 +491,11 @@ impl Demo {
                 }
             }
         }
-        let mut theme = theme;
+        let mut theme = if state.prefs.default_theme_dark {
+            theme
+        } else {
+            Theme::light()
+        };
         if let Ok(mode) = std::env::var("NEXT_GUI_DB_BROWSER_QA_THEME") {
             if mode.eq_ignore_ascii_case("light") {
                 theme = Theme::light();
@@ -516,7 +544,9 @@ impl Demo {
             }
         }
         for (i, id) in self.ids.browse_col_filters.iter().enumerate() {
-            if id.0 == 0 { continue; }
+            if id.0 == 0 {
+                continue;
+            }
             if let Some(v) = self.ui.text_input_value(*id) {
                 let tab = self.state.browse_mut();
                 if tab.col_filters.len() <= i {
@@ -559,9 +589,24 @@ impl Demo {
             }
         }
         for (i, (key, _)) in self.state.pragmas.clone().iter().enumerate() {
-            let sw = self.ids.pragma_switches.get(i).copied().unwrap_or(WidgetId(0));
-            let sel = self.ids.pragma_selects.get(i).copied().unwrap_or(WidgetId(0));
-            let inp = self.ids.pragma_inputs.get(i).copied().unwrap_or(WidgetId(0));
+            let sw = self
+                .ids
+                .pragma_switches
+                .get(i)
+                .copied()
+                .unwrap_or(WidgetId(0));
+            let sel = self
+                .ids
+                .pragma_selects
+                .get(i)
+                .copied()
+                .unwrap_or(WidgetId(0));
+            let inp = self
+                .ids
+                .pragma_inputs
+                .get(i)
+                .copied()
+                .unwrap_or(WidgetId(0));
             if self.state.pragma_drafts.len() <= i {
                 self.state.pragma_drafts.resize(i + 1, String::new());
             }
@@ -572,8 +617,14 @@ impl Demo {
             } else if sel.0 != 0 {
                 if let Some(si) = self.ui.select_selected(sel) {
                     let val = match key.as_str() {
-                        "journal_mode" => ["delete","truncate","persist","memory","wal","off"].get(si).copied().unwrap_or("delete"),
-                        "synchronous" => ["OFF","NORMAL","FULL","EXTRA"].get(si).copied().unwrap_or("FULL"),
+                        "journal_mode" => ["delete", "truncate", "persist", "memory", "wal", "off"]
+                            .get(si)
+                            .copied()
+                            .unwrap_or("delete"),
+                        "synchronous" => ["OFF", "NORMAL", "FULL", "EXTRA"]
+                            .get(si)
+                            .copied()
+                            .unwrap_or("FULL"),
                         _ => continue,
                     };
                     self.state.pragma_drafts[i] = val.into();
@@ -588,7 +639,9 @@ impl Demo {
     }
 
     fn snapshot_overlay(&mut self) {
-        let Some(kind) = self.state.overlay else { return };
+        let Some(kind) = self.state.overlay else {
+            return;
+        };
         if self.ids.ov_name.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.ov_name) {
                 match kind {
@@ -599,6 +652,16 @@ impl Demo {
             }
         }
         match kind {
+            OverlayKind::InsertRow => {
+                for (i, id) in self.ids.insert_values.iter().enumerate() {
+                    if let Some(value) = self.ui.text_input_value(*id) {
+                        self.state.insert_values[i] = value.to_string();
+                    }
+                    if let Some(mode) = self.ui.select_selected(self.ids.insert_modes[i]) {
+                        self.state.insert_modes[i] = mode;
+                    }
+                }
+            }
             OverlayKind::EditTable => {
                 if let Some(i) = self.ui.list_selected(self.ids.ov_list) {
                     if Some(i) != self.last_wizard_list {
@@ -789,7 +852,9 @@ impl Demo {
 
     fn flush_wizard_col(&mut self) {
         let sel = self.state.wizard_col_sel;
-        if sel >= self.state.wizard_cols.len() { return; }
+        if sel >= self.state.wizard_cols.len() {
+            return;
+        }
         if self.ids.ov_col_name.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.ov_col_name) {
                 self.state.wizard_cols[sel].name = v.to_string();
@@ -826,7 +891,6 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
-        self.snapshot_inputs();
         let built = build_ui(
             self.font.clone(),
             self.theme,
@@ -876,13 +940,18 @@ impl Demo {
     }
 
     fn open_url(&mut self, url: &str) {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-        self.state.status_msg = format!("Opened {url}");
-        self.rebuild = true;
-    }
-
-    fn stub(&mut self, msg: &str) {
-        self.state.status_msg = format!("TODO (parity): {msg}");
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("open").arg(url).status();
+        #[cfg(target_os = "windows")]
+        let result = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", url])
+            .status();
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let result = std::process::Command::new("xdg-open").arg(url).status();
+        match result {
+            Ok(status) if status.success() => self.state.status_msg = format!("Opened {url}"),
+            other => self.set_error(format!("Cannot open {url}: {other:?}")),
+        }
         self.rebuild = true;
     }
 
@@ -940,14 +1009,22 @@ impl Demo {
         self.rebuild = true;
     }
 
-
     fn action_import_csv(&mut self) {
         if let Some(path) = file_dlg::pick_open_csv() {
             self.state.csv_path = path.display().to_string();
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported").to_string();
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("imported")
+                .to_string();
             self.state.csv_table = stem;
             self.state.csv_has_header = true;
-            self.state.csv_delim_idx = 0;
+            self.state.csv_delim_idx = match self.state.prefs.csv_delimiter {
+                ';' => 1,
+                '\t' => 2,
+                '|' => 3,
+                _ => 0,
+            };
             self.state.csv_quote_idx = 0;
             self.state.overlay = Some(OverlayKind::ImportCsv);
         } else {
@@ -957,13 +1034,9 @@ impl Demo {
     }
 
     fn action_export_json(&mut self) {
-        let Some(res) = self.state.browse().result.clone() else {
-            self.set_error("Nothing to export — browse a table first");
-            self.rebuild = true;
-            return;
-        };
+        self.snapshot_inputs();
         if let Some(path) = file_dlg::pick_save_json() {
-            match dbmod::export_json(&path, &res.columns, &res.rows) {
+            match self.state.export_browse(&path, true) {
                 Ok(()) => {
                     self.state.status_msg = format!("Exported JSON {}", path.display());
                     self.clear_error();
@@ -974,20 +1047,13 @@ impl Demo {
         self.rebuild = true;
     }
 
-
     fn action_export_csv(&mut self) {
-        if !self.require_conn() {
-            return;
-        }
-        let Some(res) = self.state.browse().result.clone() else {
-            self.set_error("Nothing to export — browse a table first");
-            self.rebuild = true;
+        self.snapshot_inputs();
+        let Some(path) = file_dlg::pick_save_csv() else {
             return;
         };
-        let path = file_dlg::pick_save_csv().unwrap_or_else(|| PathBuf::from("/tmp/e28_export.csv"));
-        match dbmod::export_csv(&path, &res.columns, &res.rows) {
+        match self.state.export_browse(&path, false) {
             Ok(()) => {
-                self.state.io_path = path.display().to_string();
                 self.state.status_msg = format!("Exported CSV {}", path.display());
                 self.clear_error();
             }
@@ -1009,7 +1075,8 @@ impl Demo {
         };
         match dbmod::import_sql_file(self.state.conn.as_ref().unwrap(), &path) {
             Ok(()) => {
-                self.state.log_sql(format!("-- import sql {}", path.display()));
+                self.state
+                    .log_sql(format!("-- import sql {}", path.display()));
                 self.state.mark_dirty();
                 let _ = self.state.refresh_schema();
                 let _ = self.state.refresh_browse();
@@ -1030,10 +1097,9 @@ impl Demo {
     }
 
     fn action_export_sql_do(&mut self) {
-        if self.state.dirty {
-            let _ = self.state.write_changes();
-        }
-        let path = file_dlg::pick_save_sql().unwrap_or_else(|| PathBuf::from("/tmp/e28_dump.sql"));
+        let Some(path) = file_dlg::pick_save_sql() else {
+            return;
+        };
         match self.state.export_sql_with_options(&path) {
             Ok(()) => {
                 self.state.io_path = path.display().to_string();
@@ -1047,7 +1113,9 @@ impl Demo {
     }
 
     fn action_project_open(&mut self) {
-        let path = file_dlg::pick_open_project().unwrap_or_else(|| PathBuf::from("/tmp/e28.sqbpro"));
+        let Some(path) = file_dlg::pick_open_project() else {
+            return;
+        };
         match self.state.open_project(&path) {
             Ok(()) => self.clear_error(),
             Err(e) => self.set_error(e),
@@ -1056,16 +1124,18 @@ impl Demo {
     }
 
     fn action_project_save(&mut self, save_as: bool) {
+        self.snapshot_inputs();
         let path = if !save_as {
-            if let Some(p) = self.state.project_path.clone() {
-                PathBuf::from(p)
-            } else {
-                file_dlg::pick_save_project()
-                    .unwrap_or_else(|| crate::project::default_project_name(&self.state.path))
-            }
+            self.state
+                .project_path
+                .clone()
+                .map(PathBuf::from)
+                .or_else(file_dlg::pick_save_project)
         } else {
             file_dlg::pick_save_project()
-                .unwrap_or_else(|| crate::project::default_project_name(&self.state.path))
+        };
+        let Some(path) = path else {
+            return;
         };
         match self.state.save_project(&path) {
             Ok(()) => self.clear_error(),
@@ -1108,6 +1178,11 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
+        if self.state.sql_busy {
+            self.set_error("Stop or finish SQL first");
+            self.rebuild = true;
+            return;
+        }
         match item {
             mid::FILE_NEW => self.action_new_db(),
             mid::FILE_NEW_MEM => {
@@ -1136,6 +1211,11 @@ impl Demo {
             mid::FILE_WRITE => self.action_write(),
             mid::FILE_REVERT => self.action_revert_ask(),
             mid::FILE_VACUUM => {
+                if self.state.dirty {
+                    self.set_error("Write Changes or Revert before compacting");
+                    self.rebuild = true;
+                    return;
+                }
                 if !self.require_conn() {
                     return;
                 }
@@ -1175,10 +1255,12 @@ impl Demo {
                 if self.state.selected.is_none() {
                     self.set_error("Select an object to delete");
                     self.rebuild = true;
-                } else {
+                } else if self.state.prefs.confirm_drops {
                     self.state.confirm_kind = ConfirmKind::DropObject;
                     self.state.confirm_open = true;
                     self.rebuild = true;
+                } else {
+                    self.apply_confirmed_action(ConfirmKind::DropObject);
                 }
             }
             mid::VIEW_DOCK_EDIT => {
@@ -1222,9 +1304,10 @@ impl Demo {
             mid::TOOLS_OPTIMIZE => self.action_tool_check("optimize"),
             mid::TOOLS_ROWCOUNTS => self.action_row_counts(),
             mid::FILE_ATTACH => {
-                if let Some(path) = file_dlg::pick_open_db() {
-                    self.state.attach_path = path.display().to_string();
-                }
+                let Some(path) = file_dlg::pick_open_db() else {
+                    return;
+                };
+                self.state.attach_path = path.display().to_string();
                 self.state.overlay = Some(OverlayKind::Attach);
                 self.rebuild = true;
             }
@@ -1232,6 +1315,12 @@ impl Demo {
                 self.state.csv_paste.clear();
                 self.state.csv_table = "clipboard".into();
                 self.state.csv_has_header = true;
+                self.state.csv_delim_idx = match self.state.prefs.csv_delimiter {
+                    ';' => 1,
+                    '\t' => 2,
+                    '|' => 3,
+                    _ => 0,
+                };
                 self.state.overlay = Some(OverlayKind::PasteCsv);
                 self.rebuild = true;
             }
@@ -1261,6 +1350,7 @@ impl Demo {
                 self.rebuild = true;
             }
             mid::TOOLS_ENCRYPT => {
+                self.state.cipher_open_path = None;
                 self.state.overlay = Some(OverlayKind::Cipher);
                 self.rebuild = true;
             }
@@ -1285,6 +1375,17 @@ impl Demo {
                 self.rebuild = true;
             }
             mid::FILE_SAVE_ALL => {
+                self.snapshot_inputs();
+                if self.state.project_path.is_none() {
+                    let Some(path) = file_dlg::pick_save_project() else {
+                        return;
+                    };
+                    if let Err(e) = self.state.save_project(&path) {
+                        self.set_error(e);
+                        self.rebuild = true;
+                        return;
+                    }
+                }
                 match self.state.save_all() {
                     Ok(()) => self.clear_error(),
                     Err(e) => self.set_error(e),
@@ -1295,8 +1396,9 @@ impl Demo {
                 if !self.require_conn() {
                     return;
                 }
-                let path = file_dlg::pick_save_sql()
-                    .unwrap_or_else(|| PathBuf::from("/tmp/e28_schema.sql"));
+                let Some(path) = file_dlg::pick_save_sql() else {
+                    return;
+                };
                 match self.state.print_schema_to(&path) {
                     Ok(()) => self.clear_error(),
                     Err(e) => self.set_error(e),
@@ -1319,9 +1421,7 @@ impl Demo {
             mid::HELP_SQLCIPHER => {
                 self.open_url("https://www.zetetic.net/sqlcipher/sqlcipher-api/")
             }
-            mid::HELP_BUG => {
-                self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/issues")
-            }
+            mid::HELP_BUG => self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/issues"),
             mid::HELP_FEATURE => {
                 self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/issues")
             }
@@ -1345,13 +1445,14 @@ impl Demo {
         }
     }
 
-
     fn handle_overlay_button(&mut self, id: WidgetId) -> bool {
         if self.state.overlay.is_none() {
             return false;
         }
         if id == self.ids.ov_btn_cancel {
             self.state.overlay = None;
+            self.state.cipher_open_path = None;
+            self.state.cipher_passphrase.clear();
             self.rebuild = true;
             return true;
         }
@@ -1359,39 +1460,34 @@ impl Demo {
             self.snapshot_inputs();
             let kind = self.state.overlay;
             let res = match kind {
+                Some(OverlayKind::InsertRow) => self.state.apply_insert_row(),
                 Some(OverlayKind::EditTable) => self.state.apply_table_wizard(),
                 Some(OverlayKind::EditIndex) => self.state.apply_index_wizard(),
-                Some(OverlayKind::ImportCsv) | Some(OverlayKind::PasteCsv) => self.state.apply_csv_import(),
+                Some(OverlayKind::ImportCsv) | Some(OverlayKind::PasteCsv) => {
+                    self.state.apply_csv_import()
+                }
                 Some(OverlayKind::Attach) => self.state.apply_attach(),
                 Some(OverlayKind::FindReplace) => {
                     self.state.overlay = None;
                     Ok(())
                 }
                 Some(OverlayKind::Cipher) => {
-                    let r = self.state.apply_cipher_overlay();
-                    if r.is_ok() {
-                        // Optional: export encrypted copy (DB4S CipherDialog "Encrypt database").
-                        if let Some(dest) = file_dlg::pick_save_db() {
-                            match self.state.apply_cipher_encrypt_file(&dest) {
-                                Ok(()) => {
-                                    self.state.status_msg = format!(
-                                        "Key applied; encrypted copy → {}",
-                                        dest.display()
-                                    );
-                                }
-                                Err(e) => {
-                                    self.state.status_msg =
-                                        format!("Key applied; encrypt-to-file: {e}");
-                                }
-                            }
-                        }
-                        self.state.overlay = None;
+                    if self.state.cipher_open_path.is_some() {
+                        self.state.apply_cipher_overlay()
+                    } else if let Some(dest) = file_dlg::pick_save_db() {
+                        self.state.apply_cipher_encrypt_file(&dest)
+                    } else {
+                        return true;
                     }
-                    r
                 }
                 Some(OverlayKind::Preferences) => {
                     let r = self.state.apply_prefs_overlay();
                     if r.is_ok() {
+                        self.theme = if self.state.prefs.default_theme_dark {
+                            Theme::dark()
+                        } else {
+                            Theme::light()
+                        };
                         self.state.overlay = None;
                     }
                     r
@@ -1419,19 +1515,20 @@ impl Demo {
             };
             match res {
                 Ok(()) => {
-                    if !matches!(kind, Some(OverlayKind::CondFormat) | Some(OverlayKind::FindReplace)) {
-                        if matches!(
-                            kind,
-                            Some(OverlayKind::EditTable)
-                                | Some(OverlayKind::EditIndex)
-                                | Some(OverlayKind::ImportCsv)
-                                | Some(OverlayKind::PasteCsv)
-                                | Some(OverlayKind::Attach)
-                                | Some(OverlayKind::Cipher)
-                                | Some(OverlayKind::Preferences)
-                        ) {
-                            self.state.overlay = None;
-                        }
+                    if !matches!(
+                        kind,
+                        Some(OverlayKind::CondFormat) | Some(OverlayKind::FindReplace)
+                    ) && matches!(
+                        kind,
+                        Some(OverlayKind::EditTable)
+                            | Some(OverlayKind::EditIndex)
+                            | Some(OverlayKind::ImportCsv)
+                            | Some(OverlayKind::PasteCsv)
+                            | Some(OverlayKind::Attach)
+                            | Some(OverlayKind::Cipher)
+                            | Some(OverlayKind::Preferences)
+                    ) {
+                        self.state.overlay = None;
                     }
                     self.clear_error();
                 }
@@ -1442,7 +1539,9 @@ impl Demo {
         }
         if id == self.ids.ov_btn_add {
             self.flush_wizard_col();
-            self.state.wizard_cols.push(dbmod::ColDef::new("col", "TEXT"));
+            self.state
+                .wizard_cols
+                .push(dbmod::ColDef::new("col", "TEXT"));
             self.state.wizard_col_sel = self.state.wizard_cols.len() - 1;
             self.rebuild = true;
             return true;
@@ -1450,7 +1549,10 @@ impl Demo {
         if id == self.ids.ov_btn_del {
             self.flush_wizard_col();
             if !self.state.wizard_cols.is_empty() {
-                let i = self.state.wizard_col_sel.min(self.state.wizard_cols.len() - 1);
+                let i = self
+                    .state
+                    .wizard_col_sel
+                    .min(self.state.wizard_cols.len() - 1);
                 self.state.wizard_cols.remove(i);
                 if self.state.wizard_col_sel >= self.state.wizard_cols.len() {
                     self.state.wizard_col_sel = self.state.wizard_cols.len().saturating_sub(1);
@@ -1510,7 +1612,18 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        if self.state.sql_busy && id != self.ids.btn_sql_stop {
+            return;
+        }
         if self.handle_overlay_button(id) {
+            return;
+        }
+        if let Some(column) = self.ids.form_fields.iter().position(|field| *field == id) {
+            self.state.browse_mut().sel_col = Some(column);
+            self.state.sync_edit_cell_from_selection();
+            self.state.dock_edit = true;
+            self.state.dock_focus = DockKind::EditCell;
+            self.rebuild = true;
             return;
         }
         if id == self.ids.btn_theme {
@@ -1547,10 +1660,6 @@ impl Demo {
             self.handle_menu(mid::EDIT_MODIFY);
             return;
         }
-        if id == self.ids.btn_struct_modify {
-            self.stub("Modify Object wizard");
-            return;
-        }
         if id == self.ids.btn_struct_delete {
             self.handle_menu(mid::EDIT_DELETE);
             return;
@@ -1573,14 +1682,20 @@ impl Demo {
             }
             self.snapshot_inputs();
             let sql = self.state.ddl_draft.clone();
-            match dbmod::execute_sql(self.state.conn.as_ref().unwrap(), &sql) {
+            match self.state.run_sql_text_sync(&sql) {
                 Ok(_) => {
                     self.state.log_sql(sql);
-                    self.state.mark_dirty();
-                    let _ = self.state.refresh_schema();
-                    self.state.status_msg = "DDL ok (unwritten)".into();
+                    self.state.status_msg = "DDL executed".into();
                     self.clear_error();
                 }
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_page_prev || id == self.ids.btn_page_next {
+            match self.state.browse_page(id == self.ids.btn_page_next) {
+                Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
             self.rebuild = true;
@@ -1589,6 +1704,7 @@ impl Demo {
         if id == self.ids.btn_browse_go {
             self.snapshot_inputs();
             self.apply_browse_select();
+            self.state.browse_mut().offset = 0;
             match self.state.refresh_browse() {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
@@ -1597,24 +1713,8 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_add_row {
-            if let Err(e) = self.state.guard_writable() {
-                self.set_error(e);
-                self.rebuild = true;
-                return;
-            }
-            let Some(table) = self.state.browse().table.clone() else {
-                self.set_error("No browse table");
-                self.rebuild = true;
-                return;
-            };
-            match dbmod::insert_row(self.state.conn.as_ref().unwrap(), &table, &[], &[]) {
-                Ok(_) => {
-                    self.state.log_sql(format!("INSERT INTO {table} DEFAULT VALUES"));
-                    self.state.mark_dirty();
-                    let _ = self.state.refresh_browse();
-                    self.state.status_msg = "Row inserted (unwritten)".into();
-                    self.clear_error();
-                }
+            match self.state.open_insert_row() {
+                Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
             self.rebuild = true;
@@ -1659,7 +1759,14 @@ impl Demo {
                 self.rebuild = true;
                 return;
             }
-            let val = self.state.edit_value.clone();
+            let val = match self.state.edited_cell_value() {
+                Ok(value) => value,
+                Err(e) => {
+                    self.set_error(e);
+                    self.rebuild = true;
+                    return;
+                }
+            };
             match dbmod::update_cell(self.state.conn.as_ref().unwrap(), &table, rowid, &col, &val) {
                 Ok(_) => {
                     self.state
@@ -1697,6 +1804,35 @@ impl Demo {
                 return;
             }
         }
+        if id == self.ids.btn_sql_csv || id == self.ids.btn_sql_json {
+            let json = id == self.ids.btn_sql_json;
+            let path = if json {
+                file_dlg::pick_save_json()
+            } else {
+                file_dlg::pick_save_csv()
+            };
+            if let Some(path) = path {
+                let result = self
+                    .state
+                    .conn
+                    .as_ref()
+                    .ok_or("No database open".to_string())
+                    .and_then(|conn| {
+                        let result = self.state.sql_result.as_ref().ok_or("Execute SQL first")?;
+                        dbmod::export_query_result(conn, result, &path, json)
+                    });
+                match result {
+                    Ok(()) => {
+                        self.clear_error();
+                        self.state.status_msg =
+                            format!("SQL results exported to {}", path.display());
+                    }
+                    Err(e) => self.set_error(e),
+                }
+                self.rebuild = true;
+            }
+            return;
+        }
         if id == self.ids.btn_sql_stop {
             self.state.request_sql_stop();
             self.rebuild = true;
@@ -1717,7 +1853,10 @@ impl Demo {
         }
         if id == self.ids.btn_sql_line {
             self.snapshot_inputs();
-            match self.state.execute_current_line() {
+            match self
+                .state
+                .execute_current_line(self.ui.text_area_caret(self.ids.sql_area).unwrap_or(0))
+            {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
@@ -1826,20 +1965,23 @@ impl Demo {
             self.action_project_open();
             return;
         }
-        if id == self.ids.toolbar_extra {
+        if id == self.ids.btn_project_save {
+            self.action_project_save(false);
+            return;
+        }
+        if id == self.ids.btn_integrity {
             self.action_tool_check("integrity_check");
+            return;
+        }
+        if id == self.ids.toolbar_extra {
+            self.handle_menu(mid::FILE_VACUUM);
             return;
         }
         if id == self.ids.btn_sql_run {
             self.snapshot_inputs();
             match self.state.start_sql_job() {
                 Ok(()) => self.clear_error(),
-                Err(e) => {
-                    match self.state.run_sql_sync() {
-                        Ok(()) => self.clear_error(),
-                        Err(_) => self.set_error(e),
-                    }
-                }
+                Err(e) => self.set_error(e),
             }
             self.rebuild = true;
             return;
@@ -1869,8 +2011,16 @@ impl Demo {
         }
         if id == self.ids.btn_sql_save {
             self.snapshot_inputs();
-            let path =
-                file_dlg::pick_save_sql().unwrap_or_else(|| PathBuf::from("/tmp/e28_query.sql"));
+            let Some(path) = file_dlg::pick_save_sql() else {
+                return;
+            };
+            if let Some(conn) = self.state.conn.as_ref() {
+                if let Err(e) = dbmod::guard_output_path(conn, &path) {
+                    self.set_error(e);
+                    self.rebuild = true;
+                    return;
+                }
+            }
             match std::fs::write(&path, self.state.sql_editor()) {
                 Ok(()) => {
                     self.state.status_msg = format!("Saved SQL {}", path.display());
@@ -1910,6 +2060,11 @@ impl Demo {
         if let Some(i) = self.ui.select_selected(self.ids.browse_select) {
             if let Some(name) = opts.get(i) {
                 let tab = self.state.browse_mut();
+                if tab.table.as_ref() != Some(name) {
+                    tab.col_filters.clear();
+                    tab.result = None;
+                    tab.offset = 0;
+                }
                 tab.table = Some(name.clone());
                 tab.title = name.clone();
                 tab.order_col = None;
@@ -1917,7 +2072,6 @@ impl Demo {
             }
         }
     }
-
 
     fn apply_chart_select(&mut self) {
         if self.ids.chart_select.0 == 0 {
@@ -1992,11 +2146,19 @@ impl Demo {
             if tid != self.ids.browse_table {
                 return;
             }
-            let Some(res) = self.state.browse().result.as_ref() else { return };
-            let Some(col_name) = res.columns.get(col_idx).cloned() else { return };
-            let col_name = col_name.trim_end_matches(" ▲").trim_end_matches(" ▼").to_string();
+            let Some(res) = self.state.browse().result.as_ref() else {
+                return;
+            };
+            let Some(col_name) = res.columns.get(col_idx).cloned() else {
+                return;
+            };
+            let col_name = col_name
+                .trim_end_matches(" ▲")
+                .trim_end_matches(" ▼")
+                .to_string();
             {
                 let tab = self.state.browse_mut();
+                tab.offset = 0;
                 if tab.order_col.as_deref() == Some(col_name.as_str()) {
                     tab.order_desc = !tab.order_desc;
                 } else {
@@ -2012,7 +2174,6 @@ impl Demo {
         }
     }
 
-
     fn handle_modal(&mut self) {
         if let Some((mid_w, action)) = self.ui.take_modal_action() {
             if mid_w != self.ids.modal {
@@ -2025,74 +2186,79 @@ impl Demo {
                 self.rebuild = true;
                 return;
             }
-            match kind {
-                ConfirmKind::CloseDb => {
-                    self.state.close_db();
-                }
-                ConfirmKind::Revert => match self.state.revert_changes() {
-                    Ok(()) => self.clear_error(),
-                    Err(e) => self.set_error(e),
-                },
-                ConfirmKind::ExitDirty => {
-                    let _ = self.state.revert_changes();
-                    self.exit_requested = true;
-                }
-                ConfirmKind::DropObject => {
-                    if let Some(sel) = self.state.selected.clone() {
-                        if let Err(e) = self.state.guard_writable() {
-                            self.set_error(e);
-                        } else if let Some(conn) = self.state.conn.as_ref() {
-                            match dbmod::drop_object(conn, sel.kind, &sel.name) {
-                                Ok(()) => {
-                                    self.state.log_sql(format!("DROP {:?} {}", sel.kind, sel.name));
-                                    self.state.mark_dirty();
-                                    self.state.selected = None;
-                                    let _ = self.state.refresh_schema();
-                                    let _ = self.state.refresh_browse();
-                                    self.state.status_msg = format!("Dropped {} (unwritten)", sel.name);
-                                    self.clear_error();
-                                }
-                                Err(e) => self.set_error(e),
-                            }
-                        }
-                    }
-                }
-                ConfirmKind::DeleteRow => {
+            self.apply_confirmed_action(kind);
+        }
+    }
+
+    fn apply_confirmed_action(&mut self, kind: ConfirmKind) {
+        match kind {
+            ConfirmKind::CloseDb => {
+                self.state.close_db();
+            }
+            ConfirmKind::Revert => match self.state.revert_changes() {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            },
+            ConfirmKind::ExitDirty => match self.state.revert_changes() {
+                Ok(()) => self.exit_requested = true,
+                Err(e) => self.set_error(e),
+            },
+            ConfirmKind::DropObject => {
+                if let Some(sel) = self.state.selected.clone() {
                     if let Err(e) = self.state.guard_writable() {
                         self.set_error(e);
-                    } else {
-                        let table = self.state.browse().table.clone();
-                        let row = self
-                            .state
-                            .browse()
-                            .sel_row
-                            .or_else(|| self.ui.table_selected_row(self.ids.browse_table));
-                        if let (Some(table), Some(row)) = (table, row) {
-                            if let Some(&rowid) = self.state.browse().rowids.get(row) {
-                                if let Some(conn) = self.state.conn.as_ref() {
-                                    match dbmod::delete_row_by_rowid(conn, &table, rowid) {
-                                        Ok(_) => {
-                                            self.state.log_sql(format!(
-                                                "DELETE FROM {table} WHERE rowid={rowid}"
-                                            ));
-                                            self.state.mark_dirty();
-                                            let _ = self.state.refresh_browse();
-                                            self.state.status_msg = "Row deleted (unwritten)".into();
-                                            self.clear_error();
-                                        }
-                                        Err(e) => self.set_error(e),
-                                    }
-                                }
-                            } else {
-                                self.set_error("No rowid");
+                    } else if let Some(conn) = self.state.conn.as_ref() {
+                        match dbmod::drop_object(conn, sel.kind, &sel.name) {
+                            Ok(()) => {
+                                self.state
+                                    .log_sql(format!("DROP {:?} {}", sel.kind, sel.name));
+                                self.state.mark_dirty();
+                                self.state.selected = None;
+                                let _ = self.state.refresh_schema();
+                                let _ = self.state.refresh_browse();
+                                self.state.status_msg = format!("Dropped {} (unwritten)", sel.name);
+                                self.clear_error();
                             }
+                            Err(e) => self.set_error(e),
                         }
                     }
                 }
-                ConfirmKind::None => {}
             }
-            self.rebuild = true;
+            ConfirmKind::DeleteRow => {
+                if let Err(e) = self.state.guard_writable() {
+                    self.set_error(e);
+                } else {
+                    let table = self.state.browse().table.clone();
+                    let row = self
+                        .state
+                        .browse()
+                        .sel_row
+                        .or_else(|| self.ui.table_selected_row(self.ids.browse_table));
+                    if let (Some(table), Some(row)) = (table, row) {
+                        if let Some(&rowid) = self.state.browse().rowids.get(row) {
+                            if let Some(conn) = self.state.conn.as_ref() {
+                                match dbmod::delete_row_by_rowid(conn, &table, rowid) {
+                                    Ok(_) => {
+                                        self.state.log_sql(format!(
+                                            "DELETE FROM {table} WHERE rowid={rowid}"
+                                        ));
+                                        self.state.mark_dirty();
+                                        let _ = self.state.refresh_browse();
+                                        self.state.status_msg = "Row deleted (unwritten)".into();
+                                        self.clear_error();
+                                    }
+                                    Err(e) => self.set_error(e),
+                                }
+                            }
+                        } else {
+                            self.set_error("No rowid");
+                        }
+                    }
+                }
+            }
+            ConfirmKind::None => {}
         }
+        self.rebuild = true;
     }
 
     fn toggle_backend(&mut self, w: u32, h: u32) {
@@ -2176,14 +2342,19 @@ impl Demo {
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
         while let Some(id) = self.ui.take_button_activate() {
+            self.snapshot_inputs();
             self.handle_button(id);
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
+            self.snapshot_inputs();
             self.handle_menu(item);
         }
         self.handle_modal();
-        self.poll_header_sort();
-        self.poll_selection_changes();
+        if !self.rebuild {
+            self.snapshot_inputs();
+            self.poll_header_sort();
+            self.poll_selection_changes();
+        }
         if self.state.poll_sql_job() {
             self.rebuild = true;
         }
@@ -2193,6 +2364,10 @@ impl Demo {
             self.ui.sync(&mut self.scene);
             self.needs_paint = true;
         }
+        ctx.set_ime_allowed(self.ui.text_input_wants_ime());
+        if let Some((x, y, w, h)) = self.ui.ime_cursor_area(&self.scene) {
+            ctx.set_ime_cursor_area(x as f64, y as f64, w as f64, h as f64);
+        }
         if self.exit_requested {
             ctx.request_exit();
         }
@@ -2201,6 +2376,10 @@ impl Demo {
 }
 
 impl AppCallbacks for Demo {
+    fn can_close(&self) -> bool {
+        !self.state.dirty && !self.state.sql_busy
+    }
+
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>) {
         let (w, h) = ctx.size();
         self.win_w = w;
@@ -2218,7 +2397,7 @@ impl AppCallbacks for Demo {
                     std::process::exit(1);
                 }
             }
-        } else if matches!(self.window_backend, PresentBackend::Softbuffer) {
+        } else if matches!(self.window_backend, PresentBackend::Softbuffer) && !self.qa_exit {
             match GpuRenderer::try_new(w, h, clear_color(&self.theme)) {
                 Ok(gpu) => {
                     self.backend = Backend::Gpu(gpu);
@@ -2228,10 +2407,7 @@ impl AppCallbacks for Demo {
             }
         }
         self.scene.mark_full_dirty(w as f32, h as f32);
-        ctx.set_title(&format!(
-            "next-gui DB Browser — {}",
-            self.backend.name()
-        ));
+        ctx.set_title(&format!("next-gui DB Browser — {}", self.backend.name()));
         eprintln!(
             "e28_db_browser ready {}x{} backend={} path={}",
             w,
@@ -2244,7 +2420,16 @@ impl AppCallbacks for Demo {
 
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event) {
         match event {
+            Event::CloseRequested { .. } => {
+                if self.state.sql_busy {
+                    self.state.request_sql_stop();
+                } else {
+                    self.handle_menu(mid::FILE_EXIT);
+                }
+                self.after_ui(ctx);
+            }
             Event::Resized { width, height, .. } => {
+                self.snapshot_inputs();
                 self.win_w = width;
                 self.win_h = height;
                 self.backend.resize(width, height);
@@ -2273,6 +2458,7 @@ impl AppCallbacks for Demo {
                 }
                 if let Some(hit) = self.ui.hit_widget(&self.scene, xf, yf) {
                     if self.ui.is_button(hit) {
+                        self.snapshot_inputs();
                         self.handle_button(hit);
                         self.after_ui(ctx);
                     }
@@ -2322,6 +2508,30 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
+                if modifiers.commandish() {
+                    match key {
+                        KeyCode::Char('c' | 'C') => {
+                            if let Some(text) = self.ui.focused_text_for_copy() {
+                                if let Err(e) = ctx.clipboard_set_text(&text) {
+                                    self.set_error(e.to_string());
+                                }
+                            }
+                            return;
+                        }
+                        KeyCode::Char('v' | 'V') => {
+                            match ctx.clipboard_get_text() {
+                                Ok(Some(text)) => {
+                                    self.ui.paste_into_focused_text(&text);
+                                }
+                                Ok(None) => {}
+                                Err(e) => self.set_error(e.to_string()),
+                            }
+                            self.after_ui(ctx);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 if let Some(ui_key) = map_key(key, modifiers) {
                     if self.ui.key_input(ui_key) {
                         self.after_ui(ctx);
@@ -2329,6 +2539,8 @@ impl AppCallbacks for Demo {
                     }
                     if matches!(ui_key, UiKey::Escape) {
                         if self.state.overlay.is_some() {
+                            self.state.cipher_open_path = None;
+                            self.state.cipher_passphrase.clear();
                             self.state.overlay = None;
                             self.rebuild = true;
                             self.do_rebuild();
@@ -2343,19 +2555,32 @@ impl AppCallbacks for Demo {
                             ctx.request_redraw();
                             return;
                         }
-                        ctx.request_exit();
+                        self.handle_menu(mid::FILE_EXIT);
+                        self.after_ui(ctx);
                         return;
                     }
                     if matches!(ui_key, UiKey::Space) && self.ui.focused().is_none() {
                         let (w, h) = ctx.size();
                         self.toggle_backend(w, h);
-                        ctx.set_title(&format!(
-                            "next-gui DB Browser — {}",
-                            self.backend.name()
-                        ));
+                        ctx.set_title(&format!("next-gui DB Browser — {}", self.backend.name()));
                         ctx.request_redraw();
                     }
                 }
+            }
+            Event::Ime { ime, .. } => {
+                match ime {
+                    ImeEvent::Preedit { text, cursor } => {
+                        self.ui.ime_preedit(text, cursor);
+                    }
+                    ImeEvent::Commit { text } => {
+                        self.ui.ime_commit(text);
+                    }
+                    ImeEvent::Disabled => {
+                        self.ui.ime_clear_preedit();
+                    }
+                    ImeEvent::Enabled => {}
+                }
+                self.after_ui(ctx);
             }
             Event::RedrawRequested { .. } => {
                 self.needs_paint = true;
@@ -2365,6 +2590,15 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
+        if self.state.sql_busy {
+            if self.state.poll_sql_job() {
+                self.snapshot_inputs();
+                self.rebuild = true;
+                self.do_rebuild();
+            } else {
+                ctx.request_redraw();
+            }
+        }
         if !self.needs_paint {
             return;
         }
@@ -2394,8 +2628,8 @@ impl AppCallbacks for Demo {
 }
 
 fn main() {
-    let use_native = std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some()
-        && GpuRenderer::adapter_available();
+    let use_native =
+        std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", 1400, 860).with_gpu_surface()
     } else {
@@ -2409,5 +2643,165 @@ fn main() {
     if let Err(e) = result {
         eprintln!("failed: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+
+    #[test]
+    fn record_dialog_buttons_fit_and_drop_preference_is_applied() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE TABLE t(v TEXT NOT NULL); COMMIT; BEGIN;")
+            .unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.tab = MainTab::Browse;
+        demo.state.open_insert_row().unwrap();
+        demo.do_rebuild();
+        for button in [demo.ids.ov_btn_ok, demo.ids.ov_btn_cancel] {
+            let bounds = demo
+                .scene
+                .iter_paint_order()
+                .into_iter()
+                .find(|n| demo.ui.widget_from_node(n.id) == Some(button))
+                .unwrap()
+                .bounds;
+            assert!(
+                bounds.y + bounds.height <= 820.0,
+                "dialog action is behind the status bar"
+            );
+            assert_eq!(
+                demo.ui
+                    .hit_widget(&demo.scene, bounds.x + 5.0, bounds.y + 5.0),
+                Some(button)
+            );
+        }
+        demo.ui
+            .set_select_selected(demo.ids.insert_modes[0], Some(2));
+        demo.ui
+            .set_text_input(demo.ids.insert_values[0], "required value");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.overlay.is_none());
+        assert_eq!(
+            dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
+            1
+        );
+        demo.state.prefs.confirm_drops = false;
+        demo.state.selected = Some(crate::state::SelectedObject {
+            kind: ObjectKind::Table,
+            name: "t".into(),
+        });
+        demo.handle_menu(mid::EDIT_DELETE);
+        assert!(!demo.state.confirm_open);
+        assert!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "t").is_err());
+        demo.state.revert_changes().unwrap();
+        assert_eq!(
+            dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn tab_switch_pixels_match_fresh_page_without_stale_descendants() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        for tab in [1, 2, 0, 1] {
+            demo.ui.set_tabs_selected(demo.ids.tabs, tab);
+            demo.snapshot_inputs();
+            demo.poll_selection_changes();
+            demo.do_rebuild();
+            assert_eq!(demo.state.tab, MainTab::from_index(tab));
+            let mut fresh = build_ui(demo.font.clone(), demo.theme, 1400, 860, &demo.state);
+            let render = |scene: &mut Scene| {
+                scene.mark_full_dirty(1400.0, 860.0);
+                let dirty = scene.take_dirty();
+                let mut renderer = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+                renderer.render(&encode_scene(scene, &dirty), &dirty);
+                renderer.frame_pixels().unwrap().0.to_vec()
+            };
+            assert!(
+                render(&mut demo.scene) == render(&mut fresh.scene),
+                "stale pixels on tab {tab}"
+            );
+        }
+    }
+
+    #[test]
+    fn sql_buttons_rebuild_and_close_keep_user_state() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES('saved'); COMMIT; BEGIN;")
+            .unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.do_rebuild();
+        demo.ui
+            .set_text_area_value(demo.ids.sql_area, "SELECT '中文';\nSELECT 42;");
+        demo.handle_button(demo.ids.btn_sql_new_tab);
+        demo.do_rebuild();
+        assert_eq!(demo.state.sql_tabs[0], "SELECT '中文';\nSELECT 42;");
+        assert_eq!(
+            demo.ui.text_area_value(demo.ids.sql_area),
+            Some("-- new tab\n")
+        );
+        demo.ui.set_text_area_value(
+            demo.ids.sql_area,
+            "INSERT INTO t VALUES('pending'); SELECT count(*) FROM t;",
+        );
+        demo.handle_button(demo.ids.btn_sql_run);
+        assert!(!demo.can_close());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !demo.state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        demo.do_rebuild();
+        assert_eq!(demo.state.sql_result.as_ref().unwrap().rows[0][0], "2");
+        assert!(!demo.can_close());
+        demo.handle_menu(mid::FILE_EXIT);
+        demo.do_rebuild();
+        assert!(demo.ui.modal_open(demo.ids.modal).unwrap());
+        assert!(!demo.exit_requested);
+        demo.state.revert_changes().unwrap();
+        assert!(demo.can_close());
+        assert_eq!(
+            dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
+            1
+        );
+        demo.state.tab = MainTab::Browse;
+        demo.state.confirm_open = false;
+        demo.do_rebuild();
+        assert_eq!(
+            demo.ui.tabs_selected(demo.ids.tabs),
+            Some(MainTab::Browse.index())
+        );
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.refresh_browse().unwrap();
+        demo.state.toggle_browse_view();
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.form_fields[0]);
+        demo.do_rebuild();
+        assert_eq!(demo.state.edit_col, "v");
+        assert_eq!(demo.state.edit_value, "saved");
+        demo.ui.set_text_input(demo.ids.edit_value, "form edit");
+        demo.handle_button(demo.ids.btn_edit_cell);
+        assert_eq!(
+            demo.state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row("SELECT v FROM t", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "form edit"
+        );
+        demo.state.revert_changes().unwrap();
     }
 }

@@ -1,15 +1,15 @@
 # e28_db_browser — DB Browser for SQLite (next-gui)
 
-**Goal:** 100% feature + UI parity with [DB Browser for SQLite](https://sqlitebrowser.org/) (DB4S), with Theme so the UI can meet or exceed DB4S visually.
+A local SQLite browser example inspired by [DB Browser for SQLite](https://sqlitebrowser.org/) (DB4S), using next-gui themes, SQLCipher and native file dialogs. Full upstream compatibility remains a goal, not a completion claim.
 
-See **[PARITY.md](./PARITY.md)** for the exhaustive checklist (`done` / `partial` / `todo`). There is no “limitations excused” list — gaps are tracked as parity work.
+See **[PARITY.md](./PARITY.md)** for the exhaustive checklist (`done` / `partial` / `todo`). Remaining compatibility gaps are marked explicitly.
 
 ## Run
 
 ```bash
 cargo run -p e28_db_browser
 NEXT_GUI_DB_BROWSER_QA=1 cargo run -p e28_db_browser   # Soft PPM → /tmp/next-gui-db-browser.ppm
-NEXT_GUI_DB_BROWSER_QA_TAB=browse|pragmas|sql|wizard|cipher|prefs|exportsql|cond cargo run -p e28_db_browser
+NEXT_GUI_DB_BROWSER_QA_TAB=browse|pragmas|sql|insert|wizard|cipher|prefs|exportsql|cond cargo run -p e28_db_browser
 ```
 
 On first launch the example opens/creates `examples/28_db_browser/sample.db` with a small demo schema.
@@ -20,4 +20,16 @@ On first launch the example opens/creates `examples/28_db_browser/sample.db` wit
 
 **Phase 2:** EditTable/EditIndex overlay wizards · CSV import wizard (+ clipboard) · per-column browse filters + multi browse tabs · Execute SQL multi-tabs / Find-Replace / Stop (interrupt) · Pragma labeled form · JSON export · Recent files · Attach Database.
 
-Native file pickers use `rfd` (falls back when cancelled / headless).
+Native file pickers use `rfd`. Cancel means no operation.
+
+Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
+
+Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open refuses to replace a database with unwritten edits.
+
+Tools → Set Encryption exports a new encrypted copy; Open prompts for a key for encrypted files. Passphrases are masked and excluded from copy/accessibility labels. Project files are example-specific JSON, not upstream DB4S XML.
+
+Verification: `cargo test -p e28_db_browser`, workspace tests, strict clippy and macOS feature checks. See `docs/reviews/INDEX.md` for measured results and unavailable acceptance.
+
+Browse → New Record opens a form with Default / NULL / Value modes. Page buttons reach records beyond the first 500. Execute SQL → Results → CSV/JSON exports the full last result without rerunning SQL, including `RETURNING` results. Results use a private temporary file (plaintext, removed when the result is released), so very large queries need temporary disk space. JSON represents BLOBs/non-finite numbers as strings; use SQL dumps for a lossless backup.
+
+Project JSON retains all browse tabs, filters, sorting and page positions. Save an in-memory database with Save As before saving a project. The SQL editor supports IME composition through the shared UI; native OS input and file-picker acceptance still need a permitted desktop session.
