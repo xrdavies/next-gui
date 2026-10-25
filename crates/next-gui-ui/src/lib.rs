@@ -1657,6 +1657,7 @@ enum Kind {
     },
     TextInput {
         value: String,
+        secret: bool,
         placeholder: String,
         caret: usize,
         select_all: bool,
@@ -1832,6 +1833,8 @@ enum Kind {
         value: String,
         placeholder: String,
         caret: usize,
+        preedit: String,
+        preedit_cursor: Option<(usize, usize)>,
         scroll_y: f32,
         style: TextAreaStyle,
     },
@@ -3437,6 +3440,7 @@ impl Ui {
                     Some(title.clone())
                 }
             }
+            Kind::TextInput { secret: true, placeholder, .. } => Some(placeholder.clone()),
             Kind::TextInput {
                 value,
                 placeholder,
@@ -3746,6 +3750,17 @@ impl Ui {
         }
     }
 
+    /// Mask a password input and exclude its value from copy and accessible labels.
+    pub fn set_text_input_secret(&mut self, id: WidgetId, secret: bool) {
+        if let Some(Widget {
+            kind: Kind::TextInput { secret: value, .. },
+            ..
+        }) = self.widgets.get_mut(&id)
+        {
+            *value = secret;
+        }
+    }
+
     /// Set TextInput value; resets caret to end.
     pub fn set_text_input(&mut self, id: WidgetId, value: impl Into<String>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -3776,7 +3791,11 @@ impl Ui {
     pub fn focused_text_for_copy(&self) -> Option<String> {
         let id = self.focus?;
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::TextInput { value, .. }) if !value.is_empty() => Some(value.clone()),
+            Some(Kind::TextInput {
+                value,
+                secret: false,
+                ..
+            }) if !value.is_empty() => Some(value.clone()),
             Some(Kind::TextArea { value, .. }) if !value.is_empty() => Some(value.clone()),
             _ => None,
         }
@@ -3818,7 +3837,9 @@ impl Ui {
                 }
                 true
             }
-            Some(Kind::TextArea { value, caret, .. }) => {
+            Some(Kind::TextArea { value, caret, preedit, preedit_cursor, .. }) => {
+                preedit.clear();
+                *preedit_cursor = None;
                 let mut chars: Vec<char> = value.chars().collect();
                 *caret = (*caret).min(chars.len());
                 for (i, ch) in text.chars().enumerate() {
@@ -3832,17 +3853,23 @@ impl Ui {
         }
     }
 
-    /// True when focus is on a [`Kind::TextInput`] (app should enable OS IME).
+    /// True when a text editor is focused (app should enable OS IME).
     pub fn text_input_wants_ime(&self) -> bool {
         self.focus
-            .map(|id| self.is_text_input(id))
-            .unwrap_or(false)
+            .is_some_and(|id| matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { .. } | Kind::TextArea { .. })))
     }
 
-    /// Caret rectangle for the focused TextInput (physical px), for IME candidate placement.
+    /// Caret rectangle for the focused TextInput / TextArea (physical px), for IME candidate placement.
     pub fn ime_cursor_area(&self, scene: &Scene) -> Option<(f32, f32, f32, f32)> {
-        let id = self.focus.filter(|&id| self.is_text_input(id))?;
+        let id = self.focus?;
         let w = self.widgets.get(&id)?;
+        if let Kind::TextArea { value, caret, preedit, preedit_cursor, scroll_y, style, .. } = &w.kind {
+            let bounds = w.node.and_then(|n| scene.get(n).map(|n| n.bounds))?;
+            let (display, caret) = composed_text(value, *caret, preedit, *preedit_cursor);
+            let (layout, _) = self.font.rasterize_text(&display, style.size, Some((bounds.width - style.padding_x * 2.0).max(1.0)));
+            let (x, y) = layout.caret_top_left(&display, caret, self.font.metrics(style.size).ascent);
+            return Some((bounds.x + style.padding_x + x, bounds.y + style.padding_y - scroll_y + y, 2.0, style.size));
+        }
         let Kind::TextInput {
             value,
             caret,
@@ -3867,7 +3894,7 @@ impl Ui {
         Some((cx, cy, 2.0_f32.max(1.0), ch))
     }
 
-    /// Update IME preedit on the focused TextInput. Empty `text` clears composition.
+    /// Update IME preedit on the focused TextInput / TextArea. Empty `text` clears composition.
     pub fn ime_preedit(&mut self, text: impl Into<String>, cursor: Option<(usize, usize)>) -> bool {
         let Some(id) = self.focus else {
             return false;
@@ -3875,11 +3902,8 @@ impl Ui {
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
-        let Kind::TextInput {
-            preedit,
-            preedit_cursor,
-            ..
-        } = &mut w.kind
+        let (Kind::TextInput { preedit, preedit_cursor, .. }
+            | Kind::TextArea { preedit, preedit_cursor, .. }) = &mut w.kind
         else {
             return false;
         };
@@ -3888,7 +3912,7 @@ impl Ui {
         true
     }
 
-    /// Commit IME text into the focused TextInput at the caret (clears preedit).
+    /// Commit IME text into the focused TextInput / TextArea at the caret (clears preedit).
     pub fn ime_commit(&mut self, text: impl AsRef<str>) -> bool {
         let Some(id) = self.focus else {
             return false;
@@ -3901,6 +3925,11 @@ impl Ui {
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
+        if let Kind::TextArea { preedit, preedit_cursor, .. } = &mut w.kind {
+            preedit.clear();
+            *preedit_cursor = None;
+            return self.paste_into_focused_text(text);
+        }
         let Kind::TextInput {
             value,
             caret,
@@ -3929,7 +3958,7 @@ impl Ui {
         true
     }
 
-    /// Clear preedit on the focused TextInput (IME disabled / cancelled).
+    /// Clear preedit on the focused TextInput / TextArea (IME disabled / cancelled).
     pub fn ime_clear_preedit(&mut self) -> bool {
         self.ime_preedit("", None)
     }
@@ -3940,11 +3969,8 @@ impl Ui {
             if Some(*id) == focus {
                 continue;
             }
-            if let Kind::TextInput {
-                preedit,
-                preedit_cursor,
-                ..
-            } = &mut w.kind
+            if let Kind::TextInput { preedit, preedit_cursor, .. }
+                | Kind::TextArea { preedit, preedit_cursor, .. } = &mut w.kind
             {
                 if !preedit.is_empty() || preedit_cursor.is_some() {
                     preedit.clear();
@@ -6338,15 +6364,25 @@ impl Ui {
         }
     }
 
+    /// TextArea caret offset in Unicode characters.
+    pub fn text_area_caret(&self, id: WidgetId) -> Option<usize> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextArea { caret, .. }) => Some(*caret),
+            _ => None,
+        }
+    }
+
     /// Set TextArea value.
     pub fn set_text_area_value(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::TextArea {
-                value: v, caret, ..
+                value: v, caret, preedit, preedit_cursor, ..
             } = &mut w.kind
             {
                 *v = value.into();
                 *caret = v.chars().count();
+                preedit.clear();
+                *preedit_cursor = None;
                 return true;
             }
         }
@@ -10878,6 +10914,7 @@ impl Ui {
             }
             Kind::TextInput {
                 value,
+                secret,
                 placeholder,
                 caret,
                 select_all,
@@ -10885,11 +10922,19 @@ impl Ui {
                 preedit_cursor,
                 style,
             } => {
-                let value = value.clone();
+                let value = if *secret {
+                    "*".repeat(value.chars().count())
+                } else {
+                    value.clone()
+                };
                 let placeholder = placeholder.clone();
                 let caret = *caret;
                 let select_all = *select_all;
-                let preedit = preedit.clone();
+                let preedit = if *secret {
+                    "*".repeat(preedit.chars().count())
+                } else {
+                    preedit.clone()
+                };
                 let preedit_cursor = *preedit_cursor;
                 let style = *style;
                 let focused = self.focus == Some(id);
@@ -12121,6 +12166,8 @@ impl Ui {
                     value,
                     placeholder,
                     caret,
+                    preedit,
+                    preedit_cursor,
                     scroll_y,
                     style,
                 },
@@ -12132,9 +12179,8 @@ impl Ui {
         else {
             return;
         };
-        let value = value.clone();
+        let (value, caret) = composed_text(value, *caret, preedit, *preedit_cursor);
         let placeholder = placeholder.clone();
-        let caret = *caret;
         let scroll_y = *scroll_y;
         let style = *style;
         let Some(host) = *node else { return };
@@ -17503,6 +17549,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::TextInput {
                     value,
+                    secret: false,
                     placeholder: placeholder.into(),
                     caret,
                     select_all: false,
@@ -18325,6 +18372,8 @@ impl FlexBuilder<'_> {
                     value,
                     placeholder: placeholder.into(),
                     caret,
+                    preedit: String::new(),
+                    preedit_cursor: None,
                     scroll_y: 0.0,
                     style,
                 },
@@ -19407,6 +19456,16 @@ impl TabsBuilder<'_> {
 /// Alias kept for call sites that used the P1 name.
 pub type ColumnBuilder<'a> = FlexBuilder<'a>;
 
+
+fn composed_text(value: &str, caret: usize, preedit: &str, cursor: Option<(usize, usize)>) -> (String, usize) {
+    let caret = caret.min(value.chars().count());
+    let mut display: String = value.chars().take(caret).collect();
+    display.push_str(preedit);
+    display.extend(value.chars().skip(caret));
+    let offset = cursor.map(|(start, _)| preedit.char_indices().take_while(|(i, _)| *i < start).count()).unwrap_or_else(|| preedit.chars().count());
+    (display, caret + offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -19695,6 +19754,97 @@ mod tests {
         ui.sync(&mut scene);
 
         assert!(scene.get(sarea).unwrap().clip.is_some());
+    }
+
+    #[test]
+    fn secret_input_masks_value_and_excludes_copy_and_accessible_name() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut input = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            input = col.text_input("Password");
+        });
+        ui.set_text_input(input, "中文secret");
+        ui.set_text_input_secret(input, true);
+        ui.set_focus(Some(input));
+        ui.sync(&mut scene);
+        assert_eq!(ui.text_input_value(input), Some("中文secret"));
+        assert_eq!(ui.focused_text_for_copy(), None);
+        assert_eq!(ui.accessible_name(input).as_deref(), Some("Password"));
+        let widget = ui.widgets.get(&input).unwrap();
+        let Kind::TextInput { style, .. } = &widget.kind else {
+            panic!()
+        };
+        let (_, expected) = ui.font.rasterize_text("********", style.size, None);
+        let actual = scene
+            .get(widget.label_node.unwrap())
+            .unwrap()
+            .mask
+            .as_ref()
+            .unwrap();
+        assert_eq!(actual.pixels, expected.pixels);
+    }
+
+    #[test]
+    fn text_area_ime_previews_commits_and_cancels_without_changing_draft() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut area = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            area = c.text_area("SELECT '\n';", "SQL", TextAreaStyle::default());
+        });
+        ui.set_focus(Some(area));
+        ui.key_input(UiKey::Left);
+        assert!(ui.text_input_wants_ime());
+        assert!(ui.ime_preedit("中文", Some((3, 3))));
+        ui.sync(&mut scene);
+        assert_eq!(ui.text_area_value(area), Some("SELECT '\n';"));
+        assert!(ui.ime_cursor_area(&scene).is_some());
+        let widget = ui.widgets.get(&area).unwrap();
+        let mask = scene.get(widget.label_node.unwrap()).unwrap().mask.as_ref().unwrap().pixels.clone();
+        ui.ime_clear_preedit();
+        ui.sync(&mut scene);
+        let widget = ui.widgets.get(&area).unwrap();
+        assert_ne!(mask, scene.get(widget.label_node.unwrap()).unwrap().mask.as_ref().unwrap().pixels);
+        assert!(ui.ime_commit("中文"));
+        assert_eq!(ui.text_area_value(area), Some("SELECT '\n'中文;"));
+        ui.ime_preedit("取消", None);
+        ui.set_text_area_value(area, "replaced");
+        let Kind::TextArea { preedit, .. } = &ui.widgets.get(&area).unwrap().kind else { panic!() };
+        assert!(preedit.is_empty());
+    }
+
+    #[test]
+    fn inactive_tab_descendants_stay_hidden_after_repeated_sync() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut tabs = WidgetId(0);
+        let mut fields = Vec::new();
+        ui.column(ColumnStyle::default(), |c| {
+            tabs = c.tabs(TabsStyle::default(), |t| {
+                for label in ["first", "second"] {
+                    t.page(label, |p| {
+                        p.column(ColumnStyle::default(), |c| {
+                            fields.push(c.text_input(label));
+                        });
+                    });
+                }
+            });
+        });
+        for selected in [0, 1, 0, 1] {
+            ui.set_tabs_selected(tabs, selected);
+            ui.sync(&mut scene);
+            ui.sync(&mut scene);
+            for (i, id) in fields.iter().enumerate() {
+                let w = ui.widgets.get(id).unwrap();
+                for node in [w.node, w.label_node, w.chrome_node].into_iter().flatten() {
+                    if i != selected {
+                        assert!(!scene.get(node).unwrap().visible);
+                    }
+                }
+                assert_eq!(scene.get(w.node.unwrap()).unwrap().visible, i == selected);
+            }
+        }
     }
 
     #[test]
@@ -20557,6 +20707,7 @@ mod tests {
         assert!(ui.set_input_number_value(num, 43.0));
         assert!(ui.set_text_area_value(area, "hello\nworld"));
         assert_eq!(ui.text_area_value(area), Some("hello\nworld"));
+        assert_eq!(ui.text_area_caret(area), Some(11));
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         // F07: multiline mask taller than one line; caret chrome visible when focused.

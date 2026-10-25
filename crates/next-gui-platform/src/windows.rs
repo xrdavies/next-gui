@@ -236,7 +236,9 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                         window: WindowId(1),
                     },
                 );
-                event_loop.exit();
+                if self.app.can_close() {
+                    event_loop.exit();
+                }
             }
             WindowEvent::Resized(size) => {
                 host.width = size.width.max(1);

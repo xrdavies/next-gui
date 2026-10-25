@@ -448,6 +448,11 @@ pub trait AppCallbacks {
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>);
     /// Input / lifecycle event.
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event);
+    /// Whether a native close request may exit after its event has been delivered.
+    /// Override to keep a window alive while asking about unsaved changes.
+    fn can_close(&self) -> bool {
+        true
+    }
     /// Redraw: app should render and present (softbuffer or GPU surface).
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>);
 }
