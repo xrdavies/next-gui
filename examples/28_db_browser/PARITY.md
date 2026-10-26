@@ -47,7 +47,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Revert Changes | done | ROLLBACK + re-BEGIN |
 | Compact Database (VACUUM) | done | |
 | Exit | done | Unified Save/Discard/Cancel protects database, SQL, DDL, project, cell and PRAGMA drafts across New/Open/Close/Exit; canceled destinations preserve the session (F02 verified). |
-| Open Project… | partial | DB4S XML + legacy JSON; relative paths, SQL references, connection PRAGMAs/attachments and basic browse state restored. Advanced XML settings are retained and reported as unapplied. |
+| Open Project… | partial | DB4S XML + legacy JSON; relative paths, SQL references, connection PRAGMAs/attachments and basic browse state restored. All restored browse queries/patterns preflight before replacing the session. Advanced XML settings are retained and reported as unapplied. |
 | Save Project / Save Project As… | partial | DB4S XML output with an optional next_gui extension; unknown XML survives. Native DB4S round-trip and advanced settings compatibility remain. |
 | Close Project | done | Unified Save/Discard/Cancel; closes the project database as upstream does. |
 | Save All | done | Choose destinations before saving; apply cell/PRAGMA drafts, commit DB, save linked SQL files and the project. Failures keep documents open; writes across files are not one atomic transaction. |

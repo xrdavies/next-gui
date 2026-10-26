@@ -15,7 +15,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
-| R-20261027-2bfc8ad51380-F01 | open | P2 | codex | e28 / shared | pre-existing path | state::open_project | 已补全标签查询预检与错误传播，74 项测试通过，待提交后复核 | [F01](R-20261027-2bfc8ad51380.md#r-20261027-2bfc8ad51380-f01) | — | — |
+| R-20261027-2bfc8ad51380-F01 | verified | P2 | codex | e28 / shared | pre-existing path | state::open_project | 所有恢复标签预检 WHERE/REGEXP，失败保留旧会话 | [F01](R-20261027-2bfc8ad51380.md#r-20261027-2bfc8ad51380-f01) | 65759338765f | 65759338765f |
 | R-20261025-b90d5a7b4143-F01 | verified | P1 | codex | e28 / shared | existing branch | see report | 共享 TextArea 长文本编辑与 SQL Tab 状态已补齐 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | c72f34b584c3 | c72f34b584c3 |
 | R-20261025-b90d5a7b4143-F02 | verified | P1 | grok | e28 / shared | existing branch | see report | 统一保存/丢弃/取消，SQL 单标签关闭保留其他草稿与 DB 编辑 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | 6aeb50e5d74e | 6aeb50e5d74e |
 | R-20261025-b90d5a7b4143-F03 | verified | P1 | grok | e28 / shared | existing branch | see report | PRAGMA 校验/回读实际值，需 VACUUM 时明确报错 | [F03](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f03) | 4c490e21b529 | 4c490e21b529 |
@@ -51,6 +51,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `f800a85..2b16b7cb2279` | Codex | issues — project query safety and rounded clipping verified; 220 tests/clippy/build/features pass; Soft/Metal pixels and available framebuffer review; native/full parity remain | [Report](R-20261027-2b16b7cb2279.md) |
 | 2026-10-27 | `d1b2e68..2bfc8ad51380` | Codex | issues — filter/XML semantics and shared scrollbars; 217 tests/clippy/build/features pass; e28/available Office captures; project query-error finding open; native acceptance pending | [Report](R-20261027-2bfc8ad51380.md) |
 | 2026-10-27 | `aadb0a5..6aeb50e5d74e` | Codex | issues — F02 verified; document safety, SQL files/tabs, responsive desktop theme, font fallback and partial DB4S XML; 206 tests/checks pass; 20 Soft captures; native/DB4S binary acceptance unavailable | [Report](R-20261027-6aeb50e5d74e.md) |
 | 2026-10-27 | `d6212c4..4c490e21b529` | Codex | issues — 8 earlier findings verified; F02/F10/F13 in progress; 189 tests, clippy/build/features pass; 9 e28 + e26 Soft captures inspected; native input unavailable | [Report](R-20261027-4c490e21b529.md) |

@@ -34,6 +34,11 @@ Browse → New Record opens a form with Default / NULL / Value modes. Page butto
 
 Projects retain all local browse tabs, filters, sorting and page positions (additional local state uses a next_gui XML extension). Save an in-memory database with Save As before saving a project. The SQL editor supports IME composition through the shared UI; native OS input and file-picker acceptance still need a permitted desktop session.
 
+Project opening preflights the restored browse tabs, including WHERE/REGEXP and
+empty-table patterns. Invalid settings leave the previous connection and SQL tabs
+open and report the offending browse tab. Shared rounded-control clipping now keeps
+the original shape at viewport edges in Soft and GPU.
+
 Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with remaining advanced editing, docking and responsive-layout gaps, not full DB4S parity.
 
 Additional framebuffer QA cases: `index`, `csv`, `paste`, `attach`, `find`, `extension`, `schema`, `frozen`, `remote`, `about`, `plot`, `log`, `form`, `image`. These captures exercise rendering only.
