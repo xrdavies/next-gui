@@ -15,10 +15,10 @@ the first entries. Keep the status in this index and its report synchronized.
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
-| R-20261025-b90d5a7b4143-F01 | open | P1 | grok | e28 / shared | existing branch | see report | 长 SQL 无法正常定位、滚动和选区 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | — | — |
+| R-20261025-b90d5a7b4143-F01 | verified | P1 | codex | e28 / shared | existing branch | see report | 共享 TextArea 长文本编辑与 SQL Tab 状态已补齐 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | c72f34b584c3 | c72f34b584c3 |
 | R-20261025-b90d5a7b4143-F02 | open | P1 | grok | e28 / shared | existing branch | see report | 退出和打开 SQL 文件会丢弃未保存草稿 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | — | — |
 | R-20261025-b90d5a7b4143-F03 | open | P1 | grok | e28 / shared | existing branch | see report | PRAGMA 未生效却显示应用成功 | [F03](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f03) | — | — |
-| R-20261025-b90d5a7b4143-F04 | open | P1 | grok | e28 / shared | existing branch | see report | Replace 替换第一处，而不是 Find Next 找到的匹配 | [F04](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f04) | — | — |
+| R-20261025-b90d5a7b4143-F04 | verified | P1 | codex | e28 / shared | existing branch | see report | Find 选中可见匹配，Replace/All 正确且可撤销 | [F04](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f04) | c72f34b584c3 | c72f34b584c3 |
 | R-20261025-b90d5a7b4143-F05 | open | P1 | grok | e28 / shared | existing branch | see report | 合法的隐式/复合外键导航失败或返回错误父记录 | [F05](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f05) | — | — |
 | R-20261025-b90d5a7b4143-F06 | open | P1 | grok | e28 / shared | existing branch | see report | 单元格类型会改变，错误的 Hex 草稿会被悄悄丢弃 | [F06](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f06) | — | — |
 | R-20261025-b90d5a7b4143-F07 | open | P1 | grok | e28 / shared | existing branch | see report | Plot 把文本画成 0 并隐藏数据库错误 | [F07](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f07) | — | — |
@@ -50,6 +50,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-26 | `40eb8484be7f..c72f34b584c3` | Codex | issues — NG-03 base editing implemented; F01/F04 verified; 174 tests, clippy/build/features pass; 6 Soft captures and editor Metal comparison; 11 prior e28 findings remain open; native input unavailable | [Report](R-20261026-c72f34b584c3.md) |
 | 2026-10-25 | `dae24c2d5fa1..efefc068d21b` plus preserved incoming e28 edits | Codex | blocked acceptance — local core workflows completed; 3 P0 findings verified; 162 tests, clippy, builds and feature checks pass; 12 e28 Soft captures checked; native desktop permissions prevent OS interaction acceptance | [Report](R-20261025-efefc068d21b.md) |
 | 2026-10-24 | main `2c8b7c24dff7`; history since `d84207275ff4` | Codex | issues — framework MVP assessment; 2 main findings; 28 isolated Rust tests + 16 tooling tests pass; current remote CI green; local workspace/GUI acceptance unavailable | [Report](R-20261024-2c8b7c24dff7.md) |
 | 2026-10-24 | PR #3 selected paths at `42aab06eff27` | Codex | issues — 3 save/export data-safety findings; WAL helper and value encoding reproduced; source trace proves 500-row cap; full PR GUI/integration not run | [Report](R-20261024-42aab06eff27.md) |
