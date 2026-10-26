@@ -26,7 +26,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | R-20261025-b90d5a7b4143-F09 | open | P1 | grok | e28 / shared | existing branch | see report | SQL Tab 共用结果且 Save as VIEW 与显示结果不绑定 | [F09](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f09) | — | — |
 | R-20261025-b90d5a7b4143-F10 | open | P1 | grok | e28 / shared | existing branch | see report | 窄窗口与宽表/多 Tab 的控件超出可见区域 | [F10](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f10) | — | — |
 | R-20261025-b90d5a7b4143-F11 | open | P2 | grok | e28 / shared | existing branch | see report | 条件格式、偏好设置与项目状态不一致 | [F11](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f11) | — | — |
-| R-20261025-b90d5a7b4143-F12 | open | P2 | grok | e28 / shared | existing branch | see report | 图片预览是 24 格马赛克，无法检查原始图像 | [F12](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f12) | — | — |
+| R-20261025-b90d5a7b4143-F12 | in_progress | P2 | grok | e28 / shared | existing branch | see report | RGBA 渲染已补齐；图片缩放/平移/原尺寸查看仍缺失 | [F12](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f12) | — | — |
 | R-20261025-b90d5a7b4143-F13 | open | P2 | grok | e28 / shared | existing branch | see report | SQL Log 不能反映实际执行的完整 SQL | [F13](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f13) | — | — |
 | R-20261025-b90d5a7b4143-F14 | verified | P1 | codex | e28 / shared | existing branch | see report | Table resize/clip/hit and named Space repaired | [F14](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f14) | cb727d7 | b90d5a7b4143 |
 | R-20261025-b90d5a7b4143-F15 | verified | P1 | codex | e28 / shared | existing branch | see report | Grid rebuild, wizard column drafts and literal sort repaired | [F15](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f15) | b90d5a7 | b90d5a7b4143 |
@@ -50,6 +50,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-26 | `b04533d..5567aa3caf03` | Codex | issues — NG-04 rendering base implemented; 178 tests, clippy/build/features pass; 3 Soft captures, Metal pixel comparison and texture tiling pass; F12 remains in progress; native input unavailable | [Report](R-20261026-5567aa3caf03.md) |
 | 2026-10-26 | `40eb8484be7f..c72f34b584c3` | Codex | issues — NG-03 base editing implemented; F01/F04 verified; 174 tests, clippy/build/features pass; 6 Soft captures and editor Metal comparison; 11 prior e28 findings remain open; native input unavailable | [Report](R-20261026-c72f34b584c3.md) |
 | 2026-10-25 | `dae24c2d5fa1..efefc068d21b` plus preserved incoming e28 edits | Codex | blocked acceptance — local core workflows completed; 3 P0 findings verified; 162 tests, clippy, builds and feature checks pass; 12 e28 Soft captures checked; native desktop permissions prevent OS interaction acceptance | [Report](R-20261025-efefc068d21b.md) |
 | 2026-10-24 | main `2c8b7c24dff7`; history since `d84207275ff4` | Codex | issues — framework MVP assessment; 2 main findings; 28 isolated Rust tests + 16 tooling tests pass; current remote CI green; local workspace/GUI acceptance unavailable | [Report](R-20261024-2c8b7c24dff7.md) |
