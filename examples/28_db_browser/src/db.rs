@@ -92,12 +92,14 @@ pub const COLUMN_TYPES: &[&str] = &["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC"
 
 /// Open connection (file or `:memory:`).
 pub fn open_path(path: &str) -> Result<Connection, String> {
-    if path == ":memory:" || path.is_empty() {
-        Connection::open_in_memory().map_err(|e| e.to_string())
+    let conn = if path == ":memory:" || path.is_empty() {
+        Connection::open_in_memory()
     } else {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI;
-        Connection::open_with_flags(path, flags).map_err(|e| e.to_string())
-    }
+        Connection::open_with_flags(path, flags)
+    }.map_err(|e| e.to_string())?;
+    crate::filters::register_regexp(&conn)?;
+    Ok(conn)
 }
 
 /// Open an existing DB read-only (no CREATE).
@@ -106,7 +108,9 @@ pub fn open_readonly(path: &str) -> Result<Connection, String> {
         return Err("read-only open requires a file path".into());
     }
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI;
-    Connection::open_with_flags(path, flags).map_err(|e| e.to_string())
+    let conn = Connection::open_with_flags(path, flags).map_err(|e| e.to_string())?;
+    crate::filters::register_regexp(&conn)?;
+    Ok(conn)
 }
 
 /// Begin a deferred write transaction (DB4S Write Changes model).

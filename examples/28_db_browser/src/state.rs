@@ -850,24 +850,15 @@ impl AppState {
         Ok(())
     }
 
-    fn composed_where(tab: &BrowseTabState) -> Option<String> {
+    fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Option<String> {
         let mut parts = Vec::new();
         if !tab.filter.trim().is_empty() {
             parts.push(format!("({})", tab.filter.trim()));
         }
-        if let Some(res) = tab.result.as_ref() {
-            for (i, col) in res.columns.iter().enumerate() {
-                if let Some(f) = tab.col_filters.get(i) {
-                    let f = f.trim();
-                    if !f.is_empty() {
-                        let lit = f.replace('\'', "''");
-                        parts.push(format!("{} LIKE '%{}%'", db::quote_ident(col), lit));
-                    }
-                }
+        for (col, filter) in columns.iter().zip(&tab.col_filters) {
+            if let Some(condition) = crate::filters::condition(filter) {
+                parts.push(format!("{} {condition}", db::quote_ident(col)));
             }
-        } else {
-            // Before first load, col_filters may already be set after prior refresh —
-            // handled on next refresh when columns known.
         }
         if parts.is_empty() {
             None
@@ -880,10 +871,13 @@ impl AppState {
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let tab = self.browse();
         let table = tab.table.as_ref().ok_or("Select a table to export")?;
+        let stmt = conn.prepare(&format!("SELECT * FROM {} LIMIT 0", db::quote_ident(table)))
+            .map_err(|e| e.to_string())?;
+        let columns = stmt.column_names().into_iter().map(String::from).collect::<Vec<_>>();
         db::export_table(
             conn,
             table,
-            Self::composed_where(tab).as_deref(),
+            Self::composed_where(tab, &columns).as_deref(),
             path,
             json,
         )
@@ -898,13 +892,12 @@ impl AppState {
             }
             return Ok(());
         }
-        let (table, order, desc, filter_global, mut col_filters, mut prev_cols) = {
+        let (table, order, desc, mut col_filters, mut prev_cols) = {
             let t = self.browse_mut();
             (
                 t.table.clone(),
                 t.order_col.clone(),
                 t.order_desc,
-                t.filter.clone(),
                 t.col_filters.clone(),
                 t.result
                     .as_ref()
@@ -935,24 +928,7 @@ impl AppState {
             .iter()
             .any(|o| o.name == table && o.kind == ObjectKind::View);
 
-        let mut parts = Vec::new();
-        if !filter_global.trim().is_empty() {
-            parts.push(format!("({})", filter_global.trim()));
-        }
-        for (i, col) in prev_cols.iter().enumerate() {
-            if let Some(f) = col_filters.get(i) {
-                let f = f.trim();
-                if !f.is_empty() {
-                    let lit = f.replace('\'', "''");
-                    parts.push(format!("{} LIKE '%{}%'", db::quote_ident(col), lit));
-                }
-            }
-        }
-        let where_sql = if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join(" AND "))
-        };
+        let where_sql = Self::composed_where(self.browse(), &prev_cols);
 
         let offset = self.browse().offset;
         let (result, rowids) = {
@@ -1892,7 +1868,7 @@ fn open_or_create_demo(path: &Path) -> Result<Connection, String> {
 }
 
 fn open_shared_memory() -> Result<Connection, String> {
-    Connection::open_in_memory().map_err(|e| e.to_string())
+    db::open_path(":memory:")
 }
 
 impl AppState {
@@ -2684,6 +2660,39 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn browse_and_complete_export_share_original_filter_operators() {
+        let mut state = AppState::empty();
+        let conn = db::open_path(":memory:").unwrap();
+        conn.execute_batch("CREATE TABLE t(n INTEGER, label TEXT);
+            WITH RECURSIVE x(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM x WHERE n<603)
+            INSERT INTO t SELECT n, 'row ' || n FROM x;").unwrap();
+        state.conn = Some(conn);
+        state.refresh_schema().unwrap();
+        state.browse_tabs = vec![BrowseTabState::new(Some("t".into()))];
+        state.browse_mut().col_filters = vec![">=2".into()];
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), db::DEFAULT_LIMIT);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("filtered.json");
+        state.export_browse(&path, true).unwrap();
+        let rows: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 602);
+        state.browse_mut().filter = "n <= 3".into();
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        state.browse_mut().filter.clear();
+        state.browse_mut().col_filters = vec!["".into(), "/^row (?=[23]$)/".into()];
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        state.browse_mut().col_filters[1] = "/[/".into();
+        assert!(state.refresh_browse().is_err());
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        state.browse_mut().col_filters = vec![">0) OR 1=1; DELETE FROM t; --".into()];
+        state.refresh_browse().unwrap();
+        assert_eq!(db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(), 603);
     }
 
     fn wait_sql(state: &mut AppState) {

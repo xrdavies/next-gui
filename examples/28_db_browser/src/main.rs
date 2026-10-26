@@ -5,6 +5,7 @@
 
 mod db;
 mod file_dlg;
+mod filters;
 mod prefs;
 mod project;
 mod project_xml;
