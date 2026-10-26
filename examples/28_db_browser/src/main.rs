@@ -194,6 +194,8 @@ struct BuiltUiIds {
     btn_browse_new_tab: WidgetId,
     browse_select: WidgetId,
     browse_filter: WidgetId,
+    browse_global_filter: WidgetId,
+    btn_browse_clear_filters: WidgetId,
     btn_browse_go: WidgetId,
     btn_page_prev: WidgetId,
     btn_page_next: WidgetId,
@@ -341,6 +343,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_browse_new_tab: b.btn_browse_new_tab,
             browse_select: b.browse_select,
             browse_filter: b.browse_filter,
+            browse_global_filter: b.browse_global_filter,
+            btn_browse_clear_filters: b.btn_browse_clear_filters,
             btn_browse_go: b.btn_browse_go,
             btn_page_prev: b.btn_page_prev,
             btn_page_next: b.btn_page_next,
@@ -695,6 +699,9 @@ impl Demo {
             if let Some(v) = self.ui.text_input_value(self.ids.browse_filter) {
                 self.state.browse_mut().filter = v.to_string();
             }
+        }
+        if let Some(v) = self.ui.text_input_value(self.ids.browse_global_filter) {
+            self.state.browse_mut().global_filters = v.trim().split(' ').filter(|s| !s.is_empty()).map(String::from).collect();
         }
         for (i, id) in self.ids.browse_col_filters.iter().enumerate() {
             if id.0 == 0 {
@@ -1994,9 +2001,15 @@ impl Demo {
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_browse_go {
+        if id == self.ids.btn_browse_go || id == self.ids.btn_browse_clear_filters {
             self.snapshot_inputs();
             self.apply_browse_select();
+            if id == self.ids.btn_browse_clear_filters {
+                let tab = self.state.browse_mut();
+                tab.filter.clear();
+                tab.global_filters.clear();
+                tab.col_filters.clear();
+            }
             self.state.browse_mut().offset = 0;
             match self.state.refresh_browse() {
                 Ok(()) => self.clear_error(),
@@ -2279,10 +2292,10 @@ impl Demo {
                     tab.scroll = (0.0, 0.0);
                     tab.result = None;
                     tab.offset = 0;
+                    tab.order_col = None;
                 }
                 tab.table = Some(name.clone());
                 tab.title = name.clone();
-                tab.order_col = None;
                 tab.sel_row = None;
             }
         }
@@ -2756,6 +2769,18 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
+                if self.state.tab == MainTab::Browse && self.state.overlay.is_none() && !self.state.confirm_open {
+                    if key == KeyCode::Enter && self.ui.focused().is_some_and(|id| id == self.ids.browse_filter || id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)) {
+                        self.handle_button(self.ids.btn_browse_go);
+                        self.after_ui(ctx);
+                        return;
+                    }
+                    if modifiers.commandish() && modifiers.alt && matches!(key, KeyCode::Char('f' | 'F')) {
+                        self.ui.set_focus(Some(self.ids.browse_global_filter));
+                        self.after_ui(ctx);
+                        return;
+                    }
+                }
                 if modifiers.commandish() && !self.state.confirm_open {
                     match key {
                         KeyCode::Char('s' | 'S') if self.state.overlay.is_none() => {
@@ -2934,6 +2959,38 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn browse_filter_actions_apply_all_inputs_clear_together_and_preserve_sort() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE t(n INTEGER, name TEXT);
+            INSERT INTO t VALUES(1, 'alpha'), (2, 'alpha'), (3, 'beta');").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_tabs = vec![state::BrowseTabState::new(Some("t".into()))];
+        demo.state.browse_mut().order_col = Some("n".into());
+        demo.state.browse_mut().order_desc = true;
+        demo.state.tab = MainTab::Browse;
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.browse_global_filter, " alpha   =2 ");
+        demo.ui.set_text_input(demo.ids.browse_col_filters[0], "1~3");
+        demo.ui.set_text_input(demo.ids.browse_filter, "n <> 3");
+        demo.handle_button(demo.ids.btn_browse_go);
+        assert_eq!(demo.state.browse().global_filters, ["alpha", "=2"]);
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 1);
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "2");
+        assert_eq!(demo.state.browse().order_col.as_deref(), Some("n"));
+        assert!(demo.state.browse().order_desc);
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.btn_browse_clear_filters);
+        assert!(demo.state.browse().filter.is_empty());
+        assert!(demo.state.browse().global_filters.is_empty());
+        assert!(demo.state.browse().col_filters.iter().all(String::is_empty));
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 3);
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "3");
+        assert!(db::has_pending_changes(demo.state.conn.as_ref().unwrap()).unwrap());
+    }
 
     #[test]
     fn document_transitions_cancel_keep_drafts_and_discard_rolls_back_before_close() {

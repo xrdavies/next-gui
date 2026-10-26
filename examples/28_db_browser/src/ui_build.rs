@@ -106,6 +106,8 @@ pub struct BuiltUi {
     pub btn_browse_new_tab: WidgetId,
     pub browse_select: WidgetId,
     pub browse_filter: WidgetId,
+    pub browse_global_filter: WidgetId,
+    pub btn_browse_clear_filters: WidgetId,
     pub btn_browse_go: WidgetId,
     pub btn_page_prev: WidgetId,
     pub btn_page_next: WidgetId,
@@ -373,6 +375,8 @@ pub fn build_ui(
     let mut btn_browse_new_tab = z;
     let mut browse_select = z;
     let mut browse_filter = z;
+    let mut browse_global_filter = z;
+    let mut btn_browse_clear_filters = z;
     let mut btn_browse_go = z;
     let mut btn_page_prev = z;
     let mut btn_page_next = z;
@@ -1169,7 +1173,7 @@ pub fn build_ui(
 
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.width = main_w - 24.0;
-            browse_table_style.height = (tab_page_h - 200.0).max(160.0);
+            browse_table_style.height = (tab_page_h - 232.0).max(160.0);
 
             let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
@@ -1310,14 +1314,22 @@ pub fn build_ui(
                                 row.text("Table");
                                 browse_select =
                                     row.select(browse_opts_a.clone(), browse_sel, "table…", sel_style);
+                                btn_add_row = row.tool_button("New Record");
+                                btn_del_row = row.tool_button("Delete Record");
+                            });
+                            p.scroll_row(tool_row, |row| {
+                                browse_global_filter = row.text_input_styled(
+                                    state.browse().global_filters.join(" "),
+                                    "Filter in any column",
+                                    filter_style,
+                                );
                                 browse_filter = row.text_input_styled(
                                     &state.browse().filter,
                                     "WHERE …",
                                     filter_style,
                                 );
                                 btn_browse_go = row.tool_button("Apply");
-                                btn_add_row = row.tool_button("New Record");
-                                btn_del_row = row.tool_button("Delete Record");
+                                btn_browse_clear_filters = row.tool_button("Clear Filters");
                             });
                             p.scroll_row(tool_row, |row| {
                                 btn_form_view = row.tool_button(match state.browse_view {
@@ -1374,7 +1386,7 @@ pub fn build_ui(
                                     });
                                     let mut form_scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                                     form_scroll.width = main_w - 24.0;
-                                    form_scroll.height = (tab_page_h - 200.0).max(120.0);
+                                    form_scroll.height = (tab_page_h - 232.0).max(120.0);
                                     p.scroll_area(form_scroll, |p| {
                                     if let Some(res) = res {
                                         let cells = res.rows.get(row_i);
@@ -1886,6 +1898,8 @@ pub fn build_ui(
         btn_browse_new_tab,
         browse_select,
         browse_filter,
+        browse_global_filter,
+        btn_browse_clear_filters,
         btn_browse_go,
         btn_page_prev,
         btn_page_next,

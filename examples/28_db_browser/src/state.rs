@@ -116,6 +116,8 @@ pub struct BrowseTabState {
     pub title: String,
     pub table: Option<String>,
     pub filter: String,
+    #[serde(default)]
+    pub global_filters: Vec<String>,
     /// Parallel to current result columns; empty = no filter.
     pub col_filters: Vec<String>,
     #[serde(default)]
@@ -143,6 +145,7 @@ impl BrowseTabState {
             title,
             table,
             filter: String::new(),
+            global_filters: Vec::new(),
             col_filters: Vec::new(),
             offset: 0,
             order_col: None,
@@ -858,6 +861,13 @@ impl AppState {
         for (col, filter) in columns.iter().zip(&tab.col_filters) {
             if let Some(condition) = crate::filters::condition(filter) {
                 parts.push(format!("{} {condition}", db::quote_ident(col)));
+            }
+        }
+        for filter in &tab.global_filters {
+            if let Some(condition) = crate::filters::condition(filter) {
+                let any_column = columns.iter().map(|col| format!("{} {condition}", db::quote_ident(col)))
+                    .collect::<Vec<_>>().join(" OR ");
+                if !any_column.is_empty() { parts.push(format!("({any_column})")); }
             }
         }
         if parts.is_empty() {
@@ -2683,6 +2693,16 @@ mod chart_default_tests {
         state.browse_mut().filter = "n <= 3".into();
         state.refresh_browse().unwrap();
         assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        state.browse_mut().filter.clear();
+        state.browse_mut().col_filters.clear();
+        state.browse_mut().global_filters = vec!["row".into(), "=2".into()];
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "2");
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 1);
+        state.browse_mut().col_filters = vec![">3".into()];
+        state.refresh_browse().unwrap();
+        assert!(state.browse().result.as_ref().unwrap().rows.is_empty());
+        state.browse_mut().global_filters.clear();
         state.browse_mut().filter.clear();
         state.browse_mut().col_filters = vec!["".into(), "/^row (?=[23]$)/".into()];
         state.refresh_browse().unwrap();

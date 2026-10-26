@@ -550,6 +550,21 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
             column.set("value", width.round().max(32.0) as u32);
             widths.push(column);
         }
+        let filters = table.ensure("filter_values");
+        filters.retain_elements(|e| e.name != "column");
+        for (index, value) in tab.col_filters.iter().enumerate().take(columns.len()).filter(|(_, value)| !value.is_empty()) {
+            let mut column = Element::new("column");
+            column.set("index", index);
+            column.set("value", value);
+            filters.push(column);
+        }
+        let global = table.ensure("global_filter");
+        global.retain_elements(|e| e.name != "filter");
+        for value in &tab.global_filters {
+            let mut filter = Element::new("filter");
+            filter.set("value", value);
+            global.push(filter);
+        }
     }
     project.db4s_xml = Some(render(&root)?);
     Ok(())
@@ -608,6 +623,18 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
                 }
             }
         }
+        if let Some(filters) = table.child("filter_values") {
+            tab.col_filters = vec![String::new(); columns.len()];
+            for column in filters.children().filter(|e| e.name == "column") {
+                let index = column.attr("index").and_then(|s| s.parse::<usize>().ok())
+                    .filter(|&i| i < columns.len()).ok_or("Invalid project filter column index")?;
+                tab.col_filters[index] = column.attr("value").unwrap_or("").into();
+            }
+        }
+        if let Some(global) = table.child("global_filter") {
+            tab.global_filters = global.children().filter(|e| e.name == "filter")
+                .map(|e| e.attr("value").unwrap_or("").into()).collect();
+        }
         project.frozen_cols = table
             .attr("freeze_columns")
             .and_then(|s| s.parse::<usize>().ok())
@@ -648,8 +675,6 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
         if let Some(settings) = browse.child("browse_table_settings") {
             for table in settings.children().filter(|e| e.name == "table") {
                 if [
-                    "filter_values",
-                    "global_filter",
                     "hidden_columns",
                     "conditional_formats",
                     "row_id_formats",
@@ -822,6 +847,8 @@ mod tests {
  <dock_state state="00AABB"/>
  <browse_table_settings><table schema="main" name="表" freeze_columns="1">
  <sort><column index="1" mode="1"/></sort><column_widths><column index="0" value="175"/></column_widths>
+ <filter_values><column index="0" value="&gt;=2"/></filter_values>
+ <global_filter><filter value="東京"/><filter value="/row(?=x)/"/></global_filter>
  <hidden_columns><column index="1" value="1"/></hidden_columns>
  </table></browse_table_settings></tab_browse>
  <tab_sql><sql name="Unicode">SELECT '&lt;&amp;中文&#x1F600;';<![CDATA[
@@ -845,10 +872,18 @@ SELECT ']]&gt;';]]></sql><current_tab id="0"/></tab_sql>
         assert_eq!(project.browse_tabs[0].order_col.as_deref(), Some("name"));
         assert!(project.browse_tabs[0].order_desc);
         assert_eq!(project.browse_tabs[0].column_widths[0], 175.0);
+        assert_eq!(project.browse_tabs[0].col_filters, [">=2", ""]);
+        assert_eq!(project.browse_tabs[0].global_filters, ["東京", "/row(?=x)/"]);
+        project.browse_tabs[0].col_filters = vec!["".into(), "<>NULL".into()];
+        project.browse_tabs[0].global_filters = vec!["東京".into()];
+        capture_connection(&mut project, &conn).unwrap();
         let encoded = encode(&project, Path::new("demo.sqbpro")).unwrap();
-        let restored = decode(&encoded).unwrap();
+        let mut restored = decode(&encoded).unwrap();
+        restore_browse(&mut restored, &conn).unwrap();
         assert_eq!(restored.sql_tabs, project.sql_tabs);
         assert_eq!(restored.browse_tabs[0].title, "表\none");
+        assert_eq!(restored.browse_tabs[0].col_filters, ["", "<>NULL"]);
+        assert_eq!(restored.browse_tabs[0].global_filters, ["東京"]);
         let root = parse(&encoded).unwrap();
         assert_eq!(root.attr("future"), Some("retained"));
         assert_eq!(
