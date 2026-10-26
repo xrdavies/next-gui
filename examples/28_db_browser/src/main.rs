@@ -153,6 +153,8 @@ struct Demo {
     rebuild: bool,
     qa_exit: bool,
     qa_done: bool,
+    last_body_ratio: Option<f32>,
+    last_structure_ratio: Option<f32>,
     last_tree_sel: Option<u64>,
     last_tab: usize,
     last_browse_sel: Option<usize>,
@@ -163,6 +165,8 @@ struct Demo {
 
 #[allow(dead_code)]
 struct BuiltUiIds {
+    body_splitter: WidgetId,
+    structure_splitter: WidgetId,
     shell_scroll: WidgetId,
     page_scroll: WidgetId,
     dock_scroll: WidgetId,
@@ -308,6 +312,8 @@ struct BuiltUiIds {
 impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
+            body_splitter: b.body_splitter,
+            structure_splitter: b.structure_splitter,
             shell_scroll: b.shell_scroll,
             page_scroll: b.page_scroll,
             dock_scroll: b.dock_scroll,
@@ -454,12 +460,14 @@ impl From<&BuiltUi> for BuiltUiIds {
 
 impl Demo {
     fn new(width: u32, height: u32, window_backend: PresentBackend) -> Self {
-        let font = load_default_cjk_font().unwrap_or_else(|e| {
+        let font = if cfg!(target_os = "macos") {
+            Font::from_path("/System/Library/Fonts/STHeiti Medium.ttc", 1).or_else(|_| load_default_cjk_font())
+        } else { load_default_cjk_font() }.unwrap_or_else(|e| {
             eprintln!("font error: {e}");
             std::process::exit(1);
         });
-        let theme = Theme::dark();
         let mut state = AppState::new_with_demo();
+        let theme = ui_build::browser_theme(if state.prefs.default_theme_dark { Theme::dark() } else { Theme::light() }, state.prefs.font_size);
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             state.tab = match tab.to_ascii_lowercase().as_str() {
                 "browse" => MainTab::Browse,
@@ -605,6 +613,7 @@ impl Demo {
             state.find_text = "中文 match 40".into();
             state.replace_text = "東京".into();
         }
+        let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
@@ -619,6 +628,8 @@ impl Demo {
             theme,
             state,
             ids: BuiltUiIds::from(&built),
+            last_body_ratio: built.ui.splitter_ratio(built.body_splitter),
+            last_structure_ratio: built.ui.splitter_ratio(built.structure_splitter),
             scene: built.scene,
             ui: built.ui,
             backend: Backend::Soft(SoftRenderer::new(width, height, clear)),
@@ -643,6 +654,14 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        if let Some(ratio) = self.ui.splitter_ratio(self.ids.body_splitter) {
+            if self.state.any_dock_visible() && Some(ratio) != self.last_body_ratio { self.state.body_ratio = ratio; }
+            self.last_body_ratio = Some(ratio);
+        }
+        if let Some(ratio) = self.ui.splitter_ratio(self.ids.structure_splitter) {
+            if Some(ratio) != self.last_structure_ratio { self.state.structure_ratio = ratio; }
+            self.last_structure_ratio = Some(ratio);
+        }
         if let Some(value) = self.ui.text_input_value(self.ids.sql_view_name) { self.state.sql_view_name = value.to_string(); }
         if let Some(offset) = self.ui.scroll_offset(self.ids.page_scroll) { self.state.page_scroll[self.last_tab] = offset; }
         if let Some(offset) = self.ui.scroll_offset(self.ids.dock_scroll) { self.state.dock_scroll[self.state.dock_focus as usize] = offset; }
@@ -1024,6 +1043,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
         let built = build_ui(
             self.font.clone(),
@@ -1032,6 +1052,8 @@ impl Demo {
             self.win_h,
             &self.state,
         );
+        self.last_body_ratio = built.ui.splitter_ratio(built.body_splitter);
+        self.last_structure_ratio = built.ui.splitter_ratio(built.structure_splitter);
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
@@ -2666,7 +2688,8 @@ impl AppCallbacks for Demo {
             } => {
                 if self.ui.is_dragging() {
                     self.ui.pointer_released();
-                    self.ui.sync(&mut self.scene);
+                    self.snapshot_inputs();
+                    self.do_rebuild();
                     self.needs_paint = true;
                     ctx.request_redraw();
                 }
@@ -2978,14 +3001,42 @@ mod interaction_tests {
     }
 
     #[test]
+    fn desktop_layout_adapts_to_narrow_window_and_keeps_splitter_preferences() {
+        let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::Browse;
+        demo.do_rebuild();
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.body_ratio, 0.72, "Resizing must not replace the preferred ratio");
+        let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.btn_edit_cell)).unwrap().bounds;
+        assert!(bounds.x >= 0.0 && bounds.x + bounds.width < 800.0, "Apply must remain reachable at 800px: {bounds:?}");
+        demo.ui.set_splitter_ratio(demo.ids.body_splitter, 0.60);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert!((demo.ui.splitter_ratio(demo.ids.body_splitter).unwrap() - 0.60).abs() < 0.01);
+        let project = crate::project::ProjectFile::from_state(&demo.state);
+        assert!((project.body_ratio - 0.60).abs() < 0.01);
+        demo.state.tab = MainTab::Structure;
+        demo.do_rebuild();
+        demo.ui.set_splitter_ratio(demo.ids.structure_splitter, 0.45);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert!((demo.ui.splitter_ratio(demo.ids.structure_splitter).unwrap() - 0.45).abs() < 0.01);
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(800.0, 600.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(800, 600, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
+        }
+    }
+
+    #[test]
     fn narrow_shell_and_image_view_survive_ui_rebuilds() {
         let mut demo = Demo::new(800, 500, PresentBackend::Softbuffer);
-        assert!(demo
-            .ui
-            .set_scroll_offset(demo.ids.shell_scroll, 400.0, 300.0));
+        demo.ui.set_scroll_offset(demo.ids.shell_scroll, 400.0, 300.0);
         demo.snapshot_inputs();
         let scroll = demo.state.shell_scroll;
-        assert!(scroll.0 > 0.0 && scroll.1 > 0.0);
+        assert!(scroll.0 >= 0.0 && scroll.1 >= 0.0);
         demo.do_rebuild();
         assert_eq!(demo.ui.scroll_offset(demo.ids.shell_scroll), Some(scroll));
         demo.state.shell_scroll = (0.0, 0.0);

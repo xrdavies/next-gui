@@ -188,6 +188,8 @@ pub struct AppState {
     pub status_msg: String,
     pub error_msg: Option<String>,
 
+    pub body_ratio: f32,
+    pub structure_ratio: f32,
     pub shell_scroll: (f32, f32),
     pub page_scroll: [(f32,f32);4],
     pub dock_scroll: [(f32,f32);5],
@@ -418,6 +420,8 @@ impl AppState {
             tab: MainTab::Structure,
             status_msg: "Ready".into(),
             error_msg: None,
+            body_ratio: 0.72,
+            structure_ratio: 0.34,
             shell_scroll: (0.0,0.0),
             page_scroll: [(0.0,0.0);4],
             dock_scroll: [(0.0,0.0);5],

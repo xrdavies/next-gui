@@ -9,6 +9,8 @@ use crate::state::{AppState, BrowseTabState, MainTab};
 #[serde(default)]
 pub struct ProjectFile {
     pub db_path: String,
+    pub body_ratio: f32,
+    pub structure_ratio: f32,
     pub read_only: bool,
     pub cond_rules: Vec<crate::state::CondFormatRule>,
     pub chart_table: Option<String>,
@@ -38,6 +40,8 @@ impl ProjectFile {
         let b = state.browse();
         Self {
             db_path: state.path.clone(),
+            body_ratio: state.body_ratio,
+            structure_ratio: state.structure_ratio,
             read_only: state.read_only,
             cond_rules: state.cond_rules.clone(),
             chart_table: state.chart_table.clone(),
@@ -85,6 +89,8 @@ impl ProjectFile {
     }
 
     pub fn apply_to(&self, state: &mut AppState) {
+        state.body_ratio = self.body_ratio.clamp(0.05, 0.95);
+        state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
         state.cond_rules = self.cond_rules.clone();
         state.chart_table = self.chart_table.clone();
         state.chart_column = self.chart_column.clone();
@@ -122,6 +128,8 @@ impl Default for ProjectFile {
     fn default() -> Self {
         Self {
             db_path: String::new(),
+            body_ratio: 0.72,
+            structure_ratio: 0.34,
             read_only: false,
             cond_rules: Vec::new(),
             chart_table: None,

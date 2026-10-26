@@ -17161,6 +17161,12 @@ impl FlexBuilder<'_> {
     /// Compact toolbar button (smaller height; theme colors + density).
     pub fn tool_button(&mut self, label: impl Into<String>) -> WidgetId {
         let theme = self.ui.theme;
+        self.tool_button_styled(label, theme.colors.button_bg, theme.colors.button_fg)
+    }
+
+    /// Compact toolbar button with semantic colors; sizes follow the active theme.
+    pub fn tool_button_styled(&mut self, label: impl Into<String>, bg: Color, fg: Color) -> WidgetId {
+        let theme = self.ui.theme;
         let s = self.ui.config.density.spacing_scale();
         let f = self.ui.config.density.font_scale();
         let id = self.ui.alloc();
@@ -17169,8 +17175,8 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
-                    bg: theme.colors.button_bg,
-                    fg: theme.colors.button_fg,
+                    bg,
+                    fg,
                     size: (theme.typography.button_sm * f).round().max(1.0),
                     min_width: (64.0 * s).round().max(1.0),
                     height: (28.0 * s).round().max(1.0),

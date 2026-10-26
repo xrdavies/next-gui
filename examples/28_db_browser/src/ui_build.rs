@@ -77,6 +77,8 @@ pub mod mid {
 #[allow(dead_code)]
 pub struct BuiltUi {
     pub ui: Ui,
+    pub body_splitter: WidgetId,
+    pub structure_splitter: WidgetId,
     pub shell_scroll: WidgetId,
     pub page_scroll: WidgetId,
     pub dock_scroll: WidgetId,
@@ -295,6 +297,43 @@ fn result_columns(cols: &[String], fallback: &[&str]) -> Vec<TableColumn> {
         .collect()
 }
 
+/// Desktop typography and restrained surfaces, using the same widget token system.
+pub fn browser_theme(mut theme: Theme, font_size: f32) -> Theme {
+    theme.typography.body = font_size;
+    theme.typography.input = font_size;
+    theme.typography.button = font_size;
+    theme.typography.button_sm = font_size;
+    theme.typography.title = font_size + 2.0;
+    theme.typography.caption = (font_size - 2.0).max(10.0);
+    theme.radii.control = 5.0;
+    theme.radii.panel = 8.0;
+    let dark = theme.mode == next_gui_ui::ThemeMode::Dark;
+    let c = &mut theme.colors;
+    c.accent = Color::rgb(57, 113, 220);
+    c.on_accent = Color::rgb(255, 255, 255);
+    c.surface = if dark { Color::rgb(23, 26, 32) } else { Color::rgb(245, 247, 251) };
+    c.surface_elevated = if dark { Color::rgb(30, 34, 42) } else { Color::rgb(235, 239, 246) };
+    c.content_bg = c.surface;
+    c.panel = c.surface;
+    c.list_bg = c.surface;
+    c.scroll_bg = c.surface;
+    c.strip_bg = c.surface_elevated;
+    c.title_bar = c.surface_elevated;
+    c.header_bg = if dark { Color::rgb(36, 42, 53) } else { Color::rgb(229, 235, 244) };
+    c.button_bg = if dark { Color::rgb(43, 50, 63) } else { Color::rgb(225, 231, 240) };
+    c.button_fg = if dark { Color::rgb(225, 231, 241) } else { Color::rgb(40, 52, 72) };
+    c.text_primary = if dark { Color::rgb(225, 231, 241) } else { Color::rgb(32, 43, 61) };
+    c.text_secondary = if dark { Color::rgb(152, 164, 185) } else { Color::rgb(91, 106, 128) };
+    c.input_bg = if dark { Color::rgb(18, 21, 27) } else { Color::rgb(255, 255, 255) };
+    c.grid = if dark { Color::rgb(41, 47, 59) } else { Color::rgb(216, 225, 237) };
+    c.border = c.grid;
+    c.sash = c.grid;
+    c.chrome = if dark { Color::rgb(38, 53, 78) } else { Color::rgb(216, 230, 253) };
+    c.selected_bg = c.chrome;
+    c.muted = c.surface_elevated;
+    theme
+}
+
 pub fn build_ui(
     font: Font,
     mut theme: Theme,
@@ -302,14 +341,15 @@ pub fn build_ui(
     height: u32,
     state: &AppState,
 ) -> BuiltUi {
-    theme.typography.input = state.prefs.font_size;
-    theme.typography.button_sm = state.prefs.font_size;
+    theme = browser_theme(theme, state.prefs.font_size);
     let mut scene = Scene::new();
     let mut ui = Ui::with_font(font);
     ui.set_theme(theme);
     ui.set_viewport(width as f32, height as f32);
 
     let z = WidgetId(0);
+    let mut body_splitter = z;
+    let mut structure_splitter = z;
     let mut menu_file = z;
     let mut menu_edit = z;
     let mut menu_view = z;
@@ -460,18 +500,18 @@ pub fn build_ui(
     let win_w = width as f32;
     let win_h = height as f32;
     const STATUS_H: f32 = 40.0;
-    // shortcut: panes retain a 1100px workspace, replace with adaptive panes when redesigning narrow layouts.
-    let shell_w = (win_w - 12.0).max(1100.0);
-    let shell_h = (win_h - STATUS_H - 4.0).max(640.0);
+    let shell_w = (win_w - 12.0).max(640.0);
+    let shell_h = (win_h - STATUS_H - 4.0).max(360.0);
     let chrome_h = 42.0 + if state.toolbar_db { 42.0 } else { 0.0 }
         + if state.toolbar_extra { 38.0 } else { 0.0 }
         + if state.toolbar_project { 38.0 } else { 0.0 };
-    let content_h = (shell_h - chrome_h).max(420.0);
+    let content_h = (shell_h - chrome_h).max(300.0);
     let docks_on = state.any_dock_visible() && state.overlay.is_none();
-    let main_frac = if docks_on { 0.72 } else { 1.0 };
+    let pane_width = shell_w - 20.0;
+    let main_frac = if docks_on { state.body_ratio.clamp(340.0 / pane_width, 1.0 - 240.0 / pane_width) } else { 1.0 };
     let main_w = (shell_w - 20.0) * main_frac;
     let dock_w = (shell_w - 20.0) * (1.0 - main_frac) - 8.0;
-    let tab_page_h = (content_h - 36.0).max(360.0);
+    let tab_page_h = (content_h - 36.0).max(240.0);
 
     let mut menu_style = MenuStyle::from_theme(&theme);
     menu_style.popup_width = menu_style.popup_width.max(280.0);
@@ -485,7 +525,7 @@ pub fn build_ui(
     menu_tb.gap = 4.0;
     menu_tb.background = Some(theme.colors.strip_bg);
 
-    let mut main_tb = ToolbarStyle::from_theme(&theme);
+    let mut main_tb = RowStyle::from_theme(&theme);
     main_tb.width = shell_w - 8.0;
     main_tb.height = 38.0;
     main_tb.padding = 4.0;
@@ -596,10 +636,10 @@ pub fn build_ui(
         });
 
         if state.toolbar_db {
-            col.toolbar(main_tb, |tb| {
+            col.scroll_row(main_tb, |tb| {
                 btn_new = tb.tool_button("New");
                 btn_open = tb.tool_button("Open");
-                btn_write = tb.tool_button("Write Changes");
+                btn_write = tb.tool_button_styled("Write Changes", theme.colors.accent, theme.colors.on_accent);
                 btn_revert = tb.tool_button("Revert");
                 btn_theme = tb.tool_button("Theme");
                 tb.spacer(12.0, 1.0);
@@ -624,7 +664,7 @@ pub fn build_ui(
         if state.toolbar_extra {
             let mut extra_tb = main_tb;
             extra_tb.height = 30.0;
-            col.toolbar(extra_tb, |tb| {
+            col.scroll_row(extra_tb, |tb| {
                 toolbar_extra = tb.tool_button("Vacuum");
                 btn_integrity = tb.tool_button("Integrity");
                 tb.text_styled("Extra DB", theme.colors.text_secondary, 11.0);
@@ -633,7 +673,7 @@ pub fn build_ui(
         if state.toolbar_project {
             let mut proj_tb = main_tb;
             proj_tb.height = 30.0;
-            col.toolbar(proj_tb, |tb| {
+            col.scroll_row(proj_tb, |tb| {
                 toolbar_project = tb.tool_button("Open Project");
                 btn_project_save = tb.tool_button("Save Project");
                 let label = state
@@ -1068,7 +1108,7 @@ pub fn build_ui(
             body_split.width = shell_w - 8.0;
             body_split.height = content_h;
             body_split.axis = Axis::Vertical;
-            body_split.ratio = if docks_on { 0.72 } else { 0.98 };
+            body_split.ratio = if docks_on { main_frac } else { 0.98 };
 
             let mut page_scroll_style = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
             page_scroll_style.width = main_w - 8.0;
@@ -1081,7 +1121,7 @@ pub fn build_ui(
             tabs_style.strip_bg = theme.colors.strip_bg;
             tabs_style.active_fg = theme.colors.text_primary;
 
-            let mut struct_tb = ToolbarStyle::from_theme(&theme);
+            let mut struct_tb = RowStyle::from_theme(&theme);
             struct_tb.width = main_w - 24.0;
             struct_tb.height = 34.0;
 
@@ -1089,10 +1129,10 @@ pub fn build_ui(
             struct_split.width = main_w - 24.0;
             struct_split.height = (tab_page_h - 48.0).max(280.0);
             struct_split.axis = Axis::Vertical;
-            struct_split.ratio = 0.34;
+            struct_split.ratio = state.structure_ratio.clamp(0.25, 0.65);
 
-            let tree_w = (main_w - 24.0) * 0.34 - 8.0;
-            let right_w = (main_w - 24.0) * 0.66 - 8.0;
+            let tree_w = (main_w - 24.0) * struct_split.ratio - 8.0;
+            let right_w = (main_w - 24.0) * (1.0 - struct_split.ratio) - 8.0;
             let mut tree_style = TreeStyle::from_theme(&theme);
             tree_style.width = tree_w;
             tree_style.height = (tab_page_h - 56.0).max(240.0);
@@ -1207,7 +1247,7 @@ pub fn build_ui(
             let mut prag_inp = TextInputStyle::from_theme(&theme);
             prag_inp.width = 180.0;
 
-            col.splitter(
+            body_splitter = col.splitter(
                 body_split,
                 |left| {
                     tabs = left.tabs(tabs_style, |tb| {
@@ -1217,14 +1257,14 @@ pub fn build_ui(
                                 return;
                             }
                             page_scroll = p.scroll_area(page_scroll_style, |p| {
-                            p.toolbar(struct_tb, |tb| {
+                            p.scroll_row(struct_tb, |tb| {
                                 btn_struct_new_table = tb.tool_button("New Table");
                                 btn_struct_new_index = tb.tool_button("New Index");
                                 btn_struct_modify = tb.tool_button("Modify");
                                 btn_struct_delete = tb.tool_button("Delete");
                                 btn_struct_refresh = tb.tool_button("Refresh");
                             });
-                            p.splitter(
+                            structure_splitter = p.splitter(
                                 struct_split,
                                 |l| {
                                     tree = l.tree(roots_for_tree.clone(), tree_style);
@@ -1456,7 +1496,7 @@ pub fn build_ui(
                                     btn_sql_open = tb.tool_button("Open SQL");
                                     btn_sql_save = tb.tool_button("Save SQL");
                                     btn_sql_save_as = tb.tool_button("Save As…");
-                                    btn_sql_run = tb.tool_button("Execute");
+                                    btn_sql_run = tb.tool_button_styled("Execute", theme.colors.accent, theme.colors.on_accent);
                                     btn_sql_line = tb.tool_button("Execute Line");
                                     btn_sql_stop = tb.tool_button("Stop");
                                     btn_sql_find = tb.tool_button("Find");
@@ -1542,7 +1582,7 @@ pub fn build_ui(
                                             cell_style.height = 90.0;
                                             edit_value = c.text_area(&state.edit_value, "value", cell_style);
                                             c.row(tool_row, |r| {
-                                                btn_edit_cell = r.tool_button("Apply");
+                                                btn_edit_cell = r.tool_button_styled("Apply", theme.colors.accent, theme.colors.on_accent);
                                                 btn_edit_discard = r.tool_button("Discard Draft");
                                             });
                                             let mode = match state.edit_mode {
@@ -1807,6 +1847,8 @@ pub fn build_ui(
 
     BuiltUi {
         ui,
+        body_splitter,
+        structure_splitter,
         shell_scroll,
         page_scroll,
         dock_scroll,
