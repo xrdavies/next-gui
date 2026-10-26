@@ -138,3 +138,11 @@ cargo check -p next-gui-platform --features macos   # cross-target typecheck
 ## 7. Coordination
 
 Linux P0/P1 continue on `main` without waiting for macOS. Prefer small PRs that only touch `macos.rs`, Cargo features, and example `cfg` — avoid drive-by refactors of `linux.rs` unless fixing a shared trait bug.
+
+## Function keys (2026-10-27)
+
+All winit backends forward F1–F24 as `KeyCode::Function(1..=24)` on press,
+retaining modifiers. They are not text/IME input. Applications with exhaustive
+key matches must handle this variant; Office examples ignore it unless they bind
+an action (e28 uses F3/Shift+F3 for SQL search). Native hardware acceptance remains
+separate from shared mapping tests and feature compilation.

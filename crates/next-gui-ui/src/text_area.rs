@@ -7,6 +7,7 @@ pub(super) struct TextAreaEdit {
     undo: Vec<EditSnapshot>,
     redo: Vec<EditSnapshot>,
     pub(super) reveal: bool,
+    highlights: Option<(Color, Vec<Range<usize>>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +197,26 @@ impl Ui {
         true
     }
 
+    /// Mark disjoint Unicode scalar ranges without changing selection or undo history.
+    /// Empty ranges mark a position. Document edits clear the marks; sessions retain them.
+    pub fn set_text_area_highlights(&mut self, id: WidgetId, mut ranges: Vec<Range<usize>>, color: Color) -> bool {
+        let Some(Widget { kind: Kind::TextArea { value, edit, .. }, .. }) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let len = value.chars().count();
+        if ranges.iter().any(|range| range.start > range.end || range.end > len) { return false; }
+        ranges.sort_by_key(|range| (range.start, range.end));
+        let mut merged: Vec<Range<usize>> = Vec::new();
+        for range in ranges {
+            if merged.last() == Some(&range) { continue; }
+            if let Some(last) = merged.last_mut().filter(|last| last.start < last.end && range.start < range.end && range.start <= last.end) {
+                last.end = last.end.max(range.end);
+            } else { merged.push(range); }
+        }
+        edit.highlights = (!merged.is_empty()).then_some((color, merged));
+        true
+    }
+
     /// Replace selection (or insert at caret) as one undoable edit. Read-only areas reject edits.
     pub fn replace_text_area_selection(&mut self, id: WidgetId, text: &str) -> bool {
         let Some(Widget {
@@ -228,6 +249,7 @@ impl Ui {
             );
             edit.redo.clear();
             value.replace_range(start..end, text);
+            edit.highlights = None;
         }
         *caret = range.start + text.chars().count();
         edit.anchor = None;
@@ -433,6 +455,7 @@ impl Ui {
                         },
                     );
                     *value = snapshot.value.to_string();
+                    edit.highlights = None;
                     *caret = snapshot.caret;
                     edit.anchor = snapshot.anchor;
                     edit.reveal = true;
@@ -515,6 +538,7 @@ impl Ui {
         } else {
             0..0
         };
+        let marks = if preedit.is_empty() { edit.highlights.clone() } else { None };
         let (value, caret) = display_text(value, *caret, edit, preedit, *preedit_cursor);
         let placeholder = placeholder.clone();
         let style = *style;
@@ -552,48 +576,49 @@ impl Ui {
         scene.set_clip(host, Some(bounds));
         scene.set_visible(host, true);
         self.apply_corner_radius(scene, host, false);
-        // Allocate only visible selection rows; text uses the same wrapped layout as hit testing.
+        // Keep disjoint marks separate; selection is painted last over search highlights.
         let first = (scroll / layout.line_height).floor() as usize;
-        let last = ((scroll + view_h) / layout.line_height).ceil() as usize;
-        let mut highlights: Vec<Option<(f32, f32)>> = vec![None; last - first + 1];
-        for i in range.start..range.end.min(points.len().saturating_sub(1)) {
-            let (x, y) = points[i];
-            let (nx, ny) = points[i + 1];
-            let row = (y / layout.line_height).round() as usize;
-            if row < first || row > last {
-                continue;
-            }
-            let end = if ny > y {
-                content.width
-            } else {
-                nx.max(x + 2.0)
+        let mut rectangles = Vec::new();
+        let (mark_color, marks) = marks.unwrap_or((style.focus_border, Vec::new()));
+        let ranges = marks.into_iter().map(|range| (range, mark_color))
+            .chain((!range.is_empty()).then_some((range, style.focus_border)));
+        for (range, color) in ranges {
+            let mut segment: Option<(f32, f32, f32)> = None;
+            let mut append = |x: f32, end: f32, y: f32| {
+                if y + layout.line_height <= scroll || y >= scroll + view_h { return; }
+                if let Some((_, right, _)) = segment.as_mut().filter(|(_, _, row)| *row == y) {
+                    *right = (*right).max(end);
+                } else if let Some(previous) = segment.replace((x, end, y)) {
+                    rectangles.push((previous, color));
+                }
             };
-            let entry = &mut highlights[row - first];
-            *entry = Some(entry.map_or((x, end), |(a, b)| (a.min(x), b.max(end))));
-        }
-        self.ensure_aux_nodes(scene, host, id, highlights.len());
-        let aux = self.widgets.get(&id).unwrap().aux.clone();
-        for (i, extent) in highlights.iter().enumerate() {
-            let n = aux[i];
-            scene.set_visible(n, extent.is_some());
-            if let Some((a, b)) = extent {
-                let left = (content.x + a).floor();
-                let top = (content.y + (first + i) as f32 * layout.line_height - scroll).floor();
-                let width = (content.x + b).ceil() - left;
-                let height = layout.line_height.ceil();
-                scene.set_bounds(n, Rect::new(left, top, width, height));
-                scene.set_clip(n, Some(content));
-                // Solid fills are opaque; coverage gives both renderers the same translucent selection.
-                scene.set_mask(
-                    n,
-                    Some(AlphaMask::new(
-                        width as u32,
-                        height as u32,
-                        vec![100; width as usize * height as usize],
-                    )),
-                );
-                scene.set_fill(n, style.focus_border);
+            if range.is_empty() {
+                let (x, y) = points[range.start.min(points.len() - 1)];
+                append(x, x + 2.0, y);
+            } else {
+                for i in range.start..range.end.min(points.len().saturating_sub(1)) {
+                    let (x, y) = points[i];
+                    let (nx, ny) = points[i + 1];
+                    append(x, if ny > y { content.width } else { nx.max(x + 2.0) }, y);
+                }
             }
+            if let Some(previous) = segment { rectangles.push((previous, color)); }
+        }
+        self.ensure_aux_nodes(scene, host, id, rectangles.len());
+        let aux = self.widgets.get(&id).unwrap().aux.clone();
+        for (i, ((a, b, y), color)) in rectangles.into_iter().enumerate() {
+            let n = aux[i];
+            let left = (content.x + a).floor();
+            let top = (content.y + y - scroll).floor();
+            let width = (content.x + b).ceil() - left;
+            let height = layout.line_height.ceil();
+            scene.set_visible(n, true);
+            scene.set_bounds(n, Rect::new(left, top, width, height));
+            scene.set_clip(n, Some(content));
+            // Coverage gives both renderers the same translucent highlights.
+            scene.set_mask(n, Some(AlphaMask::new(width as u32, height as u32,
+                vec![100; width as usize * height as usize])));
+            scene.set_fill(n, color);
         }
         if let Some(label) = label {
             let placeholder_visible = value.is_empty() && !focused;
@@ -823,6 +848,48 @@ mod tests {
             ui.widgets[&area].aux.len() < 15,
             "selection nodes are viewport bounded"
         );
+    }
+
+    #[test]
+    fn search_highlights_are_disjoint_unicode_clipped_and_session_bound() {
+        let (mut ui, mut scene, area) = editor("ab gap 中文 end");
+        let color = Color::rgb(220, 160, 40);
+        ui.select_text_area_range(area, 0..0);
+        assert!(ui.set_text_area_highlights(area, vec![7..9, 0..2, 0..1, 13..13], color));
+        assert_eq!(ui.text_area_selection(area), Some(0..0));
+        let state = ui.text_area_state(area).unwrap();
+        assert!(!ui.set_text_area_highlights(area, std::iter::once(0..14).collect(), color));
+        ui.sync(&mut scene);
+        let marks: Vec<_> = ui.widgets.get(&area).unwrap().aux.iter()
+            .filter_map(|id| scene.get(*id).filter(|n| n.visible)).collect();
+        assert_eq!(marks.len(), 3);
+        assert!(marks[0].bounds.x + marks[0].bounds.width < marks[1].bounds.x);
+        assert!((2.0..=3.0).contains(&marks[2].bounds.width));
+        assert!(marks.iter().all(|n| n.fill == color && n.clip.is_some() && n.mask.is_some()));
+        ui.replace_text_area_selection(area, "x");
+        ui.sync(&mut scene);
+        assert!(ui.widgets.get(&area).unwrap().aux.iter().all(|id| !scene.get(*id).unwrap().visible));
+        assert!(!ui.restore_text_area_state(area, &state));
+        ui.key_input(UiKey::Undo);
+        assert!(ui.restore_text_area_state(area, &state));
+        ui.sync(&mut scene);
+        assert_eq!(ui.widgets.get(&area).unwrap().aux.iter().filter(|id| scene.get(**id).unwrap().visible).count(), 3);
+        ui.set_text_area_highlights(area, vec![0..2, 2..2], color);
+        ui.sync(&mut scene);
+        assert_eq!(ui.widgets.get(&area).unwrap().aux.iter().filter(|id| scene.get(**id).unwrap().visible).count(), 2);
+        ui.set_text_area_value(area, "short");
+        ui.sync(&mut scene);
+        assert!(ui.widgets.get(&area).unwrap().aux.iter().all(|id| !scene.get(*id).unwrap().visible));
+
+        let text = (0..100).map(|_| "中文 abc\n").collect::<String>();
+        ui.set_text_area_value(area, &text);
+        assert!(ui.set_text_area_highlights(area, (0..100).map(|i| i * 7..i * 7 + 2).collect(), color));
+        ui.set_text_area_scroll(area, 500.0);
+        ui.sync(&mut scene);
+        let visible: Vec<_> = ui.widgets.get(&area).unwrap().aux.iter()
+            .filter_map(|id| scene.get(*id).filter(|n| n.visible)).collect();
+        assert!(!visible.is_empty() && visible.len() < 10);
+        assert!(visible.iter().all(|n| !n.bounds.intersect(&n.clip.unwrap()).is_empty()));
     }
 
     #[test]

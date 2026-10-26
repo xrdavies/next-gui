@@ -148,12 +148,47 @@ pub enum KeyCode {
     /// Printable character from the keyboard path (typically Latin/ASCII).
     /// CJK composition arrives via [`Event::Ime`], not here.
     Char(char),
+    /// Function key F1 through F24 (number 1 through 24).
+    Function(u8),
     /// Catch-all scancode / other.
     ///
     /// P6a reserves this as the extension hook for industrial / HMI function keys;
     /// a full field key map is out of scope for P6a.
     Other(u32),
 }
+
+#[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
+fn function_key(key: &winit::keyboard::Key) -> Option<KeyCode> {
+    use winit::keyboard::{Key, NamedKey};
+    Some(KeyCode::Function(match key {
+        Key::Named(NamedKey::F1) => 1,
+        Key::Named(NamedKey::F2) => 2,
+        Key::Named(NamedKey::F3) => 3,
+        Key::Named(NamedKey::F4) => 4,
+        Key::Named(NamedKey::F5) => 5,
+        Key::Named(NamedKey::F6) => 6,
+        Key::Named(NamedKey::F7) => 7,
+        Key::Named(NamedKey::F8) => 8,
+        Key::Named(NamedKey::F9) => 9,
+        Key::Named(NamedKey::F10) => 10,
+        Key::Named(NamedKey::F11) => 11,
+        Key::Named(NamedKey::F12) => 12,
+        Key::Named(NamedKey::F13) => 13,
+        Key::Named(NamedKey::F14) => 14,
+        Key::Named(NamedKey::F15) => 15,
+        Key::Named(NamedKey::F16) => 16,
+        Key::Named(NamedKey::F17) => 17,
+        Key::Named(NamedKey::F18) => 18,
+        Key::Named(NamedKey::F19) => 19,
+        Key::Named(NamedKey::F20) => 20,
+        Key::Named(NamedKey::F21) => 21,
+        Key::Named(NamedKey::F22) => 22,
+        Key::Named(NamedKey::F23) => 23,
+        Key::Named(NamedKey::F24) => 24,
+        _ => return None,
+    }))
+}
+
 
 /// Touch-screen contact phase (winit-compatible; primary finger also synthesizes pointer via P6a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -500,6 +535,17 @@ pub mod windows;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
+    fn function_keys_keep_their_numbers_without_becoming_text() {
+        use winit::keyboard::{Key, NamedKey};
+        for (key, number) in [(NamedKey::F1, 1), (NamedKey::F3, 3), (NamedKey::F24, 24)] {
+            assert_eq!(function_key(&Key::Named(key)), Some(KeyCode::Function(number)));
+        }
+        assert_eq!(function_key(&Key::Named(NamedKey::Enter)), None);
+        assert_eq!(function_key(&Key::Character("F3".into())), None);
+    }
 
     #[test]
     fn scale_factor_changed_constructs() {

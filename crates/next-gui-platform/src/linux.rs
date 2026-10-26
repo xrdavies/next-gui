@@ -389,7 +389,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                             }
                         }
                     }
-                    _ => KeyCode::Other(0),
+                    _ => crate::function_key(&key_event.logical_key).unwrap_or(KeyCode::Other(0)),
                 };
                 // Deliver presses for editing keys; Space/Escape also on release for legacy demos.
                 // Skip Other / non-deliver keys without returning from window_event so the

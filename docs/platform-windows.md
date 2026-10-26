@@ -97,3 +97,11 @@ open a Win32 window.
 
 Field Soft fallback applies on Windows the same as Linux: no adapter → Softbuffer present
 still works. Do not drop Soft for a GPU-only Windows path.
+
+## Function keys (2026-10-27)
+
+All winit backends forward F1–F24 as `KeyCode::Function(1..=24)` on press,
+retaining modifiers. They are not text/IME input. Applications with exhaustive
+key matches must handle this variant; Office examples ignore it unless they bind
+an action (e28 uses F3/Shift+F3 for SQL search). Native hardware acceptance remains
+separate from shared mapping tests and feature compilation.

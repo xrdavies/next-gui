@@ -116,7 +116,7 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,
         KeyCode::Char(c) => UiKey::Char(c),
-        KeyCode::Other(_) => return None,
+        KeyCode::Function(_) | KeyCode::Other(_) => return None,
         KeyCode::Tab => unreachable!(),
     })
 }
