@@ -108,10 +108,10 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Table selector | done | |
-| Filter / WHERE | done | |
-| Data grid | partial | 500-row pages; shared column resize/clip/scroll fix added. No range selection, bulk copy/paste, visible scrollbars, inline editor, hiding/reorder or total-count navigation. |
+| Filter / WHERE | partial | Raw WHERE and original any-column term search share export conditions; Clear Filters, Enter and Cmd/Ctrl+Alt+F. Automatic debounce and escape preferences remain. |
+| Data grid | partial | 500-row pages; shared column resize/clip/scroll fix added. Shared visible scrollbars and focus reveal are available. No range selection, bulk copy/paste, inline editor, hiding/reorder or total-count navigation. |
 | Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort only, no clear/multi-sort UI. |
-| Filter-per-column | partial | LIKE-substring inputs in a separate fixed row; not aligned with resized/scrolled columns, no DB4S operator parser. |
+| Filter-per-column | partial | Shared inputs align with resized/scrolled/frozen columns. DB4S comparisons, numeric ranges, NULL/empty text, wildcards and Unicode PCRE2 REGEXP are supported. Escape preference and automatic debounce remain. |
 | Multi browse tabs | partial | Add/switch with scrollable tab strip; no close/reorder. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
 | Edit cell → Edit Cell dock | partial | Explicit NULL/INTEGER/REAL/TEXT/BLOB and multiline editing; numeric types retained; Hex validation errors preserve the draft (F06 addressed). SQLite affinity still applies. |
@@ -255,8 +255,8 @@ unavailable; framebuffer captures and Metal readback are recorded separately.
 
 The latest code addresses the core behavior behind F03/F05/F06/F07/F08/F09/F11/F12.
 F02 is verified after unified document transitions and per-document SQL close.
-F10 adaptive panes/ratio persistence are implemented; filter geometry/scrollbars
-and F13 full SQL tracing remain in progress. Earlier sections are historical records.
+F10 adaptive panes, ratio persistence, filter geometry, scrollbars and focus reveal
+are implemented; native input acceptance and F13 full SQL tracing remain pending. Earlier sections are historical records.
 
 Shared additions: `ImageView` get/set with validated scale and bounded pan,
 `FlexBuilder::scroll_row`, public validated ScrollArea offset restoration, correct
@@ -288,3 +288,19 @@ with backwards-compatible defaults.
 - Native desktop capture still shows wallpaper only. Application framebuffer
   review and logic tests do not replace real OS input/IME/picker acceptance or a
   round trip through the DB4S binary.
+
+## Filters and shared scrolling — 2026-10-27
+
+- Native project column/global filters now restore and save. Any-column search
+  ANDs terms and ORs columns using the same operator syntax as column filters;
+  complete filtered exports use the same conditions. Applying filters keeps sorting.
+- PCRE2 provides Unicode properties, lookaround and backreferences with cached
+  SQLite REGEXP. Match limits are 1,000,000 backtracking steps / depth 1,000;
+  errors are reported. Escape preferences and automatic debounce are still absent.
+- Filter fields share table widths, scroll and frozen-column geometry. Shared
+  overlay scrollbars support drag and track paging; keyboard focus reveals nested
+  scroll content without resetting manual scrolling. Normal shell/SQL panes fit
+  the available height; 800×600 pages remain scrollable. Hidden docks reclaim width.
+- 217 workspace tests and strict clippy/build checks pass. See the
+  [latest review](../../docs/reviews/R-20261027-2bfc8ad51380.md) for captures,
+  the project browse-error finding and native acceptance limits.

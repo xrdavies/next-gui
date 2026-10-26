@@ -109,7 +109,7 @@ These changes do not claim full DB4S compatibility or native desktop acceptance.
 
 New `.sqbpro` files use the XML layout from DB4S 3.13.1. Open restores the
 main database path/access mode, five connection PRAGMAs, existing attached files,
-main-schema browse tabs, column widths/primary sort, SQL text/file references and
+main-schema browse tabs, column/global filters, widths/primary sort, SQL text/file references and
 active main/SQL tabs. Relative database, attachment and SQL paths resolve against
 the project directory. Linked SQL text is read from its file before replacing the
 session. Read-only projects also attach files read-only. Missing files, malformed
@@ -117,7 +117,7 @@ XML, unsupported entities and invalid settings report an error. New database
 connections are prepared before replacing the current connection.
 
 Unrecognized elements/attributes and Qt dock data survive XML saves; unsupported
-browse filters/formatting/plots and attached-schema browse tabs are reported as
+advanced browse formatting/plots and attached-schema browse tabs are reported as
 retained but not applied. This is partial interoperability, not complete DB4S
 project acceptance. The `next_gui` XML extension retains additional local layout
 and draft settings; upstream ignores it. Legacy JSON projects remain readable,
@@ -133,3 +133,20 @@ file changed externally. The shared three-action modal traps focus and supports
 Tab/Shift+Tab, arrows, Enter/Space and Escape. The desktop theme uses compact
 consistent text and restrained surfaces; macOS missing symbols use a fallback
 font. Pointer tab dragging, rename and independent floating docks remain pending.
+
+### Filtering and scrolling (2026-10-27)
+
+Column filters support DB4S comparisons (`>=2`, `=NULL`, `<>NULL`, `=''`),
+ordered numeric ranges (`10~20`), LIKE wildcards and `/PCRE2 pattern/` regular
+expressions. “Filter in any column” searches each space-separated term across
+columns; all terms must match somewhere. Enter applies filters, Clear Filters
+resets them, and Cmd/Ctrl+Alt+F focuses global search. The separate WHERE field
+accepts SQL. Full CSV/JSON export uses the same filter conditions.
+
+Filter inputs track resized, scrolled and frozen columns. Shared overlay bars
+support thumb dragging and track paging; Tab focus reveals controls in enclosing
+scroll areas. Hidden docks return their width to the workspace. REGEXP uses
+Unicode properties, lookaround and backreferences, bounded to 1,000,000 match
+steps / depth 1,000. Escape preferences and automatic filter debounce remain
+pending. Project loading still needs to report invalid restored query errors;
+see the [latest review](../../docs/reviews/R-20261027-2bfc8ad51380.md).
