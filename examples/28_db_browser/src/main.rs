@@ -2961,6 +2961,24 @@ mod interaction_tests {
     use super::*;
 
     #[test]
+    fn normal_sql_page_fits_with_visible_or_hidden_toolbar() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        for visible in [true, false] {
+            demo.state.toolbar_sql = visible;
+            demo.do_rebuild();
+            demo.ui.set_scroll_offset(demo.ids.page_scroll, 0.0, 10000.0);
+            assert_eq!(demo.ui.scroll_offset(demo.ids.page_scroll), Some((0.0, 0.0)));
+        }
+        for tab in [MainTab::Structure, MainTab::Browse, MainTab::Pragmas, MainTab::ExecuteSql] {
+            demo.state.tab = tab;
+            demo.do_rebuild();
+            demo.ui.set_scroll_offset(demo.ids.shell_scroll, 0.0, 10000.0);
+            assert_eq!(demo.ui.scroll_offset(demo.ids.shell_scroll), Some((0.0, 0.0)), "{tab:?}");
+        }
+    }
+
+    #[test]
     fn browse_filter_actions_apply_all_inputs_clear_together_and_preserve_sort() {
         let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
         demo.state.new_memory_db().unwrap();
@@ -3132,6 +3150,13 @@ mod interaction_tests {
         let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
         demo.state.tab = MainTab::Browse;
         demo.do_rebuild();
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(800.0, 600.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(800, 600, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&PathBuf::from(path).with_extension("browse.ppm").to_string_lossy(), renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
+        }
         demo.snapshot_inputs();
         assert_eq!(demo.state.body_ratio, 0.72, "Resizing must not replace the preferred ratio");
         let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.btn_edit_cell)).unwrap().bounds;
@@ -3479,6 +3504,13 @@ mod interaction_tests {
         demo.ui.sync(&mut demo.scene);
         let input_node = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(field)).unwrap();
         assert!((input_node.bounds.x - table_bounds.x - next_gui_ui::TableStyle::from_theme(&demo.theme).padding - 2.0).abs() < 0.01);
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 1400, 860).unwrap();
+        }
 
         // Sorting uses the SQL identifier, not the decorated heading label.
         demo.state

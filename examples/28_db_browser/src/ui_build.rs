@@ -506,9 +506,9 @@ pub fn build_ui(
     const STATUS_H: f32 = 40.0;
     let shell_w = (win_w - 12.0).max(640.0);
     let shell_h = (win_h - STATUS_H - 4.0).max(360.0);
-    let chrome_h = 42.0 + if state.toolbar_db { 42.0 } else { 0.0 }
-        + if state.toolbar_extra { 38.0 } else { 0.0 }
-        + if state.toolbar_project { 38.0 } else { 0.0 };
+    let chrome_h = 50.0 + if state.toolbar_db { 42.0 } else { 0.0 }
+        + if state.toolbar_extra { 40.0 } else { 0.0 }
+        + if state.toolbar_project { 40.0 } else { 0.0 };
     let content_h = (shell_h - chrome_h).max(300.0);
     let docks_on = state.any_dock_visible() && state.overlay.is_none();
     let pane_width = shell_w - 20.0;
@@ -667,7 +667,7 @@ pub fn build_ui(
         }
         if state.toolbar_extra {
             let mut extra_tb = main_tb;
-            extra_tb.height = 30.0;
+            extra_tb.height = 36.0;
             col.scroll_row(extra_tb, |tb| {
                 toolbar_extra = tb.tool_button("Vacuum");
                 btn_integrity = tb.tool_button("Integrity");
@@ -676,7 +676,7 @@ pub fn build_ui(
         }
         if state.toolbar_project {
             let mut proj_tb = main_tb;
-            proj_tb.height = 30.0;
+            proj_tb.height = 36.0;
             col.scroll_row(proj_tb, |tb| {
                 toolbar_project = tb.tool_button("Open Project");
                 btn_project_save = tb.tool_button("Save Project");
@@ -1178,12 +1178,17 @@ pub fn build_ui(
             let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
             sql_tb.height = 34.0;
+            sql_tb.padding = 0.0;
+            sql_tb.cross_align = CrossAlign::Center;
             let mut sql_area_style = TextAreaStyle::from_theme(&theme);
             sql_area_style.width = main_w - 24.0;
             sql_area_style.height = 120.0;
             let mut sql_table_style = TableStyle::from_theme(&theme);
             sql_table_style.width = main_w - 24.0;
-            sql_table_style.height = (tab_page_h - 250.0).max(120.0);
+            let sql_controls_h = sql_area_style.height + 2.0 * tool_row.height
+                + AlertStyle::from_theme(&theme).height + 4.0 * page_scroll_style.gap
+                + if state.toolbar_sql { sql_tb.height + page_scroll_style.gap } else { 0.0 };
+            sql_table_style.height = (page_scroll_style.height - sql_controls_h).max(120.0);
 
             let mut dock_tabs_style = TabsStyle::from_theme(&theme);
             dock_tabs_style.width = dock_w.max(220.0);

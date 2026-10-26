@@ -550,7 +550,7 @@ impl Ui {
             let entry = &mut highlights[row - first];
             *entry = Some(entry.map_or((x, end), |(a, b)| (a.min(x), b.max(end))));
         }
-        self.ensure_aux_nodes(scene, host, id, highlights.len() + 1);
+        self.ensure_aux_nodes(scene, host, id, highlights.len());
         let aux = self.widgets.get(&id).unwrap().aux.clone();
         for (i, extent) in highlights.iter().enumerate() {
             let n = aux[i];
@@ -573,22 +573,6 @@ impl Ui {
                 );
                 scene.set_fill(n, style.focus_border);
             }
-        }
-        let bar = aux[highlights.len()];
-        scene.set_mask(bar, None);
-        scene.set_visible(bar, max_scroll > 0.0);
-        if max_scroll > 0.0 {
-            let h = (view_h * view_h / layout.height).max(12.0).min(view_h);
-            scene.set_bounds(
-                bar,
-                Rect::new(
-                    bounds.x + bounds.width - 5.0,
-                    content.y + (view_h - h) * scroll / max_scroll,
-                    3.0,
-                    h,
-                ),
-            );
-            scene.set_fill(bar, style.border);
         }
         if let Some(label) = label {
             let placeholder_visible = value.is_empty() && !focused;

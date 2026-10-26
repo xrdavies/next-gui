@@ -8,6 +8,8 @@
 //! Descriptions, Card, Segmented, Breadcrumb, Pagination, DateTime, Transfer, PropertyGrid,
 //! TreeTable, and multi-tile Chart. TextInput supports IME (CJK). Cascader stays deferred.
 //! Office P2a–P2e (`button_group` … `config_provider`): see `docs/office-p2-design.md`.
+//! ScrollArea, Table, List, Tree and TextArea display overlay scrollbars when needed.
+//! Drag the thumb or click its track; focus navigation reveals enclosing scroll viewports.
 //! Theme tokens (MVP): [`Theme`] / [`Ui::set_theme`]; see `docs/theme-tokens.md`.
 //! P6d a11y baseline: [`Ui::accessible_name`], [`Ui::focusable_widgets`] / Tab focus order
 //! (Button included; [`Ui::take_button_activate`] for Space/Enter).
@@ -23,6 +25,7 @@ mod p1_rest;
 mod office_p2;
 mod theme;
 mod text_area;
+mod scrollbars;
 pub use text_area::TextAreaState;
 use text_area::TextAreaEdit;
 
@@ -2129,6 +2132,13 @@ enum DragState {
         start_scroll_x: f32,
         start_scroll_y: f32,
     },
+    Scrollbar {
+        area: WidgetId,
+        axis: Axis,
+        start_pos: f32,
+        start_scroll: f32,
+        scroll_per_pixel: f32,
+    },
     Slider {
         slider: WidgetId,
         track: Rect,
@@ -2213,6 +2223,8 @@ pub struct Ui {
     /// scene node → widget (buttons, splitter sashes, inputs).
     node_to_widget: HashMap<NodeId, WidgetId>,
     table_filters: HashMap<WidgetId, TableFilterRow>,
+    scrollbars: HashMap<WidgetId, [NodeId; 4]>,
+    revealed_scroll_focus: Option<WidgetId>,
     font: Arc<Font>,
     drag: Option<DragState>,
     /// Focused widget (inputs + List / Tree / Table / Select / Slider / Tabs).
@@ -2358,6 +2370,8 @@ impl Ui {
             roots: Vec::new(),
             node_to_widget: HashMap::new(),
             table_filters: HashMap::new(),
+            scrollbars: HashMap::new(),
+            revealed_scroll_focus: None,
             font: Arc::new(font),
             drag: None,
             focus: None,
@@ -3079,6 +3093,10 @@ impl Ui {
             return false;
         }
 
+        if self.pointer_scrollbar(scene, id, x, y) {
+            return true;
+        }
+
         // Splitter sash
         if self.is_splitter(id) {
             let Some(w) = self.widgets.get(&id) else {
@@ -3386,6 +3404,13 @@ impl Ui {
                 let dy = start_y - y;
                 self.set_any_scroll(area, start_scroll_x + dx, start_scroll_y + dy)
             }
+            DragState::Scrollbar { area, axis, start_pos, start_scroll, scroll_per_pixel } => {
+                let pos = if axis == Axis::Horizontal { x } else { y };
+                let offset = start_scroll + (pos - start_pos) * scroll_per_pixel;
+                let (sx, sy) = self.any_scroll_offset(area).unwrap_or_default();
+                if axis == Axis::Horizontal { self.set_any_scroll(area, offset, sy) }
+                else { self.set_any_scroll(area, sx, offset) }
+            }
             DragState::Slider { slider, track } => self.apply_slider_x(slider, track, x),
         }
     }
@@ -3416,11 +3441,7 @@ impl Ui {
                     .find(|(row, group)| **row == id || group.fields.contains(&id))
                     .map(|(_, group)| group.table).unwrap_or(id);
                 if let Some((sx, sy)) = self.any_scroll_offset(id) {
-                    let changed = if matches!(self.widgets[&id].kind, Kind::TextArea { .. }) {
-                        self.set_text_area_scroll(id, sy + dy)
-                    } else {
-                        self.set_any_scroll(id, sx + dx, sy + dy)
-                    };
+                    let changed = self.set_any_scroll(id, sx + dx, sy + dy);
                     if changed {
                         return true;
                     }
@@ -4182,6 +4203,10 @@ impl Ui {
     }
 
     fn set_any_scroll(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
+        if !sx.is_finite() || !sy.is_finite() { return false; }
+        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { .. })) {
+            return self.set_text_area_scroll(id, sy);
+        }
         if let Some(mut view) = self.image_view(id) {
             view.offset_x = sx;
             view.offset_y = sy;
@@ -8841,6 +8866,12 @@ impl Ui {
             self.layout_widget(scene, root);
             self.paint_widget(scene, root);
         }
+        if self.reveal_scroll_focus(scene) {
+            for root in self.roots.clone() {
+                self.layout_widget(scene, root);
+                self.paint_widget(scene, root);
+            }
+        }
         if let Some((x, y)) = self.last_pointer {
             let tip = self
                 .hit_widget(scene, x, y)
@@ -10054,6 +10085,9 @@ impl Ui {
         for &n in &aux {
             scene.set_visible(n, false);
         }
+        if let Some(nodes) = self.scrollbars.get(&id) {
+            for &n in nodes { scene.set_visible(n, false); }
+        }
         for child in children {
             self.hide_widget_subtree(scene, child);
         }
@@ -10614,6 +10648,11 @@ impl Ui {
     }
 
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
+        self.paint_widget_content(scene, id);
+        self.paint_scrollbars(scene, id);
+    }
+
+    fn paint_widget_content(&mut self, scene: &mut Scene, id: WidgetId) {
         if self.table_filters.contains_key(&id) {
             self.align_table_filters(scene, id);
         }
