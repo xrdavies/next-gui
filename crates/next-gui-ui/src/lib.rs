@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use next_gui_layout::{layout_flex, Axis, ChildMeasure, CrossAlign, FlexParams};
-use next_gui_scene::{AlphaMask, Color, NodeId, Rect, Scene};
+use next_gui_scene::{AlphaMask, Color, NodeId, Rect, RgbaImage, Scene};
 use next_gui_text::{load_default_cjk_font, Font};
 
 use icon::rasterize_icon;
@@ -13828,89 +13828,67 @@ impl Ui {
         scene.set_mask(host, None);
         scene.set_visible(host, true);
         self.apply_corner_radius(scene, host, true);
-        let cap_h = if caption.is_empty() { 0.0 } else { 18.0 };
-        let mosaic_h = (bounds.height - cap_h).max(1.0);
-        let mosaic_w = bounds.width.max(1.0);
-        let max_side = style.mosaic_max.max(1) as f32;
-        let (cells_x, cells_y) = if pixels.is_some() && px_w > 0 && px_h > 0 {
-            let w = px_w;
-            let h = px_h;
-            if w >= h {
-                let cx = max_side.min(w as f32) as u32;
-                let cy = ((h as f32 / w as f32) * cx as f32).round().max(1.0) as u32;
-                (cx.max(1), cy.max(1))
-            } else {
-                let cy = max_side.min(h as f32) as u32;
-                let cx = ((w as f32 / h as f32) * cy as f32).round().max(1.0) as u32;
-                (cx.max(1), cy.max(1))
-            }
+        let cap_h = if caption.is_empty() {
+            0.0
         } else {
-            (0, 0)
+            18.0f32.min(bounds.height.max(0.0))
         };
-        let mosaic_n = (cells_x as usize).saturating_mul(cells_y as usize);
-        let needed = mosaic_n + 1; // + caption
-        self.ensure_aux_nodes(scene, host, id, needed.max(1));
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if let (Some(px), true) = (pixels.as_ref(), mosaic_n > 0) {
-            let cell_w = mosaic_w / cells_x as f32;
-            let cell_h = mosaic_h / cells_y as f32;
-            for cy in 0..cells_y {
-                for cx in 0..cells_x {
-                    let i = (cy * cells_x + cx) as usize;
-                    // sample source
-                    let sx = ((cx as f32 + 0.5) / cells_x as f32 * px_w as f32) as u32;
-                    let sy = ((cy as f32 + 0.5) / cells_y as f32 * px_h as f32) as u32;
-                    let sx = sx.min(px_w.saturating_sub(1));
-                    let sy = sy.min(px_h.saturating_sub(1));
-                    let off = ((sy * px_w + sx) * 4) as usize;
-                    let color = if off + 3 < px.len() {
-                        Color::rgba(px[off], px[off + 1], px[off + 2], px[off + 3])
-                    } else {
-                        style.bg
-                    };
-                    if let Some(&n) = aux.get(i) {
-                        scene.set_bounds(
-                            n,
-                            Rect::new(
-                                bounds.x + cx as f32 * cell_w,
-                                bounds.y + cy as f32 * cell_h,
-                                cell_w.max(1.0),
-                                cell_h.max(1.0),
-                            ),
-                        );
-                        scene.set_fill(n, color);
-                        scene.set_mask(n, None);
-                        scene.set_visible(n, true);
-                    }
-                }
-            }
-        } else {
-            // placeholder: keep host fill only; hide mosaic slots
-            for i in 0..mosaic_n.min(aux.len()) {
-                if let Some(&n) = aux.get(i) {
-                    scene.set_visible(n, false);
-                }
-            }
-        }
-        let cap_idx = mosaic_n;
-        if !caption.is_empty() {
-            let (_, cm) = self.font.rasterize_text(&caption, style.caption_size, None);
-            if let Some(&n) = aux.get(cap_idx) {
+        let image_h = (bounds.height - cap_h).max(0.0);
+        self.ensure_aux_nodes(scene, host, id, 2);
+        let aux = self
+            .widgets
+            .get(&id)
+            .map(|w| w.aux.clone())
+            .unwrap_or_default();
+        let image_node = aux[0];
+        scene.set_visible(image_node, false);
+        scene.set_image(image_node, None);
+        if let Some(image) = pixels.and_then(|px| RgbaImage::new(px_w, px_h, px)) {
+            if bounds.width > 0.0 && image_h > 0.0 {
+                let scale = (bounds.width / px_w as f32).min(image_h / px_h as f32);
+                let w = px_w as f32 * scale;
+                let h = px_h as f32 * scale;
                 scene.set_bounds(
-                    n,
+                    image_node,
                     Rect::new(
-                        bounds.x + 4.0,
-                        bounds.y + mosaic_h + ((cap_h - cm.height as f32) * 0.5).max(0.0),
-                        cm.width as f32,
-                        cm.height as f32,
+                        bounds.x + (bounds.width - w) * 0.5,
+                        bounds.y + (image_h - h) * 0.5,
+                        w,
+                        h,
                     ),
                 );
-                scene.set_fill(n, style.caption_fg);
-                scene.set_mask(n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
-                scene.set_visible(n, true);
+                scene.set_clip(
+                    image_node,
+                    Some(Rect::new(bounds.x, bounds.y, bounds.width, image_h)),
+                );
+                scene.set_image(image_node, Some(image));
+                scene.set_visible(image_node, true);
             }
-        } else if let Some(&n) = aux.get(cap_idx) {
-            scene.set_visible(n, false);
+        }
+        let cap_node = aux[1];
+        if !caption.is_empty() && cap_h > 0.0 {
+            let (_, cm) = self.font.rasterize_text(&caption, style.caption_size, None);
+            scene.set_bounds(
+                cap_node,
+                Rect::new(
+                    bounds.x + 4.0,
+                    bounds.y + image_h + ((cap_h - cm.height as f32) * 0.5).max(0.0),
+                    cm.width as f32,
+                    cm.height as f32,
+                ),
+            );
+            scene.set_clip(
+                cap_node,
+                Some(Rect::new(bounds.x, bounds.y + image_h, bounds.width, cap_h)),
+            );
+            scene.set_fill(cap_node, style.caption_fg);
+            scene.set_mask(
+                cap_node,
+                Some(AlphaMask::new(cm.width, cm.height, cm.pixels)),
+            );
+            scene.set_visible(cap_node, true);
+        } else {
+            scene.set_visible(cap_node, false);
         }
     }
 
@@ -18971,8 +18949,8 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// RGBA8 image mosaic preview (Office P2e). Soft paints a coarse color grid
-    /// (no scene RGBA texture yet).
+    /// RGBA8 image fitted to the host with preserved aspect ratio.
+    /// Both renderers use nearest-neighbor scaling and straight-alpha blending.
     pub fn image_rgba(
         &mut self,
         width: u32,
@@ -22121,6 +22099,18 @@ mod tests {
         ui.sync(&mut scene);
         assert!(ui.widgets.get(&img).unwrap().node.is_some());
         assert!(!ui.widgets.get(&ph).unwrap().aux.is_empty());
+        let aux = &ui.widgets.get(&img).unwrap().aux;
+        assert_eq!(aux.len(), 2);
+        let image_node = scene.get(aux[0]).unwrap();
+        assert_eq!(image_node.bounds.width, image_node.bounds.height);
+        assert_eq!(image_node.image.as_ref().unwrap().pixels().as_ref(), &px);
+        assert!(scene
+            .get(ui.widgets.get(&ph).unwrap().aux[0])
+            .unwrap()
+            .image
+            .is_none());
+        assert!(image_pixels_rgba8(u32::MAX, u32::MAX, &[]).is_empty());
+        assert!(image_pixels_rgba8(2, 2, &[0; 15]).is_empty());
     }
 
     #[test]

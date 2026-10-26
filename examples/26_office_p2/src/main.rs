@@ -212,172 +212,174 @@ impl Demo {
                 ..PanelStyle::from_theme(&theme)
             },
             |panel| {
-                panel.text("P2a — button_group / link / space");
-                group = panel.button_group(
-                    ["Day", "Week", "Month"],
-                    Some(0),
-                    ButtonGroupStyle::from_theme(&theme),
-                );
-                panel.spacer(1.0, 8.0);
-                panel.space(
-                    SpaceStyle {
-                        direction: SpaceDirection::Horizontal,
-                        gap: 20.0,
-                        width: width as f32 - 64.0,
-                        height: 36.0,
-                        cross_align: CrossAlign::Center,
-                        ..SpaceStyle::from_theme(&theme)
-                    },
-                    |row| {
-                        link_docs = row.link("Open docs");
-                        link_help = row.link_styled(
-                            "Help center",
-                            LinkStyle {
-                                underline: true,
-                                fg: Color::rgb(0x90, 0xd0, 0xa0),
-                                ..LinkStyle::from_theme(&theme)
-                            },
-                        );
-                        row.button("Solid CTA");
-                    },
-                );
-                panel.spacer(1.0, 12.0);
-                panel.text("P2b — steps");
-                steps = panel.steps(
-                    [
-                        StepItem::new("Plan"),
-                        StepItem::with_description("Build", "implement"),
-                        StepItem::new("Ship"),
-                    ],
-                    1,
-                    StepsStyle {
-                        width: width as f32 - 64.0,
-                        height: 64.0,
-                        clickable: true,
-                        ..StepsStyle::from_theme(&theme)
-                    },
-                );
-                panel.spacer(1.0, 12.0);
-                panel.text("P2b — statistic (not focusable)");
-                panel.space(
-                    SpaceStyle {
-                        direction: SpaceDirection::Horizontal,
-                        gap: 12.0,
-                        width: width as f32 - 64.0,
-                        height: 96.0,
-                        cross_align: CrossAlign::Start,
-                        ..SpaceStyle::from_theme(&theme)
-                    },
-                    |row| {
-                        row.statistic_full(
-                            "Users",
-                            "1,280",
-                            None::<&str>,
-                            None::<&str>,
-                            Some("+12% MoM"),
-                            StatisticStyle {
-                                width: 140.0,
-                                height: 88.0,
-                                ..StatisticStyle::from_theme(&theme)
-                            },
-                        );
-                        row.statistic_full(
-                            "Revenue",
-                            "42",
-                            Some("¥"),
-                            Some("k"),
-                            Some("+3.1%"),
-                            StatisticStyle {
-                                width: 140.0,
-                                height: 88.0,
-                                ..StatisticStyle::from_theme(&theme)
-                            },
-                        );
-                        row.statistic(
-                            "Latency",
-                            "18ms",
-                            StatisticStyle {
-                                width: 140.0,
-                                height: 88.0,
-                                ..StatisticStyle::from_theme(&theme)
-                            },
-                        );
-                    },
-                );
-                panel.spacer(1.0, 12.0);
-                panel.text("P2b — result");
-                result = panel.result(
-                    ResultStatus::Success,
-                    "Order placed",
-                    Some("Confirmation sent to your inbox."),
-                    Some("Back home"),
-                    Some("View order"),
-                    ResultStyle {
-                        width: width as f32 - 64.0,
-                        height: 140.0,
-                        ..ResultStyle::from_theme(&theme)
-                    },
-                );
-                panel.spacer(1.0, 12.0);
-                panel.text("P2c — popover / popconfirm (click trigger; Esc closes)");
-                panel.space(
-                    SpaceStyle {
-                        direction: SpaceDirection::Horizontal,
-                        gap: 16.0,
-                        width: width as f32 - 64.0,
-                        height: 40.0,
-                        cross_align: CrossAlign::Center,
-                        ..SpaceStyle::from_theme(&theme)
-                    },
-                    |row| {
-                        popover = row.popover_titled(
-                            "Details",
-                            Some("Popover"),
-                            "Click-toggle bubble · below host",
-                            PopoverStyle::from_theme(&theme),
-                        );
-                        popconfirm = row.popconfirm(
-                            "Delete",
-                            "Remove this row permanently?",
-                            PopconfirmStyle::from_theme(&theme),
-                        );
-                    },
-                );
-                panel.spacer(1.0, 12.0);
-                panel.text("P2d — upload (Browse stubs path) / color_picker / autocomplete");
-                upload = panel.upload(
-                    "Choose a config file…",
-                    UploadStyle {
-                        width: width as f32 - 64.0,
-                        ..UploadStyle::from_theme(&theme)
-                    },
-                );
-                panel.spacer(1.0, 8.0);
-                color = panel.color_picker(
-                    Color::rgb(0x6a, 0xb0, 0xf0),
-                    ColorPickerStyle {
-                        width: width as f32 - 64.0,
-                        ..ColorPickerStyle::from_theme(&theme)
-                    },
-                );
-                panel.spacer(1.0, 8.0);
-                autocomplete = panel.autocomplete_placeholder(
-                    [
-                        "Shanghai",
-                        "Shenzhen",
-                        "Beijing",
-                        "Hangzhou",
-                        "Guangzhou",
-                        "Chengdu",
-                    ],
-                    "",
-                    "City…",
-                    AutocompleteStyle {
-                        width: 280.0,
-                        ..AutocompleteStyle::from_theme(&theme)
-                    },
-                );
-                panel.spacer(1.0, 12.0);
+                if std::env::var_os("NEXT_GUI_P2E_QA").is_none() {
+                    panel.text("P2a — button_group / link / space");
+                    group = panel.button_group(
+                        ["Day", "Week", "Month"],
+                        Some(0),
+                        ButtonGroupStyle::from_theme(&theme),
+                    );
+                    panel.spacer(1.0, 8.0);
+                    panel.space(
+                        SpaceStyle {
+                            direction: SpaceDirection::Horizontal,
+                            gap: 20.0,
+                            width: width as f32 - 64.0,
+                            height: 36.0,
+                            cross_align: CrossAlign::Center,
+                            ..SpaceStyle::from_theme(&theme)
+                        },
+                        |row| {
+                            link_docs = row.link("Open docs");
+                            link_help = row.link_styled(
+                                "Help center",
+                                LinkStyle {
+                                    underline: true,
+                                    fg: Color::rgb(0x90, 0xd0, 0xa0),
+                                    ..LinkStyle::from_theme(&theme)
+                                },
+                            );
+                            row.button("Solid CTA");
+                        },
+                    );
+                    panel.spacer(1.0, 12.0);
+                    panel.text("P2b — steps");
+                    steps = panel.steps(
+                        [
+                            StepItem::new("Plan"),
+                            StepItem::with_description("Build", "implement"),
+                            StepItem::new("Ship"),
+                        ],
+                        1,
+                        StepsStyle {
+                            width: width as f32 - 64.0,
+                            height: 64.0,
+                            clickable: true,
+                            ..StepsStyle::from_theme(&theme)
+                        },
+                    );
+                    panel.spacer(1.0, 12.0);
+                    panel.text("P2b — statistic (not focusable)");
+                    panel.space(
+                        SpaceStyle {
+                            direction: SpaceDirection::Horizontal,
+                            gap: 12.0,
+                            width: width as f32 - 64.0,
+                            height: 96.0,
+                            cross_align: CrossAlign::Start,
+                            ..SpaceStyle::from_theme(&theme)
+                        },
+                        |row| {
+                            row.statistic_full(
+                                "Users",
+                                "1,280",
+                                None::<&str>,
+                                None::<&str>,
+                                Some("+12% MoM"),
+                                StatisticStyle {
+                                    width: 140.0,
+                                    height: 88.0,
+                                    ..StatisticStyle::from_theme(&theme)
+                                },
+                            );
+                            row.statistic_full(
+                                "Revenue",
+                                "42",
+                                Some("¥"),
+                                Some("k"),
+                                Some("+3.1%"),
+                                StatisticStyle {
+                                    width: 140.0,
+                                    height: 88.0,
+                                    ..StatisticStyle::from_theme(&theme)
+                                },
+                            );
+                            row.statistic(
+                                "Latency",
+                                "18ms",
+                                StatisticStyle {
+                                    width: 140.0,
+                                    height: 88.0,
+                                    ..StatisticStyle::from_theme(&theme)
+                                },
+                            );
+                        },
+                    );
+                    panel.spacer(1.0, 12.0);
+                    panel.text("P2b — result");
+                    result = panel.result(
+                        ResultStatus::Success,
+                        "Order placed",
+                        Some("Confirmation sent to your inbox."),
+                        Some("Back home"),
+                        Some("View order"),
+                        ResultStyle {
+                            width: width as f32 - 64.0,
+                            height: 140.0,
+                            ..ResultStyle::from_theme(&theme)
+                        },
+                    );
+                    panel.spacer(1.0, 12.0);
+                    panel.text("P2c — popover / popconfirm (click trigger; Esc closes)");
+                    panel.space(
+                        SpaceStyle {
+                            direction: SpaceDirection::Horizontal,
+                            gap: 16.0,
+                            width: width as f32 - 64.0,
+                            height: 40.0,
+                            cross_align: CrossAlign::Center,
+                            ..SpaceStyle::from_theme(&theme)
+                        },
+                        |row| {
+                            popover = row.popover_titled(
+                                "Details",
+                                Some("Popover"),
+                                "Click-toggle bubble · below host",
+                                PopoverStyle::from_theme(&theme),
+                            );
+                            popconfirm = row.popconfirm(
+                                "Delete",
+                                "Remove this row permanently?",
+                                PopconfirmStyle::from_theme(&theme),
+                            );
+                        },
+                    );
+                    panel.spacer(1.0, 12.0);
+                    panel.text("P2d — upload (Browse stubs path) / color_picker / autocomplete");
+                    upload = panel.upload(
+                        "Choose a config file…",
+                        UploadStyle {
+                            width: width as f32 - 64.0,
+                            ..UploadStyle::from_theme(&theme)
+                        },
+                    );
+                    panel.spacer(1.0, 8.0);
+                    color = panel.color_picker(
+                        Color::rgb(0x6a, 0xb0, 0xf0),
+                        ColorPickerStyle {
+                            width: width as f32 - 64.0,
+                            ..ColorPickerStyle::from_theme(&theme)
+                        },
+                    );
+                    panel.spacer(1.0, 8.0);
+                    autocomplete = panel.autocomplete_placeholder(
+                        [
+                            "Shanghai",
+                            "Shenzhen",
+                            "Beijing",
+                            "Hangzhou",
+                            "Guangzhou",
+                            "Chengdu",
+                        ],
+                        "",
+                        "City…",
+                        AutocompleteStyle {
+                            width: 280.0,
+                            ..AutocompleteStyle::from_theme(&theme)
+                        },
+                    );
+                    panel.spacer(1.0, 12.0);
+                }
                 panel.text("P2e — grid / timeline / calendar / image (config via Ui::set_config)");
                 panel.grid(
                     2,
@@ -453,11 +455,10 @@ impl Demo {
                             4,
                             3,
                             &px,
-                            "RGBA mosaic",
+                            "RGBA image",
                             ImageStyle {
                                 width: 96.0,
                                 height: 72.0,
-                                mosaic_max: 4,
                                 ..ImageStyle::from_theme(&theme)
                             },
                         );

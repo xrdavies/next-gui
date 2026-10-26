@@ -904,8 +904,7 @@ pub struct ImageStyle {
     pub caption_fg: Color,
     /// Caption font size.
     pub caption_size: f32,
-    /// Max mosaic cells on the long edge when painting RGBA via Soft fill rects
-    /// (no scene RGBA texture yet).
+    /// Legacy compatibility field; ignored by the full RGBA renderer.
     pub mosaic_max: u32,
 }
 
@@ -925,18 +924,15 @@ impl Default for ImageStyle {
 /// Owned RGBA8 pixels for [`crate::FlexBuilder::image_rgba`] (`width * height * 4` bytes).
 pub type ImagePixels = Arc<[u8]>;
 
-/// Copy RGBA8 bytes into an [`ImagePixels`] arc (truncates to `w*h*4` if longer).
+/// Copy a complete RGBA8 buffer, truncating trailing bytes; invalid sizes return empty pixels.
 pub fn image_pixels_rgba8(width: u32, height: u32, pixels: &[u8]) -> ImagePixels {
-    let need = (width as usize).saturating_mul(height as usize).saturating_mul(4);
-    let slice = if pixels.len() >= need {
-        &pixels[..need]
-    } else {
-        pixels
-    };
-    let mut buf = vec![0u8; need];
-    let n = slice.len().min(need);
-    buf[..n].copy_from_slice(&slice[..n]);
-    Arc::from(buf)
+    let need = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4));
+    match need.and_then(|n| pixels.get(..n)) {
+        Some(bytes) if width > 0 && height > 0 => Arc::from(bytes),
+        _ => Arc::from([]),
+    }
 }
 
 /// Density hint for [`UiConfig`] (theme entry point; widgets may ignore in MVP).

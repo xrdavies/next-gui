@@ -14,10 +14,9 @@
 #![deny(missing_docs)]
 
 use std::fmt;
-use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use next_gui_render::{DrawCommand, Renderer};
+use next_gui_render::{image_pixel_bounds, DrawCommand, Renderer};
 use next_gui_scene::{Color, DirtyRegion, Rect};
 use wgpu::util::DeviceExt;
 
@@ -108,6 +107,11 @@ fn vs_main(
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let coverage = textureSample(mask_tex, mask_samp, in.uv).r;
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
+}
+
+@fragment
+fn fs_image(in: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(mask_tex, mask_samp, in.uv);
 }
 "#;
 
@@ -231,6 +235,7 @@ pub struct GpuRenderer {
     solid_pipeline: wgpu::RenderPipeline,
     rounded_pipeline: wgpu::RenderPipeline,
     blit_pipeline: wgpu::RenderPipeline,
+    image_pipeline: wgpu::RenderPipeline,
     blit_bind_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
     native: Option<NativeSurfaceState>,
@@ -432,41 +437,43 @@ impl GpuRenderer {
             cache: None,
         });
 
-        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit-pipeline"),
-            layout: Some(&blit_layout),
-            vertex: wgpu::VertexState {
-                module: &blit_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<BlitVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x2,
-                        1 => Float32x2,
-                        2 => Float32x4
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &blit_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
+        let [blit_pipeline, image_pipeline] = ["fs_main", "fs_image"].map(|entry| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("blit-pipeline"),
+                layout: Some(&blit_layout),
+                vertex: wgpu::VertexState {
+                    module: &blit_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<BlitVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x2,
+                            1 => Float32x2,
+                            2 => Float32x4
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &blit_shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
         });
 
         let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -619,6 +626,7 @@ impl GpuRenderer {
             solid_pipeline,
             rounded_pipeline,
             blit_pipeline,
+            image_pipeline,
             blit_bind_layout,
             blit_sampler,
             native,
@@ -851,20 +859,12 @@ impl GpuRenderer {
         ]
     }
 
-    fn blit_quad(
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-        color: Color,
-        fw: f32,
-        fh: f32,
-    ) -> [BlitVertex; 6] {
+    fn blit_quad(rect: &Rect, color: Color, fw: f32, fh: f32) -> [BlitVertex; 6] {
         let c = Self::color_f32(color);
-        let x0 = x as f32;
-        let y0 = y as f32;
-        let x1 = x0 + width as f32;
-        let y1 = y0 + height as f32;
+        let x0 = rect.x;
+        let y0 = rect.y;
+        let x1 = x0 + rect.width;
+        let y1 = y0 + rect.height;
         let p00 = Self::to_ndc(x0, y0, fw, fh);
         let p10 = Self::to_ndc(x1, y0, fw, fh);
         let p01 = Self::to_ndc(x0, y1, fw, fh);
@@ -1057,11 +1057,12 @@ impl GpuRenderer {
         Ok(())
     }
 
-    fn upload_mask(
+    fn upload_texture(
         &self,
         width: u32,
         height: u32,
-        pixels: &Arc<[u8]>,
+        pixels: &[u8],
+        format: wgpu::TextureFormat,
     ) -> (wgpu::Texture, wgpu::BindGroup) {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("alpha-mask"),
@@ -1073,7 +1074,7 @@ impl GpuRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -1087,7 +1088,14 @@ impl GpuRenderer {
             pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(width.max(1)),
+                bytes_per_row: Some(
+                    width
+                        * if format == wgpu::TextureFormat::R8Unorm {
+                            1
+                        } else {
+                            4
+                        },
+                ),
                 rows_per_image: Some(height.max(1)),
             },
             wgpu::Extent3d {
@@ -1200,6 +1208,76 @@ impl Renderer for GpuRenderer {
 
                 for cmd in commands {
                     match cmd {
+                        DrawCommand::BlitRgba { rect, clip, image } => {
+                            let Some((ix, iy, iw, ih)) = image_pixel_bounds(
+                                rect,
+                                &clip.intersect(d),
+                                self.width,
+                                self.height,
+                            ) else {
+                                continue;
+                            };
+                            pass.set_scissor_rect(ix, iy, iw, ih);
+                            // shortcut: upload per dirty patch; cache textures when image-heavy redraw profiling warrants it.
+                            // Tile only beyond the adapter limit, keeping original image coordinates.
+                            let limit = self.device.limits().max_texture_dimension_2d;
+                            for ty in (0..image.height()).step_by(limit as usize) {
+                                for tx in (0..image.width()).step_by(limit as usize) {
+                                    let tw = limit.min(image.width() - tx);
+                                    let th = limit.min(image.height() - ty);
+                                    let tile_rect = Rect::new(
+                                        rect.x + rect.width * (tx as f32 / image.width() as f32),
+                                        rect.y + rect.height * (ty as f32 / image.height() as f32),
+                                        rect.width * (tw as f32 / image.width() as f32),
+                                        rect.height * (th as f32 / image.height() as f32),
+                                    );
+                                    if !tile_rect.intersects(&clip.intersect(d)) {
+                                        continue;
+                                    }
+                                    let mut tile = Vec::new();
+                                    let pixels = if tw == image.width() && th == image.height() {
+                                        image.pixels().as_ref()
+                                    } else {
+                                        tile.reserve(tw as usize * th as usize * 4);
+                                        for row in ty..ty + th {
+                                            let off = (row as usize * image.width() as usize
+                                                + tx as usize)
+                                                * 4;
+                                            tile.extend_from_slice(
+                                                &image.pixels()[off..off + tw as usize * 4],
+                                            );
+                                        }
+                                        &tile
+                                    };
+                                    let (tex, bind) = self.upload_texture(
+                                        tw,
+                                        th,
+                                        pixels,
+                                        wgpu::TextureFormat::Rgba8Unorm,
+                                    );
+                                    let verts = Self::blit_quad(
+                                        &tile_rect,
+                                        Color::rgb(255, 255, 255),
+                                        fw,
+                                        fh,
+                                    );
+                                    let vb = self.device.create_buffer_init(
+                                        &wgpu::util::BufferInitDescriptor {
+                                            label: Some("image-vb"),
+                                            contents: bytemuck::cast_slice(&verts),
+                                            usage: wgpu::BufferUsages::VERTEX,
+                                        },
+                                    );
+                                    pass.set_pipeline(&self.image_pipeline);
+                                    pass.set_bind_group(0, &bind, &[]);
+                                    pass.set_vertex_buffer(0, vb.slice(..));
+                                    pass.draw(0..6, 0..1);
+                                    blit_bufs.push(vb);
+                                    mask_keep.push((tex, bind));
+                                }
+                            }
+                            pass.set_scissor_rect(sx, sy, sw, sh);
+                        }
                         DrawCommand::FillRect { rect, color } => {
                             if !rect.intersects(d) {
                                 continue;
@@ -1273,9 +1351,13 @@ impl Renderer for GpuRenderer {
                             if pixels.len() < (*width as usize) * (*height as usize) {
                                 continue;
                             }
-                            let (tex, bind) = self.upload_mask(*width, *height, pixels);
-                            let verts =
-                                Self::blit_quad(*x, *y, *width, *height, *color, fw, fh);
+                            let (tex, bind) = self.upload_texture(
+                                *width,
+                                *height,
+                                pixels,
+                                wgpu::TextureFormat::R8Unorm,
+                            );
+                            let verts = Self::blit_quad(&bounds, *color, fw, fh);
                             let vb = self.device.create_buffer_init(
                                 &wgpu::util::BufferInitDescriptor {
                                     label: Some("blit-vb"),
@@ -1323,6 +1405,31 @@ mod tests {
     use super::*;
     use next_gui_render::DrawCommand;
     use std::sync::Arc;
+
+    #[test]
+    fn rgba_image_tiles_beyond_adapter_texture_limit() {
+        let Ok(mut gpu) = GpuRenderer::try_new(8, 4, Color::rgb(0, 0, 0)) else {
+            eprintln!("skip tiled RGBA test: adapter unavailable");
+            return;
+        };
+        let limit = gpu.device.limits().max_texture_dimension_2d;
+        let width = limit + 2;
+        let mut pixels = vec![255; width as usize * 4];
+        pixels[limit as usize * 4..].copy_from_slice(&[255, 0, 0, 255, 0, 255, 0, 255]);
+        let image = next_gui_scene::RgbaImage::new(width, 1, pixels).unwrap();
+        let cmds = [DrawCommand::BlitRgba {
+            rect: Rect::new(2.0 - limit as f32, 1.0, width as f32, 1.0),
+            clip: Rect::new(0.0, 0.0, 8.0, 4.0),
+            image,
+        }];
+        let mut dirty = DirtyRegion::new();
+        dirty.add(Rect::new(0.0, 0.0, 8.0, 4.0));
+        gpu.render(&cmds, &dirty);
+        assert_eq!(
+            &gpu.frame_pixels().unwrap().0[8..13],
+            &[0xffffff, 0xffffff, 0xff0000, 0x00ff00, 0]
+        );
+    }
 
     #[test]
     fn try_new_or_skip() {

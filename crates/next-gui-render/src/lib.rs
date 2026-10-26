@@ -4,11 +4,20 @@
 
 use std::sync::Arc;
 
-use next_gui_scene::{Color, DirtyRegion, Rect, Scene};
+use next_gui_scene::{Color, DirtyRegion, Rect, RgbaImage, Scene};
 
 /// A single draw operation. Render backends must not interpret widget semantics.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
+    /// Scale a straight-alpha RGBA8 image with nearest-neighbor sampling.
+    BlitRgba {
+        /// Original destination geometry, retained when clipping to avoid stretching.
+        rect: Rect,
+        /// Visible destination region in window coordinates.
+        clip: Rect,
+        /// Shared, validated source pixels.
+        image: RgbaImage,
+    },
     /// Fill an axis-aligned rectangle.
     FillRect {
         /// Rectangle in scene/window coordinates.
@@ -78,7 +87,23 @@ fn encode_node(
 
     // Skip root chrome; paint children.
     if id != scene.root() && node.visible {
-        if let Some(mask) = node.mask.as_ref() {
+        if let Some(image) = node.image.as_ref() {
+            let rect = node.bounds;
+            if [rect.x, rect.y, rect.width, rect.height]
+                .iter()
+                .all(|v| v.is_finite())
+                && !rect.is_empty()
+            {
+                let clip = clip.map_or(rect, |c| rect.intersect(&c));
+                if !clip.is_empty() && dirty.intersects_rect(&clip) {
+                    cmds.push(DrawCommand::BlitRgba {
+                        rect,
+                        clip,
+                        image: image.clone(),
+                    });
+                }
+            }
+        } else if let Some(mask) = node.mask.as_ref() {
             if !mask.is_empty() {
                 let ox = node.bounds.x.floor() as i32;
                 let oy = node.bounds.y.floor() as i32;
@@ -183,6 +208,45 @@ fn crop_alpha_blit(
     Some((nx0, ny0, nw, nh, Arc::from(out)))
 }
 
+/// Integer pixels whose centers lie inside an image destination and clip.
+/// Shared by Soft rasterization and GPU scissors, including fractional clips.
+pub fn image_pixel_bounds(
+    rect: &Rect,
+    clip: &Rect,
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if ![
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        clip.x,
+        clip.y,
+        clip.width,
+        clip.height,
+    ]
+    .iter()
+    .all(|v| v.is_finite())
+        || rect.is_empty()
+        || clip.is_empty()
+    {
+        return None;
+    }
+    let area = rect.intersect(clip);
+    let x0 = (area.x - 0.5).ceil().max(0.0).min(width as f32) as u32;
+    let y0 = (area.y - 0.5).ceil().max(0.0).min(height as f32) as u32;
+    let x1 = (area.x + area.width - 0.5)
+        .ceil()
+        .max(0.0)
+        .min(width as f32) as u32;
+    let y1 = (area.y + area.height - 0.5)
+        .ceil()
+        .max(0.0)
+        .min(height as f32) as u32;
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0)))
+}
+
 /// Raster / GPU backend interface.
 pub trait Renderer {
     /// Resize the backing store; typically marks full clear needed by caller.
@@ -199,6 +263,45 @@ pub trait Renderer {
 mod tests {
     use super::*;
     use next_gui_scene::{AlphaMask, Color};
+
+    #[test]
+    fn rgba_validation_clipping_and_dirty_keep_source_geometry() {
+        assert!(RgbaImage::new(0, 1, vec![]).is_none());
+        assert!(RgbaImage::new(2, 1, vec![0; 7]).is_none());
+        assert!(RgbaImage::new(u32::MAX, u32::MAX, vec![]).is_none());
+        let image = RgbaImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128]).unwrap();
+        let mut scene = Scene::new();
+        let parent = scene
+            .insert(scene.root(), Rect::empty(), Color::rgb(0, 0, 0))
+            .unwrap();
+        scene.set_clip(parent, Some(Rect::new(4.0, 2.0, 4.0, 3.0)));
+        let rect = Rect::new(0.0, 0.0, 8.0, 8.0);
+        let node = scene.insert(parent, rect, Color::rgb(0, 0, 0)).unwrap();
+        scene.take_dirty();
+        scene.set_image(node, Some(image.clone()));
+        let dirty = scene.take_dirty();
+        assert!(dirty.intersects_rect(&rect));
+        let cmds = encode_scene(&scene, &dirty);
+        let [DrawCommand::BlitRgba {
+            rect: destination,
+            clip,
+            image: encoded,
+        }] = cmds.as_slice()
+        else {
+            panic!("expected one image command: {cmds:?}");
+        };
+        assert_eq!(*destination, rect);
+        assert_eq!(*clip, Rect::new(4.0, 2.0, 4.0, 3.0));
+        assert!(Arc::ptr_eq(image.pixels(), encoded.pixels()));
+        scene.set_visible(node, false);
+        let dirty = scene.take_dirty();
+        assert!(encode_scene(&scene, &dirty).is_empty());
+        assert_eq!(
+            image_pixel_bounds(&rect, &Rect::new(1.6, 1.6, 2.8, 2.8), 8, 8),
+            Some((2, 2, 2, 2))
+        );
+        assert!(image_pixel_bounds(&Rect::new(f32::NAN, 0.0, 1.0, 1.0), &rect, 8, 8).is_none());
+    }
 
     #[test]
     fn encode_skips_clean_nodes() {

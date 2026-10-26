@@ -1505,8 +1505,8 @@ pub fn build_ui(
                                             ));
                                             if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
                                                 let mut istyle = ImageStyle::from_theme(&theme);
-                                                istyle.width = (*w as f32).min(160.0) + 8.0;
-                                                istyle.height = (*h as f32).min(160.0) + 24.0;
+                                                istyle.width = (dock_w - 40.0).max(1.0);
+                                                istyle.height = 200.0;
                                                 edit_image = c.image_rgba_caption(
                                                     *w,
                                                     *h,
@@ -1522,7 +1522,7 @@ pub fn build_ui(
                                                 istyle.width = 160.0;
                                                 istyle.height = 48.0;
                                                 edit_image = c.image_placeholder(
-                                                    "No PNG/JPEG in cell",
+                                                    "No preview available",
                                                     istyle,
                                                 );
                                             }

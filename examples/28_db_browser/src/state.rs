@@ -2162,34 +2162,38 @@ impl AppState {
 
     pub fn decode_edit_image(&mut self) {
         self.edit_image_rgba = None;
-        let bytes = match &self.edit_original {
-            rusqlite::types::Value::Blob(v) => v.clone(),
-            _ => return,
+        let rusqlite::types::Value::Blob(bytes) = &self.edit_original else {
+            return;
         };
-        if !(db::looks_like_png(&bytes) || db::looks_like_jpeg(&bytes)) {
+        if !(db::looks_like_png(bytes) || db::looks_like_jpeg(bytes)) {
             return;
         }
-        if let Ok(img) = image::load_from_memory(&bytes) {
-            let rgba = img.to_rgba8();
-            let (w, h) = rgba.dimensions();
-            // Downscale to max 160px for dock
-            let max_side = 160u32;
-            let (tw, th) = if w > max_side || h > max_side {
-                let scale = (max_side as f32 / w.max(h) as f32).min(1.0);
-                (
-                    ((w as f32) * scale).round().max(1.0) as u32,
-                    ((h as f32) * scale).round().max(1.0) as u32,
-                )
-            } else {
-                (w, h)
+        let decoded = (|| -> Result<_, String> {
+            let reader = || {
+                image::io::Reader::new(std::io::Cursor::new(bytes))
+                    .with_guessed_format()
+                    .map_err(|e| e.to_string())
             };
-            let resized = if tw != w || th != h {
-                image::imageops::resize(&rgba, tw, th, image::imageops::FilterType::Triangle)
-            } else {
-                rgba
-            };
-            self.edit_image_rgba = Some((tw, th, resized.into_raw()));
-            self.edit_binary_len = bytes.len();
+            let (w, h) = reader()?.into_dimensions().map_err(|e| e.to_string())?;
+            // Bound retained RGBA and decoder allocations before opening untrusted BLOBs.
+            if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 16 * 1024 * 1024 {
+                return Err("Image preview is limited to 16 megapixels".into());
+            }
+            let mut reader = reader()?;
+            let mut limits = image::io::Limits::default();
+            limits.max_image_width = Some(w);
+            limits.max_image_height = Some(h);
+            limits.max_alloc = Some(128 * 1024 * 1024);
+            reader.limits(limits);
+            let rgba = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
+            Ok((w, h, rgba.into_raw()))
+        })();
+        match decoded {
+            Ok(image) => {
+                self.edit_image_rgba = Some(image);
+                self.edit_binary_len = bytes.len();
+            }
+            Err(error) => self.status_msg = format!("Image preview: {error}"),
         }
     }
 
@@ -2307,6 +2311,39 @@ mod chart_default_tests {
             name: "partial_ix".into(),
         });
         assert!(state.open_modify_index_wizard().is_err());
+    }
+
+    #[test]
+    fn image_preview_preserves_source_resolution_alpha_and_reports_corruption() {
+        let mut state = test_state();
+        let pixels =
+            image::RgbaImage::from_fn(320, 180, |x, y| image::Rgba([x as u8, y as u8, 123, 128]));
+        let expected = pixels.as_raw().clone();
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut bytes, image::ImageOutputFormat::Png)
+            .unwrap();
+        state.edit_original = rusqlite::types::Value::Blob(bytes.into_inner());
+        let original = state.edit_original.clone();
+        state.decode_edit_image();
+        assert_eq!(state.edit_image_rgba, Some((320, 180, expected)));
+        assert_eq!(state.edit_original, original);
+        state.edit_original = rusqlite::types::Value::Blob(b"\x89PNG\r\n\x1a\n".to_vec());
+        state.decode_edit_image();
+        assert!(state.edit_image_rgba.is_none());
+        assert!(state.status_msg.starts_with("Image preview:"));
+        // Oversized dimensions are refused before decoding the incomplete pixel stream.
+        state.edit_original = rusqlite::types::Value::Blob(vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 16, 1, 0, 0, 16, 0,
+            8, 6, 0, 0, 0, 29, 97, 79, 41, 0, 0, 0, 8, 73, 68, 65, 84, 120, 156, 3, 0, 0, 0, 0, 1,
+            72, 6, 137, 210, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]);
+        state.decode_edit_image();
+        assert!(state.edit_image_rgba.is_none());
+        assert_eq!(
+            state.status_msg,
+            "Image preview: Image preview is limited to 16 megapixels"
+        );
     }
 
     #[test]

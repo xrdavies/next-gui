@@ -36,7 +36,7 @@ Project JSON retains all browse tabs, filters, sorting and page positions. Save 
 
 Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and JSON project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with known draft-safety, navigation and layout defects, not full DB4S parity.
 
-Additional framebuffer QA cases: `index`, `csv`, `paste`, `attach`, `find`, `extension`, `schema`, `frozen`, `remote`, `about`, `plot`, `log`, `form`. These captures exercise rendering only.
+Additional framebuffer QA cases: `index`, `csv`, `paste`, `attach`, `find`, `extension`, `schema`, `frozen`, `remote`, `about`, `plot`, `log`, `form`, `image`. These captures exercise rendering only.
 
 ### SQL editing (2026-10-26)
 
@@ -58,3 +58,16 @@ script scrolled to a highlighted Unicode match. `find` captures the same script 
 the Find panel; set `NEXT_GUI_DB_BROWSER_QA_THEME=light` for the light theme.
 The earlier F01/F04 editing findings are addressed; unsaved-file guards, per-tab
 SQL results and the other remaining parity findings still apply.
+
+
+### Image preview (2026-10-26)
+
+Edit Cell → Image uses the shared next-gui RGBA renderer, with transparency and
+aspect-ratio fitting in Soft and GPU. PNG/JPEG pixels retain their original size;
+preview decoding rejects images over 16 megapixels and limits decoder allocations
+to 128 MiB. Errors leave the database value untouched. Zoom/pan, 1:1 inspection
+and image export remain future work.
+
+`NEXT_GUI_DB_BROWSER_QA=1 NEXT_GUI_DB_BROWSER_QA_TAB=image` captures a detailed,
+half-transparent 320×180 PNG through the same decoder and Image control. Add
+`NEXT_GUI_DB_BROWSER_QA_THEME=light` for the light theme.

@@ -235,7 +235,7 @@
 
 - **语义：** Soft 友好光栅预览。无 PNG 解码依赖。
 - **路径：**
-  - `image_rgba(w, h, &[u8], ImageStyle)` / `image_rgba_caption`——拥有 RGBA8（`ImagePixels`）；场景无 RGBA 纹理时用 **粗马赛克色块**（`mosaic_max`）经 fill rect 绘制；
+  - `image_rgba(w, h, &[u8], ImageStyle)` / `image_rgba_caption`——拥有 RGBA8（`ImagePixels`）；通过共享 scene `RgbaImage` / `BlitRgba` 在 Soft/GPU 绘制真实像素，保持宽高比并支持透明混合、裁剪与最近邻缩放；`mosaic_max` 仅保留源码兼容，不再生效；
   - `image_placeholder(caption, style)`——纯占位底 + 文案。
 - **焦点：** 默认不进 Tab。
 
@@ -255,7 +255,7 @@
 | Grid | 固定列换行；子项可测 L→R / wrap |
 | Timeline | clickable 时 `take_timeline_select` 可排空 |
 | Calendar | Sun–Sat；点日/箭头 → `take_calendar_change` |
-| Image | RGBA 马赛克或 placeholder；不进焦序 |
+| Image | RGBA 图像或 placeholder；不进焦序 |
 | Config | `set_config` / `config`；无 Kind |
 | 测试 | `office_p2e_*` 绿；不依赖 DISPLAY |
 | 示例 | `e26_office_p2` 含 P2e；`NEXT_GUI_P2E_QA=1` 可 dump |

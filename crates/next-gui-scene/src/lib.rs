@@ -192,6 +192,47 @@ impl AlphaMask {
     }
 }
 
+/// Validated, tightly packed, straight-alpha RGBA8 pixels, shared without copying.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RgbaImage {
+    width: u32,
+    height: u32,
+    pixels: Arc<[u8]>,
+}
+
+impl RgbaImage {
+    /// Reject empty dimensions, overflow and buffers that are not exactly `width * height * 4`.
+    pub fn new(width: u32, height: u32, pixels: impl Into<Arc<[u8]>>) -> Option<Self> {
+        let len = (width as usize)
+            .checked_mul(height as usize)?
+            .checked_mul(4)?;
+        let pixels = pixels.into();
+        if width == 0 || height == 0 || pixels.len() != len {
+            return None;
+        }
+        Some(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    /// Source width in pixels.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Source height in pixels.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Row-major RGBA8 bytes; alpha is not premultiplied.
+    pub fn pixels(&self) -> &Arc<[u8]> {
+        &self.pixels
+    }
+}
+
 /// A retained rectangle node.
 #[derive(Debug, Clone)]
 pub struct Node {
@@ -210,6 +251,9 @@ pub struct Node {
     /// Optional alpha mask drawn at `bounds` origin, tinted by `fill`.
     /// When set, the solid `fill` rect is skipped in encode (mask-only paint).
     pub mask: Option<AlphaMask>,
+    /// Optional RGBA image scaled to `bounds` using nearest-neighbor sampling.
+    /// Takes precedence over the mask and fill; inherited rectangular clips apply.
+    pub image: Option<RgbaImage>,
     /// Optional clip rectangle in window coordinates (e.g. ScrollArea viewport).
     /// Descendants inherit via encode/hit-test clip stacks.
     pub clip: Option<Rect>,
@@ -296,6 +340,7 @@ impl Scene {
                 fill: Color::rgba(0, 0, 0, 0),
                 visible: false,
                 mask: None,
+                image: None,
                 clip: None,
                 corner_radius: 0.0,
             },
@@ -333,6 +378,7 @@ impl Scene {
             fill,
             visible: true,
             mask: None,
+            image: None,
             clip: None,
             corner_radius: 0.0,
         };
@@ -422,6 +468,16 @@ impl Scene {
             }
         }
         self.dirty.add(dirty_bounds);
+        true
+    }
+
+    /// Set or clear an RGBA image; marks the destination bounds dirty.
+    pub fn set_image(&mut self, id: NodeId, image: Option<RgbaImage>) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        node.image = image;
+        self.dirty.add(node.bounds);
         true
     }
 

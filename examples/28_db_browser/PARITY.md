@@ -163,7 +163,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
 | PreferencesDialog | partial | Only font/theme/drop confirmation/CSV delimiter/frozen count; full upstream preferences absent. |
 | FindReplaceDialog | partial | Visible match selection, correct current-match replacement and undo; no regex/case/word/backwards/selection-only search controls. |
-| EditDialog (blob/image/hex) | partial | Basic text/hex/JSON and 24-cell mosaic image preview; no full raster/image controls (F12). |
+| EditDialog (blob/image/hex) | partial | Basic text/hex/JSON and full RGBA fit-to-panel preview; zoom/pan/export remain pending (F12). |
 | Load Extension | done | OverlayKind::LoadExtension |
 | About | done | OverlayKind::About |
 
@@ -193,7 +193,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - Overlays use `FlexBuilder::dialog_panel` (title + body + OK/Cancel) — dual Modal chrome reduced.
 - Table `cell_bg` aux nodes provide true per-cell background fills.
 - SQLCipher linked via `rusqlite` feature `bundled-sqlcipher-vendored-openssl` (verified `sqlcipher_linked` + `sqlcipher_key_roundtrip` tests).
-- Image decoding uses `image` 0.24; rendering uses next-gui `Image`, currently a 24-cell mosaic rather than a full RGBA blit (F12).
+- Image decoding uses `image` 0.24; rendering uses next-gui `Image` with shared RGBA drawing in Soft/GPU. Original PNG/JPEG pixels are retained up to 16 megapixels; image view controls remain pending (F12).
 - Remote currently means a local-path connection list. Cloud compatibility remains unimplemented; no claim about the upstream service license or protocol is made.
 
 ## 2026-10-25 verification and boundaries
@@ -232,3 +232,21 @@ syntax, completion, line numbers, grapheme/word navigation and larger-file profi
 
 F02/F03/F05–F13 remain open. This batch does not change SQLite writes, project format,
 DDL migrations, cell typing, result ownership, docking or RGBA image support.
+
+
+## Framework completion — RGBA rendering (2026-10-26)
+
+NG-04 now has validated shared image resources, RGBA draw commands, source-over
+alpha blending, rectangular clipping and nearest-neighbor scaling in both Soft
+and GPU. The Image widget fits the source aspect ratio inside the panel and
+clips its caption. GPU images larger than an adapter texture limit are tiled.
+The public `mosaic_max` field remains for source compatibility and is ignored.
+Incomplete pixel buffers render a placeholder instead of allocating padded data.
+
+e28 retains the decoded PNG/JPEG resolution and alpha. The dock shows the original
+size; failed/oversized decoding reports an error without modifying the BLOB.
+The preview limit is 16 megapixels; decoder allocations are limited to 128 MiB.
+F12 is **in_progress**: the mosaic defect is resolved, but interactive zoom/pan,
+1:1 inspection and image export are still missing. F02/F03/F05–F11/F13 remain open.
+No database or project format changed. Native desktop input acceptance remains
+unavailable; framebuffer captures and Metal readback are recorded separately.

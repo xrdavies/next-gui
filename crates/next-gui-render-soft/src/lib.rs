@@ -2,8 +2,8 @@
 
 #![deny(missing_docs)]
 
-use next_gui_render::{DrawCommand, Renderer};
-use next_gui_scene::{Color, DirtyRegion, Rect};
+use next_gui_render::{image_pixel_bounds, DrawCommand, Renderer};
+use next_gui_scene::{Color, DirtyRegion, Rect, RgbaImage};
 
 /// Soft-renderer clearing / background color when dirty regions are erased.
 #[derive(Debug, Clone)]
@@ -203,6 +203,30 @@ impl SoftRenderer {
         }
     }
 
+    fn blit_rgba_clipped(&mut self, rect: &Rect, clip: &Rect, image: &RgbaImage) {
+        let Some((x0, y0, w, h)) = image_pixel_bounds(rect, clip, self.width, self.height) else {
+            return;
+        };
+        for y in y0..y0 + h {
+            let sy = (((y as f32 + 0.5 - rect.y) / rect.height * image.height() as f32) as u32)
+                .min(image.height() - 1);
+            for x in x0..x0 + w {
+                let sx = (((x as f32 + 0.5 - rect.x) / rect.width * image.width() as f32) as u32)
+                    .min(image.width() - 1);
+                let off = (sy as usize * image.width() as usize + sx as usize) * 4;
+                let rgba = &image.pixels()[off..off + 4];
+                let a = rgba[3] as u32;
+                let i = (y * self.width + x) as usize;
+                let dst = self.pixels[i];
+                let blend = |src: u8, shift: u32| {
+                    (src as u32 * a + ((dst >> shift) & 255u32) * (255 - a)) / 255
+                };
+                self.pixels[i] =
+                    (blend(rgba[0], 16) << 16) | (blend(rgba[1], 8) << 8) | blend(rgba[2], 0);
+            }
+        }
+    }
+
     /// Pixel at (x,y) for tests; None if OOB.
     pub fn pixel(&self, x: u32, y: u32) -> Option<u32> {
         if x >= self.width || y >= self.height {
@@ -234,6 +258,9 @@ impl Renderer for SoftRenderer {
             self.fill_rect_clipped(d, self.clear, d);
             for cmd in commands {
                 match cmd {
+                    DrawCommand::BlitRgba { rect, clip, image } => {
+                        self.blit_rgba_clipped(rect, &clip.intersect(d), image);
+                    }
                     DrawCommand::FillRect { rect, color } => {
                         if rect.intersects(d) {
                             self.fill_rect_clipped(rect, *color, d);

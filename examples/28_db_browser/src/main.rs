@@ -453,6 +453,7 @@ impl Demo {
                     });
                     MainTab::Structure
                 }
+                "image" => MainTab::Browse,
                 "schema" => {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
@@ -526,6 +527,23 @@ impl Demo {
                     state.sync_edit_cell_from_selection();
                 }
             }
+        }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("image") {
+            let pixels = image::RgbaImage::from_fn(320, 180, |x, y| {
+                let v = if (x / 2 + y / 2) % 2 == 0 { 255 } else { 0 };
+                image::Rgba([
+                    v,
+                    (x * 255 / 319) as u8,
+                    (y * 255 / 179) as u8,
+                    if x < 160 { 255 } else { 128 },
+                ])
+            });
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(pixels)
+                .write_to(&mut bytes, image::ImageOutputFormat::Png)
+                .unwrap();
+            state.edit_original = rusqlite::types::Value::Blob(bytes.into_inner());
+            state.set_edit_mode(crate::state::EditCellMode::Image);
         }
         let mut theme = if state.prefs.default_theme_dark {
             theme
@@ -2000,7 +2018,6 @@ impl Demo {
         }
         if id == self.ids.btn_edit_image {
             self.state.set_edit_mode(crate::state::EditCellMode::Image);
-            self.state.decode_edit_image();
             self.rebuild = true;
             return;
         }
@@ -2209,9 +2226,6 @@ impl Demo {
                     self.state.browse_mut().sel_col = Some(c);
                 }
                 self.state.sync_edit_cell_from_selection();
-                if matches!(self.state.edit_mode, crate::state::EditCellMode::Image) {
-                    self.state.decode_edit_image();
-                }
                 dirty = true;
             }
         }
@@ -2742,6 +2756,83 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn rgba_images_preserve_pixels_alpha_clips_and_soft_gpu_agreement() {
+        use next_gui_render::DrawCommand;
+        use next_gui_scene::{DirtyRegion, Rect, RgbaImage};
+        let image = RgbaImage::new(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 255, 255, 255, 255,
+            ],
+        )
+        .unwrap();
+        let clear = Color::rgb(20, 40, 60);
+        let mut soft = SoftRenderer::new(16, 12, clear);
+        let rect = Rect::new(-2.0, 1.0, 8.0, 8.0);
+        let cmds = [DrawCommand::BlitRgba {
+            rect,
+            clip: Rect::new(0.0, 0.0, 5.0, 12.0),
+            image: image.clone(),
+        }];
+        let mut dirty = DirtyRegion::new();
+        dirty.add(Rect::new(0.0, 0.0, 16.0, 12.0));
+        soft.render(&cmds, &dirty);
+        assert_eq!(soft.pixel(0, 1), Some(0xff0000));
+        assert_eq!(soft.pixel(2, 1), Some(0x09931d));
+        assert_eq!(soft.pixel(0, 5), Some(clear.to_xrgb8888()));
+        assert_eq!(soft.pixel(2, 5), Some(0xffffff));
+        assert_eq!(soft.pixel(5, 1), Some(clear.to_xrgb8888()));
+        let Ok(mut gpu) = GpuRenderer::try_new(16, 12, clear) else {
+            eprintln!("skip RGBA GPU comparison: adapter unavailable");
+            return;
+        };
+        eprintln!("RGBA comparison adapter: {}", gpu.backend_name());
+        let compare = |soft: &SoftRenderer, gpu: &GpuRenderer| {
+            for (a, b) in soft
+                .frame_pixels()
+                .unwrap()
+                .0
+                .iter()
+                .zip(gpu.frame_pixels().unwrap().0)
+            {
+                for shift in [0, 8, 16] {
+                    assert!(
+                        (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs() <= 1,
+                        "{a:06x} vs {b:06x}"
+                    );
+                }
+            }
+        };
+        gpu.render(&cmds, &dirty);
+        compare(&soft, &gpu);
+        for rect in [
+            Rect::new(1.25, 2.25, 7.5, 5.5),
+            Rect::new(3.0, 2.0, 1.0, 1.0),
+        ] {
+            let cmds = [
+                DrawCommand::BlitRgba {
+                    rect,
+                    clip: Rect::new(1.6, 1.6, 5.8, 7.8),
+                    image: image.clone(),
+                },
+                DrawCommand::FillRect {
+                    rect: Rect::new(13.0, 2.0, 1.0, 1.0),
+                    color: Color::rgb(255, 0, 255),
+                },
+            ];
+            soft.render(&cmds, &dirty);
+            gpu.render(&cmds, &dirty);
+            compare(&soft, &gpu);
+            let mut patch = DirtyRegion::new();
+            patch.add(Rect::new(2.0, 3.0, 3.0, 2.0));
+            soft.render(&cmds, &patch);
+            gpu.render(&cmds, &patch);
+            compare(&soft, &gpu);
+        }
+    }
 
     #[test]
     fn selected_text_area_matches_soft_and_gpu_readback() {
