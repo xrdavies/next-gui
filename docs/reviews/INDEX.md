@@ -15,7 +15,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
-| R-20261027-2b16b7cb2279-F01 | open | P1 | codex | e28 / all | pre-existing guard | db::query_preview / export_table | 拒绝第二条语句前先解析导致 PRAGMA 副作用；已补回归与共享防护，待复核 | [F01](R-20261027-2b16b7cb2279.md#r-20261027-2b16b7cb2279-f01) | — | — |
+| R-20261027-2b16b7cb2279-F01 | verified | P1 | codex | e28 / all | pre-existing guard | db::query_preview / export_table | 不再解析被拒绝的尾部 PRAGMA；预览/导出统一防护 | [F01](R-20261027-2b16b7cb2279.md#r-20261027-2b16b7cb2279-f01) | 219e686fa0d6 | 219e686fa0d6 |
 | R-20261027-2bfc8ad51380-F01 | verified | P2 | codex | e28 / shared | pre-existing path | state::open_project | 所有恢复标签预检 WHERE/REGEXP，失败保留旧会话 | [F01](R-20261027-2bfc8ad51380.md#r-20261027-2bfc8ad51380-f01) | 65759338765f | 65759338765f |
 | R-20261025-b90d5a7b4143-F01 | verified | P1 | codex | e28 / shared | existing branch | see report | 共享 TextArea 长文本编辑与 SQL Tab 状态已补齐 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | c72f34b584c3 | c72f34b584c3 |
 | R-20261025-b90d5a7b4143-F02 | verified | P1 | grok | e28 / shared | existing branch | see report | 统一保存/丢弃/取消，SQL 单标签关闭保留其他草稿与 DB 编辑 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | 6aeb50e5d74e | 6aeb50e5d74e |
@@ -29,7 +29,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | R-20261025-b90d5a7b4143-F10 | in_progress | P1 | grok | e28 / shared | existing branch | see report | 过滤列几何、滚动条、焦点跟随与布局已补齐；原生输入验收待完成 | [F10](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f10) | — | — |
 | R-20261025-b90d5a7b4143-F11 | verified | P2 | grok | e28 / shared | existing branch | see report | 条件格式按表保存，项目状态与偏好 Cancel 保持一致 | [F11](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f11) | 4c490e21b529 | 4c490e21b529 |
 | R-20261025-b90d5a7b4143-F12 | verified | P2 | grok | e28 / shared | existing branch | see report | 共享图片 Fit/1:1/缩放/平移与原图导出已接入 | [F12](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f12) | 4c490e21b529 | 4c490e21b529 |
-| R-20261025-b90d5a7b4143-F13 | in_progress | P2 | grok | e28 / shared | existing branch | see report | 引擎 tracing、分类、只读全文、清空/导出和淘汰提示已补；待提交后复核 | [F13](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f13) | — | — |
+| R-20261025-b90d5a7b4143-F13 | verified | P2 | grok | e28 / shared | existing branch | see report | 引擎 tracing、分类、只读全文、清空/导出和淘汰提示通过验证 | [F13](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f13) | f9b5dee2ee74 | f9b5dee2ee74 |
 | R-20261025-b90d5a7b4143-F14 | verified | P1 | codex | e28 / shared | existing branch | see report | Table resize/clip/hit and named Space repaired | [F14](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f14) | cb727d7 | b90d5a7b4143 |
 | R-20261025-b90d5a7b4143-F15 | verified | P1 | codex | e28 / shared | existing branch | see report | Grid rebuild, wizard column drafts and literal sort repaired | [F15](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f15) | b90d5a7 | b90d5a7b4143 |
 | R-20261024-42aab06eff27-F01 | verified | P0 | grok | PR #3 / all | PR #3 | e28 db::copy_database_file / state::save_as | Save As omits committed WAL pages; actual copy helper reproduced missing row | [F01](R-20261024-42aab06eff27.md#r-20261024-42aab06eff27-f01) | efefc068d21b | efefc068d21b |
@@ -52,6 +52,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `4516dcb..f9b5dee2ee74` | Codex | issues — F13 and PRAGMA-tail guard verified; 227 tests/clippy/build/features pass; full log/readonly/categorized export and Soft captures; native/full parity remain | [Report](R-20261027-f9b5dee2ee74.md) |
 | 2026-10-27 | `f800a85..2b16b7cb2279` | Codex | issues — project query safety and rounded clipping verified; 220 tests/clippy/build/features pass; Soft/Metal pixels and available framebuffer review; native/full parity remain | [Report](R-20261027-2b16b7cb2279.md) |
 | 2026-10-27 | `d1b2e68..2bfc8ad51380` | Codex | issues — filter/XML semantics and shared scrollbars; 217 tests/clippy/build/features pass; e28/available Office captures; project query-error finding open; native acceptance pending | [Report](R-20261027-2bfc8ad51380.md) |
 | 2026-10-27 | `aadb0a5..6aeb50e5d74e` | Codex | issues — F02 verified; document safety, SQL files/tabs, responsive desktop theme, font fallback and partial DB4S XML; 206 tests/checks pass; 20 Soft captures; native/DB4S binary acceptance unavailable | [Report](R-20261027-6aeb50e5d74e.md) |
