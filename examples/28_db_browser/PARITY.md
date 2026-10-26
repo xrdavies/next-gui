@@ -193,7 +193,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - Overlays use `FlexBuilder::dialog_panel` (title + body + OK/Cancel) — dual Modal chrome reduced.
 - Table `cell_bg` aux nodes provide true per-cell background fills.
 - SQLCipher linked via `rusqlite` feature `bundled-sqlcipher-vendored-openssl` (verified `sqlcipher_linked` + `sqlcipher_key_roundtrip` tests).
-- Image decoding uses `image` 0.24; rendering uses next-gui `Image` with shared RGBA drawing in Soft/GPU. Original PNG/JPEG pixels are retained up to 16 megapixels; image view controls remain pending (F12).
+- Image decoding uses `image` 0.24; rendering uses next-gui `Image` with shared RGBA drawing in Soft/GPU. Original PNG/JPEG pixels are retained up to 16 megapixels; shared Fit/1:1/zoom/pan and original-image export are available (F12 verified on 2026-10-27).
 - Remote currently means a local-path connection list. Cloud compatibility remains unimplemented; no claim about the upstream service license or protocol is made.
 
 ## 2026-10-25 verification and boundaries
