@@ -316,6 +316,17 @@ impl Default for SplitterStyle {
 }
 
 
+/// Retained image magnification and pan, independent of pixel resources.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ImageView {
+    /// None fits the image; Some(1.0) displays one image pixel per scene pixel.
+    pub scale: Option<f32>,
+    /// Horizontal pan from the centered image, positive toward the right edge.
+    pub offset_x: f32,
+    /// Vertical pan from the centered image, positive toward the bottom edge.
+    pub offset_y: f32,
+}
+
 /// Style for a ScrollArea viewport.
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollAreaStyle {
@@ -2055,6 +2066,7 @@ enum Kind {
         px_w: u32,
         px_h: u32,
         pixels: Option<ImagePixels>,
+        view: ImageView,
         caption: String,
         style: ImageStyle,
     },
@@ -3093,6 +3105,14 @@ impl Ui {
             return true;
         }
 
+        if let Some(view) = self.image_view(id) {
+            self.drag = Some(DragState::Scroll {
+                area: id, start_x: x, start_y: y,
+                start_scroll_x: view.offset_x, start_scroll_y: view.offset_y,
+            });
+            return true;
+        }
+
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::TextInput { .. }) => {
                 self.focus = Some(id);
@@ -3359,77 +3379,37 @@ impl Ui {
 
     /// Apply mouse-wheel scroll at (x,y); returns true if a scrollable scrolled.
     pub fn pointer_scroll(&mut self, scene: &Scene, x: f32, y: f32, dx: f32, dy: f32) -> bool {
+        if !dx.is_finite() || !dy.is_finite() {
+            return false;
+        }
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
         };
-        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { .. })) {
-            let sy = self.any_scroll_offset(id).unwrap().1;
-            return self.set_text_area_scroll(id, sy + dy);
-        }
-        let area = self.find_scroll_ancestor(id).or_else(|| {
-            if self.is_data_scrollable(id) {
-                Some(id)
-            } else {
-                None
-            }
-        });
-        let Some(area) = area else {
-            return false;
-        };
-        let (sx, sy) = self.any_scroll_offset(area).unwrap_or((0.0, 0.0));
-        self.set_any_scroll(area, sx + dx, sy + dy)
-    }
-
-    fn find_scroll_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
-        // If id is scroll, return; else search scroll areas for membership.
-        if matches!(
-            self.widgets.get(&id).map(|w| &w.kind),
-            Some(Kind::ScrollArea { .. })
-        ) {
-            return Some(id);
-        }
-        for (sid, w) in &self.widgets {
-            if let Kind::ScrollArea { children, .. } = &w.kind {
-                if self.subtree_contains(*sid, children, id) {
-                    return Some(*sid);
+        let mut node = self.widgets.get(&id).and_then(|w| w.node);
+        // Start at the hit control, then bubble at its limits to enclosing viewports.
+        while let Some(n) = node.and_then(|n| scene.get(n)) {
+            if let Some(id) = self.widget_from_node(n.id) {
+                if let Some((sx, sy)) = self.any_scroll_offset(id) {
+                    let changed = if matches!(self.widgets[&id].kind, Kind::TextArea { .. }) {
+                        self.set_text_area_scroll(id, sy + dy)
+                    } else {
+                        self.set_any_scroll(id, sx + dx, sy + dy)
+                    };
+                    if changed {
+                        return true;
+                    }
                 }
             }
-        }
-        None
-    }
-
-    fn subtree_contains(&self, _root: WidgetId, children: &[WidgetId], target: WidgetId) -> bool {
-        for c in children {
-            if *c == target {
-                return true;
-            }
-            if let Some(w) = self.widgets.get(c) {
-                let kids = match &w.kind {
-                    Kind::Column { children, .. }
-                    | Kind::Row { children, .. }
-                    | Kind::Toolbar { children, .. }
-                    | Kind::Panel { children, .. }
-                    | Kind::StatusBar { children, .. }
-                    | Kind::Splitter { children, .. }
-                    | Kind::ScrollArea { children, .. }
-                    | Kind::ContextMenu { children, .. }
-                    | Kind::Tabs { children, .. }
-                    | Kind::Badge { children, .. }
-                    | Kind::Tooltip { children, .. }
-                    | Kind::Form { children, .. }
-                    | Kind::Grid { children, .. }
-                    | Kind::Spin { children, .. } => children.as_slice(),
-                    _ => &[],
-                };
-                if self.subtree_contains(*c, kids, target) {
-                    return true;
-                }
-            }
+            node = n.parent;
         }
         false
     }
 
-    fn set_scroll_offset(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
+    /// Restore a ScrollArea position, clamped to its laid-out content. Rejects non-finite offsets.
+    pub fn set_scroll_offset(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
+        if !sx.is_finite() || !sy.is_finite() {
+            return false;
+        }
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
@@ -4100,6 +4080,56 @@ impl Ui {
         }
     }
 
+    /// Current image magnification and pan, for restoration after rebuilding a UI.
+    pub fn image_view(&self, id: WidgetId) -> Option<ImageView> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Image { view, .. }) => Some(*view),
+            _ => None,
+        }
+    }
+
+    /// Set image magnification (1/64 through 64) and bounded pan. Invalid input is ignored.
+    pub fn set_image_view(&mut self, id: WidgetId, mut view: ImageView) -> bool {
+        if view
+            .scale
+            .is_some_and(|s| !s.is_finite() || !(1.0 / 64.0..=64.0).contains(&s))
+            || !view.offset_x.is_finite()
+            || !view.offset_y.is_finite()
+        {
+            return false;
+        }
+        let Some(Widget {
+            kind:
+                Kind::Image {
+                    view: current,
+                    px_w,
+                    px_h,
+                    caption,
+                    style,
+                    ..
+                },
+            ..
+        }) = self.widgets.get_mut(&id)
+        else {
+            return false;
+        };
+        let scale = view.scale.unwrap_or(0.0);
+        let cap_h = if caption.is_empty() {
+            0.0
+        } else {
+            18.0f32.min(style.height)
+        };
+        let max_x = ((*px_w as f32 * scale - style.width) * 0.5).max(0.0);
+        let max_y = ((*px_h as f32 * scale - (style.height - cap_h)) * 0.5).max(0.0);
+        view.offset_x = view.offset_x.clamp(-max_x, max_x);
+        view.offset_y = view.offset_y.clamp(-max_y, max_y);
+        if *current == view {
+            return false;
+        }
+        *current = view;
+        true
+    }
+
     fn is_data_scrollable(&self, id: WidgetId) -> bool {
         matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -4108,6 +4138,7 @@ impl Ui {
     }
 
     fn any_scroll_offset(&self, id: WidgetId) -> Option<(f32, f32)> {
+        if let Some(view) = self.image_view(id) { return Some((view.offset_x, view.offset_y)); }
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::ScrollArea {
                 scroll_x, scroll_y, ..
@@ -4125,6 +4156,11 @@ impl Ui {
     }
 
     fn set_any_scroll(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
+        if let Some(mut view) = self.image_view(id) {
+            view.offset_x = sx;
+            view.offset_y = sy;
+            return self.set_image_view(id, view);
+        }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::ScrollArea { .. })
@@ -10306,8 +10342,21 @@ impl Ui {
             self.place_child(scene, child_id, rect);
         }
 
-        let content_w = total.width.max(w);
-        let content_h = total.height.max(h);
+        let mut content_w = total.width.max(w);
+        let mut content_h = total.height.max(h);
+        // Nested flex containers can expand beyond their requested size during layout.
+        for child in &children {
+            if let Some(bounds) = self
+                .widgets
+                .get(child)
+                .and_then(|w| w.node)
+                .and_then(|n| scene.get(n))
+                .map(|n| n.bounds)
+            {
+                content_w = content_w.max(bounds.x + bounds.width - ox + scroll_x + style.padding);
+                content_h = content_h.max(bounds.y + bounds.height - oy + scroll_y + style.padding);
+            }
+        }
         let max_x = (content_w - w).max(0.0);
         let max_y = (content_h - h).max(0.0);
         if let Some(wdig) = self.widgets.get_mut(&id) {
@@ -13810,6 +13859,7 @@ impl Ui {
                     pixels,
                     caption,
                     style,
+                    view,
                 },
             node,
             ..
@@ -13817,6 +13867,7 @@ impl Ui {
         else {
             return;
         };
+        let view = *view;
         let px_w = *px_w;
         let px_h = *px_h;
         let pixels = pixels.clone();
@@ -13845,14 +13896,14 @@ impl Ui {
         scene.set_image(image_node, None);
         if let Some(image) = pixels.and_then(|px| RgbaImage::new(px_w, px_h, px)) {
             if bounds.width > 0.0 && image_h > 0.0 {
-                let scale = (bounds.width / px_w as f32).min(image_h / px_h as f32);
+                let scale = view.scale.unwrap_or_else(|| (bounds.width / px_w as f32).min(image_h / px_h as f32));
                 let w = px_w as f32 * scale;
                 let h = px_h as f32 * scale;
                 scene.set_bounds(
                     image_node,
                     Rect::new(
-                        bounds.x + (bounds.width - w) * 0.5,
-                        bounds.y + (image_h - h) * 0.5,
+                        bounds.x + (bounds.width - w) * 0.5 - view.offset_x.clamp(-((w - bounds.width) * 0.5).max(0.0), ((w - bounds.width) * 0.5).max(0.0)),
+                        bounds.y + (image_h - h) * 0.5 - view.offset_y.clamp(-((h - image_h) * 0.5).max(0.0), ((h - image_h) * 0.5).max(0.0)),
                         w,
                         h,
                     ),
@@ -17242,6 +17293,24 @@ impl FlexBuilder<'_> {
         id
     }
 
+    /// A clipped row whose overflowing controls remain reachable by horizontal wheel or drag.
+    pub fn scroll_row<F>(&mut self, style: RowStyle, build: F) -> WidgetId
+    where
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        let viewport = ScrollAreaStyle {
+            width: style.width,
+            height: style.height,
+            padding: 0.0,
+            gap: 0.0,
+            background: style.background,
+            ..ScrollAreaStyle::default()
+        };
+        self.scroll_area(viewport, |area| {
+            area.row(style, build);
+        })
+    }
+
     /// Nest a first-class toolbar.
     pub fn toolbar<F>(&mut self, style: ToolbarStyle, build: F) -> WidgetId
     where
@@ -18979,6 +19048,7 @@ impl FlexBuilder<'_> {
                     px_w: width,
                     px_h: height,
                     pixels: Some(pixels),
+                    view: ImageView::default(),
                     caption: caption.into(),
                     style,
                 },
@@ -19007,6 +19077,7 @@ impl FlexBuilder<'_> {
                     px_w: 0,
                     px_h: 0,
                     pixels: None,
+                    view: ImageView::default(),
                     caption: caption.into(),
                     style,
                 },
@@ -22049,6 +22120,101 @@ mod tests {
             ui.take_calendar_change(),
             Some((cal, CalendarDate::new(2026, 10, 1)))
         );
+    }
+
+    #[test]
+    fn scroll_rows_route_to_nearest_viewport_and_bubble_at_limits() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut row = WidgetId(0);
+        let mut button = WidgetId(0);
+        let outer = ui.scroll_area(
+            ScrollAreaStyle {
+                width: 180.0,
+                height: 60.0,
+                padding: 0.0,
+                ..ScrollAreaStyle::default()
+            },
+            |area| {
+                row = area.scroll_row(
+                    RowStyle {
+                        width: 180.0,
+                        height: 32.0,
+                        padding: 0.0,
+                        ..RowStyle::default()
+                    },
+                    |r| {
+                        button = r.tool_button("first long action");
+                        for _ in 0..8 {
+                            r.tool_button("more long actions");
+                        }
+                    },
+                );
+                for _ in 0..12 {
+                    area.text("vertical content");
+                }
+            },
+        );
+        ui.sync(&mut scene);
+        let b = scene.get(ui.widgets[&button].node.unwrap()).unwrap().bounds;
+        assert!(ui.pointer_scroll(&scene, b.x + 2.0, b.y + 2.0, 100.0, 0.0));
+        assert_eq!(ui.scroll_offset(row), Some((100.0, 0.0)));
+        assert_eq!(ui.scroll_offset(outer), Some((0.0, 0.0)));
+        assert!(ui.pointer_scroll(&scene, b.x + 2.0, b.y + 2.0, 0.0, 20.0));
+        assert_eq!(ui.scroll_offset(outer), Some((0.0, 20.0)));
+        assert!(!ui.set_scroll_offset(outer, f32::NAN, 0.0));
+        assert!(ui.set_scroll_offset(outer, 0.0, 0.0));
+    }
+
+    #[test]
+    fn image_view_preserves_scale_clips_pans_and_rejects_invalid_geometry() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut image = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            image = col.image_rgba(
+                400,
+                300,
+                &vec![255; 400 * 300 * 4],
+                ImageStyle {
+                    width: 100.0,
+                    height: 80.0,
+                    ..ImageStyle::default()
+                },
+            );
+        });
+        ui.sync(&mut scene);
+        let node = ui.widgets[&image].aux[0];
+        assert_eq!(scene.get(node).unwrap().bounds.width, 100.0);
+        assert!(ui.set_image_view(
+            image,
+            ImageView {
+                scale: Some(1.0),
+                ..ImageView::default()
+            }
+        ));
+        ui.sync(&mut scene);
+        assert_eq!(scene.get(node).unwrap().bounds.width, 400.0);
+        let host = scene.get(ui.widgets[&image].node.unwrap()).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene, host.x + 50.0, host.y + 40.0));
+        assert!(ui.pointer_moved(host.x + 30.0, host.y + 20.0));
+        ui.pointer_released();
+        assert_eq!(ui.image_view(image).unwrap().offset_x, 20.0);
+        ui.sync(&mut scene);
+        let bounds = scene.get(node).unwrap().bounds;
+        assert!(scene.get(node).unwrap().clip.is_some());
+        assert!(!ui.set_image_view(
+            image,
+            ImageView {
+                scale: Some(f32::NAN),
+                ..ImageView::default()
+            }
+        ));
+        ui.sync(&mut scene);
+        assert_eq!(scene.get(node).unwrap().bounds, bounds);
+        assert!(ui.set_image_view(image, ImageView::default()));
+        ui.sync(&mut scene);
+        assert_eq!(scene.get(node).unwrap().bounds.width, 100.0);
     }
 
     #[test]
