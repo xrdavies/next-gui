@@ -104,9 +104,12 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   starts at the inner control and bubbles at its limits; expanded container bounds
   count toward the scroll range. The shell, main pages and editing docks use these
   viewports and retain their offsets in memory. The shell now adapts at 800×600 and persists body/structure splitter ratios;
-  visible scrollbars, table/filter alignment and full docking remain pending.
-- SQL Log retains whole manually executed batches (up to 200 entries), including
-  multiline scripts. It is still not a complete categorized SQLite trace.
+  visible scrollbars and table/filter alignment are implemented; full docking remains pending.
+- SQL Log traces SQLite statements/triggers with categorized full text; see the
+  SQL log section below for retention, redaction and remaining diagnostic work.
+- The status bar reads the database's actual encoding, including UTF-16le/be,
+  and retains it while SQL runs. Structure toolbar controls fit vertically at
+  normal and narrow widths.
 
 These changes do not claim full DB4S compatibility or native desktop acceptance.
 

@@ -52,6 +52,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `48f96b8..94a116d32399` | Codex | issues — actual encoding and toolbar overflow fixed; 229 tests/clippy/build/features pass; four Soft frames; native/full parity remain | [Report](R-20261027-94a116d32399.md) |
 | 2026-10-27 | `4516dcb..f9b5dee2ee74` | Codex | issues — F13 and PRAGMA-tail guard verified; 227 tests/clippy/build/features pass; full log/readonly/categorized export and Soft captures; native/full parity remain | [Report](R-20261027-f9b5dee2ee74.md) |
 | 2026-10-27 | `f800a85..2b16b7cb2279` | Codex | issues — project query safety and rounded clipping verified; 220 tests/clippy/build/features pass; Soft/Metal pixels and available framebuffer review; native/full parity remain | [Report](R-20261027-2b16b7cb2279.md) |
 | 2026-10-27 | `d1b2e68..2bfc8ad51380` | Codex | issues — filter/XML semantics and shared scrollbars; 217 tests/clippy/build/features pass; e28/available Office captures; project query-error finding open; native acceptance pending | [Report](R-20261027-2bfc8ad51380.md) |

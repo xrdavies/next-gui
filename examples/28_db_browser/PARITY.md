@@ -21,7 +21,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Extra DB / Project toolbars | partial | Local subset; no upstream movable toolbar/overflow behavior. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
 | Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; body/structure ratios persist in projects. Independent floating/docking panes remain absent. |
-| Status bar: path, encoding, read-only, encryption, busy | partial | Encoding is hardcoded UTF-8 instead of read from PRAGMA encoding. |
+| Status bar: path, encoding, read-only, encryption, busy | done | Reads actual main.encoding on schema refresh; cached while SQL runs; clears on Close. UTF-8 and both UTF-16 byte orders tested. |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S; Preferences default theme |
 
