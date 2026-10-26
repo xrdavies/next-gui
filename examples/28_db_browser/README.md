@@ -34,7 +34,7 @@ Browse → New Record opens a form with Default / NULL / Value modes. Page butto
 
 Project JSON retains all browse tabs, filters, sorting and page positions. Save an in-memory database with Save As before saving a project. The SQL editor supports IME composition through the shared UI; native OS input and file-picker acceptance still need a permitted desktop session.
 
-Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and JSON project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with known draft-safety, navigation and layout defects, not full DB4S parity.
+Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and JSON project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with remaining advanced editing, docking and responsive-layout gaps, not full DB4S parity.
 
 Additional framebuffer QA cases: `index`, `csv`, `paste`, `attach`, `find`, `extension`, `schema`, `frozen`, `remote`, `about`, `plot`, `log`, `form`, `image`. These captures exercise rendering only.
 
@@ -56,8 +56,8 @@ and case sensitive; regex/options remain future work.
 `NEXT_GUI_DB_BROWSER_QA=1 NEXT_GUI_DB_BROWSER_QA_TAB=sql-long` captures an 80-line
 script scrolled to a highlighted Unicode match. `find` captures the same script in
 the Find panel; set `NEXT_GUI_DB_BROWSER_QA_THEME=light` for the light theme.
-The earlier F01/F04 editing findings are addressed; unsaved-file guards, per-tab
-SQL results and the other remaining parity findings still apply.
+The earlier F01/F04 editing findings are addressed; draft transition UX and the other remaining parity findings still apply; see the
+2026-10-27 follow-up below.
 
 
 ### Image preview (2026-10-26)
@@ -65,9 +65,42 @@ SQL results and the other remaining parity findings still apply.
 Edit Cell → Image uses the shared next-gui RGBA renderer, with transparency and
 aspect-ratio fitting in Soft and GPU. PNG/JPEG pixels retain their original size;
 preview decoding rejects images over 16 megapixels and limits decoder allocations
-to 128 MiB. Errors leave the database value untouched. Zoom/pan, 1:1 inspection
-and image export remain future work.
+to 128 MiB. Errors leave the database value untouched. Fit/1:1/+/− controls use shared `ImageView` state; drag or wheel pans a
+magnified image. Export Image saves the original encoded BLOB without re-encoding it.
 
 `NEXT_GUI_DB_BROWSER_QA=1 NEXT_GUI_DB_BROWSER_QA_TAB=image` captures a detailed,
 half-transparent 320×180 PNG through the same decoder and Image control. Add
 `NEXT_GUI_DB_BROWSER_QA_THEME=light` for the light theme.
+
+### Workflow and framework follow-up (2026-10-27)
+
+- SQL file opening adds a tab instead of replacing the current draft. Exit checks
+  SQL, DDL, project, cell and PRAGMA drafts even when the database has no pending
+  writes; Cancel keeps the session, and confirmed Exit discards it. Save SQL or
+  Save Project explicitly to retain drafts. Opening a project refuses to replace
+  unsaved settings/text; a unified Save/Discard/Cancel transition dialog is still pending.
+- Edit Cell uses the shared multiline TextArea and an explicit NULL/INTEGER/REAL/
+  TEXT/BLOB selector. Numeric edits preserve their type; invalid Hex/JSON is retained
+  with an error. Apply or Discard Draft before changing the browse target. SQLite
+  column affinity still determines the stored value, as with explicit SQL writes.
+- Foreign-key navigation resolves omitted parent PK columns, groups composite keys
+  and filters on the stored typed values; NULL keys report no parent. Source rows
+  still require an unshadowed rowid.
+- SQL tabs own results, export snapshots, messages, widths and scroll positions.
+  Save as VIEW takes an editable name and the executed result statement, so editing
+  the script after execution does not change the view source.
+- PRAGMA writes are read back; settings that do not take effect report the actual
+  value and possible earlier partial application. NONE→auto_vacuum requires an
+  explicit VACUUM. Plot skips nonnumeric/non-finite values and reports query errors.
+- CSV import resets the old table's filter/order/page/selection. Conditional formats
+  are scoped to a table and saved with plot source, read-only mode and DDL text in
+  JSON projects. Canceling Preferences does not change frozen columns.
+- Shared scroll rows expose overflowing tab/action/filter strips. Nested scrolling
+  starts at the inner control and bubbles at its limits; expanded container bounds
+  count toward the scroll range. The shell, main pages and editing docks use these
+  viewports and retain their offsets in memory. The shell keeps a 1100px logical
+  workspace; adaptive panes, visible scrollbars and full docking remain pending.
+- SQL Log retains whole manually executed batches (up to 200 entries), including
+  multiline scripts. It is still not a complete categorized SQLite trace.
+
+These changes do not claim full DB4S compatibility or native desktop acceptance.

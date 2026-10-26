@@ -47,6 +47,7 @@ pub struct SchemaObject {
 #[derive(Debug, Clone)]
 pub struct QueryResult {
     pub columns: Vec<String>,
+    pub statement: Option<String>,
     pub rows: Vec<Vec<String>>,
     pub rows_affected: Option<u64>,
     pub truncated: bool,
@@ -382,6 +383,7 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
         );
     }
     Ok(QueryResult {
+        statement: None,
         columns,
         rows,
         rows_affected: None,
@@ -408,6 +410,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
             .collect();
         let col_count = columns.len();
         let readonly = stmt.readonly();
+        let statement = readonly.then(|| stmt.expanded_sql()).flatten();
         let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
         let mut export_rows = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
         let mut output = std::io::BufWriter::new(&mut export_rows);
@@ -432,6 +435,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
         output.flush().map_err(|e| e.to_string())?;
         drop(output);
         result = Some(QueryResult {
+            statement,
             export_rows: Some(std::sync::Arc::new(export_rows)),
             columns,
             rows,
@@ -464,6 +468,7 @@ pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
         rows.push(vec![obj.name.clone(), n.to_string()]);
     }
     Ok(QueryResult {
+        statement: None,
         export_rows: None,
         columns: vec!["table".into(), "rows".into()],
         rows,
@@ -1221,22 +1226,31 @@ pub fn numeric_series(
     column: &str,
     limit: usize,
 ) -> Result<Vec<f32>, String> {
+    if !table_columns(conn, table)?.iter().any(|c| c.name == column) {
+        return Err(format!("Unknown plot column {column}"));
+    }
     let sql = format!(
-        "SELECT CAST({} AS REAL) FROM {} WHERE typeof({}) IN ('integer','real') OR CAST({} AS REAL) IS NOT NULL LIMIT {limit}",
+        "SELECT {} FROM {} LIMIT {limit}",
         quote_ident(column),
         quote_ident(table),
-        quote_ident(column),
-        quote_ident(column),
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| row.get::<_, f64>(0))
+        .query_map([], |row| row.get::<_, rusqlite::types::Value>(0))
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows {
-        let v = r.map_err(|e| e.to_string())?;
+        let v = match r.map_err(|e| e.to_string())? {
+            rusqlite::types::Value::Integer(v) => v as f64,
+            rusqlite::types::Value::Real(v) => v,
+            rusqlite::types::Value::Text(v) => match v.trim().parse::<f64>() {
+                Ok(v) => v,
+                Err(_) => continue,
+            },
+            _ => continue,
+        } as f32;
         if v.is_finite() {
-            out.push(v as f32);
+            out.push(v);
         }
     }
     Ok(out)
@@ -1821,7 +1835,7 @@ pub fn export_sql_dump_opts(
     Ok(())
 }
 
-fn sql_literal(value: rusqlite::types::ValueRef<'_>) -> String {
+pub(crate) fn sql_literal(value: rusqlite::types::ValueRef<'_>) -> String {
     use rusqlite::types::ValueRef;
     match value {
         ValueRef::Null => "NULL".into(),
@@ -1837,6 +1851,8 @@ fn sql_literal(value: rusqlite::types::ValueRef<'_>) -> String {
 /// Foreign-key metadata for a table column (to parent table/col).
 #[derive(Debug, Clone)]
 pub struct FkRef {
+    pub id: i64,
+    pub seq: i64,
     pub from_col: String,
     pub to_table: String,
     pub to_col: String,
@@ -1848,15 +1864,27 @@ pub fn list_foreign_keys(conn: &Connection, table: &str) -> Result<Vec<FkRef>, S
     let rows = stmt
         .query_map([], |r| {
             Ok(FkRef {
+                id: r.get(0)?,
+                seq: r.get(1)?,
                 from_col: r.get::<_, String>(3)?,
                 to_table: r.get::<_, String>(2)?,
-                to_col: r.get::<_, String>(4)?,
+                to_col: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
             })
         })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row.map_err(|e| e.to_string())?);
+        let mut fk = row.map_err(|e| e.to_string())?;
+        if fk.to_col.is_empty() {
+            fk.to_col = conn
+                .query_row(
+                    "SELECT name FROM pragma_table_info(?1) WHERE pk=?2",
+                    rusqlite::params![fk.to_table, fk.seq + 1],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("Cannot resolve parent primary key: {e}"))?;
+        }
+        out.push(fk);
     }
     Ok(out)
 }

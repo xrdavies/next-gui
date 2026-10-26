@@ -46,9 +46,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Write Changes | done | COMMIT + re-BEGIN |
 | Revert Changes | done | ROLLBACK + re-BEGIN |
 | Compact Database (VACUUM) | done | |
-| Exit | partial | DB writes guarded; unsaved SQL/editor drafts are not guarded (F02). |
+| Exit | partial | Database, SQL, DDL, project, cell and PRAGMA drafts guarded; explicit discard/cancel on Exit. Unified save/discard/cancel transitions remain (F02). |
 | Open Project… | partial | Example JSON only; Unicode and malformed-input validation; upstream DB4S XML is rejected |
-| Save Project / Save Project As… | partial | Example JSON; all browse tabs, filters/sort/pages plus SQL tabs/docks/toolbars; relative database paths resolved from project; no upstream XML compatibility |
+| Save Project / Save Project As… | partial | Example JSON retains browse/SQL tabs, read-only mode, conditional rules, plot source and DDL; no upstream XML compatibility. |
 | Close Project | partial | Clears project path only; no unsaved project/SQL state prompt (F02). |
 | Save All | done | Prompt for project destination if missing; cancellation has no fallback write; commit DB and save JSON project |
 | Print Schema… | partial | Exports schema text to a file; no print dialog or print preview. |
@@ -61,7 +61,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Create Index… | partial | Basic name/table/raw column SQL/unique; no structured order/expression/partial-index editor. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; definition changes/reordering and expression/partial indexes require explicit SQL |
 | Delete Object… | done | confirm + DROP |
-| Preferences… | partial | Five options only; project does not retain conditional rules/plot settings; canceled frozen-column edits can leak (F11). |
+| Preferences… | partial | Five options only; frozen-column edits stay in drafts until Apply; full upstream preferences remain absent. |
 
 ## View menu
 
@@ -112,20 +112,20 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Data grid | partial | 500-row pages; shared column resize/clip/scroll fix added. No range selection, bulk copy/paste, visible scrollbars, inline editor, hiding/reorder or total-count navigation. |
 | Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort only, no clear/multi-sort UI. |
 | Filter-per-column | partial | LIKE-substring inputs in a separate fixed row; not aligned with resized/scrolled columns, no DB4S operator parser. |
-| Multi browse tabs | partial | Add/switch only; no close, reorder or overflow. Many tabs exceed available width. |
+| Multi browse tabs | partial | Add/switch with scrollable tab strip; no close/reorder. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
-| Edit cell → Edit Cell dock | partial | Typed reads for rowid tables; edited numeric values become TEXT on no-affinity/BLOB columns, NULL/empty distinction cannot be chosen (F06). |
+| Edit cell → Edit Cell dock | partial | Explicit NULL/INTEGER/REAL/TEXT/BLOB and multiline editing; numeric types retained; Hex validation errors preserve the draft (F06 addressed). SQLite affinity still applies. |
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
-| Conditional formatting | partial | Background only; rules global by column name, cannot edit/remove, not saved in projects (F11). |
-| FK click-navigation | partial | Fails on implicit parent PK; ignores composite-key grouping and typed values (F05). |
-| Record / form view | partial | Page-local record navigation; fields are unscrollable rows and overflow for wide schemas (F10). |
+| Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
+| FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
+| Record / form view | partial | Page-local navigation with a scrollable form; no total-count navigation. |
 
 ## Edit Pragmas tab
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Scroll form of pragmas | partial | Actually a fixed Column with ten PRAGMA keys; no scroll container or full upstream setting list. |
-| Save / Apply pragmas | partial | auto_vacuum may remain unchanged while status says applied (F03); values need read-back validation. |
+| Scroll form of pragmas | partial | Scrollable form for ten PRAGMA keys; full upstream setting list remains absent. |
+| Save / Apply pragmas | partial | Writes are read back; unapplied values report actual state and earlier partial application (F03 addressed). No automatic VACUUM for auto_vacuum. |
 | Bool / Select editors | done | journal_mode / synchronous / FK switches |
 
 ## Execute SQL tab
@@ -133,12 +133,12 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Feature | Status | Notes |
 |---------|--------|-------|
 | SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). Syntax, completion, line numbers and grapheme-aware navigation remain. |
-| Execute / message / results table | partial | Only final statement preview, at most 500 displayed rows; one global result across SQL tabs (F09). |
-| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Execute uses selection or whole script; Cmd/Ctrl+Enter/F and editing shortcuts wired. Open SQL still replaces unsaved draft without prompt (F02). |
-| Multi SQL tabs | partial | Add/switch only; drafts and editing sessions separated, results not; no close/reorder/overflow or dirty markers. |
+| Execute / message / results table | partial | Final statement preview, at most 500 displayed rows; results/messages/export snapshots belong to each SQL tab (F09 addressed). |
+| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Selection/whole-script execution and shortcuts; Open SQL adds a new tab and preserves existing drafts. |
+| Multi SQL tabs | partial | Drafts, editing sessions and results separated; scrollable tab strip; no close/reorder/dirty markers. |
 | Find / Replace | partial | Shared editor in Find panel highlights/reveals matches; Replace acts on the selected match and Replace All is undoable (F04 addressed). Literal case-sensitive search only. |
 | Async query + cancel | done | Live connection moves to worker; Write/Revert/keys/ATTACH shared; completion polled on redraw; Stop interrupts |
-| Results → CSV / JSON / Save as view | partial | Full snapshot export works; Save as VIEW uses current editor and a fixed name, not the displayed result query (F09). |
+| Results → CSV / JSON / Save as view | done | Full snapshot export without re-execution; editable view name and source tied to the executed result statement. |
 | Toggle comment | partial | All physical lines only; no selected-block handling. Removing comments strips all leading hyphens, not exactly two. |
 | Execute current line | done | Uses Unicode caret position; never replaces editor contents; one physical line |
 
@@ -146,10 +146,10 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Dock | Status | Notes |
 |------|--------|-------|
-| Edit Database Cell | partial | Single-line TextInput for Text/Hex/JSON; no Set NULL, import/export, XML/RTL/evaluation or full binary editor (F06). |
+| Edit Database Cell | partial | Shared multiline TextArea, explicit storage type/NULL, validated Hex and PNG/JPEG view; full binary/XML/RTL/evaluation and generic import/export remain. |
 | DB Schema | partial | Flat main-schema list; no column tree, filter or SQL insertion. |
-| SQL Log | partial | Last 200 manually logged strings; async batches log first line only, no all-SQL trace/category filters/export (F13). |
-| Plot | partial | One numeric-column trend, first 64 samples; text becomes zero and query errors are swallowed (F07); no X/Y1/Y2 or query result source. |
+| SQL Log | partial | Last 200 complete manually executed batches; no all-SQL trace/category filters/export (F13). |
+| Plot | partial | One numeric-column trend, first 64 samples; invalid samples skipped and query errors surfaced (F07 addressed). No X/Y1/Y2 or result-set source. |
 | Remote | partial | Local path list; cloud protocol/auth/sync not implemented |
 
 ## Dialogs
@@ -161,9 +161,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | Strict UTF-8 only; multiline quoting supported |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
-| PreferencesDialog | partial | Only font/theme/drop confirmation/CSV delimiter/frozen count; full upstream preferences absent. |
+| PreferencesDialog | partial | Font/theme/drop confirmation/CSV delimiter/frozen count; Cancel preserves current frozen count (F11 addressed); full upstream preferences absent. |
 | FindReplaceDialog | partial | Visible match selection, correct current-match replacement and undo; no regex/case/word/backwards/selection-only search controls. |
-| EditDialog (blob/image/hex) | partial | Basic text/hex/JSON and full RGBA fit-to-panel preview; zoom/pan/export remain pending (F12). |
+| EditDialog (blob/image/hex) | partial | Multiline text/JSON, typed/NULL values, Hex and RGBA preview; Fit/1:1/zoom/pan/original image export supported (F12 addressed). Full binary editor remains. |
 | Load Extension | done | OverlayKind::LoadExtension |
 | About | done | OverlayKind::About |
 
@@ -250,3 +250,17 @@ F12 is **in_progress**: the mosaic defect is resolved, but interactive zoom/pan,
 1:1 inspection and image export are still missing. F02/F03/F05–F11/F13 remain open.
 No database or project format changed. Native desktop input acceptance remains
 unavailable; framebuffer captures and Metal readback are recorded separately.
+
+## Workflow and framework follow-up — 2026-10-27
+
+The latest code addresses the core behavior behind F03/F05/F06/F07/F08/F09/F11/F12.
+F02 draft protection, F10 overflow reachability and F13 complete batch logging have
+improved but remain in progress: unified document transitions, adaptive panes and
+full SQL tracing are not complete. Earlier sections are historical records.
+
+Shared additions: `ImageView` get/set with validated scale and bounded pan,
+`FlexBuilder::scroll_row`, public validated ScrollArea offset restoration, correct
+nested wheel routing and expanded-content extent calculation. e28 uses these APIs
+for images, long strips, narrow windows and scrollable pages/docks. No dependency
+was added and database formats are unchanged; JSON projects gain optional fields
+with backwards-compatible defaults.

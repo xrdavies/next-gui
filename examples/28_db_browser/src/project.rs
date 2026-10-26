@@ -9,6 +9,11 @@ use crate::state::{AppState, BrowseTabState, MainTab};
 #[serde(default)]
 pub struct ProjectFile {
     pub db_path: String,
+    pub read_only: bool,
+    pub cond_rules: Vec<crate::state::CondFormatRule>,
+    pub chart_table: Option<String>,
+    pub chart_column: String,
+    pub ddl_draft: String,
     pub main_tab: usize,
     pub browse_table: Option<String>,
     pub browse_filter: String,
@@ -32,6 +37,11 @@ impl ProjectFile {
         let b = state.browse();
         Self {
             db_path: state.path.clone(),
+            read_only: state.read_only,
+            cond_rules: state.cond_rules.clone(),
+            chart_table: state.chart_table.clone(),
+            chart_column: state.chart_column.clone(),
+            ddl_draft: state.ddl_draft.clone(),
             main_tab: state.tab.index(),
             browse_table: b.table.clone(),
             browse_filter: b.filter.clone(),
@@ -73,6 +83,12 @@ impl ProjectFile {
     }
 
     pub fn apply_to(&self, state: &mut AppState) {
+        state.cond_rules = self.cond_rules.clone();
+        state.chart_table = self.chart_table.clone();
+        state.chart_column = self.chart_column.clone();
+        state.ddl_draft = self.ddl_draft.clone();
+        state.sql_outputs.clear();
+        state.sql_result = None;
         state.tab = MainTab::from_index(self.main_tab);
         state.dock_edit = self.dock_edit;
         state.dock_schema = self.dock_schema;
@@ -103,6 +119,11 @@ impl Default for ProjectFile {
     fn default() -> Self {
         Self {
             db_path: String::new(),
+            read_only: false,
+            cond_rules: Vec::new(),
+            chart_table: None,
+            chart_column: String::new(),
+            ddl_draft: String::new(),
             main_tab: 0,
             browse_table: None,
             browse_filter: String::new(),
@@ -138,6 +159,16 @@ mod tests {
         browse.scroll = (15.0, 40.0);
         let project = ProjectFile {
             db_path: "数据库.db".into(),
+            read_only: true,
+            chart_table: Some("表".into()),
+            chart_column: "price".into(),
+            cond_rules: vec![crate::state::CondFormatRule {
+                table: Some("表".into()),
+                column: "price".into(),
+                op: 3,
+                value: "10".into(),
+                color_rgb: 0x123456,
+            }],
             browse_tabs: vec![browse],
             sql_tabs: vec!["SELECT '中文\n\\\"';".into()],
             ..Default::default()
@@ -146,6 +177,11 @@ mod tests {
         let restored = ProjectFile::load(&path).unwrap();
         assert_eq!(restored.db_path, project.db_path);
         assert_eq!(restored.sql_tabs, project.sql_tabs);
+        assert!(restored.read_only);
+        assert_eq!(restored.chart_table.as_deref(), Some("表"));
+        assert_eq!(restored.chart_column, "price");
+        assert_eq!(restored.cond_rules[0].table.as_deref(), Some("表"));
+        assert_eq!(restored.cond_rules[0].color_rgb, 0x123456);
         assert_eq!(restored.browse_tabs[0].offset, 500);
         assert_eq!(restored.browse_tabs[0].order_col.as_deref(), Some("name"));
         assert_eq!(restored.browse_tabs[0].filter, "id>1");

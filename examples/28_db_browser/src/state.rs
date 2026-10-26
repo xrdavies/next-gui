@@ -165,8 +165,9 @@ pub enum EditCellMode {
     Image = 3,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CondFormatRule {
+    pub table: Option<String>,
     pub column: String,
     /// 0== 1!= 2contains 3> 4<
     pub op: usize,
@@ -187,6 +188,9 @@ pub struct AppState {
     pub status_msg: String,
     pub error_msg: Option<String>,
 
+    pub shell_scroll: (f32, f32),
+    pub page_scroll: [(f32,f32);4],
+    pub dock_scroll: [(f32,f32);5],
     pub dock_edit: bool,
     pub dock_schema: bool,
     pub dock_log: bool,
@@ -236,9 +240,11 @@ pub struct AppState {
     pub sql_edit_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub sql_tab_idx: usize,
     pub sql_result: Option<QueryResult>,
+    pub sql_outputs: Vec<SqlOutput>,
     pub sql_column_widths: Vec<f32>,
     pub sql_scroll: (f32, f32),
     pub sql_message: String,
+    pub sql_view_name: String,
     pub sql_busy: bool,
     pub sql_cancel: Arc<AtomicBool>,
     pub sql_interrupt: Option<InterruptHandle>,
@@ -262,11 +268,14 @@ pub struct AppState {
 
     // Phase 3
     pub project_path: Option<String>,
+    saved_project: serde_json::Value,
+    pub edit_saved: rusqlite::types::Value,
     pub prefs: crate::prefs::Prefs,
     pub frozen_cols: usize,
     pub cond_rules: Vec<CondFormatRule>,
     pub edit_mode: EditCellMode,
     pub edit_original: rusqlite::types::Value,
+    pub edit_type: usize,
     pub edit_binary_len: usize,
     pub edit_image_kind: String,
     pub toolbar_db: bool,
@@ -283,6 +292,7 @@ pub struct AppState {
     pub export_drop: bool,
     pub export_keep_fk: bool,
     pub prefs_font_size: String,
+    pub prefs_frozen_cols: usize,
     pub prefs_theme_dark: bool,
     pub prefs_confirm_drops: bool,
     pub prefs_csv_delim: String,
@@ -299,8 +309,17 @@ pub struct AppState {
     pub remote_paths: Vec<String>,
     pub remote_sel: usize,
     pub remote_draft: String,
+    pub edit_image_view: next_gui_ui::ImageView,
     pub edit_image_rgba: Option<(u32, u32, Vec<u8>)>,
     pub cipher_linked: bool,
+}
+
+#[derive(Default)]
+pub struct SqlOutput {
+    result: Option<QueryResult>,
+    widths: Vec<f32>,
+    scroll: (f32, f32),
+    message: String,
 }
 
 pub struct SqlJob {
@@ -362,12 +381,14 @@ impl AppState {
                 }
             }
         }
+        state.frozen_cols = state.prefs.frozen_cols_default;
         state.log_sql("-- session start");
+        state.checkpoint_project();
         state
     }
 
     fn empty() -> Self {
-        Self {
+        let mut state = Self {
             conn: None,
             path: String::new(),
             path_draft: String::new(),
@@ -378,6 +399,9 @@ impl AppState {
             tab: MainTab::Structure,
             status_msg: "Ready".into(),
             error_msg: None,
+            shell_scroll: (0.0,0.0),
+            page_scroll: [(0.0,0.0);4],
+            dock_scroll: [(0.0,0.0);5],
             dock_edit: true,
             dock_schema: true,
             dock_log: true,
@@ -425,8 +449,10 @@ impl AppState {
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
             sql_tab_idx: 0,
             sql_result: None,
+            sql_outputs: Vec::new(),
             sql_column_widths: Vec::new(),
             sql_scroll: (0.0, 0.0),
+            sql_view_name: "e28_saved_view".into(),
             sql_message: "Ready — Execute SQL to see results.".into(),
             sql_busy: false,
             sql_cancel: Arc::new(AtomicBool::new(false)),
@@ -443,11 +469,14 @@ impl AppState {
             confirm_kind: ConfirmKind::None,
             confirm_open: false,
             project_path: None,
+            saved_project: serde_json::Value::Null,
+            edit_saved: rusqlite::types::Value::Null,
             prefs: crate::prefs::Prefs::load(),
             frozen_cols: 0,
             cond_rules: Vec::new(),
             edit_mode: EditCellMode::Text,
             edit_original: rusqlite::types::Value::Null,
+            edit_type: 0,
             edit_binary_len: 0,
             edit_image_kind: String::new(),
             toolbar_db: true,
@@ -463,6 +492,7 @@ impl AppState {
             export_data: true,
             export_drop: false,
             export_keep_fk: true,
+            prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
             prefs_theme_dark: true,
             prefs_confirm_drops: true,
@@ -479,9 +509,12 @@ impl AppState {
             remote_paths: Vec::new(),
             remote_sel: 0,
             remote_draft: String::new(),
+            edit_image_view: next_gui_ui::ImageView::default(),
             edit_image_rgba: None,
             cipher_linked: false,
-        }
+        };
+        state.checkpoint_project();
+        state
     }
 
     pub fn browse(&self) -> &BrowseTabState {
@@ -518,6 +551,75 @@ impl AppState {
             self.sql_tab_idx = self.sql_tabs.len() - 1;
         }
         &mut self.sql_tabs[self.sql_tab_idx]
+    }
+
+    pub fn switch_sql_tab(&mut self, index: usize) {
+        if index >= self.sql_tabs.len() || index == self.sql_tab_idx || self.sql_busy {
+            return;
+        }
+        self.sql_outputs
+            .resize_with(self.sql_tabs.len(), SqlOutput::default);
+        self.sql_outputs[self.sql_tab_idx] = SqlOutput {
+            result: self.sql_result.take(),
+            widths: std::mem::take(&mut self.sql_column_widths),
+            scroll: self.sql_scroll,
+            message: std::mem::take(&mut self.sql_message),
+        };
+        let output = std::mem::take(&mut self.sql_outputs[index]);
+        self.sql_result = output.result;
+        self.sql_column_widths = output.widths;
+        self.sql_scroll = output.scroll;
+        self.sql_message = output.message;
+        self.error_msg = None;
+        self.sql_tab_idx = index;
+    }
+
+    fn project_snapshot(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(crate::project::ProjectFile::from_state(self))
+            .expect("project serialization");
+        // Active pages are navigation, not unsaved content.
+        for key in ["main_tab", "sql_tab_idx", "browse_tab_idx"] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        value
+    }
+
+    pub fn checkpoint_project(&mut self) {
+        self.saved_project = self.project_snapshot();
+    }
+
+    pub fn mark_sql_saved(&mut self) {
+        let sql = self.sql_editor().to_string();
+        if let Some(tabs) = self
+            .saved_project
+            .get_mut("sql_tabs")
+            .and_then(|v| v.as_array_mut())
+        {
+            while tabs.len() < self.sql_tabs.len() {
+                tabs.push(serde_json::Value::String(String::new()));
+            }
+            tabs[self.sql_tab_idx] = serde_json::Value::String(sql);
+        }
+    }
+
+    pub fn has_cell_draft(&self) -> bool {
+        if self.edit_col.is_empty() {
+            return false;
+        }
+        if self.edit_mode == EditCellMode::Image {
+            return self.edit_original != self.edit_saved;
+        }
+        !matches!(self.edited_cell_value(), Ok(value) if value == self.edit_saved)
+    }
+
+    pub fn has_unsaved_drafts(&self) -> bool {
+        self.project_snapshot() != self.saved_project
+            || self.has_cell_draft()
+            || self
+                .pragmas
+                .iter()
+                .zip(&self.pragma_drafts)
+                .any(|((_, old), draft)| old != draft)
     }
 
     pub fn any_dock_visible(&self) -> bool {
@@ -582,6 +684,7 @@ impl AppState {
             return Err("No database open".into());
         };
         db::rollback_and_begin(conn)?;
+        self.edit_col.clear();
         self.dirty = false;
         self.log_sql("-- REVERT CHANGES (ROLLBACK)");
         self.refresh_schema()?;
@@ -661,6 +764,7 @@ impl AppState {
     }
 
     pub fn refresh_browse(&mut self) -> Result<(), String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.conn.is_none() {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
                 t.result = None;
@@ -808,7 +912,9 @@ impl AppState {
         }
         self.edit_col.clear();
         self.edit_value.clear();
+        self.edit_type = 0;
         self.edit_original = rusqlite::types::Value::Null;
+        self.edit_saved = rusqlite::types::Value::Null;
         self.edit_image_rgba = None;
         self.status_msg = format!(
             "Browse {} — {} rows from {}{}{}",
@@ -852,8 +958,8 @@ impl AppState {
             self.chart_points.clear();
             return Ok(());
         }
-        self.chart_points =
-            db::numeric_series(conn, &table, self.chart_column.trim(), 64).unwrap_or_default();
+        self.chart_points.clear();
+        self.chart_points = db::numeric_series(conn, &table, self.chart_column.trim(), 64)?;
         Ok(())
     }
 
@@ -1163,11 +1269,7 @@ impl AppState {
         self.mark_dirty();
         self.overlay = None;
         self.refresh_schema()?;
-        {
-            let t = self.browse_mut();
-            t.table = Some(table.clone());
-            t.title = table.clone();
-        }
+        *self.browse_mut() = BrowseTabState::new(Some(table.clone()));
         self.refresh_browse()?;
         self.status_msg = format!("Imported {n} rows into `{table}` (unwritten)");
         Ok(())
@@ -1186,26 +1288,17 @@ impl AppState {
             .map(|o| o.name.clone())
             .collect::<Vec<_>>();
         let preferred = ["products", "order_items", "orders"];
-        let mut chosen = None;
-        for pref in preferred {
-            if names.iter().any(|n| n == pref) {
-                chosen = Some(pref.to_string());
-                break;
-            }
-        }
-        if chosen.is_none() {
-            if let Some(conn) = self.conn.as_ref() {
-                for name in &names {
-                    if let Ok(pts) = db::numeric_series(conn, name, self.chart_column.trim(), 8) {
-                        if !pts.is_empty() {
-                            chosen = Some(name.clone());
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        self.chart_table = chosen.or_else(|| names.first().cloned());
+        self.chart_table = preferred
+            .iter()
+            .copied()
+            .chain(names.iter().map(String::as_str))
+            .find(|name| {
+                names.iter().any(|n| n == name)
+                    && self.conn.as_ref().is_some_and(|conn| {
+                        db::numeric_series(conn, name, self.chart_column.trim(), 8).is_ok()
+                    })
+            })
+            .map(String::from);
     }
 
     pub fn table_names(&self) -> Vec<String> {
@@ -1233,6 +1326,7 @@ impl AppState {
         self.cipher_open_path = None;
         self.selected = None;
         self.sql_result = None;
+        self.sql_outputs.clear();
         self.path = path;
         self.path_draft = self.path.clone();
         self.read_only = read_only;
@@ -1294,6 +1388,7 @@ impl AppState {
         self.log_sql(format!("-- create {path}"));
         self.schema.clear();
         self.sql_result = None;
+        self.sql_outputs.clear();
         self.adopt_conn(conn, path.to_string(), false)?;
         self.status_msg = format!("Created {path}");
         Ok(())
@@ -1305,6 +1400,7 @@ impl AppState {
         self.log_sql("-- new in-memory");
         self.schema.clear();
         self.sql_result = None;
+        self.sql_outputs.clear();
         self.adopt_conn(conn, ":memory:".into(), false)?;
         self.status_msg = "New in-memory database".into();
         Ok(())
@@ -1350,6 +1446,7 @@ impl AppState {
         if self.sql_busy {
             return Err("Stop or finish SQL before changing databases".into());
         }
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.dirty {
             return Err("Write Changes or Revert before changing databases".into());
         }
@@ -1366,6 +1463,7 @@ impl AppState {
         self.browse_tabs = vec![BrowseTabState::new(None)];
         self.browse_tab_idx = 0;
         self.sql_result = None;
+        self.sql_outputs.clear();
         self.pragmas.clear();
         self.chart_points.clear();
         self.path.clear();
@@ -1470,10 +1568,10 @@ impl AppState {
                     }
                     let out = match k.as_str() {
                         "foreign_keys" | "recursive_triggers" => {
-                            if matches!(vv.to_ascii_lowercase().as_str(), "1" | "on" | "true") {
-                                "ON"
-                            } else {
-                                "OFF"
+                            match vv.to_ascii_lowercase().as_str() {
+                                "1" | "on" | "true" => "ON",
+                                "0" | "off" | "false" => "OFF",
+                                _ => return Err(format!("Invalid boolean PRAGMA {k}")),
                             }
                         }
                         _ => vv,
@@ -1482,6 +1580,28 @@ impl AppState {
                         continue;
                     }
                     db::write_pragma(conn, k, out)?;
+                    let actual = db::read_pragma(conn, k)?;
+                    let lower = out.to_ascii_lowercase();
+                    let expected = match (k.as_str(), lower.as_str()) {
+                        ("foreign_keys" | "recursive_triggers", "on" | "true") => "1",
+                        ("foreign_keys" | "recursive_triggers", "off" | "false")
+                        | ("synchronous", "off") => "0",
+                        ("synchronous", "normal") => "1",
+                        ("synchronous", "full") => "2",
+                        ("synchronous", "extra") => "3",
+                        ("temp_store", "default") | ("auto_vacuum", "none") => "0",
+                        ("temp_store", "file") | ("auto_vacuum", "full") => "1",
+                        ("temp_store", "memory") | ("auto_vacuum", "incremental") => "2",
+                        _ => out,
+                    };
+                    let matches = actual.eq_ignore_ascii_case(expected)
+                        || matches!(
+                            (actual.parse::<i64>(), expected.parse::<i64>()),
+                            (Ok(a), Ok(b)) if a == b
+                        );
+                    if !matches {
+                        return Err(format!("PRAGMA {k} requested {out}, actual {actual}; earlier settings may have applied. auto_vacuum changes from NONE require VACUUM."));
+                    }
                     logs.push(format!("PRAGMA {k} = {out}"));
                 }
                 Ok::<_, String>(())
@@ -1503,6 +1623,7 @@ impl AppState {
     }
 
     pub fn run_sql_text_sync(&mut self, sql: &str) -> Result<(), String> {
+        self.log_sql(sql);
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let result = db::execute_sql(conn, sql);
         self.dirty = !self.read_only && db::has_pending_changes(conn)?;
@@ -1532,7 +1653,7 @@ impl AppState {
         self.sql_busy = true;
         self.sql_message = "Running…".into();
         self.status_msg = "SQL running…".into();
-        self.log_sql(sql.lines().next().unwrap_or("SQL"));
+        self.log_sql(&sql);
         let handle = std::thread::spawn(move || {
             worker.progress_handler(500, Some(move || cancel.load(Ordering::SeqCst)));
             let mut result = db::execute_sql(&worker, &sql);
@@ -1641,7 +1762,7 @@ impl AppState {
         self.prefs_theme_dark = self.prefs.default_theme_dark;
         self.prefs_confirm_drops = self.prefs.confirm_drops;
         self.prefs_csv_delim = self.prefs.csv_delimiter.to_string();
-        self.frozen_cols = self.prefs.frozen_cols_default;
+        self.prefs_frozen_cols = self.frozen_cols;
     }
 
     pub fn apply_prefs_overlay(&mut self) -> Result<(), String> {
@@ -1659,7 +1780,8 @@ impl AppState {
         if let Some(c) = self.prefs_csv_delim.chars().next() {
             self.prefs.csv_delimiter = if c == 't' { '\t' } else { c };
         }
-        self.prefs.frozen_cols_default = self.frozen_cols;
+        self.prefs.frozen_cols_default = self.prefs_frozen_cols;
+        self.frozen_cols = self.prefs_frozen_cols;
         self.prefs.save()?;
         self.status_msg = format!(
             "Preferences saved (font {}, theme {})",
@@ -1750,6 +1872,7 @@ impl AppState {
                 .to_string();
         }
         pf.save(path)?;
+        self.checkpoint_project();
         self.project_path = Some(path.display().to_string());
         self.status_msg = format!("Project saved → {}", path.display());
         Ok(())
@@ -1757,6 +1880,9 @@ impl AppState {
 
     pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
         self.guard_replace()?;
+        if self.has_unsaved_drafts() {
+            return Err("Save the current project before replacing its drafts/settings".into());
+        }
         let mut pf = crate::project::ProjectFile::load(path)?;
         if !pf.db_path.is_empty()
             && pf.db_path != ":memory:"
@@ -1776,6 +1902,9 @@ impl AppState {
                 return Err("Project database does not exist".into());
             }
             if self.cipher_active && self.path == pf.db_path {
+                if pf.read_only != self.read_only {
+                    return Err("Reopen the encrypted database in the project's access mode before loading it".into());
+                }
                 // Reuse the already unlocked connection; keys are never stored in projects.
             } else {
                 if !db::looks_like_sqlite(Path::new(&pf.db_path))? {
@@ -1783,12 +1912,17 @@ impl AppState {
                         "Open and unlock the encrypted database before loading its project".into(),
                     );
                 }
-                self.open_path(&pf.db_path)?;
+                if pf.read_only {
+                    self.open_readonly_path(&pf.db_path)?;
+                } else {
+                    self.open_path(&pf.db_path)?;
+                }
             }
         }
         pf.apply_to(self);
         self.project_path = Some(path.display().to_string());
         let _ = self.refresh_browse();
+        self.checkpoint_project();
         self.status_msg = format!("Project opened ← {}", path.display());
         Ok(())
     }
@@ -1832,17 +1966,21 @@ impl AppState {
         self.status_msg = "Toggled -- comments on SQL tab".into();
     }
 
+    pub fn discard_cell_draft(&mut self) {
+        self.edit_col.clear();
+        self.edit_value.clear();
+        self.edit_image_rgba = None;
+        self.sync_edit_cell_from_selection();
+    }
+
     pub fn save_results_as_view(&mut self, name: &str) -> Result<(), String> {
         self.guard_writable()?;
         let name = name.trim();
         if name.is_empty() {
             return Err("View name required".into());
         }
-        let sql = self
-            .sql_tabs
-            .get(self.sql_tab_idx)
-            .cloned()
-            .unwrap_or_default();
+        let sql = self.sql_result.as_ref().and_then(|r| r.statement.as_deref())
+            .ok_or("Execute a SELECT in this tab before saving its result as a view")?;
         let body = sql.trim().trim_end_matches(';');
         if body.is_empty() {
             return Err("SQL editor empty".into());
@@ -1872,6 +2010,7 @@ impl AppState {
         let rgb =
             u32::from_str_radix(self.cond_color.trim_start_matches('#'), 16).unwrap_or(0xE67E22);
         self.cond_rules.push(CondFormatRule {
+            table: self.browse().table.clone(),
             column: col,
             op: self.cond_op_idx,
             value: self.cond_value.clone(),
@@ -1891,7 +2030,7 @@ impl AppState {
                 let val = row.get(ci).map(|s| s.as_str()).unwrap_or("");
                 let mut tint = None;
                 for rule in &self.cond_rules {
-                    if &rule.column != cname {
+                    if rule.table != self.browse().table || &rule.column != cname {
                         continue;
                     }
                     let hit = match rule.op {
@@ -1925,6 +2064,7 @@ impl AppState {
     }
 
     pub fn sync_edit_cell_from_selection(&mut self) {
+        if self.has_cell_draft() { self.error_msg = Some("Apply or discard the cell draft first".into()); return; }
         let b = self.browse();
         let (Some(ri), Some(res), Some(table), Some(conn)) = (
             b.sel_row,
@@ -1965,6 +2105,15 @@ impl AppState {
             EditCellMode::Text
         };
         self.edit_col = col;
+        self.edit_type = match &value {
+            rusqlite::types::Value::Null => 0,
+            rusqlite::types::Value::Integer(_) => 1,
+            rusqlite::types::Value::Real(_) => 2,
+            rusqlite::types::Value::Text(_) => 3,
+            rusqlite::types::Value::Blob(_) => 4,
+        };
+        self.edit_image_view = next_gui_ui::ImageView::default();
+        self.edit_saved = value.clone();
         self.edit_original = value;
         self.edit_mode = mode;
         self.show_edit_value();
@@ -1995,36 +2144,62 @@ impl AppState {
 
     pub fn edited_cell_value(&self) -> Result<rusqlite::types::Value, String> {
         use rusqlite::types::Value;
-        match self.edit_mode {
-            EditCellMode::Hex => db::from_hex(&self.edit_value).map(Value::Blob),
-            EditCellMode::Json
-                if serde_json::from_str::<serde_json::Value>(&self.edit_value).is_err() =>
-            {
-                Err("Invalid JSON".into())
+        if self.edit_mode == EditCellMode::Image {
+            return Err("Image preview is read-only; use Hex to edit binary data".into());
+        }
+        if self.edit_type == 0 {
+            return Ok(Value::Null);
+        }
+        let decoded;
+        let text = if self.edit_mode == EditCellMode::Hex {
+            let bytes = db::from_hex(&self.edit_value)?;
+            if self.edit_type == 4 {
+                return Ok(Value::Blob(bytes));
             }
-            EditCellMode::Image => {
-                Err("Image preview is read-only; use Hex to edit binary data".into())
+            decoded = String::from_utf8(bytes)
+                .map_err(|_| "Invalid UTF-8; select BLOB for arbitrary bytes")?;
+            &decoded
+        } else {
+            &self.edit_value
+        };
+        if self.edit_mode == EditCellMode::Json
+            && serde_json::from_str::<serde_json::Value>(text).is_err()
+        {
+            return Err("Invalid JSON".into());
+        }
+        match self.edit_type {
+            1 => text
+                .trim()
+                .parse::<i64>()
+                .map(Value::Integer)
+                .map_err(|_| "Invalid INTEGER; select TEXT to change its type".into()),
+            2 => {
+                let value = text.trim().parse::<f64>().map_err(|_| "Invalid REAL")?;
+                if !value.is_finite() {
+                    return Err("REAL must be finite".into());
+                }
+                Ok(Value::Real(value))
             }
-            _ if matches!(self.edit_original, Value::Blob(_)) => {
-                Err("Use Hex to edit binary data without changing its type".into())
+            4 => {
+                if let Value::Blob(bytes) = &self.edit_original {
+                    if text.as_str() == String::from_utf8_lossy(bytes) {
+                        return Ok(self.edit_original.clone());
+                    }
+                    return Err("Use Hex to edit binary data without changing its type".into());
+                }
+                Ok(Value::Blob(text.as_bytes().to_vec()))
             }
-            _ if matches!(&self.edit_original, Value::Integer(v) if v.to_string() == self.edit_value) => {
-                Ok(self.edit_original.clone())
-            }
-            _ if matches!(&self.edit_original, Value::Real(v) if v.to_string() == self.edit_value) => {
-                Ok(self.edit_original.clone())
-            }
-            _ if self.edit_original == Value::Null && self.edit_value.is_empty() => Ok(Value::Null),
-            _ => Ok(Value::Text(self.edit_value.clone())),
+            _ => Ok(Value::Text(text.to_string())),
         }
     }
 
-    pub fn set_edit_mode(&mut self, mode: EditCellMode) {
-        if let Ok(value) = self.edited_cell_value() {
-            self.edit_original = value;
+    pub fn set_edit_mode(&mut self, mode: EditCellMode) -> Result<(), String> {
+        if self.edit_mode != EditCellMode::Image {
+            self.edit_original = self.edited_cell_value()?;
         }
         self.edit_mode = mode;
         self.show_edit_value();
+        Ok(())
     }
 
     pub fn navigate_fk(&mut self) -> Result<(), String> {
@@ -2034,7 +2209,6 @@ impl AppState {
             .clone()
             .ok_or_else(|| "No browse table".to_string())?;
         let col = self.edit_col.clone();
-        let val = self.edit_value.clone();
         if col.is_empty() {
             return Err("Select a cell first".into());
         }
@@ -2042,21 +2216,45 @@ impl AppState {
             let conn = self.conn.as_ref().ok_or("No database open")?;
             db::list_foreign_keys(conn, &table)?
         };
-        let Some(fk) = fks.into_iter().find(|f| f.from_col == col) else {
+        let Some(fk) = fks.iter().find(|f| f.from_col == col) else {
             return Err(format!("Column {col} has no foreign key"));
         };
-        let filter = format!(
-            "{} = '{}'",
-            db::quote_ident(&fk.to_col),
-            val.replace('\'', "''")
-        );
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        let rowid = self
+            .browse()
+            .sel_row
+            .and_then(|i| self.browse().rowids.get(i))
+            .ok_or("Select a stored row with a rowid")?;
+        let mut parts = Vec::new();
+        for key in fks.iter().filter(|key| key.id == fk.id) {
+            let value = conn
+                .query_row(
+                    &format!(
+                        "SELECT {} FROM {} WHERE rowid=?1",
+                        db::quote_ident(&key.from_col),
+                        db::quote_ident(&table)
+                    ),
+                    [rowid],
+                    |row| row.get::<_, rusqlite::types::Value>(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if value == rusqlite::types::Value::Null {
+                return Err("NULL foreign key has no parent row".into());
+            }
+            parts.push(format!(
+                "{} = {}",
+                db::quote_ident(&key.to_col),
+                db::sql_literal((&value).into())
+            ));
+        }
+        let filter = parts.join(" AND ");
         self.browse_tabs
             .push(BrowseTabState::new(Some(fk.to_table.clone())));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
         self.browse_mut().filter = filter;
         self.tab = MainTab::Browse;
         self.refresh_browse()?;
-        self.status_msg = format!("FK → {}.{} = {}", fk.to_table, fk.to_col, val);
+        self.status_msg = format!("FK → {}", fk.to_table);
         Ok(())
     }
 }
@@ -2263,6 +2461,7 @@ mod chart_default_tests {
             .execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('saved'); BEGIN;")
             .unwrap();
         state.path = ":memory:".into();
+        state.checkpoint_project();
         state
     }
 
@@ -2272,6 +2471,197 @@ mod chart_default_tests {
             assert!(std::time::Instant::now() < deadline, "SQL worker timed out");
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn cell_types_and_invalid_hex_drafts_are_preserved() {
+        use rusqlite::types::Value;
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("DELETE FROM t; INSERT INTO t VALUES(7)")
+            .unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.edit_value = "8".into();
+        assert_eq!(state.edited_cell_value().unwrap(), Value::Integer(8));
+        assert!(state.has_cell_draft());
+        state.edit_value = "9223372036854775808".into();
+        assert!(state.edited_cell_value().is_err());
+        state.edit_type = 3;
+        assert_eq!(
+            state.edited_cell_value().unwrap(),
+            Value::Text(state.edit_value.clone())
+        );
+        state.edit_type = 0;
+        assert_eq!(state.edited_cell_value().unwrap(), Value::Null);
+        state.set_edit_mode(EditCellMode::Hex).unwrap();
+        state.edit_type = 4;
+        state.edit_value = "ZZ".into();
+        assert!(state.set_edit_mode(EditCellMode::Text).is_err());
+        assert_eq!(state.edit_mode, EditCellMode::Hex);
+        assert_eq!(state.edit_value, "ZZ");
+        assert!(state.refresh_browse().is_err());
+        state.discard_cell_draft();
+        assert_eq!(state.edit_value, "7");
+        assert!(!state.has_cell_draft());
+    }
+
+    #[test]
+    fn composite_implicit_and_blob_foreign_keys_navigate_stored_values() {
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE parent(a BLOB,b,PRIMARY KEY(a,b));
+            INSERT INTO parent VALUES(X'00FF',2),(X'00FF',3);
+            CREATE TABLE child(x BLOB,y, FOREIGN KEY(x,y) REFERENCES parent);
+            INSERT INTO child VALUES(X'00FF',3),(NULL,2);",
+            )
+            .unwrap();
+        state.refresh_schema().unwrap();
+        state.browse_mut().table = Some("child".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.navigate_fk().unwrap();
+        assert_eq!(state.browse().table.as_deref(), Some("parent"));
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 1);
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][1], "3");
+        state.browse_tab_idx = 0;
+        state.browse_mut().sel_row = Some(1);
+        state.sync_edit_cell_from_selection();
+        assert!(state.navigate_fk().unwrap_err().contains("NULL"));
+    }
+
+    #[test]
+    fn pragma_reports_actual_value_instead_of_false_success() {
+        let mut state = test_state();
+        state.refresh_pragmas().unwrap();
+        let i = state
+            .pragmas
+            .iter()
+            .position(|(k, _)| k == "auto_vacuum")
+            .unwrap();
+        state.pragma_drafts[i] = "1".into();
+        assert!(state.save_pragmas().unwrap_err().contains("actual 0"));
+        assert!(!state.conn.as_ref().unwrap().is_autocommit());
+        state.refresh_pragmas().unwrap();
+        let journal = state
+            .pragmas
+            .iter()
+            .position(|(k, _)| k == "journal_mode")
+            .unwrap();
+        state.pragma_drafts[journal] = "OFF".into();
+        state.save_pragmas().unwrap();
+        assert_eq!(
+            db::read_pragma(state.conn.as_ref().unwrap(), "journal_mode").unwrap(),
+            "off"
+        );
+        state.pragma_drafts[journal] = "MEMORY".into();
+        state.save_pragmas().unwrap();
+    }
+
+    #[test]
+    fn csv_import_resets_old_browse_state_and_plot_rejects_bad_samples() {
+        let mut state = test_state();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().col_filters = vec!["42".into()];
+        state.browse_mut().offset = 500;
+        state.browse_mut().order_col = Some("v".into());
+        state.overlay = Some(OverlayKind::PasteCsv);
+        state.csv_table = "new_csv".into();
+        state.csv_paste = "new_col\nhello\n".into();
+        state.apply_csv_import().unwrap();
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().order_col, None);
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "hello");
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch(
+                "DELETE FROM t; INSERT INTO t VALUES ('abc'),(42),('1e100'),(NULL),('2.5')",
+            )
+            .unwrap();
+        state.chart_table = Some("t".into());
+        state.chart_column = "v".into();
+        state.refresh_chart().unwrap();
+        assert_eq!(state.chart_points, vec![42.0, 2.5]);
+        state.chart_table = Some("missing".into());
+        assert!(state.refresh_chart().is_err());
+        assert!(state.chart_points.is_empty());
+    }
+
+    #[test]
+    fn sql_results_and_view_source_belong_to_their_tab() {
+        let mut state = test_state();
+        *state.sql_editor_mut() = "SELECT 1 AS value;".into();
+        state.run_sql_sync().unwrap();
+        state.sql_tabs.push("SELECT 2 AS value;".into());
+        state.switch_sql_tab(1);
+        assert!(state.sql_result.is_none());
+        state.run_sql_sync().unwrap();
+        state.switch_sql_tab(0);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "1");
+        *state.sql_editor_mut() = "SELECT 99;".into();
+        state.save_results_as_view("saved_result").unwrap();
+        assert_eq!(
+            state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row("SELECT * FROM saved_result", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        state.switch_sql_tab(1);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "2");
+        state.start_sql_text("SELECT 3;\nSELECT 4;".into()).unwrap();
+        wait_sql(&mut state);
+        assert!(state.sql_log.iter().any(|s| s == "SELECT 3;\nSELECT 4;"));
+    }
+
+    #[test]
+    fn sql_and_project_drafts_survive_rollback_and_are_checkpointed_on_save() {
+        let mut state = test_state();
+        assert!(!state.has_unsaved_drafts());
+        *state.sql_editor_mut() = "SELECT 'draft';".into();
+        state.revert_changes().unwrap();
+        assert!(state.has_unsaved_drafts());
+        state.mark_sql_saved();
+        assert!(!state.has_unsaved_drafts());
+        state.frozen_cols = 2;
+        state.sync_prefs_drafts();
+        state.prefs_frozen_cols = 8;
+        assert_eq!(state.frozen_cols, 2);
+        assert!(state.has_unsaved_drafts());
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.cond_col = "v".into();
+        state.cond_value = "saved".into();
+        state.add_cond_format_rule();
+        assert!(state.cell_format_colors()[0][0].is_some());
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE TABLE other(v); INSERT INTO other VALUES('saved')")
+            .unwrap();
+        *state.browse_mut() = BrowseTabState::new(Some("other".into()));
+        state.refresh_browse().unwrap();
+        assert!(
+            state.cell_format_colors()[0][0].is_none(),
+            "Rules must stay with their table"
+        );
     }
 
     #[test]
@@ -2380,7 +2770,7 @@ mod chart_default_tests {
                 .unwrap(),
             vec![255, 0]
         );
-        state.set_edit_mode(EditCellMode::Image);
+        state.set_edit_mode(EditCellMode::Image).unwrap();
         assert!(state.edited_cell_value().is_err());
         let mut bytes = std::io::Cursor::new(Vec::new());
         image::DynamicImage::new_rgb8(2, 2)

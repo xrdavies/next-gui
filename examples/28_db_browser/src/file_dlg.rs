@@ -65,3 +65,8 @@ pub fn pick_save_project() -> Option<PathBuf> {
         .set_title("Save Project")
         .save_file()
 }
+
+/// Export the original image bytes without decoding/re-encoding them.
+pub fn pick_save_image() -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title("Export Original Image").save_file()
+}

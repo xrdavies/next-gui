@@ -163,6 +163,9 @@ struct Demo {
 
 #[allow(dead_code)]
 struct BuiltUiIds {
+    shell_scroll: WidgetId,
+    page_scroll: WidgetId,
+    dock_scroll: WidgetId,
     menu_file: WidgetId,
     menu_edit: WidgetId,
     menu_view: WidgetId,
@@ -211,6 +214,8 @@ struct BuiltUiIds {
     dock_tabs: WidgetId,
     edit_col: WidgetId,
     edit_value: WidgetId,
+    edit_type: WidgetId,
+    btn_edit_discard: WidgetId,
     btn_edit_cell: WidgetId,
     chart_select: WidgetId,
     chart_col: WidgetId,
@@ -266,6 +271,7 @@ struct BuiltUiIds {
     btn_sql_line: WidgetId,
     btn_sql_comment: WidgetId,
     btn_sql_view: WidgetId,
+    sql_view_name: WidgetId,
     btn_edit_text: WidgetId,
     btn_edit_hex: WidgetId,
     btn_edit_json: WidgetId,
@@ -283,6 +289,11 @@ struct BuiltUiIds {
     btn_form_prev: WidgetId,
     btn_form_next: WidgetId,
     form_fields: Vec<WidgetId>,
+    image_fit: WidgetId,
+    image_actual: WidgetId,
+    image_in: WidgetId,
+    image_out: WidgetId,
+    image_export: WidgetId,
     edit_image: WidgetId,
     remote_list: WidgetId,
     remote_draft: WidgetId,
@@ -293,6 +304,9 @@ struct BuiltUiIds {
 impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
+            shell_scroll: b.shell_scroll,
+            page_scroll: b.page_scroll,
+            dock_scroll: b.dock_scroll,
             menu_file: b.menu_file,
             menu_edit: b.menu_edit,
             menu_view: b.menu_view,
@@ -341,6 +355,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             dock_tabs: b.dock_tabs,
             edit_col: b.edit_col,
             edit_value: b.edit_value,
+            edit_type: b.edit_type,
+            btn_edit_discard: b.btn_edit_discard,
             btn_edit_cell: b.btn_edit_cell,
             chart_select: b.chart_select,
             chart_col: b.chart_col,
@@ -396,6 +412,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_sql_line: b.btn_sql_line,
             btn_sql_comment: b.btn_sql_comment,
             btn_sql_view: b.btn_sql_view,
+            sql_view_name: b.sql_view_name,
             btn_edit_text: b.btn_edit_text,
             btn_edit_hex: b.btn_edit_hex,
             btn_edit_json: b.btn_edit_json,
@@ -413,6 +430,11 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_form_prev: b.btn_form_prev,
             btn_form_next: b.btn_form_next,
             form_fields: b.form_fields.clone(),
+            image_fit: b.image_fit,
+            image_actual: b.image_actual,
+            image_in: b.image_in,
+            image_out: b.image_out,
+            image_export: b.image_export,
             edit_image: b.edit_image,
             remote_list: b.remote_list,
             remote_draft: b.remote_draft,
@@ -543,7 +565,10 @@ impl Demo {
                 .write_to(&mut bytes, image::ImageOutputFormat::Png)
                 .unwrap();
             state.edit_original = rusqlite::types::Value::Blob(bytes.into_inner());
-            state.set_edit_mode(crate::state::EditCellMode::Image);
+            state.edit_type = 4;
+            state.edit_saved = state.edit_original.clone();
+            state.edit_mode = crate::state::EditCellMode::Image;
+            state.set_edit_mode(crate::state::EditCellMode::Image).unwrap();
         }
         let mut theme = if state.prefs.default_theme_dark {
             theme
@@ -603,6 +628,11 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        if let Some(value) = self.ui.text_input_value(self.ids.sql_view_name) { self.state.sql_view_name = value.to_string(); }
+        if let Some(offset) = self.ui.scroll_offset(self.ids.page_scroll) { self.state.page_scroll[self.last_tab] = offset; }
+        if let Some(offset) = self.ui.scroll_offset(self.ids.dock_scroll) { self.state.dock_scroll[self.state.dock_focus as usize] = offset; }
+        if let Some(offset) = self.ui.scroll_offset(self.ids.shell_scroll) { self.state.shell_scroll = offset; }
+        if let Some(view) = self.ui.image_view(self.ids.edit_image) { self.state.edit_image_view = view; }
         if let Some(widths) = self.ui.table_column_widths(self.ids.browse_table) {
             self.state.browse_mut().column_widths = widths;
             self.state.browse_mut().scroll =
@@ -639,8 +669,11 @@ impl Demo {
                 self.state.edit_col = v.to_string();
             }
         }
+        if let Some(t) = self.ui.select_selected(self.ids.edit_type) {
+            self.state.edit_type = t;
+        }
         if self.ids.edit_value.0 != 0 {
-            if let Some(v) = self.ui.text_input_value(self.ids.edit_value) {
+            if let Some(v) = self.ui.text_area_value(self.ids.edit_value) {
                 self.state.edit_value = v.to_string();
             }
         }
@@ -867,7 +900,7 @@ impl Demo {
                 if self.ids.ov_frozen.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_frozen) {
                         if let Ok(n) = v.trim().parse::<usize>() {
-                            self.state.frozen_cols = n;
+                            self.state.prefs_frozen_cols = n;
                         }
                     }
                 }
@@ -1265,6 +1298,12 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
+        self.snapshot_inputs();
+        if self.state.has_cell_draft() && item != mid::FILE_EXIT {
+            self.set_error("Apply or discard the cell draft first");
+            self.rebuild = true;
+            return;
+        }
         if self.state.sql_busy {
             self.set_error("Stop or finish SQL first");
             self.rebuild = true;
@@ -1322,7 +1361,7 @@ impl Demo {
             mid::FILE_EXPORT_CSV => self.action_export_csv(),
             mid::FILE_EXPORT_SQL => self.action_export_sql(),
             mid::FILE_EXIT => {
-                if self.state.dirty {
+                if self.state.dirty || self.state.has_unsaved_drafts() {
                     self.state.confirm_kind = ConfirmKind::ExitDirty;
                     self.state.confirm_open = true;
                     self.rebuild = true;
@@ -1711,6 +1750,47 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        self.snapshot_inputs();
+        if id == self.ids.btn_edit_discard && id.0 != 0 {
+            self.state.discard_cell_draft();
+            self.clear_error();
+            self.rebuild = true;
+            return;
+        }
+        if id.0 != 0 && [self.ids.image_fit, self.ids.image_actual, self.ids.image_in, self.ids.image_out].contains(&id) {
+            let mut view = self.state.edit_image_view;
+            let (w, h) = self.state.edit_image_rgba.as_ref().map(|(w,h,_)| (*w as f32,*h as f32)).unwrap_or((1.0,1.0));
+            let bounds = self.scene.iter_paint_order().into_iter().find(|n| self.ui.widget_from_node(n.id) == Some(self.ids.edit_image)).map(|n| n.bounds);
+            let fit = bounds.map_or(1.0, |b| (b.width/w).min((b.height-18.0).max(1.0)/h));
+            view.scale = if id == self.ids.image_fit { None }
+                else if id == self.ids.image_actual { Some(1.0) }
+                else { Some((view.scale.unwrap_or(fit) * if id == self.ids.image_in { 2.0 } else { 0.5 }).clamp(1.0/64.0,64.0)) };
+            self.ui.set_image_view(self.ids.edit_image, view);
+            self.state.edit_image_view = self.ui.image_view(self.ids.edit_image).unwrap_or_default();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.image_export && id.0 != 0 {
+            if let Some(path) = file_dlg::pick_save_image() {
+                let result = (|| {
+                    let conn = self.state.conn.as_ref().ok_or("No database open")?;
+                    dbmod::guard_output_path(conn, &path)?;
+                    let rusqlite::types::Value::Blob(bytes) = &self.state.edit_original else { return Err("Select an image BLOB".into()); };
+                    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+                })();
+                match result { Ok(()) => self.clear_error(), Err(e) => self.set_error(e) }
+                self.rebuild = true;
+            }
+            return;
+        }
+        if self.state.has_cell_draft() && ![
+            self.ids.btn_edit_cell, self.ids.btn_edit_text, self.ids.btn_edit_hex,
+            self.ids.btn_edit_json, self.ids.btn_edit_image,
+        ].contains(&id) {
+            self.set_error("Apply or discard the cell draft first");
+            self.rebuild = true;
+            return;
+        }
         if self.state.sql_busy && id != self.ids.btn_sql_stop {
             return;
         }
@@ -1783,7 +1863,6 @@ impl Demo {
             let sql = self.state.ddl_draft.clone();
             match self.state.run_sql_text_sync(&sql) {
                 Ok(_) => {
-                    self.state.log_sql(sql);
                     self.state.status_msg = "DDL executed".into();
                     self.clear_error();
                 }
@@ -1871,6 +1950,7 @@ impl Demo {
                     self.state
                         .log_sql(format!("UPDATE {table} SET {col}=… WHERE rowid={rowid}"));
                     self.state.mark_dirty();
+                    self.state.edit_saved = val;
                     let _ = self.state.refresh_browse();
                     self.state.status_msg = "Cell updated (unwritten)".into();
                     self.clear_error();
@@ -1946,7 +2026,7 @@ impl Demo {
         for (i, bid) in self.ids.sql_tab_btns.iter().enumerate() {
             if id == *bid {
                 self.snapshot_inputs();
-                self.state.sql_tab_idx = i;
+                self.state.switch_sql_tab(i);
                 self.rebuild = true;
                 return;
             }
@@ -1971,7 +2051,7 @@ impl Demo {
         }
         if id == self.ids.btn_sql_view {
             self.snapshot_inputs();
-            match self.state.save_results_as_view("e28_saved_view") {
+            match self.state.save_results_as_view(&self.state.sql_view_name.clone()) {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
@@ -2002,22 +2082,22 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_edit_text {
-            self.state.set_edit_mode(crate::state::EditCellMode::Text);
+            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Text) { self.set_error(e); }
             self.rebuild = true;
             return;
         }
         if id == self.ids.btn_edit_hex {
-            self.state.set_edit_mode(crate::state::EditCellMode::Hex);
+            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Hex) { self.set_error(e); }
             self.rebuild = true;
             return;
         }
         if id == self.ids.btn_edit_json {
-            self.state.set_edit_mode(crate::state::EditCellMode::Json);
+            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Json) { self.set_error(e); }
             self.rebuild = true;
             return;
         }
         if id == self.ids.btn_edit_image {
-            self.state.set_edit_mode(crate::state::EditCellMode::Image);
+            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Image) { self.set_error(e); }
             self.rebuild = true;
             return;
         }
@@ -2083,7 +2163,7 @@ impl Demo {
         if id == self.ids.btn_sql_new_tab {
             self.snapshot_inputs();
             self.state.sql_tabs.push("-- new tab\n".into());
-            self.state.sql_tab_idx = self.state.sql_tabs.len() - 1;
+            self.state.switch_sql_tab(self.state.sql_tabs.len() - 1);
             self.state.status_msg = format!("SQL tab {}", self.state.sql_tab_idx + 1);
             self.rebuild = true;
             return;
@@ -2092,7 +2172,10 @@ impl Demo {
             if let Some(path) = file_dlg::pick_open_sql() {
                 match std::fs::read_to_string(&path) {
                     Ok(text) => {
-                        *self.state.sql_editor_mut() = text;
+                        self.snapshot_inputs();
+                        self.state.sql_tabs.push(text);
+                        self.state.switch_sql_tab(self.state.sql_tabs.len() - 1);
+                        self.state.mark_sql_saved();
                         self.state.tab = MainTab::ExecuteSql;
                         self.state.status_msg = format!("Opened SQL {}", path.display());
                         self.clear_error();
@@ -2117,6 +2200,7 @@ impl Demo {
             }
             match std::fs::write(&path, self.state.sql_editor()) {
                 Ok(()) => {
+                    self.state.mark_sql_saved();
                     self.state.status_msg = format!("Saved SQL {}", path.display());
                     self.clear_error();
                 }
@@ -2182,6 +2266,27 @@ impl Demo {
     }
 
     fn poll_selection_changes(&mut self) {
+        if self.state.has_cell_draft() {
+            let selection_changed = (self.ids.browse_table.0 != 0
+                && (self.ui.table_selected_row(self.ids.browse_table)
+                    != self.state.browse().sel_row
+                    || self
+                        .ui
+                        .table_selected_col(self.ids.browse_table)
+                        .is_some_and(|col| Some(col) != self.state.browse().sel_col)))
+                || self
+                    .ui
+                    .tabs_selected(self.ids.tabs)
+                    .is_some_and(|i| i != self.last_tab)
+                || self.ui.tree_selected(self.ids.tree) != self.last_tree_sel
+                || self.ui.select_selected(self.ids.browse_select) != self.last_browse_sel;
+            if selection_changed {
+                self.state.tab = MainTab::from_index(self.last_tab);
+                self.set_error("Apply or discard the cell draft first");
+                self.rebuild = true;
+            }
+            return;
+        }
         let mut dirty = false;
         if let Some(sel) = self.ui.tree_selected(self.ids.tree) {
             if self.last_tree_sel != Some(sel) {
@@ -2235,6 +2340,13 @@ impl Demo {
     }
 
     fn poll_header_sort(&mut self) {
+        if self.state.has_cell_draft() {
+            if self.ui.take_table_header_click().is_some() {
+                self.set_error("Apply or discard the cell draft first");
+                self.rebuild = true;
+            }
+            return;
+        }
         if let Some((tid, col_idx)) = self.ui.take_table_header_click() {
             if tid != self.ids.browse_table {
                 return;
@@ -2288,9 +2400,13 @@ impl Demo {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             },
-            ConfirmKind::ExitDirty => match self.state.revert_changes() {
-                Ok(()) => self.exit_requested = true,
-                Err(e) => self.set_error(e),
+            ConfirmKind::ExitDirty => {
+                if self.state.dirty {
+                    match self.state.revert_changes() {
+                        Ok(()) => self.exit_requested = true,
+                        Err(e) => self.set_error(e),
+                    }
+                } else { self.exit_requested = true; }
             },
             ConfirmKind::DropObject => {
                 if let Some(sel) = self.state.selected.clone() {
@@ -2466,7 +2582,21 @@ impl Demo {
 
 impl AppCallbacks for Demo {
     fn can_close(&self) -> bool {
-        !self.state.dirty && !self.state.sql_busy
+        !self.state.dirty
+            && !self.state.sql_busy
+            && !self.state.has_unsaved_drafts()
+            && self
+                .ui
+                .text_area_value(self.ids.sql_area)
+                .is_none_or(|text| text == self.state.sql_editor())
+            && self
+                .ui
+                .text_area_value(self.ids.edit_value)
+                .is_none_or(|text| text == self.state.edit_value)
+            && self
+                .ui
+                .text_area_value(self.ids.ddl_area)
+                .is_none_or(|text| text == self.state.ddl_draft)
     }
 
     fn on_start(&mut self, ctx: &mut WindowCtx<'_>) {
@@ -2756,6 +2886,111 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn preferences_cancel_keeps_frozen_columns_and_pragma_save_is_visible() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.frozen_cols = 2;
+        demo.state.sync_prefs_drafts();
+        demo.state.overlay = Some(OverlayKind::Preferences);
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_frozen, "8");
+        demo.handle_button(demo.ids.ov_btn_cancel);
+        assert_eq!(demo.state.frozen_cols, 2);
+        demo.state.tab = MainTab::Pragmas;
+        demo.do_rebuild();
+        let b = demo
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.btn_pragma_apply))
+            .unwrap()
+            .bounds;
+        assert!(
+            b.y + b.height <= 820.0,
+            "Save Pragmas must fit above the status bar: {b:?}"
+        );
+    }
+
+    #[test]
+    fn exit_prompts_for_clean_database_sql_drafts_and_cell_navigation_is_guarded() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.checkpoint_project();
+        demo.do_rebuild();
+        assert!(demo.can_close());
+        demo.ui
+            .set_text_area_value(demo.ids.sql_area, "SELECT 'unsaved';");
+        assert!(!demo.can_close());
+        demo.handle_menu(mid::FILE_EXIT);
+        assert!(!demo.exit_requested);
+        assert!(demo.state.confirm_open);
+        assert_eq!(demo.state.sql_editor(), "SELECT 'unsaved';");
+        demo.state.confirm_open = false;
+        demo.state.tab = MainTab::Browse;
+        demo.state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(7)")
+            .unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.refresh_browse().unwrap();
+        demo.state.browse_mut().sel_row = Some(0);
+        demo.state.sync_edit_cell_from_selection();
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.edit_value, "8");
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        demo.poll_header_sort();
+        assert!(
+            !demo.rebuild,
+            "Typing a cell draft must keep the editor session intact"
+        );
+        demo.handle_button(demo.ids.btn_browse_new_tab);
+        assert_eq!(demo.state.browse_tabs.len(), 1);
+        assert_eq!(demo.state.edit_value, "8");
+        demo.handle_button(demo.ids.btn_edit_discard);
+        demo.do_rebuild();
+        assert_eq!(demo.state.edit_value, "7");
+        assert!(!demo.state.has_cell_draft());
+    }
+
+    #[test]
+    fn narrow_shell_and_image_view_survive_ui_rebuilds() {
+        let mut demo = Demo::new(800, 500, PresentBackend::Softbuffer);
+        assert!(demo
+            .ui
+            .set_scroll_offset(demo.ids.shell_scroll, 400.0, 300.0));
+        demo.snapshot_inputs();
+        let scroll = demo.state.shell_scroll;
+        assert!(scroll.0 > 0.0 && scroll.1 > 0.0);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.scroll_offset(demo.ids.shell_scroll), Some(scroll));
+        demo.state.shell_scroll = (0.0, 0.0);
+        demo.win_w = 1400;
+        demo.win_h = 860;
+        demo.state.edit_image_rgba = Some((400, 300, vec![255; 400 * 300 * 4]));
+        demo.state.edit_mode = crate::state::EditCellMode::Image;
+        demo.state.dock_focus = DockKind::EditCell;
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.image_actual);
+        demo.do_rebuild();
+        assert_eq!(
+            demo.ui.image_view(demo.ids.edit_image).unwrap().scale,
+            Some(1.0)
+        );
+        demo.handle_button(demo.ids.image_in);
+        demo.do_rebuild();
+        assert_eq!(
+            demo.ui.image_view(demo.ids.edit_image).unwrap().scale,
+            Some(2.0)
+        );
+        demo.handle_button(demo.ids.image_fit);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.image_view(demo.ids.edit_image).unwrap().scale, None);
+    }
 
     #[test]
     fn rgba_images_preserve_pixels_alpha_clips_and_soft_gpu_agreement() {
@@ -3160,6 +3395,8 @@ mod interaction_tests {
         assert!(demo.ui.modal_open(demo.ids.modal).unwrap());
         assert!(!demo.exit_requested);
         demo.state.revert_changes().unwrap();
+        assert!(!demo.can_close(), "SQL drafts survive a database rollback");
+        demo.state.checkpoint_project();
         assert!(demo.can_close());
         assert_eq!(
             dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
@@ -3180,7 +3417,7 @@ mod interaction_tests {
         demo.do_rebuild();
         assert_eq!(demo.state.edit_col, "v");
         assert_eq!(demo.state.edit_value, "saved");
-        demo.ui.set_text_input(demo.ids.edit_value, "form edit");
+        demo.ui.set_text_area_value(demo.ids.edit_value, "form edit");
         demo.handle_button(demo.ids.btn_edit_cell);
         assert_eq!(
             demo.state

@@ -77,6 +77,9 @@ pub mod mid {
 #[allow(dead_code)]
 pub struct BuiltUi {
     pub ui: Ui,
+    pub shell_scroll: WidgetId,
+    pub page_scroll: WidgetId,
+    pub dock_scroll: WidgetId,
     pub scene: Scene,
     pub menu_file: WidgetId,
     pub menu_edit: WidgetId,
@@ -129,6 +132,8 @@ pub struct BuiltUi {
     pub dock_tabs: WidgetId,
     pub edit_col: WidgetId,
     pub edit_value: WidgetId,
+    pub edit_type: WidgetId,
+    pub btn_edit_discard: WidgetId,
     pub btn_edit_cell: WidgetId,
     pub schema_list: WidgetId,
     pub log_list: WidgetId,
@@ -189,6 +194,7 @@ pub struct BuiltUi {
     pub btn_sql_line: WidgetId,
     pub btn_sql_comment: WidgetId,
     pub btn_sql_view: WidgetId,
+    pub sql_view_name: WidgetId,
     pub btn_edit_text: WidgetId,
     pub btn_edit_hex: WidgetId,
     pub btn_edit_json: WidgetId,
@@ -207,6 +213,11 @@ pub struct BuiltUi {
     pub btn_form_prev: WidgetId,
     pub btn_form_next: WidgetId,
     pub form_fields: Vec<WidgetId>,
+    pub image_fit: WidgetId,
+    pub image_actual: WidgetId,
+    pub image_in: WidgetId,
+    pub image_out: WidgetId,
+    pub image_export: WidgetId,
     pub edit_image: WidgetId,
     pub remote_list: WidgetId,
     pub remote_draft: WidgetId,
@@ -346,6 +357,8 @@ pub fn build_ui(
     let mut dock_tabs = z;
     let mut edit_col = z;
     let mut edit_value = z;
+    let mut edit_type = z;
+    let mut btn_edit_discard = z;
     let mut btn_edit_cell = z;
     let mut schema_list = z;
     let mut log_list = z;
@@ -404,6 +417,7 @@ pub fn build_ui(
     let mut btn_sql_line = z;
     let mut btn_sql_comment = z;
     let mut btn_sql_view = z;
+    let mut sql_view_name = z;
     let mut btn_edit_text = z;
     let mut btn_edit_hex = z;
     let mut btn_edit_json = z;
@@ -422,7 +436,14 @@ pub fn build_ui(
     let mut btn_form_prev = z;
     let mut btn_form_next = z;
     let mut form_fields: Vec<WidgetId> = Vec::new();
+    let mut image_fit = z;
+    let mut image_actual = z;
+    let mut image_in = z;
+    let mut image_out = z;
+    let mut image_export = z;
     let mut edit_image = z;
+    let mut page_scroll = z;
+    let mut dock_scroll = z;
     let mut remote_list = z;
     let mut remote_draft = z;
     let mut btn_remote_add = z;
@@ -431,9 +452,13 @@ pub fn build_ui(
     let win_w = width as f32;
     let win_h = height as f32;
     const STATUS_H: f32 = 40.0;
+    // shortcut: panes retain a 1100px workspace, replace with adaptive panes when redesigning narrow layouts.
     let shell_w = (win_w - 12.0).max(1100.0);
     let shell_h = (win_h - STATUS_H - 4.0).max(640.0);
-    let content_h = (shell_h - 100.0).max(420.0);
+    let chrome_h = 42.0 + if state.toolbar_db { 42.0 } else { 0.0 }
+        + if state.toolbar_extra { 38.0 } else { 0.0 }
+        + if state.toolbar_project { 38.0 } else { 0.0 };
+    let content_h = (shell_h - chrome_h).max(420.0);
     let docks_on = state.any_dock_visible() && state.overlay.is_none();
     let main_frac = if docks_on { 0.72 } else { 1.0 };
     let main_w = (shell_w - 20.0) * main_frac;
@@ -444,16 +469,6 @@ pub fn build_ui(
     menu_style.popup_width = menu_style.popup_width.max(280.0);
     menu_style.min_width = menu_style.min_width.max(72.0);
     let check = |on: bool| if on { "✓ " } else { "  " };
-
-    let mut col_style = ui.column_style();
-    col_style.x = 6.0;
-    col_style.y = 2.0;
-    col_style.width = shell_w;
-    col_style.height = shell_h;
-    col_style.padding = 4.0;
-    col_style.gap = 4.0;
-    col_style.cross_align = CrossAlign::Start;
-    col_style.background = Some(theme.colors.content_bg);
 
     let mut menu_tb = ToolbarStyle::from_theme(&theme);
     menu_tb.width = shell_w - 8.0;
@@ -506,7 +521,14 @@ pub fn build_ui(
     file_items.push(MenuItem::new(mid::FILE_PRINT_SCHEMA, "Print Schema…"));
     file_items.push(MenuItem::new(mid::FILE_EXIT, "Exit"));
 
-    ui.column(col_style, |col| {
+    let mut shell_view = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+    shell_view.x = 6.0;
+    shell_view.y = 2.0;
+    shell_view.width = (win_w - 12.0).max(1.0);
+    shell_view.height = (win_h - STATUS_H - 4.0).max(1.0);
+    shell_view.padding = 4.0;
+    shell_view.gap = 4.0;
+    let shell_scroll = ui.scroll_area(shell_view, |col| {
         col.toolbar(menu_tb, |tb| {
             menu_file = tb.menu("File", file_items.clone(), menu_style);
             menu_edit = tb.menu(
@@ -889,7 +911,7 @@ pub fn build_ui(
                             });
                             c.row(row, |r| {
                                 r.text("Default frozen cols");
-                                ov_frozen = r.text_input_styled(format!("{}", state.frozen_cols), "0", name_s);
+                                ov_frozen = r.text_input_styled(format!("{}", state.prefs_frozen_cols), "0", name_s);
                             });
                         }
                         OverlayKind::ExportSql => {
@@ -1040,6 +1062,10 @@ pub fn build_ui(
             body_split.axis = Axis::Vertical;
             body_split.ratio = if docks_on { 0.72 } else { 0.98 };
 
+            let mut page_scroll_style = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+            page_scroll_style.width = main_w - 8.0;
+            page_scroll_style.height = tab_page_h - 8.0;
+            page_scroll_style.padding = 0.0;
             let mut tabs_style = TabsStyle::from_theme(&theme);
             tabs_style.width = main_w - 4.0;
             tabs_style.height = content_h - 4.0;
@@ -1095,7 +1121,7 @@ pub fn build_ui(
 
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.width = main_w - 24.0;
-            browse_table_style.height = (tab_page_h - 140.0).max(160.0);
+            browse_table_style.height = (tab_page_h - 200.0).max(160.0);
 
             let mut sql_tb = ToolbarStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
@@ -1114,7 +1140,7 @@ pub fn build_ui(
             dock_tabs_style.strip_bg = theme.colors.strip_bg;
             dock_tabs_style.active_fg = theme.colors.text_primary;
 
-            let mut dock_col = ColumnStyle::from_theme(&theme);
+            let mut dock_col = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
             dock_col.width = dock_w.max(200.0) - 16.0;
             dock_col.height = tab_page_h - 20.0;
             dock_col.padding = 4.0;
@@ -1159,9 +1185,9 @@ pub fn build_ui(
                 .map(|r| r.columns.clone())
                 .unwrap_or_default();
 
-            let mut pragma_col = ColumnStyle::from_theme(&theme);
+            let mut pragma_col = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
             pragma_col.width = main_w - 24.0;
-            pragma_col.height = (tab_page_h - 60.0).max(200.0);
+            pragma_col.height = (tab_page_h - 100.0).max(200.0);
             pragma_col.padding = 4.0;
             pragma_col.gap = 4.0;
             pragma_col.cross_align = CrossAlign::Start;
@@ -1182,6 +1208,7 @@ pub fn build_ui(
                                 p.text_styled("", theme.colors.content_bg, 1.0);
                                 return;
                             }
+                            page_scroll = p.scroll_area(page_scroll_style, |p| {
                             p.toolbar(struct_tb, |tb| {
                                 btn_struct_new_table = tb.tool_button("New Table");
                                 btn_struct_new_index = tb.tool_button("New Index");
@@ -1209,6 +1236,7 @@ pub fn build_ui(
                                     });
                                 },
                             );
+                            });
                         });
 
                         tb.page(MainTab::Browse.title(), |p| {
@@ -1216,10 +1244,11 @@ pub fn build_ui(
                                 p.text_styled("", theme.colors.content_bg, 1.0);
                                 return;
                             }
+                            page_scroll = p.scroll_area(page_scroll_style, |p| {
                             // Browse multi-tabs strip
                             let titles: Vec<String> =
                                 state.browse_tabs.iter().map(|t| t.title.clone()).collect();
-                            p.row(tool_row, |row| {
+                            p.scroll_row(tool_row, |row| {
                                 btn_browse_new_tab = row.tool_button("+ Tab");
                                 for (i, title) in titles.iter().enumerate() {
                                     let label = if i == state.browse_tab_idx {
@@ -1231,7 +1260,7 @@ pub fn build_ui(
                                 }
                             });
                             browse_tabs = WidgetId(0);
-                            p.row(tool_row, |row| {
+                            p.scroll_row(tool_row, |row| {
                                 row.text("Table");
                                 browse_select =
                                     row.select(browse_opts_a.clone(), browse_sel, "table…", sel_style);
@@ -1244,7 +1273,7 @@ pub fn build_ui(
                                 btn_add_row = row.tool_button("New Record");
                                 btn_del_row = row.tool_button("Delete Record");
                             });
-                            p.row(tool_row, |row| {
+                            p.scroll_row(tool_row, |row| {
                                 btn_form_view = row.tool_button(match state.browse_view {
                                     crate::state::BrowseViewMode::Table => "Form View",
                                     crate::state::BrowseViewMode::Form => "Grid View",
@@ -1258,7 +1287,7 @@ pub fn build_ui(
                             });
                             // Per-column filters
                             if !col_names.is_empty() {
-                                p.row(filt_row, |row| {
+                                p.scroll_row(filt_row, |row| {
                                     row.text_styled("Filters", theme.colors.text_secondary, 12.0);
                                     for (i, name) in col_names.iter().enumerate() {
                                         let val = col_filter_vals.get(i).cloned().unwrap_or_default();
@@ -1283,7 +1312,7 @@ pub fn build_ui(
                                     let b = state.browse();
                                     let row_i = b.sel_row.unwrap_or(0);
                                     let res = b.result.as_ref();
-                                    p.row(tool_row, |row| {
+                                    p.scroll_row(tool_row, |row| {
                                         btn_form_prev = row.tool_button("◀ Prev");
                                         btn_form_next = row.tool_button("Next ▶");
                                         let n = res.map(|r| r.rows.len()).unwrap_or(0);
@@ -1293,6 +1322,10 @@ pub fn build_ui(
                                             n
                                         ));
                                     });
+                                    let mut form_scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+                                    form_scroll.width = main_w - 24.0;
+                                    form_scroll.height = (tab_page_h - 200.0).max(120.0);
+                                    p.scroll_area(form_scroll, |p| {
                                     if let Some(res) = res {
                                         let cells = res.rows.get(row_i);
                                         for (ci, cname) in res.columns.iter().enumerate() {
@@ -1300,7 +1333,7 @@ pub fn build_ui(
                                                 .and_then(|r| r.get(ci))
                                                 .cloned()
                                                 .unwrap_or_default();
-                                            p.row(tool_row, |row| {
+                                            p.scroll_row(tool_row, |row| {
                                                 row.text(cname.as_str());
                                                 let id = row.tool_button(format!("{}: {}", cname, val));
                                                 form_fields.push(id);
@@ -1309,6 +1342,7 @@ pub fn build_ui(
                                     } else {
                                         p.text("No rows — Apply a table first");
                                     }
+                                    });
                                     browse_table = WidgetId(0);
                                 }
                             }
@@ -1321,6 +1355,7 @@ pub fn build_ui(
                                 theme.colors.text_secondary,
                                 12.0,
                             );
+                            });
                         });
 
                         tb.page(MainTab::Pragmas.title(), |p| {
@@ -1328,8 +1363,9 @@ pub fn build_ui(
                                 p.text_styled("", theme.colors.content_bg, 1.0);
                                 return;
                             }
+                            page_scroll = p.scroll_area(page_scroll_style, |p| {
                             p.text("Database preferences (PRAGMA). Edit values then Save Pragmas.");
-                            p.column(pragma_col, |c| {
+                            p.scroll_area(pragma_col, |c| {
                                 for (i, (key, _val)) in state.pragmas.iter().enumerate() {
                                     let draft = state
                                         .pragma_drafts
@@ -1394,8 +1430,9 @@ pub fn build_ui(
                                     });
                                 }
                             });
-                            p.row(tool_row, |row| {
+                            p.scroll_row(tool_row, |row| {
                                 btn_pragma_apply = row.tool_button("Save Pragmas");
+                            });
                             });
                         });
 
@@ -1404,6 +1441,7 @@ pub fn build_ui(
                                 p.text_styled("", theme.colors.content_bg, 1.0);
                                 return;
                             }
+                            page_scroll = p.scroll_area(page_scroll_style, |p| {
                             if state.toolbar_sql {
                                 p.toolbar(sql_tb, |tb| {
                                     btn_sql_new_tab = tb.tool_button("New Tab");
@@ -1414,7 +1452,7 @@ pub fn build_ui(
                                     btn_sql_stop = tb.tool_button("Stop");
                                     btn_sql_find = tb.tool_button("Find");
                                     btn_sql_comment = tb.tool_button("Comment");
-                                    btn_sql_view = tb.tool_button("Save as VIEW");
+
                                     tb.spacer(8.0, 1.0);
                                     tb.text_styled(
                                         format!("SQL {}", state.sql_tab_idx + 1),
@@ -1424,7 +1462,7 @@ pub fn build_ui(
                                 });
                             }
                             // SQL editor tabs as buttons
-                            p.row(tool_row, |row| {
+                            p.scroll_row(tool_row, |row| {
                                 for i in 0..state.sql_tabs.len() {
                                     let label = if i == state.sql_tab_idx {
                                         format!("[SQL {}]", i + 1)
@@ -1450,11 +1488,16 @@ pub fn build_ui(
                             let mut alert_s = AlertStyle::from_theme(&theme);
                             alert_s.width = main_w - 24.0;
                             sql_alert = p.alert_styled(tone, msg, false, alert_s);
-                            p.row(tool_row, |row| {
+                            p.scroll_row(tool_row, |row| {
                                 btn_sql_csv = row.tool_button("Results → CSV");
                                 btn_sql_json = row.tool_button("Results → JSON");
+                                let mut view_style = TextInputStyle::from_theme(&theme);
+                                view_style.width = 160.0;
+                                sql_view_name = row.text_input_styled(&state.sql_view_name, "view name", view_style);
+                                btn_sql_view = row.tool_button("Save as VIEW");
                             });
                             sql_table = p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style);
+                            });
                         });
                     });
                 },
@@ -1468,7 +1511,7 @@ pub fn build_ui(
                             match *dock {
                                 DockKind::EditCell => {
                                     tb.page(DockKind::EditCell.title(), |p| {
-                                        p.column(dock_col, |c| {
+                                        dock_scroll = p.scroll_area(dock_col, |c| {
                                             c.text("Column");
                                             edit_col = c.text_input_styled(
                                                 &state.edit_col,
@@ -1481,13 +1524,19 @@ pub fn build_ui(
                                                 btn_edit_json = r.tool_button("JSON");
                                                 btn_edit_image = r.tool_button("Image");
                                             });
-                                            c.text("Value");
-                                            edit_value = c.text_input_styled(
-                                                &state.edit_value,
-                                                "value",
-                                                edit_val_style,
+                                            edit_type = c.select(
+                                                ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"].map(String::from).to_vec(),
+                                                Some(state.edit_type), "Storage type", sel_style,
                                             );
-                                            btn_edit_cell = c.tool_button("Apply");
+                                            c.text("Value");
+                                            let mut cell_style = TextAreaStyle::from_theme(&theme);
+                                            cell_style.width = edit_val_style.width;
+                                            cell_style.height = 90.0;
+                                            edit_value = c.text_area(&state.edit_value, "value", cell_style);
+                                            c.row(tool_row, |r| {
+                                                btn_edit_cell = r.tool_button("Apply");
+                                                btn_edit_discard = r.tool_button("Discard Draft");
+                                            });
                                             let mode = match state.edit_mode {
                                                 crate::state::EditCellMode::Text => "Text",
                                                 crate::state::EditCellMode::Hex => "Hex",
@@ -1507,6 +1556,13 @@ pub fn build_ui(
                                                 let mut istyle = ImageStyle::from_theme(&theme);
                                                 istyle.width = (dock_w - 40.0).max(1.0);
                                                 istyle.height = 200.0;
+                                                c.row(tool_row, |r| {
+                                                    image_fit = r.tool_button("Fit");
+                                                    image_actual = r.tool_button("1:1");
+                                                    image_in = r.tool_button("+");
+                                                    image_out = r.tool_button("−");
+                                                });
+                                                image_export = c.tool_button("Export Image…");
                                                 edit_image = c.image_rgba_caption(
                                                     *w,
                                                     *h,
@@ -1546,7 +1602,7 @@ pub fn build_ui(
                                 }
                                 DockKind::Plot => {
                                     tb.page(DockKind::Plot.title(), |p| {
-                                        p.column(dock_col, |c| {
+                                        dock_scroll = p.scroll_area(dock_col, |c| {
                                             c.row(dock_row, |row| {
                                                 chart_select = row.select(
                                                     browse_opts_b.clone(),
@@ -1567,7 +1623,7 @@ pub fn build_ui(
                                 }
                                 DockKind::Remote => {
                                     tb.page(DockKind::Remote.title(), |p| {
-                                        p.column(dock_col, |c| {
+                                        dock_scroll = p.scroll_area(dock_col, |c| {
                                             c.text("Remote / connection list");
                                             c.text_styled(
                                                 "DB4S cloud Remote is not used here — local paths only.",
@@ -1735,6 +1791,13 @@ pub fn build_ui(
         let _ = ui.set_modal_open(modal, true);
     }
 
+    ui.set_image_view(edit_image, state.edit_image_view);
+    ui.sync(&mut scene);
+    ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
+    let page_offset = state.page_scroll[state.tab.index()];
+    ui.set_scroll_offset(page_scroll, page_offset.0, page_offset.1);
+    let dock_offset = state.dock_scroll[state.dock_focus as usize];
+    ui.set_scroll_offset(dock_scroll, dock_offset.0, dock_offset.1);
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
@@ -1743,6 +1806,9 @@ pub fn build_ui(
 
     BuiltUi {
         ui,
+        shell_scroll,
+        page_scroll,
+        dock_scroll,
         scene,
         menu_file,
         menu_edit,
@@ -1795,6 +1861,8 @@ pub fn build_ui(
         dock_tabs,
         edit_col,
         edit_value,
+        edit_type,
+        btn_edit_discard,
         btn_edit_cell,
         schema_list,
         log_list,
@@ -1854,6 +1922,7 @@ pub fn build_ui(
         btn_sql_line,
         btn_sql_comment,
         btn_sql_view,
+        sql_view_name,
         btn_edit_text,
         btn_edit_hex,
         btn_edit_json,
@@ -1872,6 +1941,11 @@ pub fn build_ui(
         btn_form_prev,
         btn_form_next,
         form_fields,
+        image_fit,
+        image_actual,
+        image_in,
+        image_out,
+        image_export,
         edit_image,
         remote_list,
         remote_draft,
