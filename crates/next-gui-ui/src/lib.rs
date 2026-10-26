@@ -2949,6 +2949,15 @@ impl Ui {
         }
     }
 
+    /// Update a button label without replacing its focus or the surrounding editor.
+    pub fn set_button_label(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
+        if let Some(Widget { kind: Kind::Button { label, .. }, .. }) = self.widgets.get_mut(&id) {
+            *label = value.into();
+            return true;
+        }
+        false
+    }
+
     /// Update a panel title; call [`Ui::sync`] afterwards.
     pub fn set_panel_title(&mut self, id: WidgetId, title: impl Into<String>) {
         if let Some(w) = self.widgets.get_mut(&id) {

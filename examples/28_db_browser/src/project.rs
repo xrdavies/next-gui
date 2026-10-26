@@ -20,6 +20,7 @@ pub struct ProjectFile {
     pub browse_tabs: Vec<BrowseTabState>,
     pub browse_tab_idx: usize,
     pub sql_tabs: Vec<String>,
+    pub sql_files: Vec<Option<crate::state::SqlFile>>,
     pub sql_tab_idx: usize,
     pub dock_edit: bool,
     pub dock_schema: bool,
@@ -48,6 +49,7 @@ impl ProjectFile {
             browse_tabs: state.browse_tabs.clone(),
             browse_tab_idx: state.browse_tab_idx,
             sql_tabs: state.sql_tabs.clone(),
+            sql_files: state.sql_files.clone(),
             sql_tab_idx: state.sql_tab_idx,
             dock_edit: state.dock_edit,
             dock_schema: state.dock_schema,
@@ -87,6 +89,7 @@ impl ProjectFile {
         state.chart_table = self.chart_table.clone();
         state.chart_column = self.chart_column.clone();
         state.ddl_draft = self.ddl_draft.clone();
+        state.sql_files = self.sql_files.clone();
         state.sql_outputs.clear();
         state.sql_result = None;
         state.tab = MainTab::from_index(self.main_tab);
@@ -130,6 +133,7 @@ impl Default for ProjectFile {
             browse_tabs: Vec::new(),
             browse_tab_idx: 0,
             sql_tabs: Vec::new(),
+            sql_files: Vec::new(),
             sql_tab_idx: 0,
             dock_edit: true,
             dock_schema: true,

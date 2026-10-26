@@ -122,6 +122,10 @@ pub struct BuiltUi {
     pub btn_sql_run: WidgetId,
     pub btn_sql_new_tab: WidgetId,
     pub btn_sql_open: WidgetId,
+    pub btn_sql_save_as: WidgetId,
+    pub btn_sql_close: WidgetId,
+    pub btn_sql_left: WidgetId,
+    pub btn_sql_right: WidgetId,
     pub btn_sql_save: WidgetId,
     pub btn_sql_find: WidgetId,
     pub btn_sql_stop: WidgetId,
@@ -347,6 +351,10 @@ pub fn build_ui(
     let mut btn_sql_run = z;
     let mut btn_sql_new_tab = z;
     let mut btn_sql_open = z;
+    let mut btn_sql_save_as = z;
+    let mut btn_sql_close = z;
+    let mut btn_sql_left = z;
+    let mut btn_sql_right = z;
     let mut btn_sql_save = z;
     let mut btn_sql_find = z;
     let mut btn_sql_stop = z;
@@ -1123,7 +1131,7 @@ pub fn build_ui(
             browse_table_style.width = main_w - 24.0;
             browse_table_style.height = (tab_page_h - 200.0).max(160.0);
 
-            let mut sql_tb = ToolbarStyle::from_theme(&theme);
+            let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
             sql_tb.height = 34.0;
             let mut sql_area_style = TextAreaStyle::from_theme(&theme);
@@ -1443,10 +1451,11 @@ pub fn build_ui(
                             }
                             page_scroll = p.scroll_area(page_scroll_style, |p| {
                             if state.toolbar_sql {
-                                p.toolbar(sql_tb, |tb| {
+                                p.scroll_row(sql_tb, |tb| {
                                     btn_sql_new_tab = tb.tool_button("New Tab");
                                     btn_sql_open = tb.tool_button("Open SQL");
                                     btn_sql_save = tb.tool_button("Save SQL");
+                                    btn_sql_save_as = tb.tool_button("Save As…");
                                     btn_sql_run = tb.tool_button("Execute");
                                     btn_sql_line = tb.tool_button("Execute Line");
                                     btn_sql_stop = tb.tool_button("Stop");
@@ -1464,13 +1473,12 @@ pub fn build_ui(
                             // SQL editor tabs as buttons
                             p.scroll_row(tool_row, |row| {
                                 for i in 0..state.sql_tabs.len() {
-                                    let label = if i == state.sql_tab_idx {
-                                        format!("[SQL {}]", i + 1)
-                                    } else {
-                                        format!("SQL {}", i + 1)
-                                    };
+                                    let label = state.sql_tab_label(i);
                                     sql_tab_btns.push(row.tool_button(label));
                                 }
+                                btn_sql_left = row.tool_button("←");
+                                btn_sql_right = row.tool_button("→");
+                                btn_sql_close = row.tool_button("Close Tab");
                             });
                             sql_tabs_w = WidgetId(0);
                             sql_area = p.text_area(&sql_editor, "SQL…", sql_area_style);
@@ -1844,6 +1852,10 @@ pub fn build_ui(
         btn_sql_run,
         btn_sql_new_tab,
         btn_sql_open,
+        btn_sql_save_as,
+        btn_sql_close,
+        btn_sql_left,
+        btn_sql_right,
         btn_sql_save,
         btn_sql_find,
         btn_sql_stop,

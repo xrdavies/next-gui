@@ -237,6 +237,7 @@ pub struct AppState {
 
     // Execute SQL
     pub sql_tabs: Vec<String>,
+    pub sql_files: Vec<Option<SqlFile>>,
     pub sql_edit_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub sql_tab_idx: usize,
     pub sql_result: Option<QueryResult>,
@@ -315,6 +316,12 @@ pub struct AppState {
     pub cipher_linked: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SqlFile {
+    pub path: PathBuf,
+    pub saved: String,
+}
+
 #[derive(Default)]
 pub struct SqlOutput {
     result: Option<QueryResult>,
@@ -344,6 +351,7 @@ pub enum DocumentAction {
     CloseDatabase,
     OpenProject(PathBuf),
     CloseProject,
+    CloseSqlTab(usize),
     Exit,
 }
 
@@ -457,6 +465,7 @@ impl AppState {
             find_text: String::new(),
             replace_text: String::new(),
             sql_edit_states: Vec::new(),
+            sql_files: Vec::new(),
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
             sql_tab_idx: 0,
             sql_result: None,
@@ -601,17 +610,109 @@ impl AppState {
     }
 
     pub fn mark_sql_saved(&mut self) {
-        let sql = self.sql_editor().to_string();
-        if let Some(tabs) = self
-            .saved_project
-            .get_mut("sql_tabs")
-            .and_then(|v| v.as_array_mut())
-        {
-            while tabs.len() < self.sql_tabs.len() {
-                tabs.push(serde_json::Value::String(String::new()));
-            }
-            tabs[self.sql_tab_idx] = serde_json::Value::String(sql);
+        self.mark_sql_tab_saved(self.sql_tab_idx);
+    }
+
+    fn mark_sql_tab_saved(&mut self, index: usize) {
+        let sql = self.sql_tabs[index].clone();
+        if let Some(Some(file)) = self.sql_files.get_mut(index) { file.saved = sql.clone(); }
+        if let Some(tabs) = self.saved_project.get_mut("sql_tabs").and_then(|v| v.as_array_mut()) {
+            while tabs.len() < self.sql_tabs.len() { tabs.push(serde_json::Value::String(String::new())); }
+            tabs[index] = serde_json::Value::String(sql);
         }
+        self.saved_project["sql_files"] = serde_json::to_value(&self.sql_files).unwrap();
+    }
+
+    pub fn sql_tab_label(&self, index: usize) -> String {
+        let title = self.sql_files.get(index).and_then(|f| f.as_ref()).and_then(|f| f.path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| format!("SQL {}", index + 1));
+        let modified = if self.sql_tab_dirty(index) { " ●" } else { "" };
+        if index == self.sql_tab_idx { format!("[{title}]{modified}") } else { format!("{title}{modified}") }
+    }
+
+    pub fn sql_tab_dirty(&self, index: usize) -> bool {
+        let Some(text) = self.sql_tabs.get(index) else { return false; };
+        if let Some(Some(file)) = self.sql_files.get(index) { return text != &file.saved; }
+        self.saved_project.get("sql_tabs").and_then(|v| v.get(index)).and_then(|v| v.as_str()).unwrap_or("") != text
+    }
+
+    pub fn has_project_drafts(&self) -> bool {
+        let mut current = self.project_snapshot();
+        for (index, file) in self.sql_files.iter().enumerate() {
+            if file.is_some() {
+                if let Some(saved) = self.saved_project.get("sql_tabs").and_then(|v| v.get(index)) {
+                    current["sql_tabs"][index] = saved.clone();
+                }
+            }
+        }
+        current != self.saved_project
+    }
+
+    pub fn open_sql_file(&mut self, path: &Path) -> Result<(), String> {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        self.sql_tabs.push(text.clone());
+        self.sql_files.resize_with(self.sql_tabs.len(), || None);
+        self.sql_files[self.sql_tabs.len() - 1] = Some(SqlFile { path: path.to_path_buf(), saved: text });
+        self.switch_sql_tab(self.sql_tabs.len() - 1);
+        self.mark_sql_saved();
+        self.tab = MainTab::ExecuteSql;
+        self.status_msg = format!("Opened SQL {}", path.display());
+        Ok(())
+    }
+
+    pub fn save_sql_file(&mut self, index: usize, path: &Path) -> Result<(), String> {
+        use std::io::Write;
+        let text = self.sql_tabs.get(index).ok_or("SQL tab no longer exists")?;
+        if let Some(conn) = &self.conn { db::guard_output_path(conn, path)?; }
+        if let Some(Some(file)) = self.sql_files.get(index) {
+            if file.path == path && path.exists() {
+                let disk = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+                if disk != file.saved { return Err(format!("{} changed outside this session; use Save As", path.display())); }
+            }
+        }
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+        temp.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        temp.persist(path).map_err(|e| e.to_string())?;
+        self.sql_files.resize_with(self.sql_tabs.len(), || None);
+        self.sql_files[index] = Some(SqlFile { path: path.to_path_buf(), saved: text.clone() });
+        self.mark_sql_tab_saved(index);
+        self.status_msg = format!("Saved SQL {}", path.display());
+        Ok(())
+    }
+
+    pub fn move_sql_tab(&mut self, from: usize, to: usize) {
+        if self.sql_busy || from >= self.sql_tabs.len() || to >= self.sql_tabs.len() { return; }
+        self.sql_files.resize_with(self.sql_tabs.len(), || None);
+        self.sql_edit_states.resize(self.sql_tabs.len(), None);
+        self.sql_outputs.resize_with(self.sql_tabs.len(), SqlOutput::default);
+        self.sql_tabs.swap(from, to);
+        self.sql_files.swap(from, to);
+        self.sql_edit_states.swap(from, to);
+        self.sql_outputs.swap(from, to);
+        if self.sql_tab_idx == from { self.sql_tab_idx = to; }
+        else if self.sql_tab_idx == to { self.sql_tab_idx = from; }
+    }
+
+    pub fn close_sql_tab(&mut self, index: usize) {
+        if self.sql_busy || index >= self.sql_tabs.len() { return; }
+        self.sql_files.resize_with(self.sql_tabs.len(), || None);
+        self.sql_edit_states.resize(self.sql_tabs.len(), None);
+        self.sql_outputs.resize_with(self.sql_tabs.len(), SqlOutput::default);
+        if index == self.sql_tab_idx && self.sql_tabs.len() > 1 {
+            self.switch_sql_tab(if index == 0 { 1 } else { index - 1 });
+        }
+        self.sql_tabs.remove(index);
+        self.sql_files.remove(index);
+        self.sql_edit_states.remove(index);
+        self.sql_outputs.remove(index);
+        if self.sql_tabs.is_empty() {
+            self.sql_tabs.push(String::new());
+            self.sql_result = None;
+            self.sql_message.clear();
+            self.sql_column_widths.clear();
+            self.sql_scroll = (0.0, 0.0);
+            self.sql_tab_idx = 0;
+        } else if self.sql_tab_idx > index { self.sql_tab_idx -= 1; }
     }
 
     pub fn has_cell_draft(&self) -> bool {
@@ -625,7 +726,8 @@ impl AppState {
     }
 
     pub fn has_unsaved_drafts(&self) -> bool {
-        self.project_snapshot() != self.saved_project
+        self.has_project_drafts()
+            || self.sql_tabs.iter().enumerate().any(|(i, _)| self.sql_tab_dirty(i))
             || self.has_cell_draft()
             || self.has_pragma_drafts()
     }
@@ -1903,6 +2005,9 @@ impl AppState {
             return Err("Save the current project before replacing its drafts/settings".into());
         }
         let mut pf = crate::project::ProjectFile::load(path)?;
+        for file in pf.sql_files.iter_mut().flatten() {
+            if file.path.is_relative() { file.path = path.parent().unwrap_or(Path::new(".")).join(&file.path); }
+        }
         if !pf.db_path.is_empty()
             && pf.db_path != ":memory:"
             && Path::new(&pf.db_path).is_relative()
@@ -1947,7 +2052,7 @@ impl AppState {
     }
 
     pub fn close_project(&mut self) {
-        self.project_path = None;
+        self.close_db();
         self.status_msg = "Project closed".into();
     }
 
@@ -2017,12 +2122,17 @@ impl AppState {
         if let Some(path) = database {
             if path.exists() { return Err("Save As requires a new path".into()); }
         }
-        if self.has_unsaved_drafts() && project.is_none() {
+        if self.has_project_drafts() && project.is_none() {
             return Err("Choose a project destination for the drafts/settings".into());
         }
         if let Some(path) = project {
             if let Some(conn) = &self.conn { db::guard_output_path(conn, path)?; }
             if database == Some(path) { return Err("Database and project destinations must differ".into()); }
+        }
+        for i in 0..self.sql_tabs.len() {
+            if self.sql_tab_dirty(i) {
+                if let Some(Some(file)) = self.sql_files.get(i) { self.save_sql_file(i, &file.path.clone())?; }
+            }
         }
         if self.has_cell_draft() { self.apply_cell_draft()?; }
         if self.dirty { self.write_changes()?; }
@@ -2042,6 +2152,12 @@ impl AppState {
         }
         let saved: crate::project::ProjectFile = serde_json::from_value(self.saved_project.clone()).map_err(|e| e.to_string())?;
         saved.apply_to(self);
+        for (i, file) in self.sql_files.iter().enumerate() {
+            if let Some(file) = file {
+                if let Some(text) = self.sql_tabs.get_mut(i) { *text = file.saved.clone(); }
+            }
+        }
+        self.checkpoint_project();
         self.edit_col.clear();
         self.edit_value.clear();
         self.edit_image_rgba = None;
@@ -2511,14 +2627,7 @@ impl AppState {
         );
     }
 
-    pub fn remote_open_selected(&mut self) -> Result<(), String> {
-        let path = self
-            .remote_paths
-            .get(self.remote_sel)
-            .cloned()
-            .ok_or_else(|| "No remote path selected".to_string())?;
-        self.open_path(&path)
-    }
+
 }
 
 #[cfg(test)]
@@ -2546,6 +2655,58 @@ mod chart_default_tests {
             assert!(std::time::Instant::now() < deadline, "SQL worker timed out");
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn sql_files_save_to_their_source_and_reject_external_changes() {
+        let mut state = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let sql = dir.path().join("query.sql");
+        std::fs::write(&sql, "SELECT 1").unwrap();
+        state.open_sql_file(&sql).unwrap();
+        let index = state.sql_tab_idx;
+        assert!(!state.sql_tab_dirty(index));
+        assert!(state.sql_tab_label(index).contains("query.sql"));
+        *state.sql_editor_mut() = "SELECT 2".into();
+        assert!(state.sql_tab_dirty(index));
+        assert!(state.sql_tab_label(index).contains('●'));
+        assert!(!state.has_project_drafts());
+        state.save_sql_file(index, &sql).unwrap();
+        assert_eq!(std::fs::read_to_string(&sql).unwrap(), "SELECT 2");
+        assert!(!state.sql_tab_dirty(index));
+        *state.sql_editor_mut() = "SELECT 3".into();
+        std::fs::write(&sql, "SELECT 'external'").unwrap();
+        assert!(state.save_sql_file(index, &sql).unwrap_err().contains("outside"));
+        assert_eq!(std::fs::read_to_string(&sql).unwrap(), "SELECT 'external'");
+        assert_eq!(state.sql_editor(), "SELECT 3");
+        let alternate = dir.path().join("new.sql");
+        state.save_sql_file(index, &alternate).unwrap();
+        assert_eq!(std::fs::read_to_string(alternate).unwrap(), "SELECT 3");
+    }
+
+    #[test]
+    fn sql_tab_move_and_close_keep_results_files_and_editor_sessions_together() {
+        let mut state = test_state();
+        state.sql_tabs[0] = "SELECT 11".into();
+        state.run_sql_sync().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("query.sql");
+        std::fs::write(&source, "SELECT 22").unwrap();
+        state.open_sql_file(&source).unwrap();
+        state.run_sql_sync().unwrap();
+        state.move_sql_tab(1, 0);
+        assert_eq!(state.sql_tab_idx, 0);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "22");
+        assert_eq!(state.sql_files[0].as_ref().unwrap().path, source);
+        state.switch_sql_tab(1);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "11");
+        state.switch_sql_tab(0);
+        state.close_sql_tab(0);
+        assert_eq!(state.sql_tab_idx, 0);
+        assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "11");
+        state.close_sql_tab(0);
+        assert_eq!(state.sql_tabs, vec![String::new()]);
+        assert!(state.sql_result.is_none());
     }
 
     #[test]

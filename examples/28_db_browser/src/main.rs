@@ -205,6 +205,10 @@ struct BuiltUiIds {
     btn_sql_run: WidgetId,
     btn_sql_new_tab: WidgetId,
     btn_sql_open: WidgetId,
+    btn_sql_save_as: WidgetId,
+    btn_sql_close: WidgetId,
+    btn_sql_left: WidgetId,
+    btn_sql_right: WidgetId,
     btn_sql_save: WidgetId,
     btn_sql_find: WidgetId,
     btn_sql_stop: WidgetId,
@@ -346,6 +350,10 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_sql_run: b.btn_sql_run,
             btn_sql_new_tab: b.btn_sql_new_tab,
             btn_sql_open: b.btn_sql_open,
+            btn_sql_save_as: b.btn_sql_save_as,
+            btn_sql_close: b.btn_sql_close,
+            btn_sql_left: b.btn_sql_left,
+            btn_sql_right: b.btn_sql_right,
             btn_sql_save: b.btn_sql_save,
             btn_sql_find: b.btn_sql_find,
             btn_sql_stop: b.btn_sql_stop,
@@ -690,6 +698,9 @@ impl Demo {
                 self.state.sql_edit_states.resize(self.state.sql_tabs.len(), None);
                 self.state.sql_edit_states[self.state.sql_tab_idx] = self.ui.text_area_state(self.ids.sql_area);
             }
+        }
+        for (index, button) in self.ids.sql_tab_btns.iter().enumerate() {
+            self.ui.set_button_label(*button, self.state.sql_tab_label(index));
         }
         if self.ids.chart_col.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.chart_col) {
@@ -1106,6 +1117,7 @@ impl Demo {
             DocumentAction::CloseDatabase => { self.state.close_db(); Ok(()) }
             DocumentAction::OpenProject(path) => self.state.open_project(&path),
             DocumentAction::CloseProject => { self.state.close_project(); Ok(()) }
+            DocumentAction::CloseSqlTab(index) => { self.state.close_sql_tab(index); Ok(()) }
             DocumentAction::Exit => { self.exit_requested = true; Ok(()) }
         };
         match result {
@@ -1118,7 +1130,7 @@ impl Demo {
     }
 
     fn save_documents_interactive(&mut self, always_project: bool) -> Result<bool, String> {
-        let needs_project = always_project || self.state.has_unsaved_drafts();
+        let needs_project = always_project || self.state.has_project_drafts() || self.state.has_cell_draft() || self.state.has_pragma_drafts();
         let database = if self.state.path == ":memory:" {
             let Some(path) = file_dlg::pick_save_db() else { return Ok(false); };
             Some(path)
@@ -1160,6 +1172,28 @@ impl Demo {
         if let Some(path) = file_dlg::pick_open_db() {
             self.request_document_action(DocumentAction::OpenDatabase(path, readonly));
         }
+    }
+
+    fn action_save_sql(&mut self, save_as: bool) {
+        self.snapshot_inputs();
+        let path = if save_as { None } else {
+            self.state.sql_files.get(self.state.sql_tab_idx).and_then(|f| f.as_ref()).map(|f| f.path.clone())
+        }.or_else(file_dlg::pick_save_sql);
+        if let Some(path) = path {
+            match self.state.save_sql_file(self.state.sql_tab_idx, &path) {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+        }
+    }
+
+    fn action_new_sql_tab(&mut self) {
+        self.snapshot_inputs();
+        self.state.sql_tabs.push(String::new());
+        self.state.switch_sql_tab(self.state.sql_tabs.len() - 1);
+        self.state.status_msg = format!("SQL tab {}", self.state.sql_tab_idx + 1);
+        self.rebuild = true;
     }
 
     fn action_write(&mut self) {
@@ -1771,6 +1805,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        if id.0 == 0 { return; }
         self.snapshot_inputs();
         if id == self.ids.btn_edit_discard && id.0 != 0 {
             self.state.discard_cell_draft();
@@ -1801,6 +1836,17 @@ impl Demo {
                 })();
                 match result { Ok(()) => self.clear_error(), Err(e) => self.set_error(e) }
                 self.rebuild = true;
+            }
+            return;
+        }
+        if id == self.ids.toolbar_project {
+            self.handle_menu(mid::FILE_PROJECT_OPEN);
+            return;
+        }
+        if id == self.ids.btn_remote_open {
+            if let Some(i) = self.ui.list_selected(self.ids.remote_list) { self.state.remote_sel = i; }
+            if let Some(path) = self.state.remote_paths.get(self.state.remote_sel).cloned() {
+                self.request_document_action(DocumentAction::OpenDatabase(PathBuf::from(path), false));
             }
             return;
         }
@@ -2101,21 +2147,6 @@ impl Demo {
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_remote_open {
-            if let Some(i) = self.ui.list_selected(self.ids.remote_list) {
-                self.state.remote_sel = i;
-            }
-            match self.state.remote_open_selected() {
-                Ok(()) => self.clear_error(),
-                Err(e) => self.set_error(e),
-            }
-            self.rebuild = true;
-            return;
-        }
-        if id == self.ids.toolbar_project {
-            self.action_project_open();
-            return;
-        }
         if id == self.ids.btn_project_save {
             self.action_project_save(false);
             return;
@@ -2133,51 +2164,31 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_sql_new_tab {
-            self.snapshot_inputs();
-            self.state.sql_tabs.push("-- new tab\n".into());
-            self.state.switch_sql_tab(self.state.sql_tabs.len() - 1);
-            self.state.status_msg = format!("SQL tab {}", self.state.sql_tab_idx + 1);
-            self.rebuild = true;
+            self.action_new_sql_tab();
             return;
         }
         if id == self.ids.btn_sql_open {
             if let Some(path) = file_dlg::pick_open_sql() {
-                match std::fs::read_to_string(&path) {
-                    Ok(text) => {
-                        self.snapshot_inputs();
-                        self.state.sql_tabs.push(text);
-                        self.state.switch_sql_tab(self.state.sql_tabs.len() - 1);
-                        self.state.mark_sql_saved();
-                        self.state.tab = MainTab::ExecuteSql;
-                        self.state.status_msg = format!("Opened SQL {}", path.display());
-                        self.clear_error();
-                    }
-                    Err(e) => self.set_error(e.to_string()),
+                match self.state.open_sql_file(&path) {
+                    Ok(()) => self.clear_error(),
+                    Err(e) => self.set_error(e),
                 }
+                self.rebuild = true;
             }
-            self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_sql_save {
-            self.snapshot_inputs();
-            let Some(path) = file_dlg::pick_save_sql() else {
-                return;
-            };
-            if let Some(conn) = self.state.conn.as_ref() {
-                if let Err(e) = dbmod::guard_output_path(conn, &path) {
-                    self.set_error(e);
-                    self.rebuild = true;
-                    return;
-                }
-            }
-            match std::fs::write(&path, self.state.sql_editor()) {
-                Ok(()) => {
-                    self.state.mark_sql_saved();
-                    self.state.status_msg = format!("Saved SQL {}", path.display());
-                    self.clear_error();
-                }
-                Err(e) => self.set_error(e.to_string()),
-            }
+        if id == self.ids.btn_sql_save || id == self.ids.btn_sql_save_as {
+            self.action_save_sql(id == self.ids.btn_sql_save_as);
+            return;
+        }
+        if id == self.ids.btn_sql_close {
+            self.request_document_action(DocumentAction::CloseSqlTab(self.state.sql_tab_idx));
+            return;
+        }
+        if id == self.ids.btn_sql_left || id == self.ids.btn_sql_right {
+            let index = self.state.sql_tab_idx;
+            let next = if id == self.ids.btn_sql_left { index.saturating_sub(1) } else { (index + 1).min(self.state.sql_tabs.len() - 1) };
+            self.state.move_sql_tab(index, next);
             self.rebuild = true;
             return;
         }
@@ -2692,8 +2703,27 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
-                if modifiers.commandish() {
+                if modifiers.commandish() && !self.state.confirm_open {
                     match key {
+                        KeyCode::Char('s' | 'S') if self.state.overlay.is_none() => {
+                            if self.state.tab == MainTab::ExecuteSql {
+                                self.action_save_sql(modifiers.shift);
+                            } else { self.handle_menu(mid::FILE_SAVE_ALL); }
+                            self.after_ui(ctx);
+                            return;
+                        }
+                        KeyCode::Char('w' | 'W') if self.state.overlay.is_none() => {
+                            self.request_document_action(if self.state.tab == MainTab::ExecuteSql {
+                                DocumentAction::CloseSqlTab(self.state.sql_tab_idx)
+                            } else { DocumentAction::CloseDatabase });
+                            self.after_ui(ctx);
+                            return;
+                        }
+                        KeyCode::Char('t' | 'T') if self.state.tab == MainTab::ExecuteSql && self.state.overlay.is_none() => {
+                            self.action_new_sql_tab();
+                            self.after_ui(ctx);
+                            return;
+                        }
                         KeyCode::Char('f' | 'F') if self.state.tab == MainTab::ExecuteSql && self.state.overlay.is_none() => {
                             self.snapshot_inputs();
                             self.state.overlay = Some(OverlayKind::FindReplace);
@@ -3156,7 +3186,7 @@ mod interaction_tests {
         demo.do_rebuild();
         demo.ui.set_focus(Some(demo.ids.sql_area));
         demo.ui.key_input(UiKey::Undo);
-        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("-- new tab\n"));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some(""));
         demo.handle_button(demo.ids.sql_tab_btns[0]);
         demo.do_rebuild();
         assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(21..23));
@@ -3364,7 +3394,7 @@ mod interaction_tests {
         assert_eq!(demo.state.sql_tabs[0], "SELECT '中文';\nSELECT 42;");
         assert_eq!(
             demo.ui.text_area_value(demo.ids.sql_area),
-            Some("-- new tab\n")
+            Some("")
         );
         demo.ui.set_text_area_value(
             demo.ids.sql_area,
