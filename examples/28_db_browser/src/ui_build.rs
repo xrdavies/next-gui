@@ -1332,7 +1332,7 @@ pub fn build_ui(
                                 btn_page_next = row.tool_button("Page ▶");
                             });
                             // Per-column filters
-                            if !col_names.is_empty() {
+                            if !col_names.is_empty() && state.browse_view == crate::state::BrowseViewMode::Form {
                                 p.scroll_row(filt_row, |row| {
                                     row.text_styled("Filters", theme.colors.text_secondary, 12.0);
                                     for (i, name) in col_names.iter().enumerate() {
@@ -1348,10 +1348,14 @@ pub fn build_ui(
                             }
                             match state.browse_view {
                                 crate::state::BrowseViewMode::Table => {
-                                    browse_table = p.table(
+                                    let mut filtered_style = browse_table_style;
+                                    filtered_style.height += col_filt_style.height + 4.0;
+                                    (browse_table, browse_col_filters) = p.filtered_table(
                                         browse_cols.clone(),
                                         browse_rows.clone(),
-                                        browse_table_style,
+                                        &col_filter_vals,
+                                        filtered_style,
+                                        col_filt_style,
                                     );
                                 }
                                 crate::state::BrowseViewMode::Form => {

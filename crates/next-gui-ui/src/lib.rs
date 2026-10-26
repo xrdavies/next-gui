@@ -2195,6 +2195,14 @@ fn toggle_expanded_in_forest(nodes: &mut [TreeNode], id: u64) -> bool {
     false
 }
 
+// Fields use the table's column geometry while retaining standard text input behavior.
+#[derive(Debug, Clone)]
+struct TableFilterRow {
+    table: WidgetId,
+    fields: Vec<WidgetId>,
+    last_focus: Option<WidgetId>,
+}
+
 /// Retained UI tree that mounts into a [`Scene`].
 #[derive(Debug)]
 pub struct Ui {
@@ -2204,6 +2212,7 @@ pub struct Ui {
     roots: Vec<WidgetId>,
     /// scene node → widget (buttons, splitter sashes, inputs).
     node_to_widget: HashMap<NodeId, WidgetId>,
+    table_filters: HashMap<WidgetId, TableFilterRow>,
     font: Arc<Font>,
     drag: Option<DragState>,
     /// Focused widget (inputs + List / Tree / Table / Select / Slider / Tabs).
@@ -2348,6 +2357,7 @@ impl Ui {
             widgets: HashMap::new(),
             roots: Vec::new(),
             node_to_widget: HashMap::new(),
+            table_filters: HashMap::new(),
             font: Arc::new(font),
             drag: None,
             focus: None,
@@ -3402,6 +3412,9 @@ impl Ui {
         // Start at the hit control, then bubble at its limits to enclosing viewports.
         while let Some(n) = node.and_then(|n| scene.get(n)) {
             if let Some(id) = self.widget_from_node(n.id) {
+                let id = self.table_filters.iter()
+                    .find(|(row, group)| **row == id || group.fields.contains(&id))
+                    .map(|(_, group)| group.table).unwrap_or(id);
                 if let Some((sx, sy)) = self.any_scroll_offset(id) {
                     let changed = if matches!(self.widgets[&id].kind, Kind::TextArea { .. }) {
                         self.set_text_area_scroll(id, sy + dy)
@@ -10529,7 +10542,81 @@ impl Ui {
         scene.set_corner_radius(node, r);
     }
 
+    fn align_table_filters(&mut self, scene: &mut Scene, row: WidgetId) {
+        let Some(group) = self.table_filters.get(&row).cloned() else {
+            return;
+        };
+        let Some(Widget {
+            kind:
+                Kind::Table {
+                    columns,
+                    scroll_x,
+                    scroll_y,
+                    frozen_cols,
+                    style,
+                    ..
+                },
+            node: Some(node),
+            ..
+        }) = self.widgets.get(&group.table)
+        else {
+            return;
+        };
+        let columns = columns.clone();
+        let frozen = *frozen_cols;
+        let padding = style.padding;
+        let (mut sx, sy) = (*scroll_x, *scroll_y);
+        let bounds = scene
+            .get(*node)
+            .map(|n| n.bounds)
+            .unwrap_or_else(Rect::empty);
+        let focused = self.focus.filter(|id| group.fields.contains(id));
+        if focused != group.last_focus {
+            if let Some(index) = focused
+                .and_then(|id| group.fields.iter().position(|&field| field == id))
+                .filter(|&i| i >= frozen)
+            {
+                let left: f32 = columns.iter().take(index).map(|c| c.width.max(1.0)).sum();
+                let frozen_w: f32 = columns.iter().take(frozen).map(|c| c.width.max(1.0)).sum();
+                let viewport = (bounds.width - 2.0 * padding).max(0.0);
+                let width = columns[index].width.max(1.0);
+                if left - sx < frozen_w || width > viewport - frozen_w {
+                    sx = left - frozen_w;
+                } else if left + width - sx > viewport {
+                    sx = left + width - viewport;
+                }
+                self.set_table_scroll_offset(group.table, sx.max(0.0), sy);
+                sx = self.table_scroll_offset(group.table).unwrap().0;
+            }
+            self.table_filters.get_mut(&row).unwrap().last_focus = focused;
+        }
+        let geometry = table_column_rects(bounds, &columns, padding, sx, frozen);
+        for (index, field) in group.fields.iter().enumerate() {
+            let Some(node) = self.widgets.get(field).and_then(|w| w.node) else {
+                continue;
+            };
+            let Some(old) = scene.get(node).map(|n| n.bounds) else {
+                continue;
+            };
+            let (origin, clip) = geometry[index];
+            let field_bounds = Rect::new(
+                origin + 2.0,
+                old.y,
+                (columns[index].width - 4.0).max(1.0),
+                old.height,
+            );
+            scene.set_bounds(node, field_bounds);
+            scene.set_clip(
+                node,
+                Some(field_bounds.intersect(&Rect::new(clip.x, old.y, clip.width, old.height))),
+            );
+        }
+    }
+
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
+        if self.table_filters.contains_key(&id) {
+            self.align_table_filters(scene, id);
+        }
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Spin { .. })
@@ -17713,6 +17800,60 @@ impl FlexBuilder<'_> {
         id
     }
 
+    /// A table with standard text inputs aligned to its columns above the header.
+    /// Inputs follow column resizing, horizontal scrolling and frozen columns;
+    /// keyboard focus reveals hidden fields. Wheel over the filters scrolls the
+    /// same table. `style.height` includes the filter row. Returns table + inputs.
+    pub fn filtered_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        values: &[String],
+        mut style: TableStyle,
+        input_style: TextInputStyle,
+    ) -> (WidgetId, Vec<WidgetId>) {
+        let height = input_style.height + 4.0;
+        let mut container = ColumnStyle::from_theme(self.theme());
+        container.width = style.width;
+        container.height = style.height;
+        container.padding = 0.0;
+        container.gap = 0.0;
+        container.background = None;
+        let mut filter_style = RowStyle::from_theme(self.theme());
+        filter_style.width = style.width;
+        filter_style.height = height;
+        filter_style.padding = 2.0;
+        filter_style.gap = 4.0;
+        filter_style.background = Some(style.header_bg);
+        let mut table = WidgetId(0);
+        let mut fields = Vec::new();
+        let mut filter_row = WidgetId(0);
+        style.height = (style.height - height).max(style.header_height);
+        self.column(container, |column| {
+            filter_row = column.scroll_row(filter_style, |row| {
+                for (index, definition) in columns.iter().enumerate() {
+                    let mut field_style = input_style;
+                    field_style.width = (definition.width - 4.0).max(1.0);
+                    fields.push(row.text_input_styled(
+                        values.get(index).map(String::as_str).unwrap_or(""),
+                        &definition.title,
+                        field_style,
+                    ));
+                }
+            });
+            table = column.table(columns, rows, style);
+        });
+        self.ui.table_filters.insert(
+            filter_row,
+            TableFilterRow {
+                table,
+                fields: fields.clone(),
+                last_focus: None,
+            },
+        );
+        (table, fields)
+    }
+
     /// Dropdown Menu (title button; click to open item list).
     pub fn menu(
         &mut self,
@@ -20035,6 +20176,91 @@ mod tests {
         }
         ui.set_table_column_width(table, 2, -1.0);
         assert_eq!(ui.table_column_widths(table).unwrap()[2], 24.0);
+    }
+
+    #[test]
+    fn table_filter_inputs_follow_resize_scroll_freeze_and_keyboard_focus() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut table = WidgetId(0);
+        let mut fields = Vec::new();
+        ui.column(
+            ColumnStyle {
+                width: 360.0,
+                padding: 0.0,
+                gap: 0.0,
+                ..ColumnStyle::default()
+            },
+            |c| {
+                (table, fields) = c.filtered_table(
+                    (0..5)
+                        .map(|i| TableColumn::new(format!("Column {i}"), 100.0))
+                        .collect(),
+                    vec![vec!["value".into(); 5]; 30],
+                    &["keep".into()],
+                    TableStyle {
+                        width: 320.0,
+                        height: 200.0,
+                        padding: 0.0,
+                        ..TableStyle::default()
+                    },
+                    TextInputStyle::default(),
+                );
+            },
+        );
+        ui.set_table_frozen_cols(table, 1);
+        ui.set_table_scroll_offset(table, 150.0, 0.0);
+        ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        let field_bounds = |scene: &Scene, ui: &Ui, index: usize| {
+            scene
+                .get(ui.widgets[&fields[index]].node.unwrap())
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(field_bounds(&scene, &ui, 0).bounds.x, bounds.x + 2.0);
+        assert!(field_bounds(&scene, &ui, 1).clip.unwrap().is_empty());
+        assert_eq!(
+            field_bounds(&scene, &ui, 2).clip.unwrap().x,
+            bounds.x + 100.0
+        );
+        assert_eq!(ui.text_input_value(fields[0]), Some("keep"));
+        let visible = field_bounds(&scene, &ui, 2).clip.unwrap();
+        ui.pointer_pressed(&mut scene, visible.x + 4.0, visible.y + 8.0);
+        assert_eq!(ui.focused(), Some(fields[2]));
+        assert!(ui.key_input(UiKey::Char('中')));
+        ui.sync(&mut scene);
+        assert!(ui.text_input_value(fields[2]).unwrap().contains('中'));
+        ui.set_table_column_width(table, 0, 140.0);
+        ui.sync(&mut scene);
+        assert_eq!(field_bounds(&scene, &ui, 0).bounds.width, 136.0);
+        assert!(field_bounds(&scene, &ui, 2).clip.unwrap().x >= bounds.x + 140.0);
+
+        ui.set_focus(Some(fields[4]));
+        ui.sync(&mut scene);
+        let last = field_bounds(&scene, &ui, 4);
+        assert!(!last.clip.unwrap().is_empty());
+        assert!(last.clip.unwrap().x + last.clip.unwrap().width <= bounds.x + bounds.width);
+        let offset = ui.table_scroll_offset(table).unwrap().0;
+        let frozen = field_bounds(&scene, &ui, 0);
+        assert!(ui.pointer_scroll(
+            &scene,
+            frozen.bounds.x + 4.0,
+            frozen.bounds.y + 8.0,
+            -50.0,
+            32.0
+        ));
+        assert!(ui.table_scroll_offset(table).unwrap().0 < offset);
+        assert!(ui.table_scroll_offset(table).unwrap().1 > 0.0);
+        ui.sync(&mut scene);
+        assert!(
+            ui.table_scroll_offset(table).unwrap().0 < offset,
+            "Wheel must not snap back to the focused column"
+        );
+        ui.set_focus(Some(fields[0]));
+        assert_eq!(ui.focus_next(), Some(fields[1]));
+        ui.sync(&mut scene);
+        assert!(!field_bounds(&scene, &ui, 1).clip.unwrap().is_empty());
     }
 
     #[test]

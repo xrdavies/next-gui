@@ -3412,6 +3412,15 @@ mod interaction_tests {
             demo.ui.table_scroll_offset(demo.ids.browse_table),
             Some((150.0, 200.0))
         );
+        let table_bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table)).unwrap().bounds;
+        let field = demo.ids.browse_col_filters[0];
+        let input_node = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(field)).unwrap();
+        assert_eq!(input_node.bounds.width, 236.0);
+        assert!((input_node.bounds.x + 150.0 - table_bounds.x - next_gui_ui::TableStyle::from_theme(&demo.theme).padding - 2.0).abs() < 0.01);
+        demo.ui.set_table_frozen_cols(demo.ids.browse_table, 1);
+        demo.ui.sync(&mut demo.scene);
+        let input_node = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(field)).unwrap();
+        assert!((input_node.bounds.x - table_bounds.x - next_gui_ui::TableStyle::from_theme(&demo.theme).padding - 2.0).abs() < 0.01);
 
         // Sorting uses the SQL identifier, not the decorated heading label.
         demo.state
