@@ -20,7 +20,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Main toolbar: New, Open, Write Changes, Revert | done | + Theme (exceeds DB4S); View-toggleable |
 | Extra DB / Project toolbars | partial | Local subset; no upstream movable toolbar/overflow behavior. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
-| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; no independent floating/docking panes or persisted splitter positions. |
+| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; body/structure ratios persist in projects. Independent floating/docking panes remain absent. |
 | Status bar: path, encoding, read-only, encryption, busy | partial | Encoding is hardcoded UTF-8 instead of read from PRAGMA encoding. |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S; Preferences default theme |
@@ -46,11 +46,11 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Write Changes | done | COMMIT + re-BEGIN |
 | Revert Changes | done | ROLLBACK + re-BEGIN |
 | Compact Database (VACUUM) | done | |
-| Exit | partial | Database, SQL, DDL, project, cell and PRAGMA drafts guarded; explicit discard/cancel on Exit. Unified save/discard/cancel transitions remain (F02). |
-| Open Project… | partial | Example JSON only; Unicode and malformed-input validation; upstream DB4S XML is rejected |
-| Save Project / Save Project As… | partial | Example JSON retains browse/SQL tabs, read-only mode, conditional rules, plot source and DDL; no upstream XML compatibility. |
-| Close Project | partial | Clears project path only; no unsaved project/SQL state prompt (F02). |
-| Save All | done | Prompt for project destination if missing; cancellation has no fallback write; commit DB and save JSON project |
+| Exit | done | Unified Save/Discard/Cancel protects database, SQL, DDL, project, cell and PRAGMA drafts across New/Open/Close/Exit; canceled destinations preserve the session (F02 verified). |
+| Open Project… | partial | DB4S XML + legacy JSON; relative paths, SQL references, connection PRAGMAs/attachments and basic browse state restored. Advanced XML settings are retained and reported as unapplied. |
+| Save Project / Save Project As… | partial | DB4S XML output with an optional next_gui extension; unknown XML survives. Native DB4S round-trip and advanced settings compatibility remain. |
+| Close Project | done | Unified Save/Discard/Cancel; closes the project database as upstream does. |
+| Save All | done | Choose destinations before saving; apply cell/PRAGMA drafts, commit DB, save linked SQL files and the project. Failures keep documents open; writes across files are not one atomic transaction. |
 | Print Schema… | partial | Exports schema text to a file; no print dialog or print preview. |
 
 ## Edit menu
@@ -134,8 +134,8 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). Syntax, completion, line numbers and grapheme-aware navigation remain. |
 | Execute / message / results table | partial | Final statement preview, at most 500 displayed rows; results/messages/export snapshots belong to each SQL tab (F09 addressed). |
-| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Selection/whole-script execution and shortcuts; Open SQL adds a new tab and preserves existing drafts. |
-| Multi SQL tabs | partial | Drafts, editing sessions and results separated; scrollable tab strip; no close/reorder/dirty markers. |
+| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Selection/whole-script execution, source-bound Save/Save As and shortcuts; external file changes reject overwrite; opening preserves existing drafts. |
+| Multi SQL tabs | partial | Independent drafts/sessions/results, file names and dirty markers; Close Tab, move arrows and Cmd/Ctrl+T/W/S/Shift+S. Pointer tab dragging, close affordances and rename remain. |
 | Find / Replace | partial | Shared editor in Find panel highlights/reveals matches; Replace acts on the selected match and Replace All is undoable (F04 addressed). Literal case-sensitive search only. |
 | Async query + cancel | done | Live connection moves to worker; Write/Revert/keys/ATTACH shared; completion polled on redraw; Stop interrupts |
 | Results → CSV / JSON / Save as view | done | Full snapshot export without re-execution; editable view name and source tied to the executed result statement. |
@@ -254,9 +254,9 @@ unavailable; framebuffer captures and Metal readback are recorded separately.
 ## Workflow and framework follow-up — 2026-10-27
 
 The latest code addresses the core behavior behind F03/F05/F06/F07/F08/F09/F11/F12.
-F02 draft protection, F10 overflow reachability and F13 complete batch logging have
-improved but remain in progress: unified document transitions, adaptive panes and
-full SQL tracing are not complete. Earlier sections are historical records.
+F02 is verified after unified document transitions and per-document SQL close.
+F10 adaptive panes/ratio persistence are implemented; filter geometry/scrollbars
+and F13 full SQL tracing remain in progress. Earlier sections are historical records.
 
 Shared additions: `ImageView` get/set with validated scale and bounded pan,
 `FlexBuilder::scroll_row`, public validated ScrollArea offset restoration, correct
@@ -264,3 +264,27 @@ nested wheel routing and expanded-content extent calculation. e28 uses these API
 for images, long strips, narrow windows and scrollable pages/docks. No dependency
 was added and database formats are unchanged; JSON projects gain optional fields
 with backwards-compatible defaults.
+
+
+## Desktop workflows and project compatibility — 2026-10-27
+
+- Shared Modal supports Save/Discard/Cancel with focus cycling and wrapped body.
+  Whole-workspace transitions save/discard all applicable drafts; closing one SQL
+  tab saves/discards only that document. SQL dirty markers move with their tab.
+- e28 uses compact consistent typography, neutral toolbar actions, light/dark
+  palettes and semantic primary actions. The 800×600 layout adapts pane widths;
+  dragged body/structure ratios survive rebuilds and project save/load. Long
+  toolbars remain scrollable. Font fallbacks supply missing macOS symbols.
+- `.sqbpro` now uses the DB4S 3.13.1 XML structure. Legacy JSON remains readable.
+  Core paths/tabs/file references, access mode, five connection PRAGMAs, attached
+  files, main-schema widths/primary sort are supported. Unknown XML is retained.
+  Qt dock state, advanced browse filters/formats/plots and attached-schema browse
+  tabs are reported as retained but unapplied. Extra local state lives in a
+  next_gui extension ignored by DB4S. This remains partial interoperability.
+- New XML parsing uses the already installed quick-xml version. XML is UTF-8 with
+  16 MiB / 64-level bounds; DTD/external entities and malformed identifiers are
+  rejected. Existing SQL files and new connections are prepared before replacing
+  a session. Read-only project attachments are opened read-only.
+- Native desktop capture still shows wallpaper only. Application framebuffer
+  review and logic tests do not replace real OS input/IME/picker acceptance or a
+  round trip through the DB4S binary.

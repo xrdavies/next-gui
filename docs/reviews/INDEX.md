@@ -16,7 +16,7 @@ the first entries. Keep the status in this index and its report synchronized.
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
 | R-20261025-b90d5a7b4143-F01 | verified | P1 | codex | e28 / shared | existing branch | see report | 共享 TextArea 长文本编辑与 SQL Tab 状态已补齐 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | c72f34b584c3 | c72f34b584c3 |
-| R-20261025-b90d5a7b4143-F02 | in_progress | P1 | grok | e28 / shared | existing branch | see report | 草稿保护已加强；统一保存/丢弃/取消切换流程仍待补齐 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | — | — |
+| R-20261025-b90d5a7b4143-F02 | verified | P1 | grok | e28 / shared | existing branch | see report | 统一保存/丢弃/取消，SQL 单标签关闭保留其他草稿与 DB 编辑 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | 6aeb50e5d74e | 6aeb50e5d74e |
 | R-20261025-b90d5a7b4143-F03 | verified | P1 | grok | e28 / shared | existing branch | see report | PRAGMA 校验/回读实际值，需 VACUUM 时明确报错 | [F03](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f03) | 4c490e21b529 | 4c490e21b529 |
 | R-20261025-b90d5a7b4143-F04 | verified | P1 | codex | e28 / shared | existing branch | see report | Find 选中可见匹配，Replace/All 正确且可撤销 | [F04](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f04) | c72f34b584c3 | c72f34b584c3 |
 | R-20261025-b90d5a7b4143-F05 | verified | P1 | grok | e28 / shared | existing branch | see report | 隐式/复合/类型化外键按完整原始键值导航 | [F05](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f05) | 4c490e21b529 | 4c490e21b529 |
@@ -24,7 +24,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | R-20261025-b90d5a7b4143-F07 | verified | P1 | grok | e28 / shared | existing branch | see report | Plot 排除非法/非有限数值并显示数据库错误 | [F07](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f07) | 4c490e21b529 | 4c490e21b529 |
 | R-20261025-b90d5a7b4143-F08 | verified | P1 | grok | e28 / shared | existing branch | see report | CSV 导入清理旧表过滤/排序/分页/选择状态 | [F08](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f08) | 4c490e21b529 | 4c490e21b529 |
 | R-20261025-b90d5a7b4143-F09 | verified | P1 | grok | e28 / shared | existing branch | see report | SQL Tab 隔离结果，Save as VIEW 绑定执行来源 | [F09](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f09) | 4c490e21b529 | 4c490e21b529 |
-| R-20261025-b90d5a7b4143-F10 | in_progress | P1 | grok | e28 / shared | existing branch | see report | 嵌套滚动可达性已修复；自适应/比例持久化/过滤几何仍待补齐 | [F10](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f10) | — | — |
+| R-20261025-b90d5a7b4143-F10 | in_progress | P1 | grok | e28 / shared | existing branch | see report | 嵌套滚动、自适应与比例持久化已补齐；过滤几何/可视滚动条仍待补齐 | [F10](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f10) | — | — |
 | R-20261025-b90d5a7b4143-F11 | verified | P2 | grok | e28 / shared | existing branch | see report | 条件格式按表保存，项目状态与偏好 Cancel 保持一致 | [F11](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f11) | 4c490e21b529 | 4c490e21b529 |
 | R-20261025-b90d5a7b4143-F12 | verified | P2 | grok | e28 / shared | existing branch | see report | 共享图片 Fit/1:1/缩放/平移与原图导出已接入 | [F12](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f12) | 4c490e21b529 | 4c490e21b529 |
 | R-20261025-b90d5a7b4143-F13 | in_progress | P2 | grok | e28 / shared | existing branch | see report | 保留完整手动批次；引擎 tracing/分类/导出/淘汰提示待补齐 | [F13](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f13) | — | — |
@@ -50,6 +50,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `aadb0a5..6aeb50e5d74e` | Codex | issues — F02 verified; document safety, SQL files/tabs, responsive desktop theme, font fallback and partial DB4S XML; 206 tests/checks pass; 20 Soft captures; native/DB4S binary acceptance unavailable | [Report](R-20261027-6aeb50e5d74e.md) |
 | 2026-10-27 | `d6212c4..4c490e21b529` | Codex | issues — 8 earlier findings verified; F02/F10/F13 in progress; 189 tests, clippy/build/features pass; 9 e28 + e26 Soft captures inspected; native input unavailable | [Report](R-20261027-4c490e21b529.md) |
 | 2026-10-26 | `b04533d..5567aa3caf03` | Codex | issues — NG-04 rendering base implemented; 178 tests, clippy/build/features pass; 3 Soft captures, Metal pixel comparison and texture tiling pass; F12 remains in progress; native input unavailable | [Report](R-20261026-5567aa3caf03.md) |
 | 2026-10-26 | `40eb8484be7f..c72f34b584c3` | Codex | issues — NG-03 base editing implemented; F01/F04 verified; 174 tests, clippy/build/features pass; 6 Soft captures and editor Metal comparison; 11 prior e28 findings remain open; native input unavailable | [Report](R-20261026-c72f34b584c3.md) |

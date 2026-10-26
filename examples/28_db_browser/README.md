@@ -24,7 +24,7 @@ Native file pickers use `rfd`. Cancel means no operation.
 
 Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
 
-Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open refuses to replace a database with unwritten edits.
+Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open/Close/Exit use Save/Discard/Cancel for pending database and document edits.
 
 Tools → Set Encryption exports a new encrypted copy; Open prompts for a key for encrypted files. Passphrases are masked and excluded from copy/accessibility labels. New `.sqbpro` projects use DB4S XML; legacy e28 JSON remains readable.
 
@@ -32,9 +32,9 @@ Verification: `cargo test -p e28_db_browser`, workspace tests, strict clippy and
 
 Browse → New Record opens a form with Default / NULL / Value modes. Page buttons reach records beyond the first 500. Execute SQL → Results → CSV/JSON exports the full last result without rerunning SQL, including `RETURNING` results. Results use a private temporary file (plaintext, removed when the result is released), so very large queries need temporary disk space. JSON represents BLOBs/non-finite numbers as strings; use SQL dumps for a lossless backup.
 
-Project JSON retains all browse tabs, filters, sorting and page positions. Save an in-memory database with Save As before saving a project. The SQL editor supports IME composition through the shared UI; native OS input and file-picker acceptance still need a permitted desktop session.
+Projects retain all local browse tabs, filters, sorting and page positions (additional local state uses a next_gui XML extension). Save an in-memory database with Save As before saving a project. The SQL editor supports IME composition through the shared UI; native OS input and file-picker acceptance still need a permitted desktop session.
 
-Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and JSON project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with remaining advanced editing, docking and responsive-layout gaps, not full DB4S parity.
+Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with remaining advanced editing, docking and responsive-layout gaps, not full DB4S parity.
 
 Additional framebuffer QA cases: `index`, `csv`, `paste`, `attach`, `find`, `extension`, `schema`, `frozen`, `remote`, `about`, `plot`, `log`, `form`, `image`. These captures exercise rendering only.
 
@@ -77,8 +77,8 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
 - SQL file opening adds a tab instead of replacing the current draft. Exit checks
   SQL, DDL, project, cell and PRAGMA drafts even when the database has no pending
   writes; Cancel keeps the session, and confirmed Exit discards it. Save SQL or
-  Save Project explicitly to retain drafts. Opening a project refuses to replace
-  unsaved settings/text; a unified Save/Discard/Cancel transition dialog is still pending.
+  Save Project explicitly to retain drafts. New/Open/Close/Exit now share Save/Discard/Cancel. Closing one SQL tab applies
+  Save/Discard only to that document and keeps other drafts/database edits.
 - Edit Cell uses the shared multiline TextArea and an explicit NULL/INTEGER/REAL/
   TEXT/BLOB selector. Numeric edits preserve their type; invalid Hex/JSON is retained
   with an error. Apply or Discard Draft before changing the browse target. SQLite
@@ -98,8 +98,8 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
 - Shared scroll rows expose overflowing tab/action/filter strips. Nested scrolling
   starts at the inner control and bubbles at its limits; expanded container bounds
   count toward the scroll range. The shell, main pages and editing docks use these
-  viewports and retain their offsets in memory. The shell keeps a 1100px logical
-  workspace; adaptive panes, visible scrollbars and full docking remain pending.
+  viewports and retain their offsets in memory. The shell now adapts at 800×600 and persists body/structure splitter ratios;
+  visible scrollbars, table/filter alignment and full docking remain pending.
 - SQL Log retains whole manually executed batches (up to 200 entries), including
   multiline scripts. It is still not a complete categorized SQLite trace.
 
@@ -125,3 +125,11 @@ and choosing a `.json` destination writes JSON. SQLCipher keys are never added t
 projects. XML text is UTF-8, limited to 16 MiB / 64 nesting levels; XML cannot
 represent NUL/control characters, so those drafts require JSON. DB4S binary
 round-trip acceptance has not run.
+
+SQL tabs display file names and dirty markers, retain source-file bindings, and
+support Close Tab and move arrows. Cmd/Ctrl+T/W opens/closes tabs; Cmd/Ctrl+S saves
+to the bound file and Shift+S chooses a new destination. Saving rejects a bound
+file changed externally. The shared three-action modal traps focus and supports
+Tab/Shift+Tab, arrows, Enter/Space and Escape. The desktop theme uses compact
+consistent text and restrained surfaces; macOS missing symbols use a fallback
+font. Pointer tab dragging, rename and independent floating docks remain pending.
