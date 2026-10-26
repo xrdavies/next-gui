@@ -240,6 +240,7 @@ pub struct AppState {
     // Execute SQL
     pub sql_tabs: Vec<String>,
     pub sql_files: Vec<Option<SqlFile>>,
+    sql_saved: Vec<String>,
     pub sql_edit_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub sql_tab_idx: usize,
     pub sql_result: Option<QueryResult>,
@@ -471,6 +472,7 @@ impl AppState {
             replace_text: String::new(),
             sql_edit_states: Vec::new(),
             sql_files: Vec::new(),
+            sql_saved: Vec::new(),
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
             sql_tab_idx: 0,
             sql_result: None,
@@ -613,6 +615,7 @@ impl AppState {
 
     pub fn checkpoint_project(&mut self) {
         self.saved_project = self.project_snapshot();
+        self.sql_saved = self.sql_tabs.clone();
     }
 
     pub fn mark_sql_saved(&mut self) {
@@ -621,6 +624,8 @@ impl AppState {
 
     fn mark_sql_tab_saved(&mut self, index: usize) {
         let sql = self.sql_tabs[index].clone();
+        self.sql_saved.resize(self.sql_tabs.len(), String::new());
+        self.sql_saved[index] = sql.clone();
         if let Some(Some(file)) = self.sql_files.get_mut(index) { file.saved = sql.clone(); }
         if let Some(tabs) = self.saved_project.get_mut("sql_tabs").and_then(|v| v.as_array_mut()) {
             while tabs.len() < self.sql_tabs.len() { tabs.push(serde_json::Value::String(String::new())); }
@@ -638,7 +643,7 @@ impl AppState {
     pub fn sql_tab_dirty(&self, index: usize) -> bool {
         let Some(text) = self.sql_tabs.get(index) else { return false; };
         if let Some(Some(file)) = self.sql_files.get(index) { return text != &file.saved; }
-        self.saved_project.get("sql_tabs").and_then(|v| v.get(index)).and_then(|v| v.as_str()).unwrap_or("") != text
+        self.sql_saved.get(index).map(String::as_str).unwrap_or("") != text
     }
 
     pub fn has_project_drafts(&self) -> bool {
@@ -689,10 +694,12 @@ impl AppState {
     pub fn move_sql_tab(&mut self, from: usize, to: usize) {
         if self.sql_busy || from >= self.sql_tabs.len() || to >= self.sql_tabs.len() { return; }
         self.sql_files.resize_with(self.sql_tabs.len(), || None);
+        self.sql_saved.resize(self.sql_tabs.len(), String::new());
         self.sql_edit_states.resize(self.sql_tabs.len(), None);
         self.sql_outputs.resize_with(self.sql_tabs.len(), SqlOutput::default);
         self.sql_tabs.swap(from, to);
         self.sql_files.swap(from, to);
+        self.sql_saved.swap(from, to);
         self.sql_edit_states.swap(from, to);
         self.sql_outputs.swap(from, to);
         if self.sql_tab_idx == from { self.sql_tab_idx = to; }
@@ -702,6 +709,7 @@ impl AppState {
     pub fn close_sql_tab(&mut self, index: usize) {
         if self.sql_busy || index >= self.sql_tabs.len() { return; }
         self.sql_files.resize_with(self.sql_tabs.len(), || None);
+        self.sql_saved.resize(self.sql_tabs.len(), String::new());
         self.sql_edit_states.resize(self.sql_tabs.len(), None);
         self.sql_outputs.resize_with(self.sql_tabs.len(), SqlOutput::default);
         if index == self.sql_tab_idx && self.sql_tabs.len() > 1 {
@@ -709,10 +717,12 @@ impl AppState {
         }
         self.sql_tabs.remove(index);
         self.sql_files.remove(index);
+        self.sql_saved.remove(index);
         self.sql_edit_states.remove(index);
         self.sql_outputs.remove(index);
         if self.sql_tabs.is_empty() {
             self.sql_tabs.push(String::new());
+            self.sql_saved.push(String::new());
             self.sql_result = None;
             self.sql_message.clear();
             self.sql_column_widths.clear();
@@ -2734,6 +2744,23 @@ mod chart_default_tests {
         state.close_sql_tab(0);
         assert_eq!(state.sql_tabs, vec![String::new()]);
         assert!(state.sql_result.is_none());
+    }
+
+    #[test]
+    fn sql_dirty_markers_follow_moved_and_closed_unbound_tabs() {
+        let mut state = test_state();
+        state.sql_tabs = vec!["SELECT 1".into(), "SELECT 2".into()];
+        state.checkpoint_project();
+        state.sql_tabs[1].push_str(" -- draft");
+        state.move_sql_tab(1, 0);
+        assert!(state.sql_tab_dirty(0));
+        assert!(!state.sql_tab_dirty(1));
+        assert!(state.has_project_drafts());
+        state.close_sql_tab(0);
+        assert_eq!(state.sql_tabs[0], "SELECT 1");
+        assert!(!state.sql_tab_dirty(0));
+        state.close_sql_tab(0);
+        assert!(!state.sql_tab_dirty(0));
     }
 
     #[test]

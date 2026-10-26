@@ -1121,9 +1121,12 @@ impl Demo {
 
     fn request_document_action(&mut self, action: DocumentAction) {
         self.snapshot_inputs();
+        let needs_save = if let DocumentAction::CloseSqlTab(index) = &action {
+            self.state.sql_tab_dirty(*index)
+        } else { self.state.dirty || self.state.has_unsaved_drafts() };
         if self.state.sql_busy {
             self.set_error("Stop or finish SQL first");
-        } else if self.state.dirty || self.state.has_unsaved_drafts() {
+        } else if needs_save {
             self.state.pending_document = Some(action);
             self.state.confirm_kind = ConfirmKind::Documents;
             self.state.confirm_open = true;
@@ -1175,6 +1178,23 @@ impl Demo {
         self.state.confirm_open = false;
         self.state.confirm_kind = ConfirmKind::None;
         let Some(action) = self.state.pending_document.take() else { return; };
+        if let DocumentAction::CloseSqlTab(index) = action {
+            match decision {
+                ModalAction::Primary => {
+                    let path = self.state.sql_files.get(index).and_then(|f| f.as_ref()).map(|f| f.path.clone()).or_else(file_dlg::pick_save_sql);
+                    if let Some(path) = path {
+                        match self.state.save_sql_file(index, &path) {
+                            Ok(()) => self.perform_document_action(action),
+                            Err(e) => self.set_error(e),
+                        }
+                    }
+                }
+                ModalAction::Secondary => self.perform_document_action(action),
+                ModalAction::Tertiary | ModalAction::Dismiss => {}
+            }
+            self.rebuild = true;
+            return;
+        }
         let result = match decision {
             ModalAction::Primary => self.save_documents_interactive(false),
             ModalAction::Secondary => self.state.discard_document_changes().map(|()| true),
@@ -2932,6 +2952,46 @@ mod interaction_tests {
         assert!(!demo.state.dirty);
         assert!(!demo.state.has_unsaved_drafts());
         assert!(!demo.state.sql_editor().contains("keep me"));
+    }
+
+    #[test]
+    fn closing_sql_tab_preserves_other_drafts_and_pending_database_edits() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.sql_tabs = vec!["SELECT 1".into(), "SELECT 2".into()];
+        demo.state.sql_tab_idx = 0;
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.checkpoint_project();
+        demo.state.run_sql_text_sync("CREATE TABLE keep_pending(value)").unwrap();
+        demo.state.sql_tabs[1] = "SELECT 'keep other draft'".into();
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.sql_area, "SELECT 'close this draft'");
+        demo.request_document_action(DocumentAction::CloseSqlTab(0));
+        assert!(demo.state.confirm_open);
+        demo.resolve_document_action(ModalAction::Tertiary);
+        assert_eq!(demo.state.sql_tabs.len(), 2);
+        assert!(demo.state.dirty);
+        demo.request_document_action(DocumentAction::CloseSqlTab(0));
+        demo.resolve_document_action(ModalAction::Secondary);
+        assert_eq!(demo.state.sql_tabs, ["SELECT 'keep other draft'"]);
+        assert!(demo.state.dirty);
+        assert!(db::has_pending_changes(demo.state.conn.as_ref().unwrap()).unwrap());
+        assert!(demo.state.conn.as_ref().unwrap().prepare("SELECT * FROM keep_pending").is_ok());
+
+        let dir = tempfile::tempdir().unwrap();
+        let sql = dir.path().join("query.sql");
+        demo.state.save_sql_file(0, &sql).unwrap();
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.sql_area, "SELECT 'saved on close'");
+        demo.request_document_action(DocumentAction::CloseSqlTab(0));
+        demo.resolve_document_action(ModalAction::Primary);
+        assert_eq!(std::fs::read_to_string(sql).unwrap(), "SELECT 'saved on close'");
+        assert!(demo.state.dirty);
+        assert!(!demo.state.sql_tab_dirty(0));
+        demo.do_rebuild();
+        demo.request_document_action(DocumentAction::CloseSqlTab(0));
+        assert!(!demo.state.confirm_open, "A clean SQL tab does not prompt for unrelated database changes");
+        assert!(demo.state.dirty);
     }
 
     #[test]

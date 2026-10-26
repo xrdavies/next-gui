@@ -1808,7 +1808,9 @@ pub fn build_ui(
         ),
         ConfirmKind::Documents => (
             "Save changes before continuing?",
-            "Save database edits, SQL drafts and project settings. Discard restores the saved state. Cancel keeps this session open.".into(),
+            if let Some(crate::state::DocumentAction::CloseSqlTab(index)) = state.pending_document {
+                format!("Save changes to {} before closing this SQL tab? Discard closes this tab. Cancel keeps it open.", state.sql_tab_label(index))
+            } else { "Save database edits, SQL drafts and project settings. Discard restores the saved state. Cancel keeps this session open.".into() },
             "Save",
         ),
         ConfirmKind::Revert => (
