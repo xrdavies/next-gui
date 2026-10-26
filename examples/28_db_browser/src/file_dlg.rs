@@ -45,6 +45,10 @@ pub fn pick_save_sql() -> Option<PathBuf> {
         .save_file()
 }
 
+pub fn pick_save_log() -> Option<PathBuf> {
+    rfd::FileDialog::new().add_filter("SQL log", &["log", "txt"]).set_title("Export SQL Log").save_file()
+}
+
 pub fn pick_save_json() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .add_filter("JSON", &["json"])

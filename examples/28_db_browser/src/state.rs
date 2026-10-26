@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use rusqlite::{Connection, InterruptHandle};
+use crate::sql_log::{LoggedConnection, Source, SqlLog};
 
 use crate::db::{
     self, ColDef, CsvImportOptions, ExportSqlOptions, ObjectKind, QueryResult, SchemaObject,
@@ -180,7 +181,7 @@ pub struct CondFormatRule {
 }
 
 pub struct AppState {
-    pub conn: Option<Connection>,
+    pub conn: Option<LoggedConnection>,
     pub path: String,
     pub path_draft: String,
     pub read_only: bool,
@@ -266,7 +267,10 @@ pub struct AppState {
     pub chart_column: String,
     pub chart_points: Vec<f32>,
 
-    pub sql_log: Vec<String>,
+    pub sql_log: SqlLog,
+    pub sql_log_filter: usize,
+    pub sql_log_view: Option<next_gui_ui::TextAreaState>,
+    sql_sensitive: bool,
     pub io_path: String,
     pub recent: VecDeque<String>,
 
@@ -338,7 +342,7 @@ pub struct SqlOutput {
 }
 
 pub struct SqlJob {
-    handle: std::thread::JoinHandle<(Connection, Result<QueryResult, String>, bool)>,
+    handle: std::thread::JoinHandle<(LoggedConnection, Result<QueryResult, String>, bool)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,7 +373,8 @@ impl AppState {
         state.load_recent();
         state.sync_prefs_drafts();
         match open_or_create_demo(&demo) {
-            Ok(conn) => {
+            Ok(mut conn) => {
+                conn.bind_log(&state.sql_log);
                 state.path = demo.display().to_string();
                 state.path_draft = state.path.clone();
                 state.conn = Some(conn);
@@ -393,7 +398,8 @@ impl AppState {
             }
             Err(e) => {
                 state.status_msg = format!("Demo DB failed: {e}; using in-memory");
-                if let Ok(conn) = open_shared_memory() {
+                if let Ok(mut conn) = open_shared_memory() {
+                    conn.bind_log(&state.sql_log);
                     let _ = db::seed_demo(&conn);
                     state.conn = Some(conn);
                     state.path = ":memory:".into();
@@ -493,7 +499,10 @@ impl AppState {
             chart_table: None,
             chart_column: "price".into(),
             chart_points: Vec::new(),
-            sql_log: Vec::new(),
+            sql_log: SqlLog::default(),
+            sql_log_filter: 0,
+            sql_log_view: None,
+            sql_sensitive: false,
             io_path: String::new(),
             recent: VecDeque::new(),
             confirm_kind: ConfirmKind::None,
@@ -825,12 +834,18 @@ impl AppState {
     }
 
     pub fn log_sql(&mut self, stmt: impl Into<String>) {
-        let s = stmt.into();
-        self.sql_log.push(s);
-        if self.sql_log.len() > 200 {
-            let drain = self.sql_log.len() - 200;
-            self.sql_log.drain(0..drain);
-        }
+        self.sql_log.push(Source::Application, stmt);
+    }
+
+    pub fn export_sql_log(&self, path: &Path) -> Result<(), String> {
+        if self.sql_busy { return Err("Wait for SQL to finish before exporting the log".into()); }
+        if let Some(conn) = &self.conn { db::guard_output_path(conn, path)?; }
+        let mut file = tempfile::NamedTempFile::new_in(path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")))
+            .map_err(|e| e.to_string())?;
+        use std::io::Write;
+        file.write_all(self.sql_log.text(Source::from_filter(self.sql_log_filter)).as_bytes()).map_err(|e| e.to_string())?;
+        file.persist(path).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn refresh_schema(&mut self) -> Result<(), String> {
@@ -1418,12 +1433,13 @@ impl AppState {
 
     fn adopt_conn(
         &mut self,
-        conn: Connection,
+        mut conn: LoggedConnection,
         path: String,
         read_only: bool,
     ) -> Result<(), String> {
         self.guard_replace()?;
         db::list_schema(&conn)?;
+        conn.bind_log(&self.sql_log);
         self.conn = Some(conn);
         self.cipher_active = false;
         self.cipher_open_path = None;
@@ -1543,7 +1559,8 @@ impl AppState {
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
         db::copy_database_file(conn, Path::new(dst))?;
-        let next = db::open_path(dst)?;
+        let mut next = db::open_path(dst)?;
+        next.bind_log(&self.sql_log);
         self.conn = Some(next);
         self.path = dst.to_string();
         self.path_draft = self.path.clone();
@@ -1739,9 +1756,10 @@ impl AppState {
     }
 
     pub fn run_sql_text_sync(&mut self, sql: &str) -> Result<(), String> {
-        self.log_sql(sql);
+        self.sql_sensitive = crate::sql_log::sensitive(sql);
+        self.sql_log.push(Source::User, sql);
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let result = db::execute_sql(conn, sql);
+        let result = conn.user_sql(|| db::execute_sql(conn, sql));
         self.dirty = !self.read_only && db::has_pending_changes(conn)?;
         if !self.read_only {
             db::begin_deferred(conn)?;
@@ -1769,10 +1787,11 @@ impl AppState {
         self.sql_busy = true;
         self.sql_message = "Running…".into();
         self.status_msg = "SQL running…".into();
-        self.log_sql(&sql);
+        self.sql_sensitive = crate::sql_log::sensitive(&sql);
+        self.sql_log.push(Source::User, &sql);
         let handle = std::thread::spawn(move || {
             worker.progress_handler(500, Some(move || cancel.load(Ordering::SeqCst)));
-            let mut result = db::execute_sql(&worker, &sql);
+            let mut result = worker.user_sql(|| db::execute_sql(&worker, &sql));
             worker.progress_handler(0, None::<fn() -> bool>);
             let changed = !read_only && db::has_pending_changes(&worker).unwrap_or(true);
             if result.is_err() && worker.is_autocommit() && !read_only {
@@ -1848,6 +1867,7 @@ impl AppState {
                 Ok(())
             }
             Err(e) => {
+                self.sql_log.push(Source::Error, if self.sql_sensitive { "SQLCipher statement failed (details redacted)" } else { &e });
                 self.sql_result = None;
                 self.error_msg = Some(e.clone());
                 self.sql_message = e.clone();
@@ -1858,7 +1878,7 @@ impl AppState {
     }
 }
 
-fn open_or_create_demo(path: &Path) -> Result<Connection, String> {
+fn open_or_create_demo(path: &Path) -> Result<LoggedConnection, String> {
     if path.exists() {
         db::open_path(path.to_str().unwrap_or(":memory:"))
     } else {
@@ -1868,7 +1888,7 @@ fn open_or_create_demo(path: &Path) -> Result<Connection, String> {
     }
 }
 
-fn open_shared_memory() -> Result<Connection, String> {
+fn open_shared_memory() -> Result<LoggedConnection, String> {
     db::open_path(":memory:")
 }
 
@@ -2674,7 +2694,9 @@ mod chart_default_tests {
 
     fn test_state() -> AppState {
         let mut state = AppState::empty();
-        state.conn = Some(Connection::open_in_memory().unwrap());
+        let mut conn = LoggedConnection::new(Connection::open_in_memory().unwrap()).unwrap();
+        conn.bind_log(&state.sql_log);
+        state.conn = Some(conn);
         state
             .conn
             .as_ref()
@@ -3008,7 +3030,42 @@ mod chart_default_tests {
         assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0], "2");
         state.start_sql_text("SELECT 3;\nSELECT 4;".into()).unwrap();
         wait_sql(&mut state);
-        assert!(state.sql_log.iter().any(|s| s == "SELECT 3;\nSELECT 4;"));
+        assert!(state.sql_log.snapshot(Some(Source::User)).0.iter().any(|e| e.text == "SELECT 3;\nSELECT 4;"));
+    }
+
+    #[test]
+    fn sql_trace_covers_workers_replaced_connections_errors_and_safe_export() {
+        let mut state = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let sql = format!("SELECT '{}';\nSELECT v FROM t;", "中文🙂".repeat(60));
+        state.run_sql_text_sync(&sql).unwrap();
+        state.start_sql_text("SELECT v FROM t WHERE v='saved';".into()).unwrap();
+        let busy_output = dir.path().join("busy.log");
+        assert!(state.export_sql_log(&busy_output).is_err());
+        assert!(!busy_output.exists());
+        wait_sql(&mut state);
+        assert!(state.sql_log.text(Some(Source::User)).contains("SELECT v FROM t WHERE v='saved';"));
+        assert!(state.run_sql_text_sync("SELECT FROM; PRAGMA key='do-not-log';").is_err());
+        assert!(!state.sql_log.text(None).contains("do-not-log"));
+        assert!(state.sql_log.text(Some(Source::Error)).contains("details redacted"));
+        state.run_sql_text_sync("SELECT FROM;").unwrap_err();
+        assert!(state.sql_log.text(Some(Source::Error)).contains("syntax error"));
+        let database = dir.path().join("saved.db");
+        state.save_as(database.to_str().unwrap()).unwrap();
+        state.run_sql_text_sync("SELECT 'replacement connection';").unwrap();
+        let before = std::fs::read(&database).unwrap();
+        assert!(state.export_sql_log(&database).is_err());
+        assert_eq!(std::fs::read(&database).unwrap(), before);
+        state.sql_log_filter = 0;
+        let output = dir.path().join("user.log");
+        state.export_sql_log(&output).unwrap();
+        let exported = std::fs::read_to_string(&output).unwrap();
+        assert!(exported.contains(&sql));
+        assert!(exported.contains("replacement connection"));
+        assert!(!exported.contains("Application"));
+        assert!(!exported.contains("do-not-log"));
+        state.close_db();
+        assert!(state.sql_log.text(Some(Source::User)).contains(&sql));
     }
 
     #[test]

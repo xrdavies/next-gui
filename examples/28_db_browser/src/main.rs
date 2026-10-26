@@ -9,6 +9,7 @@ mod filters;
 mod prefs;
 mod project;
 mod project_xml;
+mod sql_log;
 mod state;
 mod ui_build;
 
@@ -162,6 +163,7 @@ struct Demo {
     last_browse_sel: Option<usize>,
     last_browse_row: Option<usize>,
     last_wizard_list: Option<usize>,
+    last_log_revision: u64,
     exit_requested: bool,
 }
 
@@ -311,6 +313,10 @@ struct BuiltUiIds {
     remote_draft: WidgetId,
     btn_remote_add: WidgetId,
     btn_remote_open: WidgetId,
+    log_area: WidgetId,
+    log_filter: WidgetId,
+    log_clear: WidgetId,
+    log_export: WidgetId,
 }
 
 impl From<&BuiltUi> for BuiltUiIds {
@@ -460,6 +466,10 @@ impl From<&BuiltUi> for BuiltUiIds {
             remote_draft: b.remote_draft,
             btn_remote_add: b.btn_remote_add,
             btn_remote_open: b.btn_remote_open,
+            log_area: b.log_area,
+            log_filter: b.log_filter,
+            log_clear: b.log_clear,
+            log_export: b.log_export,
         }
     }
 }
@@ -566,6 +576,10 @@ impl Demo {
                 "log" => {
                     state.dock_log = true;
                     state.dock_focus = DockKind::Log;
+                    state.sql_log_filter = 3;
+                    let _ = state.run_sql_text_sync("SELECT '完整 SQL 日志 · Unicode';\nSELECT count(*) FROM customers;");
+                    let _ = state.run_sql_text_sync("SELECT * FROM missing_log_example;");
+                    state.error_msg = None;
                     MainTab::Structure
                 }
                 _ => MainTab::Structure,
@@ -637,6 +651,7 @@ impl Demo {
         }
         let clear = clear_color(&theme);
         let qa_exit = std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some();
+        let last_log_revision = state.sql_log.revision();
         Self {
             font,
             theme,
@@ -663,11 +678,13 @@ impl Demo {
             last_browse_sel: None,
             last_browse_row: None,
             last_wizard_list: None,
+            last_log_revision,
             exit_requested: false,
         }
     }
 
     fn snapshot_inputs(&mut self) {
+        if let Some(view) = self.ui.text_area_state(self.ids.log_area) { self.state.sql_log_view = Some(view); }
         if let Some(ratio) = self.ui.splitter_ratio(self.ids.body_splitter) {
             if self.state.any_dock_visible() && Some(ratio) != self.last_body_ratio { self.state.body_ratio = ratio; }
             self.last_body_ratio = Some(ratio);
@@ -1060,7 +1077,10 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let log_revision = self.state.sql_log.revision();
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
+        let log_focused = self.ids.log_area.0 != 0 && self.ui.focused() == Some(self.ids.log_area)
+            && self.state.dock_log && self.state.dock_focus == DockKind::Log && self.state.overlay.is_none();
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
         let built = build_ui(
             self.font.clone(),
@@ -1078,6 +1098,10 @@ impl Demo {
             self.ui.set_focus(Some(self.ids.sql_area));
             self.ui.sync(&mut self.scene);
         }
+        if log_focused && self.ids.log_area.0 != 0 {
+            self.ui.set_focus(Some(self.ids.log_area));
+            self.ui.sync(&mut self.scene);
+        }
         let clear = clear_color(&self.theme);
         self.backend.set_clear_color(clear);
         if let Some(g) = self.gpu_stash.as_mut() {
@@ -1093,10 +1117,24 @@ impl Demo {
         self.last_browse_sel = self.ui.select_selected(self.ids.browse_select);
         self.last_browse_row = self.state.browse().sel_row;
         self.last_wizard_list = self.ui.list_selected(self.ids.ov_list);
+        self.last_log_revision = log_revision;
+    }
+
+    fn refresh_sql_log(&mut self) -> bool {
+        if self.state.dock_log && self.state.dock_focus == DockKind::Log
+            && self.state.sql_log.revision() != self.last_log_revision {
+            self.snapshot_inputs();
+            self.do_rebuild();
+            return true;
+        }
+        false
     }
 
     fn set_error(&mut self, e: impl Into<String>) {
         let e = e.into();
+        if self.state.error_msg.as_deref() != Some(e.as_str()) {
+            self.state.sql_log.push(crate::sql_log::Source::Error, &e);
+        }
         self.state.error_msg = Some(e.clone());
         self.state.status_msg = e.clone();
         self.state.sql_message = e;
@@ -1866,6 +1904,22 @@ impl Demo {
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 { return; }
         self.snapshot_inputs();
+        if id == self.ids.log_clear {
+            self.state.sql_log.clear(crate::sql_log::Source::from_filter(self.state.sql_log_filter));
+            self.state.sql_log_view = None;
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.log_export {
+            if let Some(path) = file_dlg::pick_save_log() {
+                match self.state.export_sql_log(&path) {
+                    Ok(()) => { self.clear_error(); self.state.status_msg = format!("SQL log exported → {}", path.display()); }
+                    Err(e) => self.set_error(e),
+                }
+                self.rebuild = true;
+            }
+            return;
+        }
         if id == self.ids.btn_edit_discard && id.0 != 0 {
             self.state.discard_cell_draft();
             self.clear_error();
@@ -2314,6 +2368,13 @@ impl Demo {
     }
 
     fn poll_selection_changes(&mut self) {
+        if let Some(index) = self.ui.select_selected(self.ids.log_filter) {
+            if index != self.state.sql_log_filter {
+                self.state.sql_log_filter = index;
+                self.state.sql_log_view = None;
+                self.rebuild = true;
+            }
+        }
         if self.state.has_cell_draft() {
             let selection_changed = (self.ids.browse_table.0 != 0
                 && (self.ui.table_selected_row(self.ids.browse_table)
@@ -2909,6 +2970,7 @@ impl AppCallbacks for Demo {
                 ctx.request_redraw();
             }
         }
+        self.refresh_sql_log();
         if !self.needs_paint {
             return;
         }
@@ -2959,6 +3021,69 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn log_dock_keeps_full_read_only_text_selection_filters_and_clear_scope() {
+        use crate::sql_log::Source;
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.dock_log = true;
+        demo.state.dock_focus = DockKind::Log;
+        let sql = format!("SELECT '{}';\nSELECT 2;", "完整日志🙂".repeat(30));
+        demo.state.run_sql_text_sync(&sql).unwrap();
+        demo.do_rebuild();
+        let area = demo.ids.log_area;
+        assert!(demo.ui.text_area_value(area).unwrap().contains(&sql));
+        demo.ui.set_focus(Some(area));
+        demo.ui.select_text_area_range(area, 10..40);
+        let selected = demo.ui.focused_text_for_copy().unwrap();
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused_text_for_copy(), Some(selected));
+        let value = demo.ui.text_area_value(demo.ids.log_area).unwrap().to_owned();
+        demo.ui.key_input(UiKey::Char('x'));
+        assert!(!demo.ui.ime_commit("changed"));
+        assert_eq!(demo.ui.text_area_value(demo.ids.log_area), Some(value.as_str()));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.ui.sync(&mut demo.scene);
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 1400, 860).unwrap();
+        }
+        demo.ui.set_select_selected(demo.ids.log_filter, Some(1));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.state.sql_log_filter, 1);
+        assert!(demo.ui.text_area_value(demo.ids.log_area).unwrap().contains("Application"));
+        demo.state.sql_log.push(Source::Application, "SELECT 'new trace while running';");
+        assert!(demo.refresh_sql_log());
+        assert!(demo.ui.text_area_value(demo.ids.log_area).unwrap().contains("new trace while running"));
+        assert!(!demo.refresh_sql_log());
+        demo.handle_button(demo.ids.log_clear);
+        demo.do_rebuild();
+        assert!(demo.state.sql_log.snapshot(Some(Source::Application)).0.is_empty());
+        assert!(demo.state.sql_log.text(Some(Source::User)).contains(&sql));
+        demo.ui.set_select_selected(demo.ids.log_filter, Some(3));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.log_clear);
+        assert!(demo.state.sql_log.snapshot(None).0.is_empty());
+        demo.win_w = 800;
+        demo.win_h = 600;
+        demo.state.sql_log_filter = 0;
+        demo.state.sql_log.push(Source::User, &sql);
+        demo.do_rebuild();
+        let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.log_area)).unwrap().bounds;
+        assert!(bounds.x >= 0.0 && bounds.x + bounds.width <= 800.0 && bounds.y + bounds.height <= 600.0, "{bounds:?}");
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(800.0, 600.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(800, 600, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&PathBuf::from(path).with_extension("narrow.ppm").to_string_lossy(), renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
+        }
+    }
 
     #[test]
     fn normal_sql_page_fits_with_visible_or_hidden_toolbar() {

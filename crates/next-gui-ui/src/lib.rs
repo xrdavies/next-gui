@@ -1889,6 +1889,7 @@ enum Kind {
     },
     TextArea {
         value: String,
+        read_only: bool,
         placeholder: String,
         caret: usize,
         preedit: String,
@@ -3949,7 +3950,7 @@ impl Ui {
     /// True when a text editor is focused (app should enable OS IME).
     pub fn text_input_wants_ime(&self) -> bool {
         self.focus
-            .is_some_and(|id| matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { .. } | Kind::TextArea { .. })))
+            .is_some_and(|id| matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { .. } | Kind::TextArea { read_only: false, .. })))
     }
 
     /// Caret rectangle for the focused TextInput / TextArea (physical px), for IME candidate placement.
@@ -3995,6 +3996,7 @@ impl Ui {
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
+        if matches!(w.kind, Kind::TextArea { read_only: true, .. }) { return false; }
         let (Kind::TextInput { preedit, preedit_cursor, .. }
             | Kind::TextArea { preedit, preedit_cursor, .. }) = &mut w.kind
         else {
@@ -18510,6 +18512,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::TextArea {
                     value,
+                    read_only: false,
                     placeholder: placeholder.into(),
                     caret,
                     preedit: String::new(),

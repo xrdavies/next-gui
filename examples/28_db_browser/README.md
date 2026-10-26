@@ -153,5 +153,22 @@ support thumb dragging and track paging; Tab focus reveals controls in enclosing
 scroll areas. Hidden docks return their width to the workspace. REGEXP uses
 Unicode properties, lookaround and backreferences, bounded to 1,000,000 match
 steps / depth 1,000. Escape preferences and automatic filter debounce remain
-pending. Project loading still needs to report invalid restored query errors;
-see the [latest review](../../docs/reviews/R-20261027-2bfc8ad51380.md).
+pending. Project loading preflights restored queries and reports errors while
+preserving the previous session; see the [recovery/clipping review](../../docs/reviews/R-20261027-2b16b7cb2279.md).
+
+### SQL log (2026-10-27)
+
+The dock shows User, Application, Error Log or All. It records complete submitted
+batches and SQLite statement/trigger events, including ordinary bound values as
+in DB4S. The read-only text view supports selection, copy, scrolling and live updates
+while SQL runs. Clear and Export apply to the selected category; All applies to
+all categories. Export waits for running SQL so open database paths remain protected.
+
+Each category retains 200 entries, with an always-visible eviction count. Full
+retained text is exported atomically; individual SQL text is not shortened.
+SQLCipher key/rekey/hex-key statements, ATTACH KEY and key-bearing file URIs are
+redacted before entering history. The global SQLite diagnostic callback is not
+connected yet; the Error category contains application/execution failures.
+
+`NEXT_GUI_DB_BROWSER_QA=1 NEXT_GUI_DB_BROWSER_QA_TAB=log` captures the log dock;
+`NEXT_GUI_DB_BROWSER_QA_THEME=light` selects the light theme.

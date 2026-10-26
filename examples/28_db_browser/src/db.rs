@@ -91,7 +91,7 @@ impl ColDef {
 pub const COLUMN_TYPES: &[&str] = &["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC", "VARCHAR(255)"];
 
 /// Open connection (file or `:memory:`).
-pub fn open_path(path: &str) -> Result<Connection, String> {
+pub fn open_path(path: &str) -> Result<crate::sql_log::LoggedConnection, String> {
     let conn = if path == ":memory:" || path.is_empty() {
         Connection::open_in_memory()
     } else {
@@ -99,18 +99,18 @@ pub fn open_path(path: &str) -> Result<Connection, String> {
         Connection::open_with_flags(path, flags)
     }.map_err(|e| e.to_string())?;
     crate::filters::register_regexp(&conn)?;
-    Ok(conn)
+    crate::sql_log::LoggedConnection::new(conn)
 }
 
 /// Open an existing DB read-only (no CREATE).
-pub fn open_readonly(path: &str) -> Result<Connection, String> {
+pub fn open_readonly(path: &str) -> Result<crate::sql_log::LoggedConnection, String> {
     if path == ":memory:" || path.is_empty() {
         return Err("read-only open requires a file path".into());
     }
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI;
     let conn = Connection::open_with_flags(path, flags).map_err(|e| e.to_string())?;
     crate::filters::register_regexp(&conn)?;
-    Ok(conn)
+    crate::sql_log::LoggedConnection::new(conn)
 }
 
 /// Begin a deferred write transaction (DB4S Write Changes model).
@@ -161,7 +161,7 @@ pub fn copy_database_file(conn: &Connection, dst: &Path) -> Result<(), String> {
 }
 
 /// Create a new empty DB; never truncate an existing database.
-pub fn create_new(path: &str) -> Result<Connection, String> {
+pub fn create_new(path: &str) -> Result<crate::sql_log::LoggedConnection, String> {
     if path != ":memory:" {
         std::fs::OpenOptions::new()
             .write(true)
@@ -1293,7 +1293,7 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn tmp_db() -> (PathBuf, Connection) {
+    fn tmp_db() -> (PathBuf, crate::sql_log::LoggedConnection) {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

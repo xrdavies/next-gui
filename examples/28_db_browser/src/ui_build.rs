@@ -144,7 +144,10 @@ pub struct BuiltUi {
     pub btn_edit_discard: WidgetId,
     pub btn_edit_cell: WidgetId,
     pub schema_list: WidgetId,
-    pub log_list: WidgetId,
+    pub log_area: WidgetId,
+    pub log_filter: WidgetId,
+    pub log_clear: WidgetId,
+    pub log_export: WidgetId,
     pub chart_select: WidgetId,
     pub chart_col: WidgetId,
     pub btn_chart: WidgetId,
@@ -413,7 +416,10 @@ pub fn build_ui(
     let mut btn_edit_discard = z;
     let mut btn_edit_cell = z;
     let mut schema_list = z;
-    let mut log_list = z;
+    let mut log_area = z;
+    let mut log_filter = z;
+    let mut log_clear = z;
+    let mut log_export = z;
     let mut chart_select = z;
     let mut chart_col = z;
     let mut btn_chart = z;
@@ -1062,26 +1068,7 @@ pub fn build_ui(
                 .map(|r| r.rows.clone())
                 .unwrap_or_default();
             let roots = schema_tree(state);
-            let log_items: Vec<String> = if state.sql_log.is_empty() {
-                vec!["(empty)".into()]
-            } else {
-                state
-                    .sql_log
-                    .iter()
-                    .rev()
-                    .take(100)
-                    .map(|s| {
-                        const MAX: usize = 56;
-                        let one_line = s.replace('\n', " ");
-                        if one_line.chars().count() > MAX {
-                            let trunc: String = one_line.chars().take(MAX.saturating_sub(1)).collect();
-                            format!("{trunc}…")
-                        } else {
-                            one_line
-                        }
-                    })
-                    .collect()
-            };
+            let log_text = state.sql_log.text(crate::sql_log::Source::from_filter(state.sql_log_filter));
             let schema_items: Vec<String> = if state.schema.is_empty() {
                 vec!["(no objects)".into()]
             } else {
@@ -1660,7 +1647,22 @@ pub fn build_ui(
                                 }
                                 DockKind::Log => {
                                     tb.page(DockKind::Log.title(), |p| {
-                                        log_list = p.list(log_items.clone(), list_style);
+                                        dock_scroll = p.scroll_area(dock_col, |c| {
+                                            c.scroll_row(dock_row, |row| {
+                                                let mut filter_style = sel_style;
+                                                filter_style.width = 118.0;
+                                                log_filter = row.select(["User", "Application", "Error Log", "All"], Some(state.sql_log_filter), "source", filter_style);
+                                                log_clear = row.tool_button("Clear");
+                                                log_export = row.tool_button("Export…");
+                                            });
+                                            let (entries, evicted) = state.sql_log.snapshot(crate::sql_log::Source::from_filter(state.sql_log_filter));
+                                            c.text(format!("{} retained · {evicted} evicted", entries.len()));
+                                            let mut style = TextAreaStyle::from_theme(&theme);
+                                            style.width = (dock_w - 40.0).max(160.0);
+                                            style.height = (dock_col.height - 110.0).max(140.0);
+                                            log_area = c.text_area(&log_text, "SQL log", style);
+                                            c.text("Select text · Cmd/Ctrl+C to copy");
+                                        });
                                     });
                                 }
                                 DockKind::Plot => {
@@ -1860,6 +1862,7 @@ pub fn build_ui(
     }
 
     ui.set_image_view(edit_image, state.edit_image_view);
+    ui.set_text_area_read_only(log_area, true);
     ui.sync(&mut scene);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
@@ -1868,6 +1871,10 @@ pub fn build_ui(
     ui.set_scroll_offset(dock_scroll, dock_offset.0, dock_offset.1);
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
+    }
+    if !state.sql_log_view.as_ref().is_some_and(|view| ui.restore_text_area_state(log_area, view)) {
+        let len = ui.text_area_value(log_area).map_or(0, |s| s.chars().count());
+        ui.select_text_area_range(log_area, len..len);
     }
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
@@ -1941,7 +1948,10 @@ pub fn build_ui(
         btn_edit_discard,
         btn_edit_cell,
         schema_list,
-        log_list,
+        log_area,
+        log_filter,
+        log_clear,
+        log_export,
         chart_select,
         chart_col,
         btn_chart,

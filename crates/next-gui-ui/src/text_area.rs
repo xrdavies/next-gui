@@ -182,7 +182,21 @@ impl Ui {
         )
     }
 
-    /// Replace selection (or insert at caret) as one undoable edit. Empty text deletes selection.
+    /// Allow selection/copy/navigation while blocking edits and IME. Programmatic value setters still work.
+    pub fn set_text_area_read_only(&mut self, id: WidgetId, read_only: bool) -> bool {
+        let Some(Widget {
+            kind: Kind::TextArea { read_only: current, preedit, preedit_cursor, .. },
+            ..
+        }) = self.widgets.get_mut(&id) else { return false; };
+        *current = read_only;
+        if read_only {
+            preedit.clear();
+            *preedit_cursor = None;
+        }
+        true
+    }
+
+    /// Replace selection (or insert at caret) as one undoable edit. Read-only areas reject edits.
     pub fn replace_text_area_selection(&mut self, id: WidgetId, text: &str) -> bool {
         let Some(Widget {
             kind:
@@ -192,6 +206,7 @@ impl Ui {
                     edit,
                     preedit,
                     preedit_cursor,
+                    read_only: false,
                     ..
                 },
             ..
@@ -334,6 +349,11 @@ impl Ui {
     }
 
     pub(super) fn key_text_area(&mut self, id: WidgetId, key: UiKey) -> bool {
+        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { read_only: true, .. }))
+            && matches!(key, UiKey::Char(_) | UiKey::Enter | UiKey::Backspace | UiKey::Delete | UiKey::Undo | UiKey::Redo)
+        {
+            return true;
+        }
         if let UiKey::Char(c) = key {
             return self.replace_text_area_selection(id, &c.to_string());
         }
@@ -474,6 +494,7 @@ impl Ui {
                     scroll_y,
                     style,
                     edit,
+                    ..
                 },
             node,
             label_node,
@@ -706,6 +727,39 @@ mod tests {
             !next.restore_text_area_state(next_area, &state),
             "never restore history from another document"
         );
+    }
+
+    #[test]
+    fn read_only_keeps_selection_copy_scroll_and_blocks_all_user_edits() {
+        let original = "SELECT '中文🙂';\n".repeat(30);
+        let (mut ui, mut scene, area) = editor(&original);
+        ui.key_input(UiKey::Char('x'));
+        let edited = ui.text_area_value(area).unwrap().to_owned();
+        ui.ime_preedit("東京", Some((6, 6)));
+        assert!(ui.set_text_area_read_only(area, true));
+        assert!(!ui.text_input_wants_ime());
+        ui.key_input(UiKey::SelectAll);
+        let range = ui.text_area_selection(area).unwrap();
+        for key in [UiKey::Char('y'), UiKey::Enter, UiKey::Backspace, UiKey::Delete, UiKey::Undo, UiKey::Redo] {
+            assert!(ui.key_input(key));
+            assert_eq!(ui.text_area_value(area), Some(edited.as_str()));
+            assert_eq!(ui.text_area_selection(area), Some(range.clone()));
+        }
+        assert!(!ui.paste_into_focused_text("changed"));
+        assert!(!ui.ime_preedit("changed", None));
+        assert!(!ui.ime_commit("changed"));
+        assert!(!ui.replace_text_area_selection(area, "changed"));
+        assert_eq!(ui.focused_text_for_copy().as_deref(), Some(edited.as_str()));
+        ui.key_input(UiKey::End);
+        ui.sync(&mut scene);
+        assert!(ui.text_area_scroll(area).unwrap() > 0.0);
+        assert!(ui.set_text_area_read_only(area, false));
+        assert!(ui.text_input_wants_ime());
+        ui.key_input(UiKey::Undo);
+        assert_eq!(ui.text_area_value(area), Some(original.as_str()));
+        ui.set_text_area_read_only(area, true);
+        assert!(ui.set_text_area_value(area, "programmatic"));
+        assert_eq!(ui.text_area_value(area), Some("programmatic"));
     }
 
     #[test]

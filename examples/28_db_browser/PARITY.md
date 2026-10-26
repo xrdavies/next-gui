@@ -148,7 +148,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |------|--------|-------|
 | Edit Database Cell | partial | Shared multiline TextArea, explicit storage type/NULL, validated Hex and PNG/JPEG view; full binary/XML/RTL/evaluation and generic import/export remain. |
 | DB Schema | partial | Flat main-schema list; no column tree, filter or SQL insertion. |
-| SQL Log | partial | Last 200 complete manually executed batches; no all-SQL trace/category filters/export (F13). |
+| SQL Log | partial | SQLite statement/trigger tracing with expanded ordinary values; User/Application/Error/All, full read-only text, copy, scoped clear/export and visible eviction counts (200/category). Global SQLite diagnostics and native acceptance remain. |
 | Plot | partial | One numeric-column trend, first 64 samples; invalid samples skipped and query errors surfaced (F07 addressed). No X/Y1/Y2 or result-set source. |
 | Remote | partial | Local path list; cloud protocol/auth/sync not implemented |
 

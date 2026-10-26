@@ -25,6 +25,14 @@
 
 `examples/02_counter`（及同类 Soft demo）在 `key_input` 之后 drain `take_button_activate`，与 `hit_widget` 点击共用同一套按钮逻辑。
 
+### 1.2 只读多行文本
+
+`Ui::set_text_area_read_only(id, true)` 允许焦点、导航、选择和复制，阻止输入、
+粘贴、删除、撤销/重做与 IME 修改。`text_input_wants_ime()` 对只读文本区返回 false；
+设置只读会清除未提交的组合文本。程序调用 `set_text_area_value` 仍可更新内容。
+现有 TextArea 默认可编辑，编辑历史在切换只读期间保留。这是共享控件行为，
+不表示已向 OS 暴露只读可访问状态。
+
 ## 2. 可访问名
 
 | API | 说明 |
