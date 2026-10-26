@@ -95,7 +95,7 @@ pub fn open_path(path: &str) -> Result<Connection, String> {
     if path == ":memory:" || path.is_empty() {
         Connection::open_in_memory().map_err(|e| e.to_string())
     } else {
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI;
         Connection::open_with_flags(path, flags).map_err(|e| e.to_string())
     }
 }
@@ -105,7 +105,7 @@ pub fn open_readonly(path: &str) -> Result<Connection, String> {
     if path == ":memory:" || path.is_empty() {
         return Err("read-only open requires a file path".into());
     }
-    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI;
     Connection::open_with_flags(path, flags).map_err(|e| e.to_string())
 }
 
@@ -983,6 +983,21 @@ pub fn export_query_result(
 
 /// ATTACH DATABASE.
 pub fn attach_database(conn: &Connection, path: &str, schema: &str) -> Result<(), String> {
+    attach_database_mode(conn, path, schema, false)
+}
+
+pub fn attach_database_mode(conn: &Connection, path: &str, schema: &str, read_only: bool) -> Result<(), String> {
+    let uri;
+    let path = if read_only {
+        let absolute = fs::canonicalize(path).map_err(|e| e.to_string())?;
+        let mut encoded = String::new();
+        for byte in absolute.to_string_lossy().bytes() {
+            if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) { encoded.push(byte as char); }
+            else { encoded.push_str(&format!("%{byte:02X}")); }
+        }
+        uri = format!("file:{encoded}?mode=ro");
+        &uri
+    } else { path };
     let sql = format!(
         "ATTACH DATABASE {} AS {}",
         quote_literal(path),

@@ -26,7 +26,7 @@ Save As uses a live SQLite backup (including WAL), commits pending edits and req
 
 Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open refuses to replace a database with unwritten edits.
 
-Tools → Set Encryption exports a new encrypted copy; Open prompts for a key for encrypted files. Passphrases are masked and excluded from copy/accessibility labels. Project files are example-specific JSON, not upstream DB4S XML.
+Tools → Set Encryption exports a new encrypted copy; Open prompts for a key for encrypted files. Passphrases are masked and excluded from copy/accessibility labels. New `.sqbpro` projects use DB4S XML; legacy e28 JSON remains readable.
 
 Verification: `cargo test -p e28_db_browser`, workspace tests, strict clippy and macOS feature checks. See `docs/reviews/INDEX.md` for measured results and unavailable acceptance.
 
@@ -104,3 +104,24 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   multiline scripts. It is still not a complete categorized SQLite trace.
 
 These changes do not claim full DB4S compatibility or native desktop acceptance.
+
+### DB4S project interchange (2026-10-27)
+
+New `.sqbpro` files use the XML layout from DB4S 3.13.1. Open restores the
+main database path/access mode, five connection PRAGMAs, existing attached files,
+main-schema browse tabs, column widths/primary sort, SQL text/file references and
+active main/SQL tabs. Relative database, attachment and SQL paths resolve against
+the project directory. Linked SQL text is read from its file before replacing the
+session. Read-only projects also attach files read-only. Missing files, malformed
+XML, unsupported entities and invalid settings report an error. New database
+connections are prepared before replacing the current connection.
+
+Unrecognized elements/attributes and Qt dock data survive XML saves; unsupported
+browse filters/formatting/plots and attached-schema browse tabs are reported as
+retained but not applied. This is partial interoperability, not complete DB4S
+project acceptance. The `next_gui` XML extension retains additional local layout
+and draft settings; upstream ignores it. Legacy JSON projects remain readable,
+and choosing a `.json` destination writes JSON. SQLCipher keys are never added to
+projects. XML text is UTF-8, limited to 16 MiB / 64 nesting levels; XML cannot
+represent NUL/control characters, so those drafts require JSON. DB4S binary
+round-trip acceptance has not run.

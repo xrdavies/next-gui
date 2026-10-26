@@ -7,6 +7,7 @@ mod db;
 mod file_dlg;
 mod prefs;
 mod project;
+mod project_xml;
 mod state;
 mod ui_build;
 

@@ -771,6 +771,7 @@ dependencies = [
  "next-gui-scene",
  "next-gui-text",
  "next-gui-ui",
+ "quick-xml",
  "rfd",
  "rusqlite",
  "serde",

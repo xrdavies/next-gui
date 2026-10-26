@@ -54,14 +54,15 @@ pub fn pick_save_json() -> Option<PathBuf> {
 
 pub fn pick_open_project() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("e28 JSON project", &["sqbpro", "json"])
+        .add_filter("DB Browser project", &["sqbpro"])
+        .add_filter("Legacy e28 JSON project", &["json"])
         .set_title("Open Project")
         .pick_file()
 }
 
 pub fn pick_save_project() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .add_filter("e28 JSON project", &["sqbpro"])
+        .add_filter("DB Browser XML project", &["sqbpro"])
         .set_title("Save Project")
         .save_file()
 }

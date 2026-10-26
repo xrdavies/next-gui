@@ -1,4 +1,4 @@
-//! Example-specific JSON project files; not upstream DB4S XML.
+//! DB4S XML projects with backward-compatible e28 JSON loading.
 
 use std::fs;
 use std::path::Path;
@@ -9,6 +9,8 @@ use crate::state::{AppState, BrowseTabState, MainTab};
 #[serde(default)]
 pub struct ProjectFile {
     pub db_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db4s_xml: Option<String>,
     pub body_ratio: f32,
     pub structure_ratio: f32,
     pub read_only: bool,
@@ -40,6 +42,7 @@ impl ProjectFile {
         let b = state.browse();
         Self {
             db_path: state.path.clone(),
+            db4s_xml: state.project_xml.clone(),
             body_ratio: state.body_ratio,
             structure_ratio: state.structure_ratio,
             read_only: state.read_only,
@@ -73,15 +76,23 @@ impl ProjectFile {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        serde_json::to_writer_pretty(&mut file, self).map_err(|e| e.to_string())?;
+        use std::io::Write;
+        if path.extension().is_some_and(|s| s.eq_ignore_ascii_case("json")) {
+            serde_json::to_writer_pretty(&mut file, self).map_err(|e| e.to_string())?;
+        } else {
+            file.write_all(crate::project_xml::encode(self, path)?.as_bytes()).map_err(|e| e.to_string())?;
+        }
         file.persist(path).map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        if text.trim_start_matches('\u{feff}').trim_start().starts_with('<') {
+            return crate::project_xml::decode(&text);
+        }
         let value: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| format!("Expected an e28 JSON project (DB4S XML is unsupported): {e}"))?;
+            .map_err(|e| format!("Expected a DB4S XML or e28 JSON project: {e}"))?;
         if !value.get("db_path").is_some_and(|v| v.is_string()) {
             return Err("Project is missing db_path".into());
         }
@@ -89,6 +100,7 @@ impl ProjectFile {
     }
 
     pub fn apply_to(&self, state: &mut AppState) {
+        state.project_xml = self.db4s_xml.clone();
         state.body_ratio = self.body_ratio.clamp(0.05, 0.95);
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
         state.cond_rules = self.cond_rules.clone();
@@ -128,6 +140,7 @@ impl Default for ProjectFile {
     fn default() -> Self {
         Self {
             db_path: String::new(),
+            db4s_xml: None,
             body_ratio: 0.72,
             structure_ratio: 0.34,
             read_only: false,

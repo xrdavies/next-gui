@@ -272,6 +272,7 @@ pub struct AppState {
 
     // Phase 3
     pub project_path: Option<String>,
+    pub project_xml: Option<String>,
     saved_project: serde_json::Value,
     pub edit_saved: rusqlite::types::Value,
     pub prefs: crate::prefs::Prefs,
@@ -494,6 +495,7 @@ impl AppState {
             confirm_open: false,
             pending_document: None,
             project_path: None,
+            project_xml: None,
             saved_project: serde_json::Value::Null,
             edit_saved: rusqlite::types::Value::Null,
             prefs: crate::prefs::Prefs::load(),
@@ -1464,6 +1466,7 @@ impl AppState {
         }
         self.probe_cipher_linked();
         self.project_path = None;
+        self.project_xml = None;
         self.checkpoint_project();
         Ok(())
     }
@@ -1597,6 +1600,7 @@ impl AppState {
         self.cipher_passphrase.clear();
         self.log_sql("-- close");
         self.project_path = None;
+        self.project_xml = None;
         self.checkpoint_project();
         self.status_msg = "Database closed".into();
     }
@@ -1661,7 +1665,7 @@ impl AppState {
         if path.is_empty() || schema.is_empty() {
             return Err("Attach needs path and schema name".into());
         }
-        db::attach_database(self.conn.as_ref().unwrap(), &path, &schema)?;
+        db::attach_database_mode(self.conn.as_ref().unwrap(), &path, &schema, self.read_only)?;
         self.log_sql(format!("ATTACH DATABASE '{path}' AS {schema}"));
         self.overlay = None;
         self.refresh_schema()?;
@@ -1996,7 +2000,9 @@ impl AppState {
                 .display()
                 .to_string();
         }
+        if let Some(conn) = &self.conn { crate::project_xml::capture_connection(&mut pf, conn)?; }
         pf.save(path)?;
+        self.project_xml = pf.db4s_xml;
         self.checkpoint_project();
         self.project_path = Some(path.display().to_string());
         self.status_msg = format!("Project saved → {}", path.display());
@@ -2009,8 +2015,14 @@ impl AppState {
             return Err("Save the current project before replacing its drafts/settings".into());
         }
         let mut pf = crate::project::ProjectFile::load(path)?;
-        for file in pf.sql_files.iter_mut().flatten() {
-            if file.path.is_relative() { file.path = path.parent().unwrap_or(Path::new(".")).join(&file.path); }
+        let unapplied = crate::project_xml::unapplied_settings(&pf)?;
+        pf.sql_files.resize_with(pf.sql_tabs.len(), || None);
+        for (index, file) in pf.sql_files.iter_mut().enumerate() {
+            if let Some(file) = file {
+                if file.path.is_relative() { file.path = path.parent().unwrap_or(Path::new(".")).join(&file.path); }
+                file.saved = std::fs::read_to_string(&file.path).map_err(|e| format!("Cannot open SQL file {}: {e}", file.path.display()))?;
+                pf.sql_tabs[index] = file.saved.clone();
+            }
         }
         if !pf.db_path.is_empty()
             && pf.db_path != ":memory:"
@@ -2024,7 +2036,10 @@ impl AppState {
                 .to_string();
         }
         if pf.db_path.is_empty() || pf.db_path == ":memory:" {
-            self.new_memory_db()?;
+            let conn = db::open_path(":memory:")?;
+            crate::project_xml::restore_connection(&pf, &conn, path)?;
+            crate::project_xml::restore_browse(&mut pf, &conn)?;
+            self.adopt_conn(conn, ":memory:".into(), false)?;
         } else {
             if !Path::new(&pf.db_path).is_file() {
                 return Err("Project database does not exist".into());
@@ -2034,24 +2049,32 @@ impl AppState {
                     return Err("Reopen the encrypted database in the project's access mode before loading it".into());
                 }
                 // Reuse the already unlocked connection; keys are never stored in projects.
+                let conn = self.conn.as_ref().ok_or("No unlocked connection")?;
+                crate::project_xml::restore_browse(&mut pf, conn)?;
+                if !conn.is_autocommit() { conn.execute_batch("COMMIT").map_err(|e| e.to_string())?; }
+                let result = crate::project_xml::restore_connection(&pf, conn, path);
+                db::begin_deferred(conn)?;
+                result?;
             } else {
                 if !db::looks_like_sqlite(Path::new(&pf.db_path))? {
                     return Err(
                         "Open and unlock the encrypted database before loading its project".into(),
                     );
                 }
-                if pf.read_only {
-                    self.open_readonly_path(&pf.db_path)?;
-                } else {
-                    self.open_path(&pf.db_path)?;
-                }
+                let conn = if pf.read_only { db::open_readonly(&pf.db_path)? } else { db::open_path(&pf.db_path)? };
+                db::list_schema(&conn)?;
+                crate::project_xml::restore_connection(&pf, &conn, path)?;
+                crate::project_xml::restore_browse(&mut pf, &conn)?;
+                self.adopt_conn(conn, pf.db_path.clone(), pf.read_only)?;
             }
         }
         pf.apply_to(self);
+        self.refresh_pragmas()?;
         self.project_path = Some(path.display().to_string());
         let _ = self.refresh_browse();
         self.checkpoint_project();
         self.status_msg = format!("Project opened ← {}", path.display());
+        if !unapplied.is_empty() { self.status_msg.push_str(&format!("; retained but not applied: {}", unapplied.join(", "))); }
         Ok(())
     }
 
@@ -3278,6 +3301,63 @@ mod chart_default_tests {
         assert!(
             Path::new(&crate::project::ProjectFile::load(&path).unwrap().db_path).is_absolute()
         );
+    }
+
+    #[test]
+    fn db4s_xml_project_restores_relative_sql_readonly_and_connection_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("data.db");
+        let conn = db::open_path(database.to_str().unwrap()).unwrap();
+        conn.execute_batch("CREATE TABLE records(id INTEGER, name TEXT); INSERT INTO records VALUES(1,'one')").unwrap();
+        drop(conn);
+        std::fs::write(dir.path().join("query.sql"), "SELECT '中文' AS value;").unwrap();
+        let path = dir.path().join("project.sqbpro");
+        std::fs::write(&path, r#"<sqlb_project><db path="data.db" readonly="1" foreign_keys="1" temp_store="2" synchronous="1"/>
+<tab_browse><table title="records" table="4,7:mainrecords"/><browse_table_settings><table schema="main" name="records"><sort><column index="1" mode="1"/></sort><column_widths><column index="1" value="220"/></column_widths></table></browse_table_settings></tab_browse>
+<tab_sql><sql name="file" filename="query.sql">-- reference --</sql><sql name="draft">SELECT 42;</sql><current_tab id="1"/></tab_sql></sqlb_project>"#).unwrap();
+        let mut state = test_state();
+        state.open_project(&path).unwrap();
+        assert!(state.read_only);
+        assert_eq!(state.sql_tabs, ["SELECT '中文' AS value;", "SELECT 42;"]);
+        assert_eq!(state.sql_tab_idx, 1);
+        assert_eq!(state.browse().order_col.as_deref(), Some("name"));
+        assert_eq!(state.browse().column_widths[1], 220.0);
+        assert_eq!(db::read_pragma(state.conn.as_ref().unwrap(), "foreign_keys").unwrap(), "1");
+        assert!(!state.has_unsaved_drafts());
+        state.save_project(&path).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().starts_with("<?xml"));
+        assert!(!state.has_unsaved_drafts());
+        std::fs::write(dir.path().join("query.sql"), "SELECT 'external';").unwrap();
+        state.open_project(&path).unwrap();
+        assert_eq!(state.sql_tabs[0], "SELECT 'external';");
+        state.close_project();
+        assert!(state.conn.is_none() && state.project_xml.is_none());
+    }
+
+    #[test]
+    fn invalid_xml_project_keeps_current_database_tabs_and_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("data.db");
+        let conn = db::open_path(database.to_str().unwrap()).unwrap();
+        conn.execute_batch("CREATE TABLE records(id)").unwrap();
+        drop(conn);
+        let mut state = test_state();
+        let old_tabs = state.sql_tabs.clone();
+        let old_path = state.path.clone();
+        for source in [
+            "<sqlb_project><db path='data.db'/><tab_sql><sql filename='missing.sql'/></tab_sql></sqlb_project>",
+            "<sqlb_project><db path='data.db' foreign_keys='invalid'/></sqlb_project>",
+            "<sqlb_project><db path='data.db'/><attached><db schema='extra' path='missing.db'/></attached></sqlb_project>",
+            "<sqlb_project><db path='data.db'/><tab_browse><table table='4,7:mainrecords'/><browse_table_settings><table schema='main' name='records'><column_widths><column index='0' value='NaN'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>",
+        ] {
+            let path = dir.path().join("invalid.sqbpro");
+            std::fs::write(&path, source).unwrap();
+            assert!(state.open_project(&path).is_err(), "{source}");
+            assert_eq!(state.path, old_path);
+            assert_eq!(state.sql_tabs, old_tabs);
+            assert!(state.project_path.is_none());
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_, String>(0)).unwrap(), "saved");
+        }
     }
 
     #[test]
