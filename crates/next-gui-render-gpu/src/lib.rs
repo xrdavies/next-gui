@@ -1295,10 +1295,21 @@ impl Renderer for GpuRenderer {
                             pass.draw(0..6, 0..1);
                             solid_bufs.push(vb);
                         }
-                        DrawCommand::FillRoundedRect { rect, color, radius } => {
-                            if !rect.intersects(d) {
+                        DrawCommand::FillRoundedRect {
+                            rect,
+                            clip,
+                            color,
+                            radius,
+                        } => {
+                            let Some((ix, iy, iw, ih)) = image_pixel_bounds(
+                                rect,
+                                &clip.intersect(d),
+                                self.width,
+                                self.height,
+                            ) else {
                                 continue;
-                            }
+                            };
+                            pass.set_scissor_rect(ix, iy, iw, ih);
                             let r = (*radius)
                                 .min(rect.width * 0.5)
                                 .min(rect.height * 0.5)
@@ -1317,8 +1328,7 @@ impl Renderer for GpuRenderer {
                                 pass.draw(0..6, 0..1);
                                 solid_bufs.push(vb);
                             } else {
-                                let verts =
-                                    Self::rounded_aa_quad(rect, *color, *radius, fw, fh);
+                                let verts = Self::rounded_aa_quad(rect, *color, *radius, fw, fh);
                                 let vb = self.device.create_buffer_init(
                                     &wgpu::util::BufferInitDescriptor {
                                         label: Some("fill-round-aa-vb"),
@@ -1331,6 +1341,7 @@ impl Renderer for GpuRenderer {
                                 pass.draw(0..6, 0..1);
                                 solid_bufs.push(vb);
                             }
+                            pass.set_scissor_rect(sx, sy, sw, sh);
                         }
                         DrawCommand::BlitAlpha {
                             x,
@@ -1487,6 +1498,7 @@ mod tests {
         };
         let cmds = [DrawCommand::FillRoundedRect {
             rect: Rect::new(4.0, 4.0, 20.0, 20.0),
+            clip: Rect::new(4.0, 4.0, 20.0, 20.0),
             color: Color::rgb(255, 0, 0),
             radius: 8.0,
         }];
@@ -1512,6 +1524,7 @@ mod tests {
         // Pixel (5, 5) sits in the AA band of the TL arc for r=8.
         let cmds = [DrawCommand::FillRoundedRect {
             rect: Rect::new(4.0, 4.0, 20.0, 20.0),
+            clip: Rect::new(4.0, 4.0, 20.0, 20.0),
             color: Color::rgb(255, 0, 0),
             radius: 8.0,
         }];
@@ -1536,5 +1549,71 @@ mod tests {
         );
         let body = at(14, 14);
         assert!(((body >> 16) & 0xff) > 200, "body should be opaque red");
+    }
+
+    #[test]
+    fn rounded_scene_clips_keep_original_geometry_or_skip() {
+        use next_gui_render::encode_scene;
+        use next_gui_scene::Scene;
+        let Ok(mut gpu) = GpuRenderer::try_new(110, 60, Color::rgb(0, 0, 0)) else {
+            eprintln!("skip rounded clip test: adapter unavailable");
+            return;
+        };
+        eprintln!("rounded clip adapter: {}", gpu.backend_name());
+        for radius in [10.0, 0.25] {
+            let mut scene = Scene::new();
+            let parent = scene
+                .insert(scene.root(), Rect::empty(), Color::rgb(0, 0, 0))
+                .unwrap();
+            let node = scene
+                .insert(
+                    parent,
+                    Rect::new(0.0, 0.0, 100.0, 50.0),
+                    Color::rgb(255, 255, 255),
+                )
+                .unwrap();
+            scene.set_corner_radius(node, radius);
+            scene.mark_full_dirty(110.0, 60.0);
+            let dirty = scene.take_dirty();
+            gpu.render(&encode_scene(&scene, &dirty), &dirty);
+            let full = gpu.frame_pixels().unwrap().0.to_vec();
+            for clip in [
+                Rect::new(50.0, 0.0, 50.0, 50.0),
+                Rect::new(50.6, 1.6, 47.8, 46.8),
+            ] {
+                scene.set_clip(parent, Some(Rect::new(30.0, 0.0, 70.0, 50.0)));
+                scene.set_clip(node, Some(clip));
+                let mut commands = encode_scene(&scene, &dirty);
+                let marker = DrawCommand::FillRect {
+                    rect: Rect::new(2.0, 52.0, 8.0, 4.0),
+                    color: Color::rgb(0, 255, 0),
+                };
+                commands.push(marker.clone());
+                gpu.render(&commands, &dirty);
+                let clipped = gpu.frame_pixels().unwrap().0.to_vec();
+                for y in 0..60 {
+                    for x in 0..110 {
+                        let i = y * 110 + x;
+                        let expected = if (2..10).contains(&x) && (52..56).contains(&y) {
+                            0x00ff00
+                        } else if clip.contains(x as f32 + 0.5, y as f32 + 0.5) {
+                            full[i]
+                        } else {
+                            0
+                        };
+                        assert_eq!(
+                            clipped[i], expected,
+                            "({x},{y}), radius={radius}, clip={clip:?}"
+                        );
+                    }
+                }
+                let mut patch = DirtyRegion::new();
+                patch.add(Rect::new(48.0, 0.0, 18.0, 50.0));
+                let mut commands = encode_scene(&scene, &patch);
+                commands.push(marker);
+                gpu.render(&commands, &patch);
+                assert_eq!(gpu.frame_pixels().unwrap().0, clipped);
+            }
+        }
     }
 }

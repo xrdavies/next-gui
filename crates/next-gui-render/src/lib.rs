@@ -27,8 +27,10 @@ pub enum DrawCommand {
     },
     /// Fill a rectangle with uniform corner radius (soft AA at edges).
     FillRoundedRect {
-        /// Rectangle in scene/window coordinates.
+        /// Original rectangle in scene/window coordinates, retained when clipped.
         rect: Rect,
+        /// Visible destination region in window coordinates.
+        clip: Rect,
         /// Fill color.
         color: Color,
         /// Corner radius in px (clamped to half min side).
@@ -142,7 +144,8 @@ fn encode_node(
             if !rect.is_empty() && dirty.intersects_rect(&rect) {
                 if node.corner_radius > 0.0 {
                     cmds.push(DrawCommand::FillRoundedRect {
-                        rect,
+                        rect: node.bounds,
+                        clip: rect,
                         color: node.fill,
                         radius: node.corner_radius,
                     });
@@ -208,7 +211,7 @@ fn crop_alpha_blit(
     Some((nx0, ny0, nw, nh, Arc::from(out)))
 }
 
-/// Integer pixels whose centers lie inside an image destination and clip.
+/// Integer pixels whose centers lie inside a destination and clip.
 /// Shared by Soft rasterization and GPU scissors, including fractional clips.
 pub fn image_pixel_bounds(
     rect: &Rect,

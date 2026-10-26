@@ -68,6 +68,7 @@ Density：`UiDensity::spacing_scale` / `font_scale`。
   - **已覆盖（host / popup / 选中行等）**：Button、TextInput、Panel、Card、Modal·Drawer、Tag、Alert、Select·TreeSelect（字段+popup）、Autocomplete、Checkbox、Switch、Tooltip、Popover·Popconfirm（trigger+popup）、List、Badge、Progress、Tabs、Toolbar·StatusBar、TextArea、InputNumber、Notification；以及 Tree / Table / TreeTable / VirtualTable（同 Table）、Menu·ContextMenu（标题/host + popup）、Empty、Collapse、Descriptions、Segmented、ButtonGroup、Pagination 按钮、Statistic、Result、Calendar、Timeline、Transfer、PropertyGrid、AlarmList、Form·Grid、Upload、ColorPicker、DateTime、Image、Trend / Chart 主机、Spin 遮罩。Steps 标记与 Timeline 点为几何圆（`set_corner_radius(半宽)`）；Radio / Switch thumb 同理。
   - **有意仍直角 / 不套 radii**：Link 下划线、Breadcrumb 纯文字、Steps 连接线与 Timeline 轨道（发丝线）、Table / TreeTable / PropertyGrid **表头条**（贴在已圆角 host 顶边，四角全圆会错）、Gauge 表盘与 Trend 折线（alpha mask 几何）、Image 马赛克单元格。圆角数值只在 Theme，不在 `.ngui` 单独配 `radius`。
   - GPU `FillRoundedRect`：SDF fragment + alpha blend，~1px coverage AA（与 Soft 同量级）；`radius < 0.5` 仍走不透明直角填充。`FillRect` / `BlitAlpha` 路径不变。
+  - `FillRoundedRect` 保留原始 `rect`，另传必填的 `clip`；Soft 与 GPU 按像素中心裁剪，滚动到视口边缘不会生成新的圆角。直接构造该命令时，无额外裁剪可令 `clip = rect`。
   - **`.ngui` 写 `radius` / `radii`：刻意延后，非当前重点**（圆角只在 Theme `ThemeRadii`）。
 
 ## 示例迁移

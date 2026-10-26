@@ -53,18 +53,14 @@ impl SoftRenderer {
 
     /// Fill a rounded rect; coverage falls off across ~1px at the rounded edge.
     fn fill_rounded_rect_clipped(&mut self, rect: &Rect, color: Color, radius: f32, clip: &Rect) {
-        let area = rect.intersect(clip);
-        let Some((x0, y0, w, h)) = area.clip_to_buffer(self.width, self.height) else {
+        let Some((x0, y0, w, h)) = image_pixel_bounds(rect, clip, self.width, self.height) else {
             return;
         };
         if radius <= 0.0 {
             self.fill_rect_clipped(rect, color, clip);
             return;
         }
-        let r = radius
-            .min(rect.width * 0.5)
-            .min(rect.height * 0.5)
-            .max(0.0);
+        let r = radius.min(rect.width * 0.5).min(rect.height * 0.5).max(0.0);
         if r <= 0.0 {
             self.fill_rect_clipped(rect, color, clip);
             return;
@@ -266,9 +262,19 @@ impl Renderer for SoftRenderer {
                             self.fill_rect_clipped(rect, *color, d);
                         }
                     }
-                    DrawCommand::FillRoundedRect { rect, color, radius } => {
+                    DrawCommand::FillRoundedRect {
+                        rect,
+                        clip,
+                        color,
+                        radius,
+                    } => {
                         if rect.intersects(d) {
-                            self.fill_rounded_rect_clipped(rect, *color, *radius, d);
+                            self.fill_rounded_rect_clipped(
+                                rect,
+                                *color,
+                                *radius,
+                                &clip.intersect(d),
+                            );
                         }
                     }
                     DrawCommand::BlitAlpha {
@@ -297,7 +303,8 @@ impl Renderer for SoftRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use next_gui_render::DrawCommand;
+    use next_gui_render::{encode_scene, DrawCommand};
+    use next_gui_scene::Scene;
     use std::sync::Arc;
 
     #[test]
@@ -310,7 +317,10 @@ mod tests {
         let mut dirty = DirtyRegion::new();
         dirty.add(Rect::new(10.0, 10.0, 5.0, 5.0));
         soft.render(&cmds, &dirty);
-        assert_eq!(soft.pixel(12, 12), Some(Color::rgb(255, 0, 0).to_xrgb8888()));
+        assert_eq!(
+            soft.pixel(12, 12),
+            Some(Color::rgb(255, 0, 0).to_xrgb8888())
+        );
         assert_eq!(soft.pixel(0, 0), Some(Color::rgb(0, 0, 0).to_xrgb8888()));
     }
 
@@ -338,6 +348,7 @@ mod tests {
         let mut soft = SoftRenderer::new(32, 32, Color::rgb(0, 0, 0));
         let cmds = [DrawCommand::FillRoundedRect {
             rect: Rect::new(4.0, 4.0, 20.0, 20.0),
+            clip: Rect::new(4.0, 4.0, 20.0, 20.0),
             color: Color::rgb(255, 0, 0),
             radius: 8.0,
         }];
@@ -345,8 +356,61 @@ mod tests {
         dirty.add(Rect::new(0.0, 0.0, 32.0, 32.0));
         soft.render(&cmds, &dirty);
         // Center of rounded rect is filled.
-        assert_eq!(soft.pixel(14, 14), Some(Color::rgb(255, 0, 0).to_xrgb8888()));
+        assert_eq!(
+            soft.pixel(14, 14),
+            Some(Color::rgb(255, 0, 0).to_xrgb8888())
+        );
         // Far outside the corner circle stays clear.
         assert_eq!(soft.pixel(4, 4), Some(Color::rgb(0, 0, 0).to_xrgb8888()));
+    }
+
+    #[test]
+    fn rounded_scene_clips_keep_original_geometry() {
+        for radius in [10.0, 0.25] {
+            let mut scene = Scene::new();
+            let parent = scene
+                .insert(scene.root(), Rect::empty(), Color::rgb(0, 0, 0))
+                .unwrap();
+            let node = scene
+                .insert(
+                    parent,
+                    Rect::new(0.0, 0.0, 100.0, 50.0),
+                    Color::rgb(255, 255, 255),
+                )
+                .unwrap();
+            scene.set_corner_radius(node, radius);
+            scene.mark_full_dirty(110.0, 60.0);
+            let dirty = scene.take_dirty();
+            let mut full = SoftRenderer::new(110, 60, Color::rgb(0, 0, 0));
+            full.render(&encode_scene(&scene, &dirty), &dirty);
+            for clip in [
+                Rect::new(50.0, 0.0, 50.0, 50.0),
+                Rect::new(50.6, 1.6, 47.8, 46.8),
+            ] {
+                scene.set_clip(parent, Some(Rect::new(30.0, 0.0, 70.0, 50.0)));
+                scene.set_clip(node, Some(clip));
+                let mut clipped = SoftRenderer::new(110, 60, Color::rgb(0, 0, 0));
+                clipped.render(&encode_scene(&scene, &dirty), &dirty);
+                for y in 0..60 {
+                    for x in 0..110 {
+                        let expected = if clip.contains(x as f32 + 0.5, y as f32 + 0.5) {
+                            full.pixel(x, y)
+                        } else {
+                            Some(0)
+                        };
+                        assert_eq!(
+                            clipped.pixel(x, y),
+                            expected,
+                            "({x},{y}), radius={radius}, clip={clip:?}"
+                        );
+                    }
+                }
+                let before = clipped.frame_pixels().unwrap().0.to_vec();
+                let mut patch = DirtyRegion::new();
+                patch.add(Rect::new(48.0, 0.0, 18.0, 50.0));
+                clipped.render(&encode_scene(&scene, &patch), &patch);
+                assert_eq!(clipped.frame_pixels().unwrap().0, before);
+            }
+        }
     }
 }
