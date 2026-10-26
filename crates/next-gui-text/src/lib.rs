@@ -61,10 +61,11 @@ impl AlphaMask {
     }
 }
 
-/// A loaded font face (one index inside a TTC/TTF/OTF).
+/// A loaded primary font face with optional faces for missing characters.
 #[derive(Clone)]
 pub struct Font {
     inner: Arc<fontdue::Font>,
+    fallbacks: Vec<Arc<fontdue::Font>>,
 }
 
 impl std::fmt::Debug for Font {
@@ -85,6 +86,7 @@ impl Font {
             .map_err(|e| FontError(format!("font parse: {e}")))?;
         Ok(Self {
             inner: Arc::new(font),
+            fallbacks: Vec::new(),
         })
     }
 
@@ -94,6 +96,30 @@ impl Font {
         let data = std::fs::read(path)
             .map_err(|e| FontError(format!("read {}: {e}", path.display())))?;
         Self::from_bytes(&data, collection_index)
+    }
+
+    /// Append a face (and its fallbacks) for characters absent from this face.
+    /// Measurement, layout and rasterization use the same chosen face. Vertical
+    /// line metrics and the baseline continue to come from the primary face.
+    pub fn with_fallback(mut self, fallback: Font) -> Self {
+        self.fallbacks.push(fallback.inner);
+        self.fallbacks.extend(fallback.fallbacks);
+        self
+    }
+
+    /// Whether any face in this stack contains a glyph for `ch`.
+    pub fn has_glyph(&self, ch: char) -> bool {
+        self.face_for(ch).lookup_glyph_index(ch) != 0
+    }
+
+    fn face_for(&self, ch: char) -> &fontdue::Font {
+        if self.inner.lookup_glyph_index(ch) != 0 {
+            return &self.inner;
+        }
+        self.fallbacks
+            .iter()
+            .find(|f| f.lookup_glyph_index(ch) != 0)
+            .unwrap_or(&self.inner)
     }
 
     /// Vertical metrics at `px` pixels.
@@ -134,7 +160,7 @@ impl Font {
             if ch == '\n' {
                 continue;
             }
-            let g = self.inner.metrics(ch, px);
+            let g = self.face_for(ch).metrics(ch, px);
             width += g.advance_width;
         }
         (width, m.line_height)
@@ -171,7 +197,7 @@ impl Font {
                 push_line_break(&mut line_widths, &mut max_w, &mut x, &mut line);
                 continue;
             }
-            let g = self.inner.metrics(ch, px);
+            let g = self.face_for(ch).metrics(ch, px);
             if let Some(limit) = max_width {
                 if x > 0.0 && x + g.advance_width > limit {
                     push_line_break(&mut line_widths, &mut max_w, &mut x, &mut line);
@@ -216,7 +242,7 @@ impl Font {
         let mut max_y = layout.height.ceil().max(1.0) as i32;
 
         for g in &layout.glyphs {
-            let (metrics, bitmap) = self.inner.rasterize(g.ch, px);
+            let (metrics, bitmap) = self.face_for(g.ch).rasterize(g.ch, px);
             if metrics.width == 0 || metrics.height == 0 {
                 continue;
             }
@@ -404,6 +430,42 @@ mod tests {
 
     fn test_font() -> Font {
         load_default_cjk_font().expect("system CJK font required for tests")
+    }
+
+    #[test]
+    fn fallback_keeps_primary_metrics_and_glyphs() {
+        let font = test_font();
+        let stacked = font.clone().with_fallback(font.clone());
+        assert_eq!(font.metrics(18.0), stacked.metrics(18.0));
+        assert_eq!(font.measure_line("Latin 中文", 18.0), stacked.measure_line("Latin 中文", 18.0));
+        let (_, original) = font.rasterize_text("Latin 中文", 18.0, None);
+        let (_, actual) = stacked.rasterize_text("Latin 中文", 18.0, None);
+        assert_eq!(original.pixels, actual.pixels);
+        assert!(!stacked.has_glyph('\u{10ffff}'));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn missing_cjk_symbols_use_the_fallback_for_measure_layout_and_pixels() {
+        let primary = Font::from_path("/System/Library/Fonts/STHeiti Medium.ttc", 1).unwrap();
+        let symbols = Font::from_path("/System/Library/Fonts/Apple Symbols.ttf", 0).unwrap();
+        let ch = '▾';
+        assert!(!primary.has_glyph(ch));
+        assert!(symbols.has_glyph(ch));
+        let stacked = primary.clone().with_fallback(symbols.clone());
+        assert!(stacked.has_glyph(ch));
+        assert_eq!(stacked.measure_line("▾", 18.0).0, symbols.measure_line("▾", 18.0).0);
+        let layout = stacked.layout("A▾中", 18.0, None);
+        assert_eq!(layout.glyphs[1].advance, symbols.measure_line("▾", 18.0).0);
+        let (metrics, expected) = symbols.inner.rasterize(ch, 18.0);
+        let mut isolated = stacked.layout("▾", 18.0, None);
+        isolated.glyphs[0].baseline_y = metrics.height as f32 + metrics.ymin as f32;
+        isolated.height = metrics.height as f32;
+        isolated.width = metrics.width as f32;
+        isolated.glyphs[0].x = -(metrics.xmin as f32);
+        let mask = stacked.rasterize_layout(&isolated, 18.0);
+        assert_eq!(mask.pixels.as_ref(), expected);
+        assert_eq!(stacked.measure_line("A中", 18.0), primary.measure_line("A中", 18.0));
     }
 
     fn ink_rows(mask: &AlphaMask, thresh: u8) -> Vec<u32> {

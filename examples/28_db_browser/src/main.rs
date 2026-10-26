@@ -461,12 +461,15 @@ impl From<&BuiltUi> for BuiltUiIds {
 
 impl Demo {
     fn new(width: u32, height: u32, window_backend: PresentBackend) -> Self {
-        let font = if cfg!(target_os = "macos") {
+        let mut font = if cfg!(target_os = "macos") {
             Font::from_path("/System/Library/Fonts/STHeiti Medium.ttc", 1).or_else(|_| load_default_cjk_font())
         } else { load_default_cjk_font() }.unwrap_or_else(|e| {
             eprintln!("font error: {e}");
             std::process::exit(1);
         });
+        if cfg!(target_os = "macos") {
+            if let Ok(symbols) = Font::from_path("/System/Library/Fonts/Apple Symbols.ttf", 0) { font = font.with_fallback(symbols); }
+        }
         let mut state = AppState::new_with_demo();
         let theme = ui_build::browser_theme(if state.prefs.default_theme_dark { Theme::dark() } else { Theme::light() }, state.prefs.font_size);
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
