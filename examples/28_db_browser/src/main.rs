@@ -75,12 +75,23 @@ impl Backend {
 
 fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
     if modifiers.commandish() {
-        if let KeyCode::Char(c) = key {
-            if c == 'a' || c == 'A' {
-                return Some(UiKey::SelectAll);
-            }
+        return match key {
+            KeyCode::Char('a' | 'A') => Some(UiKey::SelectAll),
+            KeyCode::Char('z' | 'Z') => Some(if modifiers.shift { UiKey::Redo } else { UiKey::Undo }),
+            KeyCode::Char('y' | 'Y') => Some(UiKey::Redo),
+            _ => None,
+        };
+    }
+    if modifiers.shift {
+        match key {
+            KeyCode::Left => return Some(UiKey::SelectLeft),
+            KeyCode::Right => return Some(UiKey::SelectRight),
+            KeyCode::Up => return Some(UiKey::SelectUp),
+            KeyCode::Down => return Some(UiKey::SelectDown),
+            KeyCode::Home => return Some(UiKey::SelectHome),
+            KeyCode::End => return Some(UiKey::SelectEnd),
+            _ => {}
         }
-        return None;
     }
     if matches!(key, KeyCode::Tab) {
         return Some(if modifiers.shift {
@@ -423,7 +434,7 @@ impl Demo {
             state.tab = match tab.to_ascii_lowercase().as_str() {
                 "browse" => MainTab::Browse,
                 "pragmas" => MainTab::Pragmas,
-                "sql" | "execute" => MainTab::ExecuteSql,
+                "sql" | "execute" | "sql-long" => MainTab::ExecuteSql,
                 "wizard" | "table" => {
                     state.open_create_table_wizard();
                     MainTab::Structure
@@ -526,7 +537,23 @@ impl Demo {
                 theme = Theme::light();
             }
         }
-        let built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some()
+            && (state.overlay == Some(OverlayKind::FindReplace)
+                || std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("sql-long"))
+        {
+            state.sql_result = None;
+            state.sql_message = "Select SQL to execute, or run the whole script".into();
+            state.sql_tabs[0] = (1..=80).map(|i| format!("SELECT {i}, '中文 match {i}';\n")).collect();
+            state.find_text = "中文 match 40".into();
+            state.replace_text = "東京".into();
+        }
+        let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
+            built.ui.select_text_area_range(built.sql_area, 0..0);
+            built.ui.find_in_text_area(built.sql_area, &state.find_text);
+            built.ui.set_focus(Some(built.sql_area));
+            built.ui.sync(&mut built.scene);
+        }
         let clear = clear_color(&theme);
         let qa_exit = std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some();
         Self {
@@ -602,6 +629,8 @@ impl Demo {
         if self.ids.sql_area.0 != 0 {
             if let Some(v) = self.ui.text_area_value(self.ids.sql_area) {
                 *self.state.sql_editor_mut() = v.to_string();
+                self.state.sql_edit_states.resize(self.state.sql_tabs.len(), None);
+                self.state.sql_edit_states[self.state.sql_tab_idx] = self.ui.text_area_state(self.ids.sql_area);
             }
         }
         if self.ids.chart_col.0 != 0 {
@@ -926,6 +955,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
         let built = build_ui(
             self.font.clone(),
             self.theme,
@@ -936,6 +966,10 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if sql_focused {
+            self.ui.set_focus(Some(self.ids.sql_area));
+            self.ui.sync(&mut self.scene);
+        }
         let clear = clear_color(&self.theme);
         self.backend.set_clear_color(clear);
         if let Some(g) = self.gpu_stash.as_mut() {
@@ -1616,34 +1650,46 @@ impl Demo {
             self.rebuild = true;
             return true;
         }
-        if id == self.ids.ov_btn_find {
+        if id == self.ids.ov_btn_find || id == self.ids.ov_btn_repl || id == self.ids.ov_btn_repl_all {
             self.snapshot_inputs();
-            self.state.status_msg = if self.state.find_next_in_sql() {
-                format!("Found at {}", self.state.find_pos)
+            let area = self.ids.sql_area;
+            let needle = self.state.find_text.clone();
+            let replacement = self.state.replace_text.clone();
+            if id == self.ids.ov_btn_repl_all {
+                let text = self.ui.text_area_value(area).unwrap_or_default().to_string();
+                let count = if needle.is_empty() { 0 } else { text.matches(&needle).count() };
+                if count > 0 {
+                    self.ui.select_text_area_range(area, 0..text.chars().count());
+                    self.ui.replace_text_area_selection(area, &text.replace(&needle, &replacement));
+                }
+                self.state.status_msg = format!("Replaced {count}");
             } else {
-                "Not found".into()
-            };
-            self.rebuild = true;
-            return true;
-        }
-        if id == self.ids.ov_btn_repl {
+                let selected_match = !needle.is_empty() && self.ui.text_area_selected_text(area).as_deref() == Some(needle.as_str());
+                let found = (id == self.ids.ov_btn_repl && selected_match) || self.ui.find_in_text_area(area, &needle);
+                if found && id == self.ids.ov_btn_repl {
+                    self.ui.replace_text_area_selection(area, &replacement);
+                }
+                self.state.status_msg = if !found { "Not found" } else if id == self.ids.ov_btn_repl { "Replaced one" } else { "Match selected in SQL editor" }.into();
+            }
             self.snapshot_inputs();
-            self.state.status_msg = if self.state.replace_one_in_sql() {
-                "Replaced one".into()
-            } else {
-                "Not found".into()
-            };
-            self.rebuild = true;
-            return true;
-        }
-        if id == self.ids.ov_btn_repl_all {
-            self.snapshot_inputs();
-            let n = self.state.replace_all_in_sql();
-            self.state.status_msg = format!("Replaced {n}");
             self.rebuild = true;
             return true;
         }
         false
+    }
+
+    fn execute_sql_selection(&mut self) {
+        self.snapshot_inputs();
+        let result = if let Some(sql) = self.ui.text_area_selected_text(self.ids.sql_area) {
+            self.state.start_sql_text(sql)
+        } else {
+            self.state.start_sql_job()
+        };
+        match result {
+            Ok(()) => self.clear_error(),
+            Err(e) => self.set_error(e),
+        }
+        self.rebuild = true;
     }
 
     fn handle_button(&mut self, id: WidgetId) {
@@ -1874,6 +1920,7 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_sql_find {
+            self.snapshot_inputs();
             self.state.overlay = Some(OverlayKind::FindReplace);
             self.rebuild = true;
             return;
@@ -2013,12 +2060,7 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_sql_run {
-            self.snapshot_inputs();
-            match self.state.start_sql_job() {
-                Ok(()) => self.clear_error(),
-                Err(e) => self.set_error(e),
-            }
-            self.rebuild = true;
+            self.execute_sql_selection();
             return;
         }
         if id == self.ids.btn_sql_new_tab {
@@ -2543,10 +2585,27 @@ impl AppCallbacks for Demo {
             } => {
                 if modifiers.commandish() {
                     match key {
-                        KeyCode::Char('c' | 'C') => {
+                        KeyCode::Char('f' | 'F') if self.state.tab == MainTab::ExecuteSql && self.state.overlay.is_none() => {
+                            self.snapshot_inputs();
+                            self.state.overlay = Some(OverlayKind::FindReplace);
+                            self.rebuild = true;
+                            self.after_ui(ctx);
+                            return;
+                        }
+                        KeyCode::Enter if self.state.tab == MainTab::ExecuteSql && self.state.overlay.is_none() => {
+                            self.execute_sql_selection();
+                            self.after_ui(ctx);
+                            return;
+                        }
+                        KeyCode::Char('c' | 'C' | 'x' | 'X') => {
                             if let Some(text) = self.ui.focused_text_for_copy() {
                                 if let Err(e) = ctx.clipboard_set_text(&text) {
                                     self.set_error(e.to_string());
+                                } else if matches!(key, KeyCode::Char('x' | 'X')) {
+                                    if let Some(area) = self.ui.focused() {
+                                        self.ui.replace_text_area_selection(area, "");
+                                    }
+                                    self.after_ui(ctx);
                                 }
                             }
                             return;
@@ -2572,6 +2631,7 @@ impl AppCallbacks for Demo {
                     }
                     if matches!(ui_key, UiKey::Escape) {
                         if self.state.overlay.is_some() {
+                            self.snapshot_inputs();
                             self.state.cipher_open_path = None;
                             self.state.cipher_passphrase.clear();
                             self.state.overlay = None;
@@ -2684,6 +2744,122 @@ mod interaction_tests {
     use super::*;
 
     #[test]
+    fn selected_text_area_matches_soft_and_gpu_readback() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut area = WidgetId(0);
+        let text: String = (1..=80).map(|i| format!("SELECT {i}, '中文';\n")).collect();
+        ui.column(next_gui_ui::ColumnStyle { x: 0.0, y: 0.0, width: 400.0, height: 200.0, padding: 0.0, gap: 0.0, background: None, ..next_gui_ui::ColumnStyle::default() }, |c| {
+            area = c.text_area(text, "SQL", next_gui_ui::TextAreaStyle { width: 400.0, height: 200.0, ..next_gui_ui::TextAreaStyle::default() });
+        });
+        ui.select_text_area_range(area, 0..0);
+        ui.find_in_text_area(area, "SELECT 40");
+        ui.set_focus(Some(area));
+        ui.sync(&mut scene);
+        scene.mark_full_dirty(400.0, 200.0);
+        let dirty = scene.take_dirty();
+        let commands = encode_scene(&scene, &dirty);
+        let clear = Color::rgb(20, 20, 20);
+        let mut soft = SoftRenderer::new(400, 200, clear);
+        soft.render(&commands, &dirty);
+        let Ok(mut gpu) = GpuRenderer::try_new(400, 200, clear) else {
+            eprintln!("GPU selection comparison not_run: adapter unavailable");
+            return;
+        };
+        gpu.render(&commands, &dirty);
+        let soft_pixels = soft.frame_pixels().unwrap().0;
+        let gpu_pixels = gpu.frame_pixels().unwrap().0;
+        // Compare editor contents; rounded outer chrome has separate renderer coverage tests.
+        let max_delta = (6..194).flat_map(|y| (8..392).map(move |x| y * 400 + x)).flat_map(|i| {
+            [0, 8, 16].map(|shift| (((soft_pixels[i] >> shift) & 255) as i32 - ((gpu_pixels[i] >> shift) & 255) as i32).abs())
+        }).max().unwrap();
+        assert!(max_delta <= 2, "Soft/GPU editor channel difference {max_delta}");
+        eprintln!("Soft/GPU selected-text comparison passed, max channel delta {max_delta}");
+    }
+
+    #[test]
+    fn sql_long_document_viewport_restores_and_find_reveals_after_resize() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = (1..=80).map(|i| format!("SELECT {i};\n")).collect();
+        demo.do_rebuild();
+        demo.ui.set_text_area_scroll(demo.ids.sql_area, 150.0);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_scroll(demo.ids.sql_area), Some(150.0));
+        demo.state.overlay = Some(OverlayKind::FindReplace);
+        demo.do_rebuild();
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        demo.ui.set_text_area_scroll(demo.ids.sql_area, 0.0);
+        assert!(demo.ui.find_in_text_area(demo.ids.sql_area, "SELECT 40"));
+        demo.ui.sync(&mut demo.scene);
+        demo.snapshot_inputs();
+        let overlay_scroll = demo.ui.text_area_scroll(demo.ids.sql_area).unwrap();
+        demo.state.overlay = None;
+        demo.do_rebuild();
+        assert!(demo.ui.text_area_scroll(demo.ids.sql_area).unwrap() > overlay_scroll);
+        assert_eq!(demo.ui.text_area_selected_text(demo.ids.sql_area).as_deref(), Some("SELECT 40"));
+    }
+
+    #[test]
+    fn sql_selection_find_replace_and_undo_survive_tabs_and_rebuild() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = "SELECT '中文';\nSELECT '中文';".into();
+        demo.do_rebuild();
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        demo.snapshot_inputs();
+        demo.state.find_text = "中文".into();
+        demo.state.replace_text = "東京".into();
+        demo.state.overlay = Some(OverlayKind::FindReplace);
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.ov_btn_find);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(8..10));
+        demo.handle_button(demo.ids.ov_btn_find);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(21..23));
+        demo.handle_button(demo.ids.ov_btn_repl);
+        demo.do_rebuild();
+        assert_eq!(demo.state.sql_editor(), "SELECT '中文';\nSELECT '東京';");
+        demo.handle_button(demo.ids.ov_btn_repl_all);
+        demo.do_rebuild();
+        assert_eq!(demo.state.sql_editor(), "SELECT '東京';\nSELECT '東京';");
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.key_input(UiKey::Undo);
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.sql_editor(), "SELECT '中文';\nSELECT '東京';");
+        demo.state.overlay = None;
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.key_input(UiKey::Undo);
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT '中文';\nSELECT '中文';"));
+        demo.snapshot_inputs();
+        demo.handle_button(demo.ids.btn_sql_new_tab);
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.key_input(UiKey::Undo);
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("-- new tab\n"));
+        demo.handle_button(demo.ids.sql_tab_btns[0]);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(21..23));
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.key_input(UiKey::Redo);
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT '中文';\nSELECT '東京';"));
+        demo.ui.set_text_area_value(demo.ids.sql_area, "SELECT 42;\nINVALID SQL;");
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..10);
+        demo.handle_button(demo.ids.btn_sql_run);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !demo.state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(demo.state.sql_result.as_ref().unwrap().rows[0][0], "42");
+        assert_eq!(demo.state.sql_editor(), "SELECT 42;\nINVALID SQL;");
+    }
+
+    #[test]
     fn table_wizard_selection_keeps_each_columns_definition() {
         let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
         demo.state.open_create_table_wizard();
@@ -2706,7 +2882,7 @@ mod interaction_tests {
             meta: true,
             ..Modifiers::default()
         };
-        assert_eq!(map_key(KeyCode::Char('z'), command), None);
+        assert_eq!(map_key(KeyCode::Char('z'), command), Some(UiKey::Undo));
         assert_eq!(map_key(KeyCode::Char('s'), command), None);
         assert_eq!(map_key(KeyCode::Char('a'), command), Some(UiKey::SelectAll));
         assert_eq!(

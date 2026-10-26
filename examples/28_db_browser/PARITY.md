@@ -132,11 +132,11 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| SQL editor | partial | Shared plain TextArea: no pointer caret placement, Select All/selection, scrolling, undo/redo, syntax, completion or line numbers (F01); Space fixed. |
+| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). Syntax, completion, line numbers and grapheme-aware navigation remain. |
 | Execute / message / results table | partial | Only final statement preview, at most 500 displayed rows; one global result across SQL tabs (F09). |
-| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Actions exist; Open SQL replaces unsaved draft without prompt, unsupported shortcuts ignored (F02). |
-| Multi SQL tabs | partial | Add/switch only; drafts separated, results not; no close/reorder/overflow or dirty markers. |
-| Find / Replace | partial | Text search/replace works; no visual match selection, current replacement is first match |
+| Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Execute uses selection or whole script; Cmd/Ctrl+Enter/F and editing shortcuts wired. Open SQL still replaces unsaved draft without prompt (F02). |
+| Multi SQL tabs | partial | Add/switch only; drafts and editing sessions separated, results not; no close/reorder/overflow or dirty markers. |
+| Find / Replace | partial | Shared editor in Find panel highlights/reveals matches; Replace acts on the selected match and Replace All is undoable (F04 addressed). Literal case-sensitive search only. |
 | Async query + cancel | done | Live connection moves to worker; Write/Revert/keys/ATTACH shared; completion polled on redraw; Stop interrupts |
 | Results → CSV / JSON / Save as view | partial | Full snapshot export works; Save as VIEW uses current editor and a fixed name, not the displayed result query (F09). |
 | Toggle comment | partial | All physical lines only; no selected-block handling. Removing comments strips all leading hyphens, not exactly two. |
@@ -162,7 +162,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
 | PreferencesDialog | partial | Only font/theme/drop confirmation/CSV delimiter/frozen count; full upstream preferences absent. |
-| FindReplaceDialog | partial | Find does not select/show match; Replace ignores the found position (F04); no regex/case/word/backwards/selection controls. |
+| FindReplaceDialog | partial | Visible match selection, correct current-match replacement and undo; no regex/case/word/backwards/selection-only search controls. |
 | EditDialog (blob/image/hex) | partial | Basic text/hex/JSON and 24-cell mosaic image preview; no full raster/image controls (F12). |
 | Load Extension | done | OverlayKind::LoadExtension |
 | About | done | OverlayKind::About |
@@ -220,3 +220,15 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - `b90d5a7`: e28 keeps widths and viewport in rebuilds/projects, preserves wizard column definitions on selection, and rejects unsupported command chords instead of inserting letters.
 - Remaining framework gaps and application ownership are tracked as NG-01 through NG-10 in the linked audit. No new dependency was added.
 - Remote UI is a local-path list. [Upstream announced DBHub.io shutdown for February 2025](https://sqlitebrowser.org/blog/dbhub-shutdown/); restoring that hosted service is not an actionable parity target without a replacement service.
+
+## Framework completion — text editing (2026-10-26)
+
+NG-03 has its basic editing layer: shared TextArea selection/hit testing, bounded
+viewport rendering, vertical scroll indicator, literal find, IME selection replacement,
+undo/redo and opaque editing-state capture/restore. e28 uses these APIs directly for
+SQL and Find; it no longer maintains a separate byte-offset search/replace algorithm.
+F01/F04 are resolved at the shared/UI logic level. Full code-editor parity still needs
+syntax, completion, line numbers, grapheme/word navigation and larger-file profiling.
+
+F02/F03/F05–F13 remain open. This batch does not change SQLite writes, project format,
+DDL migrations, cell typing, result ownership, docking or RGBA image support.

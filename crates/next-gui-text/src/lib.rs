@@ -303,25 +303,31 @@ impl TextLayout {
     /// that produced this layout (including the same wrap width). Explicit newlines and
     /// automatic wraps both advance the caret onto the next visual line.
     pub fn caret_top_left(&self, text: &str, caret: usize, ascent: f32) -> (f32, f32) {
-        let mut glyph_i = 0usize;
-        let mut x = 0.0f32;
-        let mut y = 0.0f32;
-        for (char_i, ch) in text.chars().enumerate() {
-            if char_i == caret {
-                return (x, y);
-            }
+        let positions = self.caret_positions(text, ascent);
+        positions[caret.min(positions.len() - 1)]
+    }
+
+    /// Insertion positions for every Unicode scalar boundary, including end of text.
+    /// Uses the same wrapping as glyph painting; suitable for selection and hit testing.
+    pub fn caret_positions(&self, text: &str, ascent: f32) -> Vec<(f32, f32)> {
+        let mut positions = Vec::with_capacity(text.chars().count() + 1);
+        let mut glyphs = self.glyphs.iter();
+        let (mut x, mut y) = (0.0, 0.0);
+        for ch in text.chars() {
             if ch == '\n' {
-                y += self.line_height;
+                positions.push((x, y));
                 x = 0.0;
-            } else if glyph_i < self.glyphs.len() {
-                let g = &self.glyphs[glyph_i];
-                x = g.x + g.advance;
+                y += self.line_height;
+            } else if let Some(g) = glyphs.next() {
                 y = (g.baseline_y - ascent).max(0.0);
-                glyph_i += 1;
+                positions.push((g.x, y));
+                x = g.x + g.advance;
             }
         }
-        (x, y)
+        positions.push((x, y));
+        positions
     }
+
 }
 
 struct AlphaBlit<'a> {
@@ -410,6 +416,20 @@ mod tests {
             }
         }
         rows
+    }
+
+    #[test]
+    fn wrapped_caret_starts_at_next_glyph_and_keeps_empty_lines() {
+        let font = load_default_cjk_font().unwrap();
+        let text = "中文WWWWWW\n\nZ";
+        let layout = font.layout(text, 18.0, Some(55.0));
+        let positions = layout.caret_positions(text, font.metrics(18.0).ascent);
+        assert_eq!(positions.len(), text.chars().count() + 1);
+        for (index, glyph) in layout.glyphs.iter().enumerate().take(8) {
+            assert_eq!(positions[index].0, glyph.x);
+            assert!((positions[index].1 + font.metrics(18.0).ascent - glyph.baseline_y).abs() < 0.01);
+        }
+        assert!(positions[10].1 > positions[9].1, "empty line remains navigable");
     }
 
     #[test]

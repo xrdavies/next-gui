@@ -82,13 +82,24 @@ impl Backend {
 
 fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKey> {
     if modifiers.commandish() {
-        if let KeyCode::Char(c) = key {
-            if c == 'a' || c == 'A' {
-                return Some(UiKey::SelectAll);
-            }
+        return match key {
+            KeyCode::Char('a' | 'A') => Some(UiKey::SelectAll),
+            KeyCode::Char('z' | 'Z') => Some(if modifiers.shift { UiKey::Redo } else { UiKey::Undo }),
+            KeyCode::Char('y' | 'Y') => Some(UiKey::Redo),
+            _ => None,
+        };
+    }
+    if modifiers.shift {
+        match key {
+            KeyCode::Left => return Some(UiKey::SelectLeft),
+            KeyCode::Right => return Some(UiKey::SelectRight),
+            KeyCode::Up => return Some(UiKey::SelectUp),
+            KeyCode::Down => return Some(UiKey::SelectDown),
+            KeyCode::Home => return Some(UiKey::SelectHome),
+            KeyCode::End => return Some(UiKey::SelectEnd),
+            _ => {}
         }
     }
-    // P6d: Shift+Tab → BackTab (focus_prev).
     if matches!(key, KeyCode::Tab) {
         return Some(if modifiers.shift {
             UiKey::BackTab
@@ -397,7 +408,8 @@ impl Demo {
             },
         );
 
-        if std::env::var_os("NEXT_GUI_P1_REST_QA").is_some() {
+        if std::env::var_os("NEXT_GUI_P1_REST_QA").is_some()
+            && std::env::var("NEXT_GUI_P1_REST_QA").as_deref() != Ok("textarea") {
             let _ = ui.set_drawer_open(drawer, true);
             ui.notify("QA: drawer + toast seeded", NotificationTone::Info);
             ui.notify("Saved thresholds", NotificationTone::Success);
@@ -721,6 +733,9 @@ impl AppCallbacks for Demo {
         self.backend.render(&cmds, &dirty);
         self.present_frame(ctx);
         self.maybe_qa_dump();
+        if std::env::var("NEXT_GUI_P1_REST_QA").as_deref() == Ok("textarea") && self.qa_dumps > 0 {
+            ctx.request_exit();
+        }
         self.needs_paint = false;
     }
 }

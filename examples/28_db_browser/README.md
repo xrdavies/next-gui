@@ -34,6 +34,27 @@ Browse → New Record opens a form with Default / NULL / Value modes. Page butto
 
 Project JSON retains all browse tabs, filters, sorting and page positions. Save an in-memory database with Save As before saving a project. The SQL editor supports IME composition through the shared UI; native OS input and file-picker acceptance still need a permitted desktop session.
 
-Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and JSON project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with known editor, navigation and layout defects, not full DB4S parity.
+Latest audit: [page inventory, framework capability gaps and defect list](../../docs/reviews/R-20261025-b90d5a7b4143.md). Table headers now support edge dragging; column widths and scroll positions survive rebuilds and JSON project save/load. All client-area widgets use next-gui. Native pickers still use `rfd` directly; image decoding uses `image`, and SQLite/SQLCipher uses `rusqlite`. This is a functional prototype with known draft-safety, navigation and layout defects, not full DB4S parity.
 
 Additional framebuffer QA cases: `index`, `csv`, `paste`, `attach`, `find`, `extension`, `schema`, `frozen`, `remote`, `about`, `plot`, `log`, `form`. These captures exercise rendering only.
+
+### SQL editing (2026-10-26)
+
+The shared next-gui TextArea supplies click/drag selection, Shift+navigation,
+Select All, selected-text copy/paste, IME replacement, wheel scrolling and
+undo/redo. SQL tabs retain their own caret, selection, viewport and undo history
+through UI rebuilds. These editing sessions are in memory; project files still
+save SQL text only.
+
+Execute runs the selection when present, otherwise the entire script.
+Cmd/Ctrl+Enter executes, Cmd/Ctrl+F opens Find, Cmd/Ctrl+Z undoes, and
+Cmd/Ctrl+Shift+Z or Ctrl+Y redoes. Cmd/Ctrl+C/X/V copy, cut and paste the SQL
+selection. Find displays the same editable script, selects each match, and Replace
+changes the selected match. Replace All is one undoable edit. Search is literal
+and case sensitive; regex/options remain future work.
+
+`NEXT_GUI_DB_BROWSER_QA=1 NEXT_GUI_DB_BROWSER_QA_TAB=sql-long` captures an 80-line
+script scrolled to a highlighted Unicode match. `find` captures the same script in
+the Find panel; set `NEXT_GUI_DB_BROWSER_QA_THEME=light` for the light theme.
+The earlier F01/F04 editing findings are addressed; unsaved-file guards, per-tab
+SQL results and the other remaining parity findings still apply.

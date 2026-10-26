@@ -230,10 +230,10 @@ pub struct AppState {
     // Find/Replace
     pub find_text: String,
     pub replace_text: String,
-    pub find_pos: usize,
 
     // Execute SQL
     pub sql_tabs: Vec<String>,
+    pub sql_edit_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub sql_tab_idx: usize,
     pub sql_result: Option<QueryResult>,
     pub sql_column_widths: Vec<f32>,
@@ -421,7 +421,7 @@ impl AppState {
             attach_schema: "other".into(),
             find_text: String::new(),
             replace_text: String::new(),
-            find_pos: 0,
+            sql_edit_states: Vec::new(),
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
             sql_tab_idx: 0,
             sql_result: None,
@@ -1419,60 +1419,6 @@ impl AppState {
         }
     }
 
-    pub fn find_next_in_sql(&mut self) -> bool {
-        let needle = self.find_text.clone();
-        if needle.is_empty() {
-            return false;
-        }
-        let text = self.sql_editor().to_string();
-        let mut start = self.find_pos.min(text.len());
-        while !text.is_char_boundary(start) {
-            start -= 1;
-        }
-        if let Some(rel) = text[start..].find(&needle) {
-            self.find_pos = start + rel + needle.len();
-            true
-        } else if let Some(rel) = text.find(&needle) {
-            self.find_pos = rel + needle.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn replace_one_in_sql(&mut self) -> bool {
-        let needle = self.find_text.clone();
-        let repl = self.replace_text.clone();
-        if needle.is_empty() {
-            return false;
-        }
-        let text = self.sql_editor().to_string();
-        if let Some(idx) = text.find(&needle) {
-            let mut new = String::new();
-            new.push_str(&text[..idx]);
-            new.push_str(&repl);
-            new.push_str(&text[idx + needle.len()..]);
-            *self.sql_editor_mut() = new;
-            self.find_pos = idx + repl.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn replace_all_in_sql(&mut self) -> usize {
-        let needle = self.find_text.clone();
-        let repl = self.replace_text.clone();
-        if needle.is_empty() {
-            return 0;
-        }
-        let text = self.sql_editor().to_string();
-        let count = text.matches(&needle).count();
-        *self.sql_editor_mut() = text.replace(&needle, &repl);
-        self.find_pos = 0;
-        count
-    }
-
     pub fn add_browse_tab(&mut self) {
         let table = self.browse().table.clone().or_else(|| {
             self.schema
@@ -1571,7 +1517,7 @@ impl AppState {
         self.start_sql_text(self.sql_editor().to_string())
     }
 
-    fn start_sql_text(&mut self, sql: String) -> Result<(), String> {
+    pub fn start_sql_text(&mut self, sql: String) -> Result<(), String> {
         if self.sql_busy {
             return Err("SQL already running".into());
         }

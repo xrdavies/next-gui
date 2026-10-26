@@ -80,3 +80,36 @@ Column {
 ```bash
 cargo test -p next-gui-ui --lib dsl::
 ```
+
+## TextArea editing API
+
+`FlexBuilder::text_area` keeps its existing builder/DSL interface. Shared TextArea now
+supports pointer caret placement and drag selection, Shift+arrows/Home/End,
+Select All, selected-text copy/paste/IME replacement, wheel scrolling, a viewport
+indicator, and undo/redo. The caret follows wrapped visual lines and is revealed
+after editing or finding text. Both renderers use the same selection alpha mask.
+
+- `Ui::text_area_selection` / `select_text_area_range`: Unicode scalar offsets,
+  not UTF-8 byte offsets. Empty ranges place the caret.
+- `text_area_selected_text` / `replace_text_area_selection`: selected text and
+  one undoable replacement; empty replacement deletes the selection.
+- `find_in_text_area`: literal, case-sensitive forward search with one wrap;
+  selects and reveals the next match without changing focus.
+- `text_area_scroll` / `set_text_area_scroll`: vertical pixel offset; invalid
+  floats are rejected and the offset is clamped to the document.
+- `text_area_state` / `restore_text_area_state`: opaque in-memory editing session
+  for rebuilding widgets. Restore rejects a different document. Keep one session
+  per document; project files should save text separately.
+- Map platform chords to `UiKey::Undo`, `Redo`, `SelectLeft`, `SelectRight`,
+  `SelectUp`, `SelectDown`, `SelectHome`, `SelectEnd`. Existing exhaustive matches
+  on `UiKey` must handle these variants. `focused_text_for_copy` now returns only
+  a TextArea selection (None when empty); TextInput behavior is unchanged.
+
+History stores up to 100 snapshots / 8 MiB per undo or redo stack, retaining one
+oversized edit. Snapshots share immutable text across rebuilds. Glyph layout still
+processes the complete document; masks and selection nodes cover the viewport.
+This is plain-text editing: syntax/completion, grapheme-cluster navigation, word
+selection, horizontal scrolling and draggable scrollbar thumbs are not provided.
+
+The e21 QA mode `NEXT_GUI_P1_REST_QA=textarea` captures the entry fields with the
+Drawer closed and exits. e28 exercises the same widget for SQL, Find, DDL and CSV.

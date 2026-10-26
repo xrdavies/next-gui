@@ -85,6 +85,7 @@ impl ProjectFile {
         state.toolbar_sql = self.toolbar_sql;
         if !self.sql_tabs.is_empty() {
             state.sql_tabs = self.sql_tabs.clone();
+            state.sql_edit_states.clear();
             state.sql_tab_idx = self.sql_tab_idx.min(state.sql_tabs.len().saturating_sub(1));
         }
         if !self.browse_tabs.is_empty() {

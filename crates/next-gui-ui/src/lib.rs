@@ -22,6 +22,9 @@ mod p1_raster;
 mod p1_rest;
 mod office_p2;
 mod theme;
+mod text_area;
+pub use text_area::TextAreaState;
+use text_area::TextAreaEdit;
 
 pub use dsl::{load_ngui, load_ngui_path, DslError, LoadedUi};
 pub use icon::IconName;
@@ -1873,6 +1876,7 @@ enum Kind {
         preedit: String,
         preedit_cursor: Option<(usize, usize)>,
         scroll_y: f32,
+        edit: TextAreaEdit,
         style: TextAreaStyle,
     },
     InputNumber {
@@ -2087,6 +2091,7 @@ impl Widget {
 
 #[derive(Debug, Clone)]
 enum DragState {
+    TextArea { area: WidgetId, bounds: Rect },
     TableColumn {
         table: WidgetId,
         column: usize,
@@ -2291,6 +2296,22 @@ pub enum UiKey {
     Space,
     /// Select-all in focused text input (Ctrl/Cmd+A).
     SelectAll,
+    /// Undo the last text edit.
+    Undo,
+    /// Redo the last undone text edit.
+    Redo,
+    /// Extend a TextArea selection with an arrow, Home or End key.
+    SelectLeft,
+    /// Extend selection right.
+    SelectRight,
+    /// Extend selection up one visual line.
+    SelectUp,
+    /// Extend selection down one visual line.
+    SelectDown,
+    /// Extend selection to the start of the visual line.
+    SelectHome,
+    /// Extend selection to the end of the visual line.
+    SelectEnd,
     /// Escape (close open popup).
     Escape,
 }
@@ -3187,7 +3208,9 @@ impl Ui {
             }
             Some(Kind::TextArea { .. }) => {
                 self.focus = Some(id);
-                true
+                let bounds = self.widgets.get(&id).and_then(|w| w.node).and_then(|n| scene.get(n).map(|n| n.bounds)).unwrap_or_else(Rect::empty);
+                self.drag = Some(DragState::TextArea { area: id, bounds });
+                self.pointer_text_area(id, bounds, x, y, false)
             }
             Some(Kind::InputNumber { .. }) => {
                 self.focus = Some(id);
@@ -3273,6 +3296,7 @@ impl Ui {
             return self.update_tooltip_hover_xy(x, y);
         };
         match drag {
+            DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
             DragState::TableColumn {
                 table,
                 column,
@@ -3338,6 +3362,10 @@ impl Ui {
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
         };
+        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { .. })) {
+            let sy = self.any_scroll_offset(id).unwrap().1;
+            return self.set_text_area_scroll(id, sy + dy);
+        }
         let area = self.find_scroll_ancestor(id).or_else(|| {
             if self.is_data_scrollable(id) {
                 Some(id)
@@ -3834,9 +3862,8 @@ impl Ui {
 
     /// Text to place on the OS clipboard from the focused TextInput / TextArea.
     ///
-    /// When `select_all` is set, returns the full value; otherwise still returns the
-    /// full value (MVP has no partial selection range). `None` if focus is not a
-    /// text field or the value is empty.
+    /// TextArea returns only its selection. TextInput returns its full non-secret
+    /// value. `None` when no copyable text is selected.
     pub fn focused_text_for_copy(&self) -> Option<String> {
         let id = self.focus?;
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -3845,14 +3872,15 @@ impl Ui {
                 secret: false,
                 ..
             }) if !value.is_empty() => Some(value.clone()),
-            Some(Kind::TextArea { value, .. }) if !value.is_empty() => Some(value.clone()),
+            Some(Kind::TextArea { .. }) => self.text_area_selected_text(id),
             _ => None,
         }
     }
 
     /// Insert `text` into the focused TextInput / TextArea at the caret.
     ///
-    /// Replaces the whole value when `select_all` is set. Clears IME preedit.
+    /// Replaces the TextArea selection or the whole TextInput when `select_all` is set.
+    /// Clears IME preedit.
     pub fn paste_into_focused_text(&mut self, text: &str) -> bool {
         let Some(id) = self.focus else {
             return false;
@@ -3886,18 +3914,7 @@ impl Ui {
                 }
                 true
             }
-            Some(Kind::TextArea { value, caret, preedit, preedit_cursor, .. }) => {
-                preedit.clear();
-                *preedit_cursor = None;
-                let mut chars: Vec<char> = value.chars().collect();
-                *caret = (*caret).min(chars.len());
-                for (i, ch) in text.chars().enumerate() {
-                    chars.insert(*caret + i, ch);
-                }
-                *caret += text.chars().count();
-                *value = chars.into_iter().collect();
-                true
-            }
+            Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, text),
             _ => false,
         }
     }
@@ -3912,12 +3929,12 @@ impl Ui {
     pub fn ime_cursor_area(&self, scene: &Scene) -> Option<(f32, f32, f32, f32)> {
         let id = self.focus?;
         let w = self.widgets.get(&id)?;
-        if let Kind::TextArea { value, caret, preedit, preedit_cursor, scroll_y, style, .. } = &w.kind {
+        if let Kind::TextArea { value, caret, preedit, preedit_cursor, scroll_y, style, edit, .. } = &w.kind {
             let bounds = w.node.and_then(|n| scene.get(n).map(|n| n.bounds))?;
-            let (display, caret) = composed_text(value, *caret, preedit, *preedit_cursor);
-            let (layout, _) = self.font.rasterize_text(&display, style.size, Some((bounds.width - style.padding_x * 2.0).max(1.0)));
+            let (display, caret) = text_area::display_text(value, *caret, edit, preedit, *preedit_cursor);
+            let layout = self.font.layout(&display, style.size, Some((bounds.width - style.padding_x * 2.0).max(1.0)));
             let (x, y) = layout.caret_top_left(&display, caret, self.font.metrics(style.size).ascent);
-            return Some((bounds.x + style.padding_x + x, bounds.y + style.padding_y - scroll_y + y, 2.0, style.size));
+            return Some(((bounds.x + style.padding_x + x).floor(), (bounds.y + style.padding_y - scroll_y + y).floor(), 2.0, self.font.metrics(style.size).ascent.ceil()));
         }
         let Kind::TextInput {
             value,
@@ -3958,6 +3975,7 @@ impl Ui {
         };
         *preedit = text.into();
         *preedit_cursor = if preedit.is_empty() { None } else { cursor };
+        if let Kind::TextArea { edit, .. } = &mut w.kind { edit.reveal = true; }
         true
     }
 
@@ -4085,7 +4103,7 @@ impl Ui {
     fn is_data_scrollable(&self, id: WidgetId) -> bool {
         matches!(
             self.widgets.get(&id).map(|w| &w.kind),
-            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. } | Kind::PropertyGrid { .. } | Kind::TreeTable { .. })
+            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. } | Kind::PropertyGrid { .. } | Kind::TreeTable { .. } | Kind::TextArea { .. })
         )
     }
 
@@ -4094,6 +4112,7 @@ impl Ui {
             Some(Kind::ScrollArea {
                 scroll_x, scroll_y, ..
             }) => Some((*scroll_x, *scroll_y)),
+            Some(Kind::TextArea { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::List { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Tree { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Table { scroll_x, scroll_y, .. }) => Some((*scroll_x, *scroll_y)),
@@ -4800,7 +4819,7 @@ impl Ui {
                     false
                 }
             }
-            UiKey::Enter | UiKey::Tab | UiKey::BackTab | UiKey::Space | UiKey::Up | UiKey::Down | UiKey::Escape => false,
+            _ => false,
         }
     }
 
@@ -4957,153 +4976,6 @@ impl Ui {
             }
         }
         false
-    }
-
-    fn key_text_area(&mut self, id: WidgetId, key: UiKey) -> bool {
-        let Some(Widget {
-            kind:
-                Kind::TextArea {
-                    value,
-                    caret,
-                    ..
-                },
-            ..
-        }) = self.widgets.get_mut(&id)
-        else {
-            return false;
-        };
-        match key {
-            UiKey::Char(c) => {
-                let mut chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                chars.insert(i, c);
-                *value = chars.into_iter().collect();
-                *caret = i + 1;
-                true
-            }
-            UiKey::Enter => {
-                let mut chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                chars.insert(i, '\n');
-                *value = chars.into_iter().collect();
-                *caret = i + 1;
-                true
-            }
-            UiKey::Backspace => {
-                let mut chars: Vec<char> = value.chars().collect();
-                if *caret > 0 && !chars.is_empty() {
-                    let i = (*caret).min(chars.len());
-                    chars.remove(i - 1);
-                    *value = chars.into_iter().collect();
-                    *caret = i - 1;
-                    return true;
-                }
-                false
-            }
-            UiKey::Delete => {
-                let mut chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                if i < chars.len() {
-                    chars.remove(i);
-                    *value = chars.into_iter().collect();
-                    return true;
-                }
-                false
-            }
-            UiKey::Left => {
-                if *caret > 0 {
-                    *caret -= 1;
-                    return true;
-                }
-                false
-            }
-            UiKey::Right => {
-                let n = value.chars().count();
-                if *caret < n {
-                    *caret += 1;
-                    return true;
-                }
-                false
-            }
-            UiKey::Home => {
-                let chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                let start = chars[..i]
-                    .iter()
-                    .rposition(|c| *c == '\n')
-                    .map(|p| p + 1)
-                    .unwrap_or(0);
-                if *caret != start {
-                    *caret = start;
-                    return true;
-                }
-                false
-            }
-            UiKey::End => {
-                let chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                let end = chars[i..]
-                    .iter()
-                    .position(|c| *c == '\n')
-                    .map(|p| i + p)
-                    .unwrap_or(chars.len());
-                if *caret != end {
-                    *caret = end;
-                    return true;
-                }
-                false
-            }
-            UiKey::Up => {
-                let chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                let line_start = chars[..i]
-                    .iter()
-                    .rposition(|c| *c == '\n')
-                    .map(|p| p + 1)
-                    .unwrap_or(0);
-                if line_start == 0 {
-                    return false;
-                }
-                let col = i - line_start;
-                let prev_end = line_start - 1;
-                let prev_start = chars[..prev_end]
-                    .iter()
-                    .rposition(|c| *c == '\n')
-                    .map(|p| p + 1)
-                    .unwrap_or(0);
-                let prev_len = prev_end - prev_start;
-                *caret = prev_start + col.min(prev_len);
-                true
-            }
-            UiKey::Down => {
-                let chars: Vec<char> = value.chars().collect();
-                let i = (*caret).min(chars.len());
-                let line_start = chars[..i]
-                    .iter()
-                    .rposition(|c| *c == '\n')
-                    .map(|p| p + 1)
-                    .unwrap_or(0);
-                let col = i - line_start;
-                let line_end = chars[i..]
-                    .iter()
-                    .position(|c| *c == '\n')
-                    .map(|p| i + p)
-                    .unwrap_or(chars.len());
-                if line_end >= chars.len() {
-                    return false;
-                }
-                let next_start = line_end + 1;
-                let next_end = chars[next_start..]
-                    .iter()
-                    .position(|c| *c == '\n')
-                    .map(|p| next_start + p)
-                    .unwrap_or(chars.len());
-                let next_len = next_end - next_start;
-                *caret = next_start + col.min(next_len);
-                true
-            }
-            _ => false,
-        }
     }
 
     fn key_input_number(&mut self, id: WidgetId, key: UiKey) -> bool {
@@ -6480,11 +6352,13 @@ impl Ui {
     pub fn set_text_area_value(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::TextArea {
-                value: v, caret, preedit, preedit_cursor, ..
+                value: v, caret, preedit, preedit_cursor, edit, ..
             } = &mut w.kind
             {
                 *v = value.into();
                 *caret = v.chars().count();
+                *edit = TextAreaEdit::default();
+                edit.reveal = true;
                 preedit.clear();
                 *preedit_cursor = None;
                 return true;
@@ -9924,6 +9798,10 @@ impl Ui {
     fn rebase_data_size(&mut self, id: WidgetId, width: f32, height: f32) {
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
+                Kind::TextArea { style, .. } => {
+                    style.width = width;
+                    style.height = height;
+                }
                 Kind::List { style, .. } => {
                     style.width = width;
                     style.height = height;
@@ -12260,102 +12138,6 @@ impl Ui {
             y += style.height + style.gap;
         }
         scene.raise(host);
-    }
-
-    fn paint_text_area(&mut self, scene: &mut Scene, id: WidgetId) {
-        let Some(Widget {
-            kind:
-                Kind::TextArea {
-                    value,
-                    placeholder,
-                    caret,
-                    preedit,
-                    preedit_cursor,
-                    scroll_y,
-                    style,
-                },
-            node,
-            label_node,
-            chrome_node,
-            ..
-        }) = self.widgets.get(&id)
-        else {
-            return;
-        };
-        let (value, caret) = composed_text(value, *caret, preedit, *preedit_cursor);
-        let placeholder = placeholder.clone();
-        let scroll_y = *scroll_y;
-        let style = *style;
-        let Some(host) = *node else { return };
-        let label = *label_node;
-        let chrome = *chrome_node;
-        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
-        let focused = self.focus == Some(id);
-        scene.set_fill(host, style.bg);
-        scene.set_mask(host, None);
-        scene.set_clip(host, Some(bounds));
-        scene.set_visible(host, true);
-        self.apply_corner_radius(scene, host, false);
-        if let Some(chrome) = chrome {
-            // focus ring stub: thin top bar
-            scene.set_bounds(
-                chrome,
-                Rect::new(bounds.x, bounds.y, bounds.width, 2.0),
-            );
-            scene.set_fill(
-                chrome,
-                if focused {
-                    style.focus_border
-                } else {
-                    style.border
-                },
-            );
-            scene.set_mask(chrome, None);
-            scene.set_visible(chrome, true);
-        }
-        let display = if value.is_empty() && !focused {
-            placeholder.as_str()
-        } else {
-            value.as_str()
-        };
-        let fg = if value.is_empty() && !focused {
-            style.placeholder_fg
-        } else {
-            style.fg
-        };
-        let max_w = (bounds.width - style.padding_x * 2.0).max(1.0);
-        let (layout, mask) = self.font.rasterize_text(display, style.size, Some(max_w));
-        if let Some(lab) = label {
-            scene.set_bounds(
-                lab,
-                Rect::new(
-                    bounds.x + style.padding_x,
-                    bounds.y + style.padding_y - scroll_y,
-                    mask.width as f32,
-                    mask.height as f32,
-                ),
-            );
-            scene.set_fill(lab, fg);
-            scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
-            scene.set_visible(lab, true);
-        }
-        if let Some(chrome) = chrome {
-            if focused {
-                let metrics = self.font.metrics(style.size);
-                // Caret must use the same wrapped layout as the mask, not only explicit
-                // newlines + unwrapped measure_line (which clips past the host).
-                let (ox, oy) = layout.caret_top_left(&value, caret, metrics.ascent);
-                let cx = bounds.x + style.padding_x + ox;
-                let cy = bounds.y + style.padding_y - scroll_y + oy;
-                let ch = metrics.ascent.max(style.size * 0.8);
-                scene.set_bounds(chrome, Rect::new(cx, cy, 2.0, ch));
-                scene.set_fill(chrome, style.focus_border);
-                scene.set_mask(chrome, None);
-                scene.set_visible(chrome, true);
-            } else {
-                scene.set_visible(chrome, false);
-            }
-        }
     }
 
     fn paint_input_number(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -18478,6 +18260,7 @@ impl FlexBuilder<'_> {
                     preedit: String::new(),
                     preedit_cursor: None,
                     scroll_y: 0.0,
+                    edit: TextAreaEdit::default(),
                     style,
                 },
                 node: None,

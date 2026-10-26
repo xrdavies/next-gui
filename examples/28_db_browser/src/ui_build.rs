@@ -836,6 +836,11 @@ pub fn build_ui(
                                 ov_btn_repl = r.tool_button("Replace");
                                 ov_btn_repl_all = r.tool_button("Replace All");
                             });
+                            c.text("SQL — selected match; changes apply immediately");
+                            let mut editor_style = area_s;
+                            editor_style.width = shell_w - 72.0;
+                            editor_style.height = (ov_col.height - 170.0).max(100.0);
+                            sql_area = c.text_area(state.sql_editor(), "SQL…", editor_style);
                         }
                         OverlayKind::Attach => {
                             c.row(row, |r| {
@@ -1730,6 +1735,9 @@ pub fn build_ui(
         let _ = ui.set_modal_open(modal, true);
     }
 
+    if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
+        ui.restore_text_area_state(sql_area, editor);
+    }
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
 
