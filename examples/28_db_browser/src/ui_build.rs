@@ -1247,9 +1247,7 @@ pub fn build_ui(
             let mut prag_inp = TextInputStyle::from_theme(&theme);
             prag_inp.width = 180.0;
 
-            body_splitter = col.splitter(
-                body_split,
-                |left| {
+            let main_pane = |left: &mut next_gui_ui::FlexBuilder<'_>| {
                     tabs = left.tabs(tabs_style, |tb| {
                         tb.page(MainTab::Structure.title(), |p| {
                             if state.tab != MainTab::Structure {
@@ -1548,12 +1546,8 @@ pub fn build_ui(
                             });
                         });
                     });
-                },
-                |right| {
-                    if !docks_on {
-                        right.text_styled("(docks hidden)", theme.colors.text_secondary, 12.0);
-                        return;
-                    }
+                };
+            let dock_pane = |right: &mut next_gui_ui::FlexBuilder<'_>| {
                     dock_tabs = right.tabs(dock_tabs_style, |tb| {
                         for dock in &visible_docks {
                             match *dock {
@@ -1702,8 +1696,18 @@ pub fn build_ui(
                             }
                         }
                     });
-                },
-            );
+                };
+            if docks_on {
+                body_splitter = col.splitter(body_split, main_pane, dock_pane);
+            } else {
+                let mut full_width = ColumnStyle::from_theme(&theme);
+                full_width.width = shell_w - 8.0;
+                full_width.height = content_h;
+                full_width.padding = 0.0;
+                full_width.gap = 0.0;
+                full_width.background = None;
+                col.column(full_width, main_pane);
+            }
         }
     });
 

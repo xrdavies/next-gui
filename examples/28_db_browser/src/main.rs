@@ -503,6 +503,11 @@ impl Demo {
                     MainTab::ExecuteSql
                 }
                 "image" => MainTab::Browse,
+                "full-width" => {
+                    state.dock_edit = false; state.dock_schema = false;
+                    state.dock_log = false; state.dock_plot = false; state.dock_remote = false;
+                    MainTab::Browse
+                }
                 "schema" => {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
@@ -3092,6 +3097,32 @@ mod interaction_tests {
             renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
             write_ppm(&path, renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
         }
+    }
+
+    #[test]
+    fn hidden_docks_reclaim_main_width_and_keep_preferred_splitter_ratio() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::Browse;
+        demo.state.body_ratio = 0.63;
+        demo.state.dock_edit = false; demo.state.dock_schema = false;
+        demo.state.dock_log = false; demo.state.dock_plot = false; demo.state.dock_remote = false;
+        demo.do_rebuild();
+        demo.snapshot_inputs();
+        assert_eq!(demo.ids.body_splitter, WidgetId(0));
+        assert_eq!(demo.ids.dock_tabs, WidgetId(0));
+        let table = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table)).unwrap();
+        let mut right = table.bounds.x + table.bounds.width;
+        let mut parent = table.parent;
+        while let Some(id) = parent {
+            let node = demo.scene.get(id).unwrap();
+            if let Some(clip) = node.clip { right = right.min(clip.x + clip.width); }
+            parent = node.parent;
+        }
+        assert!(right > 1350.0, "Hidden docks must reclaim the clipped table width: {right}");
+        assert_eq!(demo.state.body_ratio, 0.63);
+        demo.state.dock_edit = true;
+        demo.do_rebuild();
+        assert!((demo.ui.splitter_ratio(demo.ids.body_splitter).unwrap() - 0.63).abs() < 0.01);
     }
 
     #[test]
