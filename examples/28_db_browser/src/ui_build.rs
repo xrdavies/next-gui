@@ -1115,6 +1115,8 @@ pub fn build_ui(
             let mut struct_tb = RowStyle::from_theme(&theme);
             struct_tb.width = main_w - 24.0;
             struct_tb.height = 34.0;
+            struct_tb.padding = 0.0;
+            struct_tb.cross_align = CrossAlign::Center;
 
             let mut struct_split = SplitterStyle::from_theme(&theme);
             struct_split.width = main_w - 24.0;
@@ -1749,7 +1751,7 @@ pub fn build_ui(
         state.path.clone()
     };
     let flags = format!(
-        "{}{}{}{} · UTF-8 · {}",
+        "{}{}{}{} · {} · {}",
         if state.read_only { "RO" } else { "RW" },
         if state.dirty { " · modified" } else { "" },
         if state.sql_busy { " · busy" } else { "" },
@@ -1758,6 +1760,7 @@ pub fn build_ui(
         } else {
             ""
         },
+        if state.database_encoding.is_empty() { "—" } else { &state.database_encoding },
         if state.cipher_active {
             "encrypted"
         } else {

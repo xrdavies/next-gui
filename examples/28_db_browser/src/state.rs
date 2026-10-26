@@ -187,6 +187,7 @@ pub struct AppState {
     pub read_only: bool,
     pub dirty: bool,
     pub schema: Vec<SchemaObject>,
+    pub database_encoding: String,
     pub selected: Option<SelectedObject>,
     pub tab: MainTab,
     pub status_msg: String,
@@ -427,6 +428,7 @@ impl AppState {
             read_only: false,
             dirty: false,
             schema: Vec::new(),
+            database_encoding: String::new(),
             selected: None,
             tab: MainTab::Structure,
             status_msg: "Ready".into(),
@@ -851,9 +853,13 @@ impl AppState {
     pub fn refresh_schema(&mut self) -> Result<(), String> {
         let Some(conn) = self.conn.as_ref() else {
             self.schema.clear();
+            self.database_encoding.clear();
             return Ok(());
         };
-        self.schema = db::list_schema(conn)?;
+        let schema = db::list_schema(conn)?;
+        let encoding = db::read_pragma(conn, "main.encoding")?;
+        self.schema = schema;
+        self.database_encoding = encoding;
         Ok(())
     }
 
@@ -1589,6 +1595,7 @@ impl AppState {
             drop(conn);
         }
         self.schema.clear();
+        self.database_encoding.clear();
         self.selected = None;
         self.browse_tabs = vec![BrowseTabState::new(None)];
         self.browse_tab_idx = 0;

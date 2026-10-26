@@ -3086,6 +3086,69 @@ mod interaction_tests {
     }
 
     #[test]
+    fn structure_toolbar_has_no_vertical_overflow_at_normal_or_narrow_width() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        for (width, height) in [(1400, 860), (800, 600)] {
+            demo.win_w = width;
+            demo.win_h = height;
+            demo.state.tab = MainTab::Structure;
+            demo.do_rebuild();
+            let mut node = demo.scene.iter_paint_order().into_iter()
+                .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.btn_struct_new_table)).unwrap().id;
+            let toolbar = loop {
+                node = demo.scene.get(node).unwrap().parent.expect("toolbar viewport");
+                if let Some(widget) = demo.ui.widget_from_node(node) {
+                    if demo.ui.scroll_offset(widget).is_some() { break widget; }
+                }
+            };
+            demo.ui.set_scroll_offset(toolbar, 10000.0, 10000.0);
+            assert_eq!(demo.ui.scroll_offset(toolbar).unwrap().1, 0.0, "{width}x{height}");
+        }
+    }
+
+    #[test]
+    fn status_encoding_follows_database_sql_worker_readonly_and_close() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("utf16.db");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA encoding='UTF-16le'; CREATE TABLE t(v); INSERT INTO t VALUES('中文🙂');").unwrap();
+        drop(conn);
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        let status = |demo: &Demo| {
+            let built = build_ui(demo.font.clone(), demo.theme, demo.win_w, demo.win_h, &demo.state);
+            built.ui.text_content(built.status).unwrap().to_owned()
+        };
+        demo.state.close_db();
+        demo.state.open_readonly_path(path.to_str().unwrap()).unwrap();
+        assert!(status(&demo).contains("UTF-16le"), "{}", status(&demo));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            let mut built = build_ui(demo.font.clone(), demo.theme, demo.win_w, demo.win_h, &demo.state);
+            built.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = built.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&built.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+        demo.state.run_sql_text_sync("SELECT * FROM t").unwrap();
+        assert!(status(&demo).contains("UTF-16le"));
+        demo.state.close_db();
+        demo.state.new_memory_db().unwrap();
+        demo.state.run_sql_text_sync("PRAGMA encoding='UTF-16be'; CREATE TABLE t(v)").unwrap();
+        assert!(status(&demo).contains("UTF-16be"));
+        demo.state.start_sql_text("SELECT 1".into()).unwrap();
+        assert!(status(&demo).contains("UTF-16be"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !demo.state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline, "SQL worker deadline");
+            std::thread::yield_now();
+        }
+        demo.state.close_db();
+        assert!(!status(&demo).contains("UTF-16"));
+        demo.state.new_memory_db().unwrap();
+        assert!(status(&demo).contains("UTF-8"));
+    }
+
+    #[test]
     fn normal_sql_page_fits_with_visible_or_hidden_toolbar() {
         let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
         demo.state.tab = MainTab::ExecuteSql;
