@@ -1172,6 +1172,8 @@ pub enum ModalAction {
     Primary,
     /// Secondary button (e.g. Cancel).
     Secondary,
+    /// Optional third button (e.g. Cancel in Save / Discard / Cancel).
+    Tertiary,
     /// Escape, title close, or backdrop.
     Dismiss,
 }
@@ -1820,6 +1822,8 @@ enum Kind {
         body: String,
         primary: Option<String>,
         secondary: Option<String>,
+        tertiary: Option<String>,
+        action_focus: usize,
         open: bool,
         style: ModalStyle,
     },
@@ -4514,6 +4518,9 @@ impl Ui {
         // requirement), so text fields do not swallow Tab. Modal/Drawer absorb.
         if matches!(key, UiKey::Tab | UiKey::BackTab) {
             if self.focus_trap_active() {
+                if let Some(id) = self.focus {
+                    if self.is_modal(id) { return self.key_modal(id, key); }
+                }
                 return true;
             }
             return match key {
@@ -4607,16 +4614,22 @@ impl Ui {
     }
 
     fn key_modal(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let Some(Widget { kind: Kind::Modal { secondary, tertiary, action_focus, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let mut actions = vec![ModalAction::Primary];
+        if secondary.is_some() { actions.push(ModalAction::Secondary); }
+        if tertiary.is_some() { actions.push(ModalAction::Tertiary); }
         match key {
-            UiKey::Enter => {
-                self.pending_modal_action = Some((id, ModalAction::Primary));
-                self.close_popup_internal();
-                if self.focus == Some(id) {
-                    self.focus = None;
-                }
+            UiKey::Tab | UiKey::BackTab | UiKey::Left | UiKey::Right => {
+                let step = if matches!(key, UiKey::BackTab | UiKey::Left) { actions.len() - 1 } else { 1 };
+                *action_focus = (*action_focus + step) % actions.len();
                 true
             }
-            UiKey::Tab | UiKey::BackTab => true, // focus trap while modal open
+            UiKey::Enter | UiKey::Space => {
+                self.pending_modal_action = Some((id, actions[*action_focus % actions.len()]));
+                self.close_popup_internal();
+                if self.focus == Some(id) { self.focus = None; }
+                true
+            }
             _ => false,
         }
     }
@@ -6209,8 +6222,9 @@ impl Ui {
                 }
             }
             if let Some(w) = self.widgets.get_mut(&id) {
-                if let Kind::Modal { open: o, .. } = &mut w.kind {
+                if let Kind::Modal { open: o, action_focus, .. } = &mut w.kind {
                     *o = true;
+                    *action_focus = 0;
                 }
             }
             self.open_popup = Some(id);
@@ -6226,6 +6240,17 @@ impl Ui {
             }
         }
         true
+    }
+
+    /// Add or remove a third modal action, reported as [`ModalAction::Tertiary`].
+    /// Tab/Shift-Tab and arrows move between actions; Enter/Space activates one.
+    pub fn set_modal_tertiary(&mut self, id: WidgetId, label: Option<String>) -> bool {
+        if let Some(Widget { kind: Kind::Modal { tertiary, action_focus, .. }, .. }) = self.widgets.get_mut(&id) {
+            *tertiary = label;
+            *action_focus = 0;
+            return true;
+        }
+        false
     }
 
     /// Whether the Modal is open.
@@ -7529,6 +7554,8 @@ impl Ui {
                     body: body.into(),
                     primary: Some(primary.into()),
                     secondary,
+                    tertiary: None,
+                    action_focus: 0,
                     open: false,
                     style,
                 },
@@ -8682,7 +8709,7 @@ impl Ui {
             _ => return false,
         };
         // aux layout: 0=scrim, 1=panel, 2=title_bg, 3=title_label, 4=close,
-        // 5=body, 6=primary btn, 7=primary label, 8=secondary btn, 9=secondary label
+        // 5=body; action background/label pairs start at 6 (primary, secondary, tertiary).
         let hit = |idx: usize| -> bool {
             aux.get(idx)
                 .and_then(|n| scene.get(*n))
@@ -8703,6 +8730,12 @@ impl Ui {
         }
         if hit(8) {
             self.pending_modal_action = Some((id, ModalAction::Secondary));
+            self.hide_popup_aux_mut(scene, id);
+            self.close_popup_internal();
+            return true;
+        }
+        if hit(10) {
+            self.pending_modal_action = Some((id, ModalAction::Tertiary));
             self.hide_popup_aux_mut(scene, id);
             self.close_popup_internal();
             return true;
@@ -15780,7 +15813,7 @@ impl Ui {
     }
 
     fn paint_modal_popup(&mut self, scene: &mut Scene, id: WidgetId) {
-        let (title, body, primary, secondary, style) = match self.widgets.get(&id) {
+        let (title, body, primary, secondary, tertiary, action_focus, style) = match self.widgets.get(&id) {
             Some(Widget {
                 kind:
                     Kind::Modal {
@@ -15788,6 +15821,8 @@ impl Ui {
                         body,
                         primary,
                         secondary,
+                        tertiary,
+                        action_focus,
                         open: true,
                         style,
                     },
@@ -15797,18 +15832,21 @@ impl Ui {
                 body.clone(),
                 primary.clone(),
                 secondary.clone(),
+                tertiary.clone(),
+                *action_focus,
                 *style,
             ),
             _ => return,
         };
         let (vw, vh) = self.viewport;
         let panel_w = style.width.min(vw - 40.0).max(200.0);
-        let action_h = if primary.is_some() || secondary.is_some() {
+        let action_h = if primary.is_some() || secondary.is_some() || tertiary.is_some() {
             style.action_height + style.padding
         } else {
             0.0
         };
-        let (_, body_th) = self.font.measure_line(&body, style.body_size);
+        let (_, body_mask) = self.font.rasterize_text(&body, style.body_size, Some((panel_w - 2.0 * style.padding).max(1.0)));
+        let body_th = body_mask.height as f32;
         let panel_h = (style.title_height
             + style.padding * 2.0
             + body_th.max(40.0)
@@ -15819,10 +15857,10 @@ impl Ui {
         let py = ((vh - panel_h) * 0.5).max(0.0);
         let panel = Rect::new(px, py, panel_w, panel_h);
 
-        // 10 aux slots
-        self.ensure_overlay_aux(scene, id, 10);
+        // Stable action slots preserve existing primary/secondary hit geometry.
+        self.ensure_overlay_aux(scene, id, 12);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if aux.len() < 10 {
+        if aux.len() < 12 {
             return;
         }
         let scrim = aux[0];
@@ -15831,10 +15869,7 @@ impl Ui {
         let title_l = aux[3];
         let close_n = aux[4];
         let body_n = aux[5];
-        let primary_btn = aux[6];
-        let primary_l = aux[7];
-        let secondary_btn = aux[8];
-        let secondary_l = aux[9];
+
 
         scene.set_bounds(scrim, Rect::new(0.0, 0.0, vw, vh));
         scene.set_fill(scrim, style.scrim);
@@ -15878,7 +15913,7 @@ impl Ui {
         scene.set_mask(close_n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
         scene.set_visible(close_n, true);
 
-        let (_, bm) = self.font.rasterize_text(&body, style.body_size, None);
+        let bm = body_mask;
         scene.set_bounds(
             body_n,
             Rect::new(
@@ -15895,56 +15930,34 @@ impl Ui {
         let btn_y = panel.y + panel.height - style.padding - style.action_height;
         let mut cursor_x = panel.x + panel.width - style.padding;
 
-        if let Some(ref p) = primary {
-            let (tw, _) = self.font.measure_line(p, style.body_size);
+        let mut action_index = 0;
+        for (slot, label) in [primary, secondary, tertiary].iter().enumerate() {
+            let button = aux[6 + slot * 2];
+            let text = aux[7 + slot * 2];
+            let Some(label) = label else {
+                scene.set_visible(button, false);
+                scene.set_visible(text, false);
+                continue;
+            };
+            let (tw, _) = self.font.measure_line(label, style.body_size);
             let bw = (tw + 24.0).max(72.0);
             let bx = cursor_x - bw;
-            scene.set_bounds(primary_btn, Rect::new(bx, btn_y, bw, style.action_height));
-            scene.set_fill(primary_btn, style.primary_bg);
-            scene.set_mask(primary_btn, None);
-            scene.set_visible(primary_btn, true);
-            let (_, lm) = self.font.rasterize_text(p, style.body_size, None);
-            scene.set_bounds(
-                primary_l,
-                Rect::new(
-                    bx + ((bw - lm.width as f32) * 0.5).max(0.0),
-                    btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
-                    lm.width as f32,
-                    lm.height as f32,
-                ),
-            );
-            scene.set_fill(primary_l, style.action_fg);
-            scene.set_mask(primary_l, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
-            scene.set_visible(primary_l, true);
+            scene.set_bounds(button, Rect::new(bx, btn_y, bw, style.action_height));
+            scene.set_fill(button, if action_index == action_focus { style.primary_bg } else { style.secondary_bg });
+            scene.set_mask(button, None);
+            scene.set_visible(button, true);
+            self.apply_corner_radius(scene, button, true);
+            let (_, lm) = self.font.rasterize_text(label, style.body_size, None);
+            scene.set_bounds(text, Rect::new(
+                bx + ((bw - lm.width as f32) * 0.5).max(0.0),
+                btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
+                lm.width as f32, lm.height as f32,
+            ));
+            scene.set_fill(text, style.action_fg);
+            scene.set_mask(text, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
+            scene.set_visible(text, true);
             cursor_x = bx - 8.0;
-        } else {
-            scene.set_visible(primary_btn, false);
-            scene.set_visible(primary_l, false);
-        }
-        if let Some(ref s) = secondary {
-            let (tw, _) = self.font.measure_line(s, style.body_size);
-            let bw = (tw + 24.0).max(72.0);
-            let bx = cursor_x - bw;
-            scene.set_bounds(secondary_btn, Rect::new(bx, btn_y, bw, style.action_height));
-            scene.set_fill(secondary_btn, style.secondary_bg);
-            scene.set_mask(secondary_btn, None);
-            scene.set_visible(secondary_btn, true);
-            let (_, lm) = self.font.rasterize_text(s, style.body_size, None);
-            scene.set_bounds(
-                secondary_l,
-                Rect::new(
-                    bx + ((bw - lm.width as f32) * 0.5).max(0.0),
-                    btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
-                    lm.width as f32,
-                    lm.height as f32,
-                ),
-            );
-            scene.set_fill(secondary_l, style.action_fg);
-            scene.set_mask(secondary_l, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
-            scene.set_visible(secondary_l, true);
-        } else {
-            scene.set_visible(secondary_btn, false);
-            scene.set_visible(secondary_l, false);
+            action_index += 1;
         }
 
         if let Some(h) = self.overlay_host {
@@ -20213,6 +20226,38 @@ mod tests {
         ui.set_focus(Some(slider));
         assert!(ui.key_input(UiKey::Right));
         assert!(ui.slider_value(slider).unwrap() > v);
+    }
+
+    #[test]
+    fn modal_three_actions_wrap_body_and_support_pointer_and_keyboard() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(640.0, 480.0);
+        let modal = ui.modal("Save changes?", "A long explanation that must wrap within the modal instead of extending beyond its edge. ".repeat(3), "Save", Some("Discard".into()), ModalStyle::default());
+        assert!(ui.set_modal_tertiary(modal, Some("Cancel".into())));
+        for (slot, expected) in [(6, ModalAction::Primary), (8, ModalAction::Secondary), (10, ModalAction::Tertiary)] {
+            ui.set_modal_open(modal, true);
+            ui.sync(&mut scene);
+            let aux = &ui.widgets[&modal].aux;
+            let panel = scene.get(aux[1]).unwrap().bounds;
+            let body = scene.get(aux[5]).unwrap().bounds;
+            let bounds = scene.get(aux[slot]).unwrap().bounds;
+            assert!(body.x + body.width <= panel.x + panel.width);
+            assert!(body.y + body.height <= bounds.y);
+            assert!(ui.pointer_press(&mut scene, bounds.x + 8.0, bounds.y + 8.0, false));
+            assert_eq!(ui.take_modal_action(), Some((modal, expected)));
+        }
+        ui.set_modal_open(modal, true);
+        assert!(ui.key_input(UiKey::Tab));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.take_modal_action(), Some((modal, ModalAction::Secondary)));
+        ui.set_modal_open(modal, true);
+        assert!(ui.key_input(UiKey::BackTab));
+        assert!(ui.key_input(UiKey::Space));
+        assert_eq!(ui.take_modal_action(), Some((modal, ModalAction::Tertiary)));
+        ui.set_modal_open(modal, true);
+        assert!(ui.key_input(UiKey::Escape));
+        assert_eq!(ui.take_modal_action(), Some((modal, ModalAction::Dismiss)));
     }
 
     #[test]

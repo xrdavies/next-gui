@@ -397,6 +397,7 @@ impl Demo {
             let label = match action {
                 ModalAction::Primary => "Delete",
                 ModalAction::Secondary => "Cancel",
+                ModalAction::Tertiary => "Third action",
                 ModalAction::Dismiss => "Dismiss",
             };
             self.ui.set_text(
