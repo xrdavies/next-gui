@@ -363,16 +363,18 @@ pub fn browse_table(
     query_preview(conn, &sql, limit)
 }
 
-fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResult, String> {
+fn prepare_browse<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
     // Browse filters must never execute a second statement or write to the database.
-    let mut batch = rusqlite::Batch::new(conn, sql);
-    let mut stmt = batch
-        .next()
-        .map_err(|e| e.to_string())?
-        .ok_or("Empty browse query")?;
-    if !stmt.readonly() || batch.next().map_err(|e| e.to_string())?.is_some() {
+    let stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    // Expanded SQL contains only the first statement; never prepare a PRAGMA in the tail.
+    if !stmt.readonly() || stmt.expanded_sql().as_deref() != Some(sql) {
         return Err("Browse requires a single read-only statement".into());
     }
+    Ok(stmt)
+}
+
+fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResult, String> {
+    let mut stmt = prepare_browse(conn, sql)?;
     let columns = stmt
         .column_names()
         .iter()
@@ -845,7 +847,7 @@ pub fn export_table(
     if let Some(filter) = filter.filter(|s| !s.is_empty()) {
         sql.push_str(&format!(" WHERE {filter}"));
     }
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut stmt = prepare_browse(conn, &sql)?;
     let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let parent = path
         .parent()
@@ -1530,6 +1532,26 @@ mod tests {
         assert!(browse_table(&conn, "t", None, false, filter, 500, 0).is_err());
         assert!(browse_with_rowid(&conn, "t", None, false, filter, 500, 0).is_err());
         assert_eq!(count_rows(&conn, "t").unwrap(), 1);
+    }
+
+    #[test]
+    fn browse_rejects_tail_without_preparing_pragma_side_effects() {
+        for rowids in [false, true] {
+            for filter in ["1; PRAGMA foreign_keys=ON; --", "1; PRAGMA key='fixture-key'; --"] {
+                let conn = Connection::open_in_memory().unwrap();
+                conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('; literal'); PRAGMA foreign_keys=OFF;").unwrap();
+                let browse = if rowids { browse_with_rowid } else { browse_table };
+                assert!(browse(&conn, "t", None, false, Some(filter), 500, 0).is_err());
+                assert_eq!(read_pragma(&conn, "foreign_keys").unwrap(), "0");
+                let dir = tempfile::tempdir().unwrap();
+                let output = dir.path().join("keep.json");
+                fs::write(&output, "previous export").unwrap();
+                assert!(export_table(&conn, "t", Some(filter), &output, true).is_err());
+                assert_eq!(fs::read_to_string(&output).unwrap(), "previous export");
+                copy_database_file(&conn, &dir.path().join("copy.db")).unwrap();
+                assert_eq!(browse(&conn, "t", None, false, Some("v='; literal' /* ; harmless */"), 500, 0).unwrap().rows.len(), 1);
+            }
+        }
     }
 
     #[test]
