@@ -1758,25 +1758,15 @@ pub fn build_ui(
             "Delete the selected browse row (by rowid)?".into(),
             "Delete",
         ),
-        ConfirmKind::CloseDb => (
-            "Close Database",
-            if state.dirty {
-                "There are unsaved changes. Close anyway (revert)?"
-            } else {
-                "Close the current database connection?"
-            }
-            .into(),
-            "Close",
+        ConfirmKind::Documents => (
+            "Save changes before continuing?",
+            "Save database edits, SQL drafts and project settings. Discard restores the saved state. Cancel keeps this session open.".into(),
+            "Save",
         ),
         ConfirmKind::Revert => (
             "Revert Changes",
             "Discard all unwritten changes and reload?".into(),
             "Revert",
-        ),
-        ConfirmKind::ExitDirty => (
-            "Exit",
-            "There are unsaved changes. Exit anyway?".into(),
-            "Exit",
         ),
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
@@ -1784,9 +1774,12 @@ pub fn build_ui(
         modal_title,
         modal_body,
         modal_primary,
-        Some("Cancel".into()),
+        Some(if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
         ModalStyle::from_theme(&theme),
     );
+    if state.confirm_kind == ConfirmKind::Documents {
+        ui.set_modal_tertiary(modal, Some("Cancel".into()));
+    }
     if state.confirm_open {
         let _ = ui.set_modal_open(modal, true);
     }

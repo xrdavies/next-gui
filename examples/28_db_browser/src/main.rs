@@ -24,7 +24,7 @@ use next_gui_text::{load_default_cjk_font, Font};
 use next_gui_ui::{ModalAction, Theme, ThemeMode, Ui, UiKey, WidgetId};
 
 use crate::db::{self as dbmod, ObjectKind};
-use crate::state::{AppState, ConfirmKind, DockKind, MainTab, OverlayKind};
+use crate::state::{AppState, ConfirmKind, DockKind, DocumentAction, MainTab, OverlayKind};
 use crate::ui_build::{build_ui, clear_color, mid, BuiltUi};
 
 enum Backend {
@@ -474,6 +474,13 @@ impl Demo {
                         _ => OverlayKind::LoadExtension,
                     });
                     MainTab::Structure
+                }
+                "save-prompt" => {
+                    *state.sql_editor_mut() = "SELECT 'unsaved draft';".into();
+                    state.pending_document = Some(DocumentAction::Exit);
+                    state.confirm_kind = ConfirmKind::Documents;
+                    state.confirm_open = true;
+                    MainTab::ExecuteSql
                 }
                 "image" => MainTab::Browse,
                 "schema" => {
@@ -1075,34 +1082,84 @@ impl Demo {
         self.rebuild = true;
     }
 
-    fn action_new_db(&mut self) {
-        if let Some(path) = file_dlg::pick_save_db() {
-            match self.state.create_new_db(&path.display().to_string()) {
-                Ok(()) => self.clear_error(),
-                Err(e) => self.set_error(e),
-            }
+    fn request_document_action(&mut self, action: DocumentAction) {
+        self.snapshot_inputs();
+        if self.state.sql_busy {
+            self.set_error("Stop or finish SQL first");
+        } else if self.state.dirty || self.state.has_unsaved_drafts() {
+            self.state.pending_document = Some(action);
+            self.state.confirm_kind = ConfirmKind::Documents;
+            self.state.confirm_open = true;
         } else {
-            self.state.status_msg = "New Database cancelled".into();
+            self.perform_document_action(action);
         }
         self.rebuild = true;
     }
 
-    fn action_open(&mut self, readonly: bool) {
-        if let Some(path) = file_dlg::pick_open_db() {
-            let p = path.display().to_string();
-            let res = if readonly {
-                self.state.open_readonly_path(&p)
-            } else {
-                self.state.open_path(&p)
-            };
-            match res {
-                Ok(()) => self.clear_error(),
-                Err(e) => self.set_error(e),
+    fn perform_document_action(&mut self, action: DocumentAction) {
+        let result = match action {
+            DocumentAction::NewDatabase(path) => self.state.create_new_db(&path.to_string_lossy()),
+            DocumentAction::NewMemory => self.state.new_memory_db(),
+            DocumentAction::OpenDatabase(path, read_only) => if read_only {
+                self.state.open_readonly_path(&path.to_string_lossy())
+            } else { self.state.open_path(&path.to_string_lossy()) },
+            DocumentAction::CloseDatabase => { self.state.close_db(); Ok(()) }
+            DocumentAction::OpenProject(path) => self.state.open_project(&path),
+            DocumentAction::CloseProject => { self.state.close_project(); Ok(()) }
+            DocumentAction::Exit => { self.exit_requested = true; Ok(()) }
+        };
+        match result {
+            Ok(()) => {
+                self.clear_error();
             }
-        } else {
-            self.state.status_msg = "Open cancelled".into();
+            Err(e) => self.set_error(e),
         }
         self.rebuild = true;
+    }
+
+    fn save_documents_interactive(&mut self, always_project: bool) -> Result<bool, String> {
+        let needs_project = always_project || self.state.has_unsaved_drafts();
+        let database = if self.state.path == ":memory:" {
+            let Some(path) = file_dlg::pick_save_db() else { return Ok(false); };
+            Some(path)
+        } else { None };
+        let project = if needs_project {
+            match self.state.project_path.clone().map(PathBuf::from).or_else(file_dlg::pick_save_project) {
+                Some(path) => Some(path),
+                None => return Ok(false),
+            }
+        } else { None };
+        self.state.save_documents(database.as_deref(), project.as_deref())?;
+        Ok(true)
+    }
+
+    fn resolve_document_action(&mut self, decision: ModalAction) {
+        self.state.confirm_open = false;
+        self.state.confirm_kind = ConfirmKind::None;
+        let Some(action) = self.state.pending_document.take() else { return; };
+        let result = match decision {
+            ModalAction::Primary => self.save_documents_interactive(false),
+            ModalAction::Secondary => self.state.discard_document_changes().map(|()| true),
+            ModalAction::Tertiary | ModalAction::Dismiss => Ok(false),
+        };
+        match result {
+            Ok(true) => self.perform_document_action(action),
+            Ok(false) => self.state.status_msg = "Action canceled; documents remain open".into(),
+            Err(e) => self.set_error(format!("Save/discard incomplete; documents remain open: {e}")),
+        }
+        self.rebuild = true;
+    }
+
+    fn action_new_db(&mut self) {
+        if let Some(path) = file_dlg::pick_save_db() {
+            self.request_document_action(DocumentAction::NewDatabase(path));
+        }
+    }
+
+    fn action_open(&mut self, readonly: bool) {
+        if let Some(path) = file_dlg::pick_open_db() {
+            self.request_document_action(DocumentAction::OpenDatabase(path, readonly));
+        }
     }
 
     fn action_write(&mut self) {
@@ -1236,11 +1293,7 @@ impl Demo {
         let Some(path) = file_dlg::pick_open_project() else {
             return;
         };
-        match self.state.open_project(&path) {
-            Ok(()) => self.clear_error(),
-            Err(e) => self.set_error(e),
-        }
-        self.rebuild = true;
+        self.request_document_action(DocumentAction::OpenProject(path));
     }
 
     fn action_project_save(&mut self, save_as: bool) {
@@ -1299,7 +1352,9 @@ impl Demo {
 
     fn handle_menu(&mut self, item: u64) {
         self.snapshot_inputs();
-        if self.state.has_cell_draft() && item != mid::FILE_EXIT {
+        let document_action = matches!(item, mid::FILE_NEW | mid::FILE_NEW_MEM | mid::FILE_OPEN | mid::FILE_OPEN_RO | mid::FILE_CLOSE | mid::FILE_PROJECT_OPEN | mid::FILE_PROJECT_CLOSE | mid::FILE_EXIT | mid::FILE_SAVE_ALL)
+            || (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&item);
+        if self.state.has_cell_draft() && !document_action {
             self.set_error("Apply or discard the cell draft first");
             self.rebuild = true;
             return;
@@ -1311,20 +1366,10 @@ impl Demo {
         }
         match item {
             mid::FILE_NEW => self.action_new_db(),
-            mid::FILE_NEW_MEM => {
-                match self.state.new_memory_db() {
-                    Ok(()) => self.clear_error(),
-                    Err(e) => self.set_error(e),
-                }
-                self.rebuild = true;
-            }
+            mid::FILE_NEW_MEM => self.request_document_action(DocumentAction::NewMemory),
             mid::FILE_OPEN => self.action_open(false),
             mid::FILE_OPEN_RO => self.action_open(true),
-            mid::FILE_CLOSE => {
-                self.state.confirm_kind = ConfirmKind::CloseDb;
-                self.state.confirm_open = true;
-                self.rebuild = true;
-            }
+            mid::FILE_CLOSE => self.request_document_action(DocumentAction::CloseDatabase),
             mid::FILE_SAVE_AS => {
                 if let Some(path) = file_dlg::pick_save_db() {
                     match self.state.save_as(&path.display().to_string()) {
@@ -1360,15 +1405,7 @@ impl Demo {
             mid::FILE_IMPORT_SQL => self.action_import_sql(),
             mid::FILE_EXPORT_CSV => self.action_export_csv(),
             mid::FILE_EXPORT_SQL => self.action_export_sql(),
-            mid::FILE_EXIT => {
-                if self.state.dirty || self.state.has_unsaved_drafts() {
-                    self.state.confirm_kind = ConfirmKind::ExitDirty;
-                    self.state.confirm_open = true;
-                    self.rebuild = true;
-                } else {
-                    self.exit_requested = true;
-                }
-            }
+            mid::FILE_EXIT => self.request_document_action(DocumentAction::Exit),
             mid::EDIT_CREATE_TABLE => {
                 self.state.tab = MainTab::Structure;
                 self.action_create_table();
@@ -1466,10 +1503,7 @@ impl Demo {
             mid::FILE_PROJECT_OPEN => self.action_project_open(),
             mid::FILE_PROJECT_SAVE => self.action_project_save(false),
             mid::FILE_PROJECT_SAVE_AS => self.action_project_save(true),
-            mid::FILE_PROJECT_CLOSE => {
-                self.state.close_project();
-                self.rebuild = true;
-            }
+            mid::FILE_PROJECT_CLOSE => self.request_document_action(DocumentAction::CloseProject),
             mid::EDIT_PREFS => {
                 self.state.sync_prefs_drafts();
                 self.state.overlay = Some(OverlayKind::Preferences);
@@ -1501,19 +1535,9 @@ impl Demo {
                 self.rebuild = true;
             }
             mid::FILE_SAVE_ALL => {
-                self.snapshot_inputs();
-                if self.state.project_path.is_none() {
-                    let Some(path) = file_dlg::pick_save_project() else {
-                        return;
-                    };
-                    if let Err(e) = self.state.save_project(&path) {
-                        self.set_error(e);
-                        self.rebuild = true;
-                        return;
-                    }
-                }
-                match self.state.save_all() {
-                    Ok(()) => self.clear_error(),
+                match self.save_documents_interactive(true) {
+                    Ok(true) => self.clear_error(),
+                    Ok(false) => self.state.status_msg = "Save canceled".into(),
                     Err(e) => self.set_error(e),
                 }
                 self.rebuild = true;
@@ -1560,10 +1584,7 @@ impl Demo {
             x if (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&x) => {
                 let idx = (x - mid::FILE_RECENT_BASE) as usize;
                 if let Some(path) = self.state.recent.get(idx).cloned() {
-                    match self.state.open_path(&path) {
-                        Ok(()) => self.clear_error(),
-                        Err(e) => self.set_error(e),
-                    }
+                    self.request_document_action(DocumentAction::OpenDatabase(PathBuf::from(path), false));
                     self.rebuild = true;
                 }
             }
@@ -1783,6 +1804,10 @@ impl Demo {
             }
             return;
         }
+        if id == self.ids.btn_new || id == self.ids.btn_open {
+            self.handle_menu(if id == self.ids.btn_new { mid::FILE_NEW } else { mid::FILE_OPEN });
+            return;
+        }
         if self.state.has_cell_draft() && ![
             self.ids.btn_edit_cell, self.ids.btn_edit_text, self.ids.btn_edit_hex,
             self.ids.btn_edit_json, self.ids.btn_edit_image,
@@ -1807,14 +1832,6 @@ impl Demo {
         }
         if id == self.ids.btn_theme {
             self.handle_menu(mid::VIEW_THEME);
-            return;
-        }
-        if id == self.ids.btn_new {
-            self.action_new_db();
-            return;
-        }
-        if id == self.ids.btn_open {
-            self.action_open(false);
             return;
         }
         if id == self.ids.btn_write {
@@ -1905,56 +1922,11 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_edit_cell {
-            if let Err(e) = self.state.guard_writable() {
-                self.set_error(e);
-                self.rebuild = true;
-                return;
+            if self.state.browse().sel_row.is_none() {
+                self.state.browse_mut().sel_row = self.ui.table_selected_row(self.ids.browse_table);
             }
-            self.snapshot_inputs();
-            let Some(table) = self.state.browse().table.clone() else {
-                self.set_error("No browse table");
-                self.rebuild = true;
-                return;
-            };
-            let Some(row) = self
-                .state
-                .browse()
-                .sel_row
-                .or_else(|| self.ui.table_selected_row(self.ids.browse_table))
-            else {
-                self.set_error("Select a browse row first");
-                self.rebuild = true;
-                return;
-            };
-            let Some(&rowid) = self.state.browse().rowids.get(row) else {
-                self.set_error("No rowid for selection (views are read-only here)");
-                self.rebuild = true;
-                return;
-            };
-            let col = self.state.edit_col.trim().to_string();
-            if col.is_empty() {
-                self.set_error("Enter column name in Edit Cell dock");
-                self.rebuild = true;
-                return;
-            }
-            let val = match self.state.edited_cell_value() {
-                Ok(value) => value,
-                Err(e) => {
-                    self.set_error(e);
-                    self.rebuild = true;
-                    return;
-                }
-            };
-            match dbmod::update_cell(self.state.conn.as_ref().unwrap(), &table, rowid, &col, &val) {
-                Ok(_) => {
-                    self.state
-                        .log_sql(format!("UPDATE {table} SET {col}=… WHERE rowid={rowid}"));
-                    self.state.mark_dirty();
-                    self.state.edit_saved = val;
-                    let _ = self.state.refresh_browse();
-                    self.state.status_msg = "Cell updated (unwritten)".into();
-                    self.clear_error();
-                }
+            match self.state.apply_cell_draft() {
+                Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
             self.rebuild = true;
@@ -2383,6 +2355,10 @@ impl Demo {
             let kind = self.state.confirm_kind;
             self.state.confirm_open = false;
             self.state.confirm_kind = ConfirmKind::None;
+            if kind == ConfirmKind::Documents {
+                self.resolve_document_action(action);
+                return;
+            }
             if !matches!(action, ModalAction::Primary) {
                 self.rebuild = true;
                 return;
@@ -2393,20 +2369,9 @@ impl Demo {
 
     fn apply_confirmed_action(&mut self, kind: ConfirmKind) {
         match kind {
-            ConfirmKind::CloseDb => {
-                self.state.close_db();
-            }
             ConfirmKind::Revert => match self.state.revert_changes() {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
-            },
-            ConfirmKind::ExitDirty => {
-                if self.state.dirty {
-                    match self.state.revert_changes() {
-                        Ok(()) => self.exit_requested = true,
-                        Err(e) => self.set_error(e),
-                    }
-                } else { self.exit_requested = true; }
             },
             ConfirmKind::DropObject => {
                 if let Some(sel) = self.state.selected.clone() {
@@ -2461,7 +2426,7 @@ impl Demo {
                     }
                 }
             }
-            ConfirmKind::None => {}
+            ConfirmKind::None | ConfirmKind::Documents => {}
         }
         self.rebuild = true;
     }
@@ -2886,6 +2851,31 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn document_transitions_cancel_keep_drafts_and_discard_rolls_back_before_close() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.sql_area, "SELECT 'keep me';");
+        for action in [DocumentAction::NewMemory, DocumentAction::CloseDatabase, DocumentAction::CloseProject, DocumentAction::Exit] {
+            demo.request_document_action(action.clone());
+            assert_eq!(demo.state.pending_document, Some(action));
+            assert!(demo.state.confirm_open);
+            demo.resolve_document_action(ModalAction::Tertiary);
+            assert!(demo.state.conn.is_some());
+            assert_eq!(demo.state.sql_editor(), "SELECT 'keep me';");
+            assert!(!demo.exit_requested);
+        }
+        demo.state.run_sql_text_sync("CREATE TABLE temporary_draft(v)").unwrap();
+        demo.request_document_action(DocumentAction::CloseDatabase);
+        demo.resolve_document_action(ModalAction::Secondary);
+        assert!(demo.state.conn.is_none());
+        assert!(!demo.state.dirty);
+        assert!(!demo.state.has_unsaved_drafts());
+        assert!(!demo.state.sql_editor().contains("keep me"));
+    }
 
     #[test]
     fn preferences_cancel_keeps_frozen_columns_and_pragma_save_is_visible() {

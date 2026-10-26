@@ -265,6 +265,7 @@ pub struct AppState {
 
     pub confirm_kind: ConfirmKind,
     pub confirm_open: bool,
+    pub pending_document: Option<DocumentAction>,
 
     // Phase 3
     pub project_path: Option<String>,
@@ -331,9 +332,19 @@ pub enum ConfirmKind {
     None,
     DropObject,
     DeleteRow,
-    CloseDb,
+    Documents,
     Revert,
-    ExitDirty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentAction {
+    NewDatabase(PathBuf),
+    NewMemory,
+    OpenDatabase(PathBuf, bool),
+    CloseDatabase,
+    OpenProject(PathBuf),
+    CloseProject,
+    Exit,
 }
 
 impl AppState {
@@ -468,6 +479,7 @@ impl AppState {
             recent: VecDeque::new(),
             confirm_kind: ConfirmKind::None,
             confirm_open: false,
+            pending_document: None,
             project_path: None,
             saved_project: serde_json::Value::Null,
             edit_saved: rusqlite::types::Value::Null,
@@ -615,11 +627,7 @@ impl AppState {
     pub fn has_unsaved_drafts(&self) -> bool {
         self.project_snapshot() != self.saved_project
             || self.has_cell_draft()
-            || self
-                .pragmas
-                .iter()
-                .zip(&self.pragma_drafts)
-                .any(|((_, old), draft)| old != draft)
+            || self.has_pragma_drafts()
     }
 
     pub fn any_dock_visible(&self) -> bool {
@@ -1349,6 +1357,8 @@ impl AppState {
             self.push_recent(&self.path.clone());
         }
         self.probe_cipher_linked();
+        self.project_path = None;
+        self.checkpoint_project();
         Ok(())
     }
 
@@ -1437,7 +1447,14 @@ impl AppState {
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
         db::copy_database_file(conn, Path::new(dst))?;
-        self.open_path(dst)?;
+        let next = db::open_path(dst)?;
+        self.conn = Some(next);
+        self.path = dst.to_string();
+        self.path_draft = self.path.clone();
+        self.read_only = false;
+        self.dirty = false;
+        self.begin_txn()?;
+        self.push_recent(dst);
         self.status_msg = format!("Saved As {dst}");
         Ok(())
     }
@@ -1473,6 +1490,8 @@ impl AppState {
         self.cipher_open_path = None;
         self.cipher_passphrase.clear();
         self.log_sql("-- close");
+        self.project_path = None;
+        self.checkpoint_project();
         self.status_msg = "Database closed".into();
     }
 
@@ -1966,6 +1985,74 @@ impl AppState {
         self.status_msg = "Toggled -- comments on SQL tab".into();
     }
 
+    pub fn apply_cell_draft(&mut self) -> Result<(), String> {
+        self.guard_writable()?;
+        let tab = self.browse();
+        let table = tab.table.clone().ok_or("No browse table")?;
+        let row = tab.sel_row.ok_or("Select a browse row first")?;
+        let rowid = *tab.rowids.get(row).ok_or("No usable rowid for selection")?;
+        let column = self.edit_col.trim().to_string();
+        if column.is_empty() { return Err("Select a column first".into()); }
+        let value = self.edited_cell_value()?;
+        db::update_cell(self.conn.as_ref().unwrap(), &table, rowid, &column, &value)?;
+        self.log_sql(format!("UPDATE {table} SET {column}=… WHERE rowid={rowid}"));
+        self.mark_dirty();
+        self.edit_saved = value;
+        self.refresh_browse()?;
+        self.status_msg = "Cell updated (unwritten)".into();
+        Ok(())
+    }
+
+    pub fn has_pragma_drafts(&self) -> bool {
+        self.pragmas.iter().zip(&self.pragma_drafts).any(|((_, old), draft)| old != draft)
+    }
+
+    /// Save drafts through the same write paths used by their individual controls.
+    /// Destinations are chosen before calling so canceled pickers cannot partially save.
+    pub fn save_documents(&mut self, database: Option<&Path>, project: Option<&Path>) -> Result<(), String> {
+        if self.sql_busy { return Err("Stop or finish SQL before saving".into()); }
+        if self.path == ":memory:" && database.is_none() {
+            return Err("Choose a destination for the in-memory database".into());
+        }
+        if let Some(path) = database {
+            if path.exists() { return Err("Save As requires a new path".into()); }
+        }
+        if self.has_unsaved_drafts() && project.is_none() {
+            return Err("Choose a project destination for the drafts/settings".into());
+        }
+        if let Some(path) = project {
+            if let Some(conn) = &self.conn { db::guard_output_path(conn, path)?; }
+            if database == Some(path) { return Err("Database and project destinations must differ".into()); }
+        }
+        if self.has_cell_draft() { self.apply_cell_draft()?; }
+        if self.dirty { self.write_changes()?; }
+        if self.has_pragma_drafts() { self.save_pragmas()?; }
+        if let Some(path) = database { self.save_as(&path.to_string_lossy())?; }
+        if let Some(path) = project { self.save_project(path)?; }
+        self.status_msg = "All changes saved".into();
+        Ok(())
+    }
+
+    pub fn discard_document_changes(&mut self) -> Result<(), String> {
+        if self.sql_busy { return Err("Stop or finish SQL before discarding".into()); }
+        if self.dirty {
+            let conn = self.conn.as_ref().ok_or("No database open")?;
+            db::rollback_and_begin(conn)?;
+            self.dirty = false;
+        }
+        let saved: crate::project::ProjectFile = serde_json::from_value(self.saved_project.clone()).map_err(|e| e.to_string())?;
+        saved.apply_to(self);
+        self.edit_col.clear();
+        self.edit_value.clear();
+        self.edit_image_rgba = None;
+        self.sql_edit_states.clear();
+        self.refresh_schema()?;
+        self.refresh_pragmas()?;
+        self.refresh_browse()?;
+        self.chart_points.clear();
+        Ok(())
+    }
+
     pub fn discard_cell_draft(&mut self) {
         self.edit_col.clear();
         self.edit_value.clear();
@@ -2268,18 +2355,6 @@ impl AppState {
         }
     }
 
-    pub fn save_all(&mut self) -> Result<(), String> {
-        if self.conn.is_some() && self.dirty {
-            self.write_changes()?;
-        }
-        if let Some(pp) = self.project_path.clone() {
-            self.save_project(std::path::Path::new(&pp))?;
-        }
-        self.status_msg = "Save All complete".into();
-        self.prefs.save()?;
-        Ok(())
-    }
-
     pub fn load_extension_apply(&mut self) -> Result<(), String> {
         let path = self.ext_path.trim().to_string();
         if path.is_empty() {
@@ -2471,6 +2546,54 @@ mod chart_default_tests {
             assert!(std::time::Instant::now() < deadline, "SQL worker timed out");
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn save_documents_preserves_typed_cell_and_drafts_in_database_and_project() {
+        let mut state = test_state();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.edit_type = 1;
+        state.edit_value = "42".into();
+        *state.sql_editor_mut() = "SELECT 'saved draft';".into();
+        state.ddl_draft = "CREATE VIEW example AS SELECT 1".into();
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("saved.db");
+        let project = dir.path().join("saved.sqbpro");
+        state.save_documents(Some(&database), Some(&project)).unwrap();
+        assert!(!state.dirty);
+        assert!(!state.has_unsaved_drafts());
+        let db = Connection::open(&database).unwrap();
+        assert_eq!(db.query_row("SELECT v FROM t", [], |row| row.get::<_, i64>(0)).unwrap(), 42);
+        let saved = crate::project::ProjectFile::load(&project).unwrap();
+        assert_eq!(saved.sql_tabs[0], "SELECT 'saved draft';");
+        assert_eq!(saved.ddl_draft, state.ddl_draft);
+        assert_eq!(saved.db_path, database.canonicalize().unwrap().display().to_string());
+        assert_eq!(saved.browse_tabs[0].table.as_deref(), Some("t"));
+    }
+
+    #[test]
+    fn canceled_or_invalid_save_destinations_leave_unwritten_data_and_drafts() {
+        let mut state = test_state();
+        state.run_sql_text_sync("INSERT INTO t VALUES(2)").unwrap();
+        *state.sql_editor_mut() = "SELECT 'keep';".into();
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("saved.db");
+        assert!(state.save_documents(None, None).is_err());
+        assert!(state.save_documents(Some(&database), None).is_err());
+        assert!(state.save_documents(Some(&database), Some(&database)).is_err());
+        assert!(!database.exists());
+        assert!(state.dirty);
+        assert_eq!(state.sql_editor(), "SELECT 'keep';");
+        let count: i64 = state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2);
+        state.discard_document_changes().unwrap();
+        assert!(!state.dirty);
+        assert!(!state.has_unsaved_drafts());
+        let count: i64 = state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]
