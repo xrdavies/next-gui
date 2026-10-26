@@ -853,41 +853,41 @@ impl AppState {
         Ok(())
     }
 
-    fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Option<String> {
+    fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Result<Option<String>, String> {
         let mut parts = Vec::new();
         if !tab.filter.trim().is_empty() {
             parts.push(format!("({})", tab.filter.trim()));
         }
         for (col, filter) in columns.iter().zip(&tab.col_filters) {
+            crate::filters::validate(filter)?;
             if let Some(condition) = crate::filters::condition(filter) {
                 parts.push(format!("{} {condition}", db::quote_ident(col)));
             }
         }
         for filter in &tab.global_filters {
+            crate::filters::validate(filter)?;
             if let Some(condition) = crate::filters::condition(filter) {
                 let any_column = columns.iter().map(|col| format!("{} {condition}", db::quote_ident(col)))
                     .collect::<Vec<_>>().join(" OR ");
                 if !any_column.is_empty() { parts.push(format!("({any_column})")); }
             }
         }
-        if parts.is_empty() {
+        Ok(if parts.is_empty() {
             None
         } else {
             Some(parts.join(" AND "))
-        }
+        })
     }
 
     pub fn export_browse(&self, path: &Path, json: bool) -> Result<(), String> {
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let tab = self.browse();
         let table = tab.table.as_ref().ok_or("Select a table to export")?;
-        let stmt = conn.prepare(&format!("SELECT * FROM {} LIMIT 0", db::quote_ident(table)))
-            .map_err(|e| e.to_string())?;
-        let columns = stmt.column_names().into_iter().map(String::from).collect::<Vec<_>>();
+        let columns = db::table_column_names(conn, table)?;
         db::export_table(
             conn,
             table,
-            Self::composed_where(tab, &columns).as_deref(),
+            Self::composed_where(tab, &columns)?.as_deref(),
             path,
             json,
         )
@@ -922,23 +922,14 @@ impl AppState {
             return Ok(());
         };
         if prev_cols.is_empty() {
-            prev_cols = self
-                .conn
-                .as_ref()
-                .unwrap()
-                .prepare(&format!("SELECT * FROM {}", db::quote_ident(&table)))
-                .map_err(|e| e.to_string())?
-                .column_names()
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            prev_cols = db::table_column_names(self.conn.as_ref().unwrap(), &table)?;
         }
         let is_view = self
             .schema
             .iter()
             .any(|o| o.name == table && o.kind == ObjectKind::View);
 
-        let where_sql = Self::composed_where(self.browse(), &prev_cols);
+        let where_sql = Self::composed_where(self.browse(), &prev_cols)?;
 
         let offset = self.browse().offset;
         let (result, rowids) = {
@@ -2005,6 +1996,26 @@ impl AppState {
         Ok(())
     }
 
+    fn preflight_project_browse(pf: &mut crate::project::ProjectFile, conn: &Connection) -> Result<(), String> {
+        if pf.browse_tabs.is_empty() {
+            if let Some(table) = &pf.browse_table {
+                let mut tab = BrowseTabState::new(Some(table.clone()));
+                tab.filter = pf.browse_filter.clone();
+                pf.browse_tabs.push(tab);
+            }
+        }
+        for tab in &pf.browse_tabs {
+            let Some(table) = &tab.table else { continue; };
+            let result = (|| {
+                let columns = db::table_column_names(conn, table)?;
+                db::browse_table(conn, table, tab.order_col.as_deref(), tab.order_desc,
+                    Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
+            })();
+            result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
+        }
+        Ok(())
+    }
+
     pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
         self.guard_replace()?;
         if self.has_unsaved_drafts() {
@@ -2035,6 +2046,7 @@ impl AppState {
             let conn = db::open_path(":memory:")?;
             crate::project_xml::restore_connection(&pf, &conn, path)?;
             crate::project_xml::restore_browse(&mut pf, &conn)?;
+            Self::preflight_project_browse(&mut pf, &conn)?;
             self.adopt_conn(conn, ":memory:".into(), false)?;
         } else {
             if !Path::new(&pf.db_path).is_file() {
@@ -2047,6 +2059,7 @@ impl AppState {
                 // Reuse the already unlocked connection; keys are never stored in projects.
                 let conn = self.conn.as_ref().ok_or("No unlocked connection")?;
                 crate::project_xml::restore_browse(&mut pf, conn)?;
+                Self::preflight_project_browse(&mut pf, conn)?;
                 if !conn.is_autocommit() { conn.execute_batch("COMMIT").map_err(|e| e.to_string())?; }
                 let result = crate::project_xml::restore_connection(&pf, conn, path);
                 db::begin_deferred(conn)?;
@@ -2061,13 +2074,14 @@ impl AppState {
                 db::list_schema(&conn)?;
                 crate::project_xml::restore_connection(&pf, &conn, path)?;
                 crate::project_xml::restore_browse(&mut pf, &conn)?;
+                Self::preflight_project_browse(&mut pf, &conn)?;
                 self.adopt_conn(conn, pf.db_path.clone(), pf.read_only)?;
             }
         }
         pf.apply_to(self);
         self.refresh_pragmas()?;
         self.project_path = Some(path.display().to_string());
-        let _ = self.refresh_browse();
+        self.refresh_browse()?;
         self.checkpoint_project();
         self.status_msg = format!("Project opened ← {}", path.display());
         if !unapplied.is_empty() { self.status_msg.push_str(&format!("; retained but not applied: {}", unapplied.join(", "))); }
@@ -3405,6 +3419,7 @@ mod chart_default_tests {
             "<sqlb_project><db path='data.db' foreign_keys='invalid'/></sqlb_project>",
             "<sqlb_project><db path='data.db'/><attached><db schema='extra' path='missing.db'/></attached></sqlb_project>",
             "<sqlb_project><db path='data.db'/><tab_browse><table table='4,7:mainrecords'/><browse_table_settings><table schema='main' name='records'><column_widths><column index='0' value='NaN'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>",
+            "<sqlb_project><db path='data.db'/><tab_browse><table table='4,7:mainrecords'/><browse_table_settings><table schema='main' name='records'><filter_values><column index='0' value='/[/'/></filter_values></table></browse_table_settings></tab_browse></sqlb_project>",
         ] {
             let path = dir.path().join("invalid.sqbpro");
             std::fs::write(&path, source).unwrap();
@@ -3414,6 +3429,58 @@ mod chart_default_tests {
             assert!(state.project_path.is_none());
             assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_, String>(0)).unwrap(), "saved");
         }
+    }
+
+    #[test]
+    fn invalid_project_browse_queries_preserve_current_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("data.db");
+        let conn = db::open_path(database.to_str().unwrap()).unwrap();
+        conn.execute_batch("CREATE TABLE records(id); INSERT INTO records VALUES ('value')").unwrap();
+        let mut state = test_state();
+        let old_tabs = state.sql_tabs.clone();
+        for (raw, column, global) in [
+            ("id =", "", ""),
+            ("1); DELETE FROM records; --", "", ""),
+            ("", "/[/", ""),
+            ("", "", "/[/"),
+            ("", "/^(a+)+$/", ""),
+        ] {
+            conn.execute("UPDATE records SET id=?1", [format!("{}!", "a".repeat(100))]).unwrap();
+            for inactive in [false, true] {
+                let mut tab = BrowseTabState::new(Some("records".into()));
+                tab.filter = raw.into();
+                tab.col_filters = vec![column.into()];
+                tab.global_filters = vec![global.into()];
+                let project = crate::project::ProjectFile {
+                    db_path: database.display().to_string(),
+                    browse_tabs: if inactive { vec![BrowseTabState::new(None), tab] } else { vec![tab] },
+                    ..Default::default()
+                };
+                let path = dir.path().join("invalid.json");
+                project.save(&path).unwrap();
+                assert!(state.open_project(&path).is_err(), "{raw:?} {column:?} {global:?} inactive={inactive}");
+                assert_eq!(state.path, ":memory:");
+                assert_eq!(state.sql_tabs, old_tabs);
+                assert!(state.project_path.is_none());
+                assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |r| r.get::<_, String>(0)).unwrap(), "saved");
+                assert_eq!(db::count_rows(&conn, "records").unwrap(), 1);
+            }
+        }
+        conn.execute("DELETE FROM records", []).unwrap();
+        let mut project = crate::project::ProjectFile {
+            db_path: database.display().to_string(),
+            browse_table: Some("records".into()),
+            browse_filter: "id =".into(),
+            ..Default::default()
+        };
+        let path = dir.path().join("legacy.json");
+        project.save(&path).unwrap();
+        assert!(state.open_project(&path).is_err());
+        project.browse_filter = String::new();
+        project.save(&path).unwrap();
+        state.open_project(&path).unwrap();
+        assert!(state.browse().result.as_ref().unwrap().rows.is_empty());
     }
 
     #[test]

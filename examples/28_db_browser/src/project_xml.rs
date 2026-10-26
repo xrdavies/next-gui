@@ -511,7 +511,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let Some(name) = &tab.table else {
             continue;
         };
-        let columns = columns(conn, name)?;
+        let columns = db::table_column_names(conn, name)?;
         let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == "main" && e.attr("name") == Some(name))).unwrap_or_else(|| {
             let mut table = Element::new("table");
             table.set("schema", "main"); table.set("name", name);
@@ -592,7 +592,7 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
         }) else {
             continue;
         };
-        let columns = columns(conn, name)?;
+        let columns = db::table_column_names(conn, name)?;
         if let Some(column) = table
             .child("sort")
             .and_then(|e| e.children().find(|e| e.name == "column"))
@@ -642,13 +642,6 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             .min(columns.len());
     }
     Ok(())
-}
-
-fn columns(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
-    let stmt = conn
-        .prepare(&format!("SELECT * FROM {} LIMIT 0", db::quote_ident(table)))
-        .map_err(|e| e.to_string())?;
-    Ok(stmt.column_names().into_iter().map(String::from).collect())
 }
 
 pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, String> {

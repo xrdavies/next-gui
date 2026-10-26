@@ -66,19 +66,27 @@ fn text(value: ValueRef<'_>) -> String {
     }
 }
 
+fn compile_regexp(pattern: &str) -> Result<pcre2::bytes::Regex, pcre2::Error> {
+    // Bound backtracking inside one SQLite callback, where Stop cannot interrupt it.
+    pcre2::bytes::RegexBuilder::new().ucp(true).build(&format!(
+        "(*LIMIT_MATCH=1000000)(*LIMIT_DEPTH=1000){pattern}"
+    ))
+}
+
+pub fn validate(value: &str) -> Result<(), String> {
+    if value.len() > 2 && value.starts_with('/') && value.ends_with('/') {
+        compile_regexp(&value[1..value.len() - 1]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn register_regexp(conn: &Connection) -> Result<(), String> {
     conn.create_scalar_function(
         "regexp",
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let regex = ctx.get_or_create_aux(0, |pattern| {
-                // Bound backtracking inside one SQLite callback, where Stop cannot interrupt it.
-                pcre2::bytes::RegexBuilder::new().ucp(true).build(&format!(
-                    "(*LIMIT_MATCH=1000000)(*LIMIT_DEPTH=1000){}",
-                    text(pattern)
-                ))
-            })?;
+            let regex = ctx.get_or_create_aux(0, |pattern| compile_regexp(&text(pattern)))?;
             regex
                 .is_match(text(ctx.get_raw(1)).as_bytes())
                 .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))

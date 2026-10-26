@@ -325,6 +325,13 @@ fn cell_to_string(value: rusqlite::types::ValueRef<'_>) -> String {
 pub const DEFAULT_LIMIT: usize = 500;
 
 /// Browse a table/view with optional ORDER BY, WHERE filter, and limit.
+pub fn table_column_names(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
+    let stmt = conn
+        .prepare(&format!("SELECT * FROM {} LIMIT 0", quote_ident(table)))
+        .map_err(|e| e.to_string())?;
+    Ok(stmt.column_names().into_iter().map(String::from).collect())
+}
+
 pub fn browse_table(
     conn: &Connection,
     table: &str,

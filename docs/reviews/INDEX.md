@@ -15,7 +15,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
-| R-20261027-2bfc8ad51380-F01 | open | P2 | codex | e28 / shared | pre-existing path | state::open_project | 项目恢复吞掉 WHERE/REGEXP 浏览错误，缺少查询预检 | [F01](R-20261027-2bfc8ad51380.md#r-20261027-2bfc8ad51380-f01) | — | — |
+| R-20261027-2bfc8ad51380-F01 | open | P2 | codex | e28 / shared | pre-existing path | state::open_project | 已补全标签查询预检与错误传播，74 项测试通过，待提交后复核 | [F01](R-20261027-2bfc8ad51380.md#r-20261027-2bfc8ad51380-f01) | — | — |
 | R-20261025-b90d5a7b4143-F01 | verified | P1 | codex | e28 / shared | existing branch | see report | 共享 TextArea 长文本编辑与 SQL Tab 状态已补齐 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | c72f34b584c3 | c72f34b584c3 |
 | R-20261025-b90d5a7b4143-F02 | verified | P1 | grok | e28 / shared | existing branch | see report | 统一保存/丢弃/取消，SQL 单标签关闭保留其他草稿与 DB 编辑 | [F02](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f02) | 6aeb50e5d74e | 6aeb50e5d74e |
 | R-20261025-b90d5a7b4143-F03 | verified | P1 | grok | e28 / shared | existing branch | see report | PRAGMA 校验/回读实际值，需 VACUUM 时明确报错 | [F03](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f03) | 4c490e21b529 | 4c490e21b529 |
