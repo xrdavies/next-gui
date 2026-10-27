@@ -601,3 +601,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Named table CHECK progress (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-8e840a8e2ed1.md): Check Constraints page edits optional names and multiline SQL, adds/removes/reorders all table CHECKs and updates the fixed preview. Qualified atomic rebuild preserves inline constraints/dependencies/rowids/sequence/settings/pending data; violations/injection fail without mutation. Independent undo/redo/composition survive page switches/reorders; failed drafts remain correctable. 478 tests/strict checks, four Soft/Metal pairs and native draft/saved windows inspected. Edited CHECK rename rebinding, remaining advanced pages/original grid/layout/move/polish/native acceptance remain.
+
+### CHECK reference identity progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-6fdb899a760b.md): edited and unedited table CHECKs follow column/table renames, temporary duplicate/empty names and swaps with stable identity mappings. Malformed expressions keep SQL and reject renames; bindings follow column reorder/add/remove. Qualified local inline/table CHECKs survive temporary rebuild; preview/native/rebuild share one decision and match saved constraints.483 tests/strict checks, four Soft/Metal pairs and final native draft/saved windows inspected. Changed reference expressions reset their CHECK edit history; wizard Undo, all-constraint editors/original layout/move/polish/native acceptance remain.
