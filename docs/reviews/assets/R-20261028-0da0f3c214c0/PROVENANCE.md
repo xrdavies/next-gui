@@ -1,0 +1,11 @@
+# Global table header verification
+
+Implementation0da0f3c214c0b4909cae9bb2b6e708cec7deb311. Final506 tests/43 groups, e28294/UI147, strict clippy/build and platform features passed; every exit awaited. Logs `/tmp/next-gui-table-header-{workspace,clippy,build}-complete.log`, features-final.log. Earlier failures/corrections are described in the review.
+
+`NEXT_GUI_DB_BROWSER_TABLE_HEADER_QA_OUT=/tmp/next-gui-table-header-final cargo test --offline --locked -p e28_db_browser global_table_header -- --nocapture`: four dark/light ×1400×1000/800×600 Soft/Metal pairs, maximum channel delta2 each. Final PPMs converted only after the writer exited; contact and full small light image inspected. Later name-session reset regression also passes in the final workspace suite; rendered layout is unchanged.
+
+Shared Check-icon change: sequential own-PID GPU sweep of e10–15 and e20–27.14 windows, all reviewed via office-contact.png. Helper `/tmp/next-gui-table-header-office-native.py` exit0; all owned SIGINT children-2 awaited. Original metadata/logs/screens retained under `/tmp/next-gui-table-header-office-native`.
+
+Native e28 static: dark table-fields and light table-advanced in `/tmp/next-gui-table-header-native-{dark,light}`; both reviewed. Final light capture uses complete build in `/tmp/next-gui-table-header-native-complete-light`; own onscreen main-window metadata excludes auxiliary/menu windows. Helpers0/owned SIGINT children-2 awaited. Full final light image inspected.
+
+Native interactive: owned PID56669/window2608,1400×892 at260,48,1920×1080 scale1, active=true. `table-fields` fixture has outer scroll180 to expose selected-column controls. Observed desktop before all input. Mouse focus, Cmd+A and paste customer_name → rename.png; Cmd+Z → undo.png restores name and CHECK/preview; Cmd+Shift+Z → redo.png. Table name orders plus mouse Advanced/open, Enter/close, table-name Cmd+Z → header-undo.png restores records. Redo then mouse Save → saved.png; Browse → browse-saved.png shows orders/customer_name and both original rows, FK/amount/generated values. All images inspected. PTY81021 stopped with Ctrl-C and exit1 awaited; only the owned in-memory fixture was changed. No native composition/picker/copy/original-binary/cross-platform acceptance claimed.
