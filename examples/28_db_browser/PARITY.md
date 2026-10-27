@@ -61,7 +61,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |--------|--------|-------|
 | Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, basic PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
-| Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; full definition changes/reordering still require migration. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
+| Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. PK/options/full constraint editing and moving tables remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
 
@@ -99,7 +99,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | partial | Basic qualified table/index wizards and Delete cover all namespaces; definition previews outside main stay read-only. Expression/partial definitions, ordered key actions/types/ASC-DESC and preview now edit across namespaces; full table migration and exact original/native acceptance remain. |
+| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | partial | Basic qualified table/index wizards and Delete cover all namespaces; definition previews outside main stay read-only. Expression/partial definitions, ordered key actions/types/ASC-DESC and preview now edit across namespaces; safe definition/reorder rebuilding now covers all namespaces; full constraint/move and exact original/native acceptance remain. |
 | Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Expansion, scroll, group selection and keyboard focus persist for the database session; active selection reveals ancestors. Column/detail tree, object context actions and project view persistence remain. |
 | Object SQL preview | partial | Schema identity retained in projects; attached/temp stored definitions are read-only, since SQLite removes their database/TEMP qualifiers. Structured qualified editing remains. |
 | Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
@@ -179,7 +179,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | SQLCipher | partial | Core unlock/encrypted export tested; upstream compatibility controls/rekey/decrypt absent. |
 | Extensions | done | Load Extension… |
 | In-memory DB | done | Isolated connection, shared with worker by ownership transfer |
-| ATTACH DATABASE | partial | Live connection, namespace tree/definition/deletion and Browse data workflows preserve explicit database identity; file-backed attachments and their browse settings restore through projects. Basic structured table/index creation and safe modification cover all namespaces; full table rebuild/constraint migration remains. |
+| ATTACH DATABASE | partial | Live connection, namespace tree/definition/deletion and Browse data workflows preserve explicit database identity; file-backed attachments and their browse settings restore through projects. Basic structured table/index creation and safe modification cover all namespaces; safe type/NN/U/default/order rebuilding preserves dependencies in all namespaces; full constraint/move workflows remain. |
 
 ---
 
@@ -561,3 +561,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Column rename identity checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-8dcf321b3729.md): Modify Table now saves column renames, name swaps and case-only changes using explicit source identities and atomic native ALTER. Qualified filters/order/widths/frozen prefixes, conditional formats and Plot references follow the same columns. Main/attached dependencies, constraints, generated values, sequence and pending transaction preservation pass; raw WHERE errors report saved DDL and clear stale browse data. 424 tests/strict checks, four Soft/Metal pairs and two native static windows inspected. Full rebuild/constraints/move, temp-trigger engine workaround, original interface and native input acceptance remain.
+
+### Safe definition rebuild progress (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-ee0e39162afd.md): Modify Table saves declared type, NN, single-column UNIQUE, default and editable-column order through a constraint-preserving SQLite AST and atomic rebuild. Named/composite/FK/check/collation/generated/AI/options survive unchanged; qualified dependencies, rowids, sequence, pending transactions and settings are validated/restored. Copy conflicts abort; ambiguous existing FK violation identities decline safely. 435 tests/strict checks pass. Four Soft/Metal pairs and two native static captures inspected before final DB-only guards; successful UI paths re-tested afterward. PK membership/AI/options/advanced constraint controls, cross-database move, original layout and native input acceptance remain.
