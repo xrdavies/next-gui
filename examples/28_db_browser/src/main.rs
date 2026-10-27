@@ -1935,6 +1935,20 @@ impl Demo {
         if self.state.tab != MainTab::Browse || self.state.overlay.is_some() || self.state.confirm_open
             || self.ids.browse_table.0 == 0 || self.ui.focused() != Some(self.ids.browse_table)
             || modifiers.shift || modifiers.alt { return false; }
+        if modifiers.commandish() && matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
+            self.snapshot_inputs();
+            let names = self.state.table_names();
+            if names.is_empty() { return true; }
+            let current = names.iter().position(|name| Some(name) == self.state.browse().table.as_ref()).unwrap_or(0);
+            let index = if key == KeyCode::PageDown { (current + 1) % names.len() }
+                else if current == 0 { names.len() - 1 } else { current - 1 };
+            match self.state.switch_browse_table(&names[index]) {
+                Ok(()) => self.clear_error(),
+                Err(error) => self.set_error(error),
+            }
+            self.rebuild = true;
+            return true;
+        }
         let button = match key {
             KeyCode::PageUp if !modifiers.commandish() => self.ids.btn_record_prev,
             KeyCode::PageDown if !modifiers.commandish() => self.ids.btn_record_next,
@@ -2169,7 +2183,11 @@ impl Demo {
         }
         if id == self.ids.btn_browse_go || id == self.ids.btn_browse_clear_filters {
             self.snapshot_inputs();
-            self.apply_browse_select();
+            if let Err(error) = self.apply_browse_select() {
+                self.set_error(error);
+                self.rebuild = true;
+                return;
+            }
             if id == self.ids.btn_browse_clear_filters {
                 let tab = self.state.browse_mut();
                 tab.filter.clear();
@@ -2444,27 +2462,17 @@ impl Demo {
         }
     }
 
-    fn apply_browse_select(&mut self) {
+    fn apply_browse_select(&mut self) -> Result<(), String> {
         if self.ids.browse_select.0 == 0 {
-            return;
+            return Ok(());
         }
         let opts = self.state.table_names();
         if let Some(i) = self.ui.select_selected(self.ids.browse_select) {
             if let Some(name) = opts.get(i) {
-                let tab = self.state.browse_mut();
-                if tab.table.as_ref() != Some(name) {
-                    tab.col_filters.clear();
-                    tab.column_widths.clear();
-                    tab.scroll = (0.0, 0.0);
-                    tab.result = None;
-                    tab.offset = 0;
-                    tab.set_ordering(Vec::new());
-                }
-                tab.table = Some(name.clone());
-                tab.title = name.clone();
-                tab.sel_row = None;
+                self.state.switch_browse_table(name)?;
             }
         }
+        Ok(())
     }
 
     fn apply_chart_select(&mut self) {
@@ -2538,9 +2546,12 @@ impl Demo {
         if let Some(i) = self.ui.select_selected(self.ids.browse_select) {
             if self.last_browse_sel != Some(i) {
                 self.last_browse_sel = Some(i);
-                self.apply_browse_select();
-                let _ = self.state.refresh_browse();
-                dirty = true;
+                match self.apply_browse_select() {
+                    Ok(()) => self.clear_error(),
+                    Err(error) => self.set_error(error),
+                }
+                self.rebuild = true;
+                return;
             }
         }
         if let Some(row) = self.ui.table_selected_row(self.ids.browse_table) {

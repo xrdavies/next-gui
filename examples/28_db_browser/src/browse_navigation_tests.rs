@@ -403,7 +403,6 @@ fn page_shortcuts_cross_cache_and_command_home_end_reach_the_complete_result() {
     assert!(demo.handle_browse_navigation_key(KeyCode::PageDown, plain));
     assert!(!demo.rebuild, "disabled end action does not rebuild");
     for modifiers in [
-        command,
         Modifiers {
             shift: true,
             ..plain
@@ -438,4 +437,134 @@ fn page_shortcuts_cross_cache_and_command_home_end_reach_the_complete_result() {
     assert_eq!(selected(&demo), (500, 102, "1"));
     assert_eq!(demo.state.edit_value, "retain shortcut draft");
     assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
+}
+
+#[test]
+fn selecting_an_unqueryable_view_restores_the_previous_table_result_and_editor() {
+    let mut demo = demo();
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch("CREATE VIEW broken AS SELECT n,label FROM t WHERE missing_function()")
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    go(&mut demo, "501");
+    let names = demo.state.table_names();
+    let index = names.iter().position(|name| name == "broken").unwrap();
+    demo.ui
+        .set_select_selected(demo.ids.browse_select, Some(index));
+    demo.snapshot_inputs();
+    demo.poll_selection_changes();
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().table.as_deref(), Some("t"));
+    assert_eq!(selected(&demo), (500, 0, "205"));
+    assert_eq!(demo.state.edit_value, "row 205");
+    assert!(demo.state.error_msg.is_some());
+    assert_eq!(
+        demo.ui.select_selected(demo.ids.browse_select),
+        names.iter().position(|name| name == "t")
+    );
+    if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+        demo.scene
+            .mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+        let dirty = demo.scene.take_dirty();
+        let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+        renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+        write_ppm(
+            &path,
+            renderer.frame_pixels().unwrap().0,
+            demo.win_w,
+            demo.win_h,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn command_page_shortcuts_cycle_tables_and_views_in_both_directions() {
+    let mut demo = demo();
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE u(other TEXT); INSERT INTO u VALUES('u');
+         CREATE VIEW v AS SELECT * FROM t WHERE n=1",
+        )
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.browse_table));
+    let names = demo.state.table_names();
+    assert_eq!(names.len(), 3);
+    let start = names.iter().position(|name| name == "t").unwrap();
+    let command = Modifiers {
+        ctrl: true,
+        ..Modifiers::default()
+    };
+    for next in [true, false] {
+        for step in 1..=names.len() {
+            let key = if next {
+                KeyCode::PageDown
+            } else {
+                KeyCode::PageUp
+            };
+            assert!(demo.handle_browse_navigation_key(key, command));
+            demo.do_rebuild();
+            let index = if next {
+                (start + step) % names.len()
+            } else {
+                (start + names.len() - step) % names.len()
+            };
+            assert_eq!(
+                demo.state.browse().table.as_deref(),
+                Some(names[index].as_str())
+            );
+            assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+            assert_eq!(demo.state.browse().sel_row, None);
+            assert!(demo.state.edit_col.is_empty());
+            assert!(demo.state.browse().ordering().is_empty());
+            assert_eq!(demo.state.browse().offset, 0);
+            assert_eq!(demo.ui.focused(), Some(demo.ids.browse_table));
+        }
+    }
+}
+
+#[test]
+fn table_switch_apply_guards_drafts_and_busy_queries_without_mutating_the_tab() {
+    let mut demo = demo();
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch("CREATE TABLE u(n,label)")
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    go(&mut demo, "501");
+    let names = demo.state.table_names();
+    let target = names.iter().position(|name| name == "u").unwrap();
+    demo.ui
+        .set_text_area_value(demo.ids.edit_value, "keep table draft");
+    demo.ui
+        .set_select_selected(demo.ids.browse_select, Some(target));
+    demo.handle_button(demo.ids.btn_browse_go);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().table.as_deref(), Some("t"));
+    assert_eq!(selected(&demo), (500, 0, "205"));
+    assert_eq!(demo.state.edit_value, "keep table draft");
+    assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
+    demo.handle_button(demo.ids.btn_edit_discard);
+    demo.do_rebuild();
+    demo.state.sql_busy = true;
+    assert!(demo
+        .state
+        .switch_browse_table("u")
+        .unwrap_err()
+        .contains("Wait"));
+    demo.state.sql_busy = false;
+    assert!(demo.state.switch_browse_table("missing").is_err());
+    assert_eq!(selected(&demo), (500, 0, "205"));
+    assert_eq!(demo.state.edit_value, "row 205");
+    assert!(!demo.state.dirty);
 }

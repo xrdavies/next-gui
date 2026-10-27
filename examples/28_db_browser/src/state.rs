@@ -1143,6 +1143,22 @@ impl AppState {
         Ok(())
     }
 
+    pub fn switch_browse_table(&mut self, name: &str) -> Result<(), String> {
+        if self.conn.is_none() { return Err("No database open".into()); }
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        if self.sql_busy { return Err("Wait for SQL to finish before switching tables".into()); }
+        if !self.table_names().iter().any(|table| table == name) { return Err("Select a valid table or view".into()); }
+        if self.browse().table.as_deref() == Some(name) { return Ok(()); }
+        let previous = self.browse().clone();
+        // shortcut: prior per-table options are not retained; restore them for DB4S settings parity.
+        *self.browse_mut() = BrowseTabState::new(Some(name.into()));
+        if let Err(error) = self.refresh_browse() {
+            *self.browse_mut() = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Jump to a one-based record in the complete filtered/sorted result.
     pub fn goto_browse_record(&mut self, record: usize) -> Result<(), String> {
         if self.conn.is_none() { return Err("No database open".into()); }
