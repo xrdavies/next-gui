@@ -25,6 +25,9 @@ mod p1_rest;
 mod office_p2;
 mod theme;
 mod text_area;
+mod tabs;
+pub use tabs::TabsState;
+use tabs::TabStripState;
 mod scrollbars;
 pub use text_area::TextAreaState;
 use text_area::TextAreaEdit;
@@ -892,6 +895,8 @@ pub struct TabsStyle {
     pub height: f32,
     /// Tab strip height.
     pub strip_height: f32,
+    /// Use content-width tabs and scroll arrows when the strip overflows.
+    pub scrollable: bool,
     /// Content padding.
     pub padding: f32,
     /// Gap between content children.
@@ -918,6 +923,7 @@ impl Default for TabsStyle {
             width: 400.0,
             height: 240.0,
             strip_height: 32.0,
+            scrollable: false,
             padding: 10.0,
             gap: 8.0,
             cross_align: CrossAlign::Start,
@@ -1804,6 +1810,7 @@ enum Kind {
         titles: Vec<String>,
         selected: usize,
         style: TabsStyle,
+        strip: TabStripState,
         children: Vec<WidgetId>,
     },
     Select {
@@ -6369,7 +6376,7 @@ impl Ui {
         }
     }
 
-    /// Set selected tab index (clamped).
+    /// Set selected tab index (clamped), revealing it in a scrollable strip.
     pub fn set_tabs_selected(&mut self, id: WidgetId, index: usize) -> bool {
         let n = match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::Tabs { titles, .. }) => titles.len(),
@@ -6380,9 +6387,10 @@ impl Ui {
         }
         let index = index.min(n - 1);
         if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Tabs { selected, .. } = &mut w.kind {
-                if *selected != index {
+            if let Kind::Tabs { selected, style, strip, .. } = &mut w.kind {
+                if *selected != index || style.scrollable {
                     *selected = index;
+                    strip.selected = None;
                     return true;
                 }
             }
@@ -8946,32 +8954,6 @@ impl Ui {
         }
     }
 
-    fn pointer_tabs(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
-        let (titles, style, node) = match self.widgets.get(&id) {
-            Some(Widget {
-                kind: Kind::Tabs { titles, style, .. },
-                node,
-                ..
-            }) => (titles.clone(), *style, *node),
-            _ => return false,
-        };
-        let bounds = node
-            .and_then(|n| scene.get(n).map(|n| n.bounds))
-            .unwrap_or_else(Rect::empty);
-        if y > bounds.y + style.strip_height {
-            return true; // content click — keep focus
-        }
-        if titles.is_empty() {
-            return false;
-        }
-        let tab_w = (bounds.width / titles.len() as f32).max(40.0);
-        let idx = ((x - bounds.x) / tab_w).floor() as isize;
-        if idx < 0 || (idx as usize) >= titles.len() {
-            return false;
-        }
-        self.set_tabs_selected(id, idx as usize)
-    }
-
     fn pointer_slider(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
         let (style, node) = match self.widgets.get(&id) {
             Some(Widget {
@@ -10472,6 +10454,7 @@ impl Ui {
                     selected,
                     style,
                     children,
+                    ..
                 },
             node,
             chrome_node,
@@ -12465,49 +12448,6 @@ impl Ui {
             scene.set_fill(thumb_n, style.thumb);
             scene.set_mask(thumb_n, None);
             scene.set_visible(thumb_n, true);
-        }
-    }
-
-    fn paint_tabs_strip(&mut self, scene: &mut Scene, id: WidgetId) {
-        let Some(Widget {
-            kind: Kind::Tabs { titles, selected, style, .. },
-            node,
-            ..
-        }) = self.widgets.get(&id)
-        else {
-            return;
-        };
-        let titles = titles.clone();
-        let selected = *selected;
-        let style = *style;
-        let Some(host) = *node else { return };
-        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
-        if titles.is_empty() {
-            return;
-        }
-        let tab_w = (bounds.width / titles.len() as f32).max(40.0);
-        let needed = titles.len() * 2;
-        self.ensure_aux_nodes(scene, host, id, needed);
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        for (i, title) in titles.iter().enumerate() {
-            let x = bounds.x + i as f32 * tab_w;
-            let active = i == selected;
-            if let Some(&bg) = aux.get(i * 2) {
-                scene.set_bounds(bg, Rect::new(x, bounds.y, tab_w, style.strip_height));
-                scene.set_fill(bg, if active { style.active_bg } else { style.strip_bg });
-                scene.set_mask(bg, None);
-                scene.set_visible(bg, true);
-                self.apply_corner_radius(scene, bg, false);
-            }
-            let (_, mask) = self.font.rasterize_text(title, style.size, None);
-            if let Some(&lab) = aux.get(i * 2 + 1) {
-                let lx = x + 10.0;
-                let ly = bounds.y + ((style.strip_height - mask.height as f32) * 0.5).max(0.0);
-                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-                scene.set_fill(lab, if active { style.active_fg } else { style.fg });
-                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
-                scene.set_visible(lab, true);
-            }
         }
     }
 
@@ -18372,6 +18312,7 @@ impl FlexBuilder<'_> {
                 kind: Kind::Tabs {
                     titles: Vec::new(),
                     selected: 0,
+                    strip: TabStripState::default(),
                     style,
                     children: Vec::new(),
                 },

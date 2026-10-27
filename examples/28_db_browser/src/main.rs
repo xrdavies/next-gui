@@ -1119,6 +1119,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let dock_tabs_view = self.ui.tabs_state(self.ids.dock_tabs);
         let log_revision = self.state.sql_log.revision();
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
         let log_focused = self.ids.log_area.0 != 0 && self.ui.focused() == Some(self.ids.log_area)
@@ -1139,6 +1140,11 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(view) = dock_tabs_view {
+            if self.ui.restore_tabs_state(self.ids.dock_tabs, &view) {
+                self.ui.sync(&mut self.scene);
+            }
+        }
         if std::mem::take(&mut self.reveal_browse_selection) && self.ids.browse_table.0 != 0 {
             self.ui.reveal_table_selection(self.ids.browse_table);
             self.ui.set_focus(Some(self.ids.browse_table));
@@ -4070,6 +4076,45 @@ mod interaction_tests {
         }).max().unwrap();
         assert!(max_delta <= 2, "Soft/GPU editor channel difference {max_delta}");
         eprintln!("Soft/GPU selected-text comparison passed, max channel delta {max_delta}");
+    }
+
+    #[test]
+    fn dock_tab_overflow_preserves_scroll_across_rebuild_and_reveals_selected_panels() {
+        let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::Browse;
+        demo.state.dock_focus = DockKind::EditCell;
+        demo.do_rebuild();
+        let header = |demo: &Demo| demo.ui.tabs_state(demo.ids.dock_tabs).unwrap();
+        let bounds = demo.scene.iter_paint_order().into_iter()
+            .find(|node| demo.ui.widget_from_node(node.id) == Some(demo.ids.dock_tabs) && node.bounds.height > 32.0)
+            .unwrap().bounds;
+        let initial = header(&demo);
+        assert!(demo.ui.pointer_pressed(&mut demo.scene, bounds.x + bounds.width - 8.0, bounds.y + 16.0));
+        demo.ui.pointer_released();
+        demo.ui.sync(&mut demo.scene);
+        assert_eq!(demo.ui.tabs_selected(demo.ids.dock_tabs), Some(0));
+        let scrolled = header(&demo);
+        assert_ne!(scrolled, initial);
+        demo.do_rebuild();
+        assert_eq!(header(&demo), scrolled, "polling rebuild must retain manual tab scrolling");
+        demo.ui.set_focus(Some(demo.ids.dock_tabs));
+        assert!(demo.ui.key_input(UiKey::End));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.state.dock_focus, DockKind::Remote);
+        assert_eq!(demo.ui.accessible_name(demo.ids.dock_tabs).as_deref(), Some("Remote"));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            for (width, height, extension) in [(800, 600, "narrow.ppm"), (1400, 860, "ppm")] {
+                demo.win_w = width; demo.win_h = height;
+                demo.do_rebuild();
+                demo.scene.mark_full_dirty(width as f32, height as f32);
+                let dirty = demo.scene.take_dirty();
+                let mut renderer = SoftRenderer::new(width, height, clear_color(&demo.theme));
+                renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+                write_ppm(&PathBuf::from(&path).with_extension(extension).to_string_lossy(), renderer.frame_pixels().unwrap().0, width, height).unwrap();
+            }
+        }
+        assert!(!demo.state.dirty);
     }
 
     #[test]

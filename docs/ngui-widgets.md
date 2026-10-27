@@ -113,3 +113,10 @@ selection, horizontal scrolling and draggable scrollbar thumbs are not provided.
 
 The e21 QA mode `NEXT_GUI_P1_REST_QA=textarea` captures the entry fields with the
 Drawer closed and exits. e28 exercises the same widget for SQL, Find, DDL and CSV.
+
+
+`Tabs { scrollable: true ... }` uses each title's natural width and shows arrow
+buttons when needed. The default is `false` and retains equal-width tabs.
+Arrow buttons scroll without switching pages; keyboard selection reveals the
+chosen title. Rust builders use `TabsStyle::scrollable`; rebuilds can retain
+manual strip scrolling with `Ui::tabs_state` / `Ui::restore_tabs_state`.

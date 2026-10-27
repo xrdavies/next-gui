@@ -1217,6 +1217,7 @@ pub fn build_ui(
 
             let mut dock_tabs_style = TabsStyle::from_theme(&theme);
             dock_tabs_style.width = dock_w.max(220.0);
+            dock_tabs_style.scrollable = true;
             dock_tabs_style.height = content_h - 4.0;
             dock_tabs_style.content_bg = theme.colors.content_bg;
             dock_tabs_style.strip_bg = theme.colors.strip_bg;
