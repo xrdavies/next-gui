@@ -15,6 +15,7 @@ pub struct ProjectFile {
     pub structure_ratio: f32,
     pub read_only: bool,
     pub cond_rules: Vec<crate::state::CondFormatRule>,
+    pub chart_schema: String,
     pub chart_table: Option<String>,
     pub chart_column: String,
     pub ddl_draft: String,
@@ -55,6 +56,7 @@ impl ProjectFile {
             structure_ratio: state.structure_ratio,
             read_only: state.read_only,
             cond_rules: state.cond_rules.clone(),
+            chart_schema: state.chart_schema.clone(),
             chart_table: state.chart_table.clone(),
             chart_column: state.chart_column.clone(),
             ddl_draft: state.ddl_draft.clone(),
@@ -124,6 +126,8 @@ impl ProjectFile {
         state.body_ratio = self.body_ratio.clamp(0.05, 0.95);
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
         state.cond_rules = self.cond_rules.clone();
+        state.chart_schema = self.chart_schema.clone();
+        state.chart_points.clear();
         state.chart_table = self.chart_table.clone();
         state.chart_column = self.chart_column.clone();
         state.ddl_draft = self.ddl_draft.clone();
@@ -172,6 +176,7 @@ impl Default for ProjectFile {
             structure_ratio: 0.34,
             read_only: false,
             cond_rules: Vec::new(),
+            chart_schema: "main".into(),
             chart_table: None,
             chart_column: String::new(),
             ddl_draft: String::new(),
@@ -213,6 +218,7 @@ mod tests {
         let project = ProjectFile {
             db_path: "数据库.db".into(),
             read_only: true,
+            chart_schema: "辅.库".into(),
             chart_table: Some("表".into()),
             chart_column: "price".into(),
             cond_rules: vec![crate::state::CondFormatRule {
@@ -233,6 +239,7 @@ mod tests {
         assert_eq!(restored.sql_tabs, project.sql_tabs);
         assert!(restored.read_only);
         assert_eq!(restored.chart_table.as_deref(), Some("表"));
+        assert_eq!(restored.chart_schema, "辅.库");
         assert_eq!(restored.chart_column, "price");
         assert_eq!(restored.cond_rules[0].table.as_deref(), Some("表"));
         assert_eq!(restored.cond_rules[0].color_rgb, 0x123456);
@@ -242,6 +249,7 @@ mod tests {
         assert_eq!(restored.browse_tabs[0].column_widths, vec![100.0, 180.0]);
         assert_eq!(restored.browse_tabs[0].scroll, (15.0, 40.0));
         let mut legacy = serde_json::to_value(&project).unwrap();
+        legacy.as_object_mut().unwrap().remove("chart_schema");
         legacy["browse_tabs"][0].as_object_mut().unwrap().remove("schema");
         legacy["cond_rules"][0].as_object_mut().unwrap().remove("schema");
         let legacy_path = dir.path().join("legacy.json");
@@ -249,6 +257,7 @@ mod tests {
         let restored = ProjectFile::load(&legacy_path).unwrap();
         assert_eq!(restored.browse_tabs[0].schema, "main");
         assert_eq!(restored.cond_rules[0].schema, "main");
+        assert_eq!(restored.chart_schema, "main");
         fs::write(&path, "<sqlb_project/>").unwrap();
         assert!(ProjectFile::load(&path).is_err());
         fs::write(&path, "{}").unwrap();

@@ -415,6 +415,7 @@ pub struct AppState {
     pub pragma_drafts: Vec<String>,
 
     // Plot
+    pub chart_schema: String,
     pub chart_table: Option<String>,
     pub chart_column: String,
     pub chart_points: Vec<f32>,
@@ -659,6 +660,7 @@ impl AppState {
             sql_job: None,
             pragmas: Vec::new(),
             pragma_drafts: Vec::new(),
+            chart_schema: "main".into(),
             chart_table: None,
             chart_column: "price".into(),
             chart_points: Vec::new(),
@@ -1368,7 +1370,7 @@ impl AppState {
             return Ok(());
         }
         self.chart_points.clear();
-        self.chart_points = db::numeric_series(conn, &table, self.chart_column.trim(), 64)?;
+        self.chart_points = db::numeric_series_in(conn, &self.chart_schema, &table, self.chart_column.trim(), 64)?;
         Ok(())
     }
 
@@ -1701,6 +1703,7 @@ impl AppState {
     }
 
     pub fn pick_chart_source(&mut self) {
+        self.chart_schema = "main".into();
         self.chart_column = if self.chart_column.trim().is_empty() {
             "price".into()
         } else {
@@ -1727,7 +1730,7 @@ impl AppState {
     }
 
     pub fn table_names(&self) -> Vec<String> {
-        // shortcut: plot/wizards address main; carry schema identity through their models before enabling other databases.
+        // shortcut: structured wizards address main; carry schema identity through their models before enabling other databases.
         self.schema
             .iter()
             .filter(|o| o.schema == "main" && matches!(o.kind, ObjectKind::Table | ObjectKind::View))
@@ -1899,6 +1902,11 @@ impl AppState {
         }
         self.refresh_browse()?;
         self.push_recent(dst);
+        if self.chart_schema != "main" {
+            self.chart_schema = "main".into();
+            self.chart_table = None;
+            self.chart_points.clear();
+        }
         self.status_msg = format!("Saved As {dst}");
         Ok(())
     }
@@ -1933,6 +1941,8 @@ impl AppState {
         self.sql_result = None;
         self.sql_outputs.clear();
         self.pragmas.clear();
+        self.chart_schema = "main".into();
+        self.chart_table = None;
         self.chart_points.clear();
         self.path.clear();
         self.read_only = false;
@@ -2526,6 +2536,7 @@ impl AppState {
         self.checkpoint_project();
         self.status_msg = format!("Project opened ← {}", path.display());
         if !unapplied.is_empty() { self.status_msg.push_str(&format!("; retained but not applied: {}", unapplied.join(", "))); }
+        if let Err(error) = self.refresh_chart() { self.status_msg.push_str(&format!("; plot unavailable: {error}")); }
         Ok(())
     }
 
@@ -3310,7 +3321,13 @@ mod chart_default_tests {
         assert!(state.save_as(copy.to_str().unwrap()).is_err());
         assert!(!copy.exists());
         state.discard_cell_draft();
+        state.chart_schema = "aux".into();
+        state.chart_table = Some("parent".into());
+        state.chart_column = "aux_id".into();
+        state.refresh_chart().unwrap();
+        assert_eq!(state.chart_points, [1.0]);
         state.save_as(copy.to_str().unwrap()).unwrap();
+        assert!(state.chart_table.is_none() && state.chart_points.is_empty());
         assert_eq!(state.schema_names, ["main"]);
         assert!(state.browse_tabs.iter().all(|tab| tab.schema == "main" && tab.schema_table_options.is_empty()));
         assert!(state.browse().table.is_none() && state.browse().result.is_none() && state.browse().rowids.is_empty());
@@ -3625,6 +3642,37 @@ mod chart_default_tests {
         );
         state.pragma_drafts[journal] = "MEMORY".into();
         state.save_pragmas().unwrap();
+    }
+
+    #[test]
+    fn plot_namespaces_keep_quoted_identity_and_clear_failed_samples() {
+        let mut state = test_state();
+        let conn = state.conn.as_ref().unwrap();
+        conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";").unwrap();
+        for (schema, value) in [("main", 11), ("temp", 22), ("aux.\"db", 33)] {
+            conn.execute_batch(&format!("CREATE TABLE {}(\"v\"\"alue\"); INSERT INTO {} VALUES({value}),('2.5'),('bad'),('1e100'),(NULL),(X'31');",
+                db::qualified_name(schema, "same.\"table"), db::qualified_name(schema, "same.\"table"))).unwrap();
+        }
+        assert_eq!(db::numeric_series(conn, "same.\"table", "v\"alue", 1).unwrap(), [11.0]);
+        assert_eq!(db::numeric_series_in(conn, "temp", "same.\"table", "v\"alue", 1).unwrap(), [22.0]);
+        state.chart_schema = "aux.\"db".into();
+        state.chart_table = Some("same.\"table".into());
+        state.chart_column = "v\"alue".into();
+        state.refresh_chart().unwrap();
+        assert_eq!(state.chart_points, [33.0, 2.5]);
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE main.generated(v, doubled AS (v*2)); INSERT INTO main.generated(v) VALUES(5);").unwrap();
+        assert_eq!(db::numeric_series(state.conn.as_ref().unwrap(), "generated", "DOUBLED", 10).unwrap(), [10.0]);
+        state.chart_column = "missing".into();
+        assert!(state.refresh_chart().is_err());
+        assert!(state.chart_points.is_empty());
+        state.chart_column = "v\"alue".into();
+        state.refresh_chart().unwrap();
+        state.conn.as_ref().unwrap().execute_batch("COMMIT; DETACH \"aux.\"\"db\";").unwrap();
+        assert!(state.refresh_chart().is_err());
+        assert!(state.chart_points.is_empty());
+        state.close_db();
+        assert_eq!(state.chart_schema, "main");
+        assert!(state.chart_table.is_none());
     }
 
     #[test]
@@ -4510,7 +4558,7 @@ mod chart_default_tests {
         let dir = tempfile::tempdir().unwrap();
         for (file, value) in [("main.db", "main"), ("attached.db", "attached")] {
             Connection::open(dir.path().join(file)).unwrap().execute_batch(&format!(
-                "CREATE TABLE t(v); INSERT INTO t VALUES('{value}');")).unwrap();
+                "CREATE TABLE t(v); INSERT INTO t VALUES('{value}'); CREATE VIEW numbers AS SELECT length('{value}') AS v;")).unwrap();
         }
         let path = dir.path().join("project.sqbpro");
         let schema = "辅.库";
@@ -4536,6 +4584,11 @@ mod chart_default_tests {
         state.add_browse_tab().unwrap();
         state.browse_mut().column_widths = vec![310.0];
         state.browse_mut().frozen_cols = Some(0);
+        state.chart_schema = schema.into();
+        state.chart_table = Some("numbers".into());
+        state.chart_column = "v".into();
+        state.refresh_chart().unwrap();
+        assert_eq!(state.chart_points, [8.0]);
         state.save_project(&path).unwrap();
         let source = std::fs::read_to_string(&path).unwrap();
         assert!(source.contains("unknown=\"retained\""));
@@ -4543,6 +4596,8 @@ mod chart_default_tests {
         state.open_project(&path).unwrap();
         assert_eq!(state.browse_tabs.len(), 2);
         assert_eq!(state.browse_tab_idx, 1);
+        assert_eq!(state.chart_schema, schema);
+        assert_eq!(state.chart_points, [8.0]);
         assert_eq!(state.browse().schema, schema);
         assert_eq!(state.browse().column_widths, [310.0]);
         assert_eq!(state.browse().frozen_cols, Some(0));
@@ -4553,6 +4608,12 @@ mod chart_default_tests {
         state.switch_browse_table("t").unwrap();
         assert_eq!(state.browse().column_widths, [124.0]);
         assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "main");
+        state.chart_schema = "missing".into();
+        state.save_project(&path).unwrap();
+        state.open_project(&path).unwrap();
+        assert!(state.chart_points.is_empty());
+        assert_eq!(state.chart_schema, "missing");
+        assert!(state.status_msg.contains("plot unavailable"));
     }
 
     #[test]

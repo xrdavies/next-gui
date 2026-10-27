@@ -1065,7 +1065,6 @@ pub fn build_ui(
             ov_btn_cancel = cancel_id;
         } else {
             // —— Main + docks ——
-            let table_names = state.table_names();
             let browse_tables = state.browse_tables();
             let browse_opts: Vec<String> = if browse_tables.is_empty() {
                 vec!["(no tables)".into()]
@@ -1080,7 +1079,7 @@ pub fn build_ui(
             let chart_sel = state
                 .chart_table
                 .as_ref()
-                .and_then(|t| table_names.iter().position(|x| x == t));
+                .and_then(|t| browse_tables.iter().position(|(schema, name)| *schema == state.chart_schema && *name == t));
             let browse_cols = state
                 .browse()
                 .result
@@ -1114,19 +1113,14 @@ pub fn build_ui(
                     .map(|o| format!("{:?} · {}.{}", o.kind, db::quote_ident(&o.schema), db::quote_ident(&o.name)))
                     .collect()
             };
-            let chart_points = if state.chart_points.is_empty() {
-                vec![0.0]
-            } else {
-                state.chart_points.clone()
-            };
             let chart_tiles = vec![ChartTile::trend(
                 format!(
                     "{} · {} ({} samples)",
-                    state.chart_table.as_deref().unwrap_or("—"),
+                    state.chart_table.as_ref().map(|name| db::qualified_name(&state.chart_schema, name)).unwrap_or_else(|| "—".into()),
                     state.chart_column,
                     state.chart_points.len()
                 ),
-                chart_points,
+                state.chart_points.clone(),
                 TrendStyle::from_theme(&theme),
             )];
 
@@ -1257,7 +1251,7 @@ pub fn build_ui(
             dock_row.padding = 0.0;
 
             let browse_opts_a = browse_opts.clone();
-            let browse_opts_b = if table_names.is_empty() { vec!["(no tables)".into()] } else { table_names };
+            let browse_opts_b = browse_opts;
             let roots_for_tree = roots;
             let visible_docks = state.visible_docks();
             let sql_editor = state.sql_editor().to_string();
@@ -1722,12 +1716,16 @@ pub fn build_ui(
                                     tb.page(DockKind::Plot.title(), |p| {
                                         dock_scroll = p.scroll_area(dock_col, |c| {
                                             c.row(dock_row, |row| {
+                                                let mut table_style = sel_style;
+                                                table_style.width = (dock_w - 52.0).max(160.0);
                                                 chart_select = row.select(
                                                     browse_opts_b.clone(),
                                                     chart_sel,
                                                     "table…",
-                                                    sel_style,
+                                                    table_style,
                                                 );
+                                            });
+                                            c.row(dock_row, |row| {
                                                 chart_col = row.text_input_styled(
                                                     &state.chart_column,
                                                     "col",

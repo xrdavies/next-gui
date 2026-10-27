@@ -1470,20 +1470,30 @@ pub fn import_sql_file(conn: &Connection, path: &Path) -> Result<(), String> {
     })
 }
 
-/// Numeric series from a column for charts (first N finite values).
+/// Finite numeric samples from the first N source rows for charts.
 pub fn numeric_series(
     conn: &Connection,
     table: &str,
     column: &str,
     limit: usize,
 ) -> Result<Vec<f32>, String> {
-    if !table_columns(conn, table)?.iter().any(|c| c.name == column) {
+    numeric_series_in(conn, "main", table, column, limit)
+}
+
+pub fn numeric_series_in(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    column: &str,
+    limit: usize,
+) -> Result<Vec<f32>, String> {
+    if !table_column_names_in(conn, schema, table)?.iter().any(|name| name.eq_ignore_ascii_case(column)) {
         return Err(format!("Unknown plot column {column}"));
     }
     let sql = format!(
         "SELECT {} FROM {} LIMIT {limit}",
         quote_ident(column),
-        qualified_name("main", table),
+        qualified_name(schema, table),
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt

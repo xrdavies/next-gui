@@ -600,14 +600,25 @@ impl Demo {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
                 }
-                "schema-namespaces" | "browse-namespaces" => {
+                "schema-namespaces" | "browse-namespaces" | "plot-namespaces" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
                     state.refresh_schema().unwrap();
                     let i = state.schema.iter().position(|o| o.schema == "analytics" && o.name == "customers").unwrap();
                     state.select_schema_node(10_000 + i as u64);
                     state.dock_focus = DockKind::Schema;
-                    if tab == "browse-namespaces" { MainTab::Browse } else { MainTab::Structure }
+                    if tab == "plot-namespaces" {
+                        state.conn.as_ref().unwrap().execute_batch("WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<15)
+                            INSERT INTO analytics.customers SELECT x,'APAC',100+x*12+((x%3)*30) FROM n;").unwrap();
+                        state.refresh_browse().unwrap();
+                        state.chart_schema = "analytics".into();
+                        state.chart_table = Some("customers".into());
+                        state.chart_column = "revenue".into();
+                        state.refresh_chart().unwrap();
+                        state.dock_plot = true;
+                        state.dock_focus = DockKind::Plot;
+                    }
+                    if tab == "schema-namespaces" { MainTab::Structure } else { MainTab::Browse }
                 }
                 "schema-scroll" => {
                     state.new_memory_db().unwrap();
@@ -2821,8 +2832,8 @@ impl Demo {
                     self.state.status_msg = format!(
                         "Plot {} pts from {}.{}",
                         self.state.chart_points.len(),
-                        self.state.chart_table.as_deref().unwrap_or("?"),
-                        self.state.chart_column
+                        self.state.chart_table.as_ref().map(|name| dbmod::qualified_name(&self.state.chart_schema, name)).unwrap_or_else(|| "?".into()),
+                        dbmod::quote_ident(&self.state.chart_column)
                     );
                     self.clear_error();
                 }
@@ -2849,10 +2860,11 @@ impl Demo {
         if self.ids.chart_select.0 == 0 {
             return;
         }
-        let opts = self.state.table_names();
+        let opts = self.state.browse_tables();
         if let Some(i) = self.ui.select_selected(self.ids.chart_select) {
-            if let Some(name) = opts.get(i) {
-                self.state.chart_table = Some(name.clone());
+            if let Some((schema, name)) = opts.get(i).map(|(schema, name)| (schema.to_string(), name.to_string())) {
+                self.state.chart_schema = schema;
+                self.state.chart_table = Some(name);
             }
         }
     }
@@ -4109,6 +4121,59 @@ mod interaction_tests {
         let new_root = demo.state.schema_names.iter().position(|name| name == "kept").unwrap() as u64 * 5 + 1;
         assert_ne!(old_root, new_root);
         assert_eq!(demo.ui.tree_expanded(demo.ids.tree, new_root), Some(false));
+    }
+
+    #[test]
+    fn plot_namespace_selector_reads_the_selected_database_and_reports_errors() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<75)
+            INSERT INTO analytics.customers SELECT x,'APAC',100+x*12+((x%3)*30) FROM n;").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.switch_browse_table_in("analytics", "customers").unwrap();
+        demo.state.tab = MainTab::Browse;
+        demo.state.dock_plot = true;
+        demo.state.dock_focus = DockKind::Plot;
+        demo.do_rebuild();
+        let index = demo.state.browse_tables().iter().position(|pair| *pair == ("analytics", "customers")).unwrap();
+        demo.ui.set_select_selected(demo.ids.chart_select, Some(index));
+        demo.ui.set_text_input(demo.ids.chart_col, "revenue");
+        demo.handle_button(demo.ids.btn_chart);
+        demo.do_rebuild();
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        assert_eq!(demo.state.chart_schema, "analytics");
+        assert_eq!(demo.state.chart_table.as_deref(), Some("customers"));
+        assert_eq!(demo.state.chart_points.len(), 64);
+        assert_eq!(demo.state.chart_points[0], 125.5);
+        assert!(demo.state.status_msg.contains("\"analytics\".\"customers\""));
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                demo.win_w = width;
+                demo.win_h = height;
+                demo.do_rebuild();
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_PLOT_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(width as f32, height as f32);
+                    let dirty = demo.scene.take_dirty();
+                    let mut soft = SoftRenderer::new(width, height, clear_color(&demo.theme));
+                    soft.render(&encode_scene(&demo.scene, &dirty), &dirty);
+                    write_ppm(&format!("{prefix}-{name}-{width}.ppm"), soft.frame_pixels().unwrap().0, width, height).unwrap();
+                }
+            }
+        }
+        let main = demo.state.browse_tables().iter().position(|pair| *pair == ("main", "customers")).unwrap();
+        demo.ui.set_select_selected(demo.ids.chart_select, Some(main));
+        demo.handle_button(demo.ids.btn_chart);
+        demo.do_rebuild();
+        assert!(demo.state.error_msg.as_deref().unwrap().contains("Unknown plot column"));
+        assert!(demo.state.chart_points.is_empty());
+        demo.ui.set_text_input(demo.ids.chart_col, "id");
+        demo.handle_button(demo.ids.btn_chart);
+        assert!(demo.state.error_msg.is_none());
+        assert_eq!(demo.state.chart_schema, "main");
+        assert_eq!(demo.state.chart_points, [1.0]);
     }
 
     #[test]
