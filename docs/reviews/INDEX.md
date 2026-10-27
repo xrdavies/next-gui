@@ -50,6 +50,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 ## Review runs
 
+| 2026-10-27 | `bd6c317..3c323ea` | Codex | issues — browse-tab close/one-tab invariant verified; 245 tests, clippy/build pass; Soft browse frame; native/full parity remain | [Report](R-20261027-3c323ea.md) |
+
 | 2026-10-27 | `d2492ad..a54e792` | Codex | issues — rectangular cell selection/TSV persistence verified; 244 tests, clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-a54e792.md) |
 
 | 2026-10-27 | `fc35e45..fa942d3` | Codex | issues — filtered browse totals/page ranges verified; 243 tests, clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-fa942d3.md) |
