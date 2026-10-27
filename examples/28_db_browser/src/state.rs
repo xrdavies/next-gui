@@ -402,6 +402,7 @@ pub struct AppState {
     pub wizard_index_name: String,
     pub wizard_index_table: String,
     pub wizard_index_cols: String,
+    pub wizard_index_where: String,
     pub wizard_index_unique: bool,
     pub wizard_index_original: Option<SelectedObject>,
 
@@ -661,6 +662,7 @@ impl AppState {
             wizard_index_name: "idx_name".into(),
             wizard_index_table: String::new(),
             wizard_index_cols: "name".into(),
+            wizard_index_where: String::new(),
             wizard_index_unique: false,
             wizard_index_original: None,
             csv_path: String::new(),
@@ -1554,6 +1556,7 @@ impl AppState {
         self.wizard_index_name = format!("idx_{table}");
         self.wizard_index_table = table;
         self.wizard_index_cols = String::new();
+        self.wizard_index_where.clear();
         self.wizard_index_unique = false;
         self.wizard_index_original = None;
         self.overlay = Some(OverlayKind::EditIndex);
@@ -1568,40 +1571,29 @@ impl AppState {
             return Err("Select an index object".into());
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let table = self
-            .schema
-            .iter()
-            .find(|o| o.schema == sel.schema && o.name == sel.name && o.kind == ObjectKind::Index)
-            .and_then(|o| o.tbl_name.clone())
-            .ok_or("Index table missing")?;
+        let (table, sql): (String, Option<String>) = conn.query_row(
+            &format!("SELECT tbl_name, sql FROM {}.sqlite_schema WHERE type='index' AND name=?1", db::quote_ident(&sel.schema)),
+            [&sel.name], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|e| e.to_string())?;
+        let sql = sql.ok_or("Modify the table to change an automatic constraint index")?;
         let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", db::quote_ident(&sel.schema), db::quote_ident(&table))).map_err(|e| e.to_string())?;
-        let indexes = stmt.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, bool>(2)?, r.get::<_, String>(3)?, r.get::<_, bool>(4)?))).map_err(|e| e.to_string())?;
+        let indexes = stmt.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, bool>(2)?, r.get::<_, String>(3)?))).map_err(|e| e.to_string())?;
         let mut flags = None;
         for index in indexes {
-            let (name, unique, origin, partial) = index.map_err(|e| e.to_string())?;
-            if name == sel.name { flags = Some((unique, origin, partial)); break; }
+            let (name, unique, origin) = index.map_err(|e| e.to_string())?;
+            if name == sel.name { flags = Some((unique, origin)); break; }
         }
-        let (unique, origin, partial) = flags.ok_or("Index no longer exists")?;
+        let (unique, origin) = flags.ok_or("Index no longer exists")?;
         if origin != "c" { return Err("Modify the table to change an automatic constraint index".into()); }
-        if partial {
-            return Err("Use Execute SQL to modify a partial index without losing its WHERE clause".into());
-        }
-        let mut stmt = conn.prepare(&format!("PRAGMA {}.index_xinfo({})", db::quote_ident(&sel.schema), db::quote_ident(&sel.name))).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, Option<String>>(2)?, r.get::<_, bool>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?))).map_err(|e| e.to_string())?;
-        let mut columns = Vec::new();
-        for row in rows {
-            let (name, desc, collation, key) = row.map_err(|e| e.to_string())?;
-            if !key { continue; }
-            let name = name.ok_or("Use Execute SQL to modify an expression index")?;
-            columns.push(format!("{} COLLATE {} {}", db::quote_ident(&name), db::quote_ident(&collation), if desc { "DESC" } else { "ASC" }));
-        }
+        let (columns, predicate) = crate::index_sql::definition(&sql)?;
         self.wizard_schema = sel.schema.clone();
         self.wizard_scroll = (0.0, 0.0);
         self.wizard_index_name = sel.name.clone();
         self.wizard_index_original = Some(sel);
         self.wizard_index_table = table;
         self.wizard_index_unique = unique;
-        self.wizard_index_cols = columns.join(", ");
+        self.wizard_index_cols = columns;
+        self.wizard_index_where = predicate;
         self.overlay = Some(OverlayKind::EditIndex);
         Ok(())
     }
@@ -1669,15 +1661,17 @@ impl AppState {
         let name = self.wizard_index_name.trim().to_string();
         let table = self.wizard_index_table.clone();
         let cols = self.wizard_index_cols.trim().to_string();
+        let predicate = self.wizard_index_where.trim().to_string();
         if name.is_empty() || table.is_empty() || cols.is_empty() { return Err("Index needs name, table, and columns".into()); }
         if !self.index_tables().contains(&(schema.as_str(), table.as_str())) { return Err("Select a valid table for the index".into()); }
         let clean_ddl = self.ddl_draft == self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.schema == s.schema && o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.as_deref()).unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         db::with_savepoint(conn, || {
             if let Some(orig) = self.wizard_index_original.as_ref() { db::drop_object(conn, ObjectKind::Index, &orig.schema, &orig.name)?; }
-            db::create_index_in(conn, &schema, &name, &table, &cols, self.wizard_index_unique)
+            db::create_index_in(conn, &schema, &name, &table, &cols, self.wizard_index_unique, &predicate)
         })?;
-        self.log_sql(format!("CREATE {}INDEX {} ON {}({cols})", if self.wizard_index_unique { "UNIQUE " } else { "" }, db::qualified_name(&schema, &name), db::quote_ident(&table)));
+        let where_sql = if predicate.is_empty() { String::new() } else { format!(" WHERE {predicate}") };
+        self.log_sql(format!("CREATE {}INDEX {} ON {}(\n{cols}\n){where_sql}", if self.wizard_index_unique { "UNIQUE " } else { "" }, db::qualified_name(&schema, &name), db::quote_ident(&table)));
         self.mark_dirty();
         self.overlay = None;
         self.refresh_schema()?;
@@ -3442,7 +3436,7 @@ mod chart_default_tests {
             CREATE TEMP TABLE pragma_index_list(fake); CREATE TEMP TABLE pragma_index_xinfo(fake);
             CREATE VIEW main.not_a_table AS SELECT 1;").unwrap();
         for schema in ["main", "temp", "aux.\"db"] {
-            db::create_index_in(state.conn.as_ref().unwrap(), schema, "same.\"index", "t", "v COLLATE NOCASE DESC", true).unwrap();
+            db::create_index_in(state.conn.as_ref().unwrap(), schema, "same.\"index", "t", "v COLLATE NOCASE DESC", true, "").unwrap();
         }
         state.refresh_schema().unwrap();
         assert!(!state.index_tables().contains(&("main", "not_a_table")));
@@ -3470,8 +3464,55 @@ mod chart_default_tests {
         state.refresh_schema().unwrap();
         for name in ["partial_ix", "expression_ix"] {
             state.selected = Some(SelectedObject { schema: "aux.\"db".into(), kind: ObjectKind::Index, name: name.into() });
-            assert!(state.open_modify_index_wizard().is_err());
+            state.open_modify_index_wizard().unwrap();
+            assert_eq!(state.wizard_index_where, if name == "partial_ix" { "v IS NOT NULL" } else { "" });
+            state.apply_index_wizard().unwrap();
         }
+    }
+
+    #[test]
+    fn partial_expression_index_edit_reads_live_sql_and_preserves_semantics() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\"").unwrap();
+        let keys = "coalesce(lower(v), '; WHERE)') COLLATE NOCASE DESC, length(v) -- key ) WHERE";
+        for schema in ["main", "temp", "aux.\"db"] {
+            let table = db::qualified_name(schema, "expr_t");
+            let index = db::qualified_name(schema, "expr.\"index");
+            state.conn.as_ref().unwrap().execute_batch(&format!("CREATE TABLE {table}(v TEXT, flag INTEGER);
+                INSERT INTO {table} VALUES('Alpha',1),('alpha',0),(NULL,1);
+                CREATE INDEX {index} ON expr_t(v);")).unwrap();
+            state.refresh_schema().unwrap();
+            state.selected = Some(SelectedObject { schema: schema.into(), kind: ObjectKind::Index, name: "expr.\"index".into() });
+            // The schema list is deliberately stale; opening must read the actual definition.
+            state.conn.as_ref().unwrap().execute_batch(&format!("DROP INDEX {index}; CREATE UNIQUE INDEX {index} ON expr_t(\n{keys}\n) WHERE flag=1;")).unwrap();
+            state.open_modify_index_wizard().unwrap();
+            assert_eq!(state.wizard_index_cols, keys);
+            assert_eq!(state.wizard_index_where, "flag=1");
+            assert!(state.wizard_index_unique);
+            let sql_query = format!("SELECT sql FROM {}.sqlite_schema WHERE type='index' AND name=?1", db::quote_ident(schema));
+            let before: String = state.conn.as_ref().unwrap().query_row(&sql_query, ["expr.\"index"], |r| r.get(0)).unwrap();
+            for predicate in ["missing_column>0".to_string(), format!("flag=1; COMMIT; DELETE FROM {table}; --")] {
+                state.wizard_index_where = predicate;
+                assert!(state.apply_index_wizard().is_err());
+                let conn = state.conn.as_ref().unwrap();
+                let actual: String = conn.query_row(&sql_query, ["expr.\"index"], |r| r.get(0)).unwrap();
+                assert_eq!(actual, before);
+                assert!(!conn.is_autocommit());
+                assert_eq!(state.overlay, Some(OverlayKind::EditIndex));
+            }
+            state.wizard_index_where = "flag=1".into();
+            state.apply_index_wizard().unwrap();
+            let conn = state.conn.as_ref().unwrap();
+            assert!(conn.execute(&format!("INSERT INTO {table} VALUES('ALPHA',1)"), []).is_err());
+            conn.execute(&format!("INSERT INTO {table} VALUES('ALPHA',0)"), []).unwrap();
+            assert_eq!(db::count_browse_rows_in(conn, schema, "expr_t", None).unwrap(), 4);
+            state.open_modify_index_wizard().unwrap();
+            assert_eq!(state.wizard_index_cols, keys);
+            assert_eq!(state.wizard_index_where, "flag=1");
+            assert!(state.wizard_index_unique);
+        }
+        state.open_create_index_wizard();
+        assert!(state.wizard_index_where.is_empty());
     }
 
     #[test]
@@ -4086,7 +4127,9 @@ mod chart_default_tests {
             kind: ObjectKind::Index,
             name: "partial_ix".into(),
         });
-        assert!(state.open_modify_index_wizard().is_err());
+        state.open_modify_index_wizard().unwrap();
+        assert_eq!(state.wizard_index_where, "v IS NOT NULL");
+        state.apply_index_wizard().unwrap();
     }
 
     #[test]

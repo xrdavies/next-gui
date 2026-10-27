@@ -7,6 +7,7 @@ mod db;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
+mod index_sql;
 mod filters;
 mod prefs;
 mod project;
@@ -304,6 +305,7 @@ struct BuiltUiIds {
     ov_btn_cancel: WidgetId,
     ov_idx_table: WidgetId,
     ov_idx_cols: WidgetId,
+    ov_idx_where: WidgetId,
     ov_idx_unique: WidgetId,
     ov_csv_table: WidgetId,
     ov_csv_header: WidgetId,
@@ -471,6 +473,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_btn_cancel: b.ov_btn_cancel,
             ov_idx_table: b.ov_idx_table,
             ov_idx_cols: b.ov_idx_cols,
+            ov_idx_where: b.ov_idx_where,
             ov_idx_unique: b.ov_idx_unique,
             ov_csv_table: b.ov_csv_table,
             ov_csv_header: b.ov_csv_header,
@@ -629,7 +632,11 @@ impl Demo {
                         state.dock_focus = DockKind::Plot;
                     }
                     if tab == "table-namespaces" { state.open_modify_table_wizard().unwrap(); }
-                    if tab == "index-namespaces" { state.open_create_index_wizard(); state.wizard_index_cols = "region COLLATE NOCASE DESC".into(); }
+                    if tab == "index-namespaces" {
+                        state.open_create_index_wizard();
+                        state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC, revenue".into();
+                        state.wizard_index_where = "revenue >= 100 AND region IS NOT NULL".into();
+                    }
                     if matches!(tab.as_str(), "schema-namespaces" | "table-namespaces" | "index-namespaces") { MainTab::Structure } else { MainTab::Browse }
                 }
                 "schema-scroll" => {
@@ -1031,6 +1038,9 @@ impl Demo {
                 self.flush_wizard_col();
             }
             OverlayKind::EditIndex => {
+                if let Some(value) = self.ui.text_input_value(self.ids.ov_idx_where) {
+                    self.state.wizard_index_where = value.to_string();
+                }
                 if self.ids.ov_idx_cols.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_idx_cols) {
                         self.state.wizard_index_cols = v.to_string();
@@ -5484,13 +5494,16 @@ mod interaction_tests {
         let table = demo.state.index_tables().iter().position(|pair| *pair == ("main", "customers")).unwrap();
         demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(table));
         demo.ui.set_text_input(demo.ids.ov_name, "created.\"index");
-        demo.ui.set_text_input(demo.ids.ov_idx_cols, "name COLLATE NOCASE DESC");
+        demo.ui.set_text_input(demo.ids.ov_idx_cols, "lower(name) COLLATE NOCASE DESC");
+        demo.ui.set_text_input(demo.ids.ov_idx_where, "id > 0");
         demo.handle_button(demo.ids.ov_btn_ok);
         assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
         assert_eq!(demo.state.selected.as_ref().unwrap().schema, "main");
         demo.do_rebuild();
         demo.handle_button(demo.ids.btn_struct_modify);
         demo.do_rebuild();
+        assert_eq!(demo.ui.text_input_value(demo.ids.ov_idx_where), Some("id > 0"));
+        assert_eq!(demo.ui.text_input_value(demo.ids.ov_idx_cols), Some("lower(name) COLLATE NOCASE DESC"));
         let table = demo.state.index_tables().iter().position(|pair| *pair == ("analytics", "customers")).unwrap();
         demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(table));
         demo.ui.set_text_input(demo.ids.ov_idx_cols, "missing_column");
@@ -5502,6 +5515,7 @@ mod interaction_tests {
         demo.handle_button(demo.ids.ov_btn_ok);
         assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
         assert_eq!(demo.state.selected.as_ref().unwrap().schema, "analytics");
+        assert!(demo.state.ddl_draft.contains("WHERE id > 0"));
         assert!(!demo.state.schema.iter().any(|o| o.schema == "main" && o.name == "created.\"index"));
         demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE analytics.custom_types(untyped, amount DECIMAL(10,2));").unwrap();
         demo.state.refresh_schema().unwrap();
@@ -5532,7 +5546,13 @@ mod interaction_tests {
                     demo.win_w = width;
                     demo.win_h = height;
                     demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
-                    if index { demo.state.open_create_index_wizard(); demo.state.wizard_index_table = "customers".into(); }
+                    if index {
+                        demo.state.open_create_index_wizard();
+                        demo.state.wizard_index_table = "customers".into();
+                        demo.state.wizard_index_name = "idx_customer_region".into();
+                        demo.state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC, revenue".into();
+                        demo.state.wizard_index_where = "revenue >= 100 AND region IS NOT NULL".into();
+                    }
                     else { demo.state.open_create_table_wizard(); }
                     demo.state.wizard_schema = "analytics".into();
                     demo.do_rebuild();

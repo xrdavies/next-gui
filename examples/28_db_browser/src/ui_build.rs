@@ -186,6 +186,7 @@ pub struct BuiltUi {
     pub ov_btn_cancel: WidgetId,
     pub ov_idx_table: WidgetId,
     pub ov_idx_cols: WidgetId,
+    pub ov_idx_where: WidgetId,
     pub ov_idx_unique: WidgetId,
     pub ov_csv_table: WidgetId,
     pub ov_csv_header: WidgetId,
@@ -453,6 +454,7 @@ pub fn build_ui(
     let mut ov_btn_cancel = z;
     let mut ov_idx_table = z;
     let mut ov_idx_cols = z;
+    let mut ov_idx_where = z;
     let mut ov_idx_unique = z;
     let mut ov_csv_table = z;
     let mut ov_csv_header = z;
@@ -909,9 +911,13 @@ pub fn build_ui(
                                     r.text("Columns");
                                     ov_idx_cols = r.text_input_styled(
                                         &state.wizard_index_cols,
-                                        "col1, col2",
+                                        "column or expression, …",
                                         wide_s,
                                     );
+                                });
+                                c.row(row, |r| {
+                                    r.text("Partial clause");
+                                    ov_idx_where = r.text_input_styled(&state.wizard_index_where, "condition after WHERE (optional)", wide_s);
                                 });
                                 ov_idx_unique = c.switch_styled("Unique", state.wizard_index_unique, sw);
                             });
@@ -2133,6 +2139,7 @@ pub fn build_ui(
         ov_btn_cancel,
         ov_idx_table,
         ov_idx_cols,
+        ov_idx_where,
         ov_idx_unique,
         ov_csv_table,
         ov_csv_header,

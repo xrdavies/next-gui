@@ -809,7 +809,7 @@ pub fn create_index(
     columns: &str,
     unique: bool,
 ) -> Result<(), String> {
-    create_index_in(conn, "main", name, table, columns, unique)
+    create_index_in(conn, "main", name, table, columns, unique, "")
 }
 
 pub fn create_index_in(
@@ -819,15 +819,17 @@ pub fn create_index_in(
     table: &str,
     columns: &str,
     unique: bool,
+    predicate: &str,
 ) -> Result<(), String> {
     let uniq = if unique { "UNIQUE " } else { "" };
     // SQLite takes the database from the index name; ON must use an unqualified table.
-    let sql = format!(
-        "CREATE {uniq}INDEX {} ON {} ({})",
+    let mut sql = format!(
+        "CREATE {uniq}INDEX {} ON {} (\n{}\n)",
         qualified_name(schema, name),
         quote_ident(table),
         columns.trim()
     );
+    if !predicate.trim().is_empty() { sql.push_str(" WHERE "); sql.push_str(predicate.trim()); }
     execute_single_statement(conn, &sql)
 }
 
@@ -1645,7 +1647,7 @@ mod tests {
                 CREATE TRIGGER {} AFTER INSERT ON {} BEGIN INSERT INTO child VALUES(new.id); END;",
                 qualified_name(schema, table), qualified_name(schema, "child"), quote_ident(table),
                 qualified_name(schema, "tr"), qualified_name(schema, table))).unwrap();
-            create_index_in(&conn, schema, "same.\"idx", table, &quote_ident("value.\"col"), true).unwrap();
+            create_index_in(&conn, schema, "same.\"idx", table, &quote_ident("value.\"col"), true, "").unwrap();
         }
         conn.execute_batch("BEGIN").unwrap();
         for schema in ["main", "temp", "aux.\"db"] {
@@ -1670,11 +1672,11 @@ mod tests {
         }
         assert!(recreate_table_in(&conn, "missing", "renamed.\"table", "x", &cols).is_err());
         assert!(recreate_table_in(&conn, "main", "missing", "x", &[]).is_err());
-        assert!(create_index_in(&conn, "missing\"; DROP TABLE main.child; --", "ix", "child", "p", false).is_err());
+        assert!(create_index_in(&conn, "missing\"; DROP TABLE main.child; --", "ix", "child", "p", false, "").is_err());
         assert_eq!(count_rows(&conn, "child").unwrap(), 1);
         conn.execute_batch("ROLLBACK").unwrap();
         drop_object(&conn, ObjectKind::Index, "aux.\"db", "same.\"idx").unwrap();
-        create_index_in(&conn, "aux.\"db", "expression_idx", table, &format!("length({})", quote_ident("value.\"col")), false).unwrap();
+        create_index_in(&conn, "aux.\"db", "expression_idx", table, &format!("length({})", quote_ident("value.\"col")), false, "").unwrap();
         let error = recreate_table_in(&conn, "aux.\"db", table, table, &cols[..1]).unwrap_err();
         assert!(error.contains("expression_idx"));
         assert_eq!(table_column_names_in(&conn, "aux.\"db", table).unwrap().len(), 2);
