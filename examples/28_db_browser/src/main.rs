@@ -299,6 +299,8 @@ struct BuiltUiIds {
     ov_ai: WidgetId,
     ov_collation: WidgetId,
     ov_check: WidgetId,
+    ov_without_rowid: WidgetId,
+    ov_strict: WidgetId,
     ov_nn: WidgetId,
     ov_unique: WidgetId,
     ov_default: WidgetId,
@@ -475,6 +477,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_ai: b.ov_ai,
             ov_collation: b.ov_collation,
             ov_check: b.ov_check,
+            ov_without_rowid: b.ov_without_rowid,
+            ov_strict: b.ov_strict,
             ov_nn: b.ov_nn,
             ov_unique: b.ov_unique,
             ov_default: b.ov_default,
@@ -649,6 +653,17 @@ impl Demo {
                         state.apply_table_wizard().unwrap();
                         MainTab::Browse
                     } else { MainTab::Structure }
+                }
+                "table-options" | "table-optioned" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(code TEXT PRIMARY KEY,amount INTEGER,note TEXT); INSERT INTO records VALUES('first',10,'kept'),('second',20,'strict values');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true };
+                    if tab == "table-optioned" { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
                 }
                 "table-check" | "table-checked" => {
                     state.new_memory_db().unwrap();
@@ -1126,6 +1141,8 @@ impl Demo {
                 }
             }
             OverlayKind::EditTable => {
+                if let Some(on) = self.ui.is_checked(self.ids.ov_without_rowid) { self.state.wizard_table_options.without_rowid = on; }
+                if let Some(on) = self.ui.is_checked(self.ids.ov_strict) { self.state.wizard_table_options.strict = on; }
                 if self.ids.ov_schema.0 != 0 {
                     if let Some(index) = self.ui.select_selected(self.ids.ov_schema) {
                         if let Some(schema) = self.state.table_schemas().get(index) { self.state.wizard_schema = (*schema).into(); }
@@ -6321,6 +6338,90 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn table_options_controls_validate_create_and_modify_and_reopen_actual_flags() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo = Demo::new(1400,1000,PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(code TEXT PRIMARY KEY,amount INTEGER,note TEXT); INSERT INTO records(rowid,code,amount,note) VALUES(7,'first',10,'kept'),(9,'second','not an integer','pending');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000+row as u64);
+            demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_strict),Some(false));
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_without_rowid),Some(false));
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_strict).as_deref(),Some("Table STRICT option"));
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_without_rowid).as_deref(),Some("Table WITHOUT ROWID option"));
+            demo.ui.set_checked(demo.ids.ov_strict,true);
+            demo.ui.set_checked(demo.ids.ov_without_rowid,true);
+            demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_strict),Some(true));
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_without_rowid),Some(true));
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_some() && demo.state.overlay.is_some());
+            let error = demo.state.error_msg.as_deref().unwrap();
+            assert!(error.contains("\"main\".\"records\".amount") && !error.contains("__next_gui_rebuild"), "{error}");
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM records WHERE rowid IN(7,9)",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+            assert_eq!(dbmod::table_options_in(demo.state.conn.as_ref().unwrap(),"main","records").unwrap(),table_sql::TableOptions::default());
+            demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_strict),Some(true));
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(1)); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_autocomplete_value(demo.ids.ov_col_type,"ANY");
+            demo.snapshot_inputs(); demo.do_rebuild(); demo.clear_error();
+            for phase in ["draft","saved"] {
+                if phase == "saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_OPTIONS_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Options {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Options GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true });
+            assert!(conn.prepare("SELECT rowid FROM records").is_err());
+            assert_eq!(conn.query_row("SELECT amount FROM records WHERE code='second'",[],|r|r.get::<_,String>(0)).unwrap(),"not an integer");
+            demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_strict),Some(true));
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_without_rowid),Some(true));
+            demo.ui.set_checked(demo.ids.ov_strict,false);
+            demo.ui.set_checked(demo.ids.ov_without_rowid,false);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(rowid) FROM records",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+            demo.state.open_create_table_wizard(); demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_strict),Some(false));
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_without_rowid),Some(false));
+            demo.ui.set_text_input(demo.ids.ov_name,"created");
+            demo.ui.set_checked(demo.ids.ov_strict,true);
+            demo.ui.set_checked(demo.ids.ov_without_rowid,true);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true });
+            assert!(conn.execute("INSERT INTO created VALUES('bad','text')",[]).is_err());
+            conn.execute("INSERT INTO created VALUES(1,'valid')",[]).unwrap();
         }
     }
 

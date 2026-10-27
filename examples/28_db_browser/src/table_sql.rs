@@ -11,6 +11,45 @@ use sqlite3_parser::{
 
 use crate::db::{self, ColDef};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TableOptions {
+    pub without_rowid: bool,
+    pub strict: bool,
+}
+
+pub fn table_options(sql: &str) -> Result<TableOptions, String> {
+    let Cmd::Stmt(Stmt::CreateTable {
+        body: CreateTableBody::ColumnsAndConstraints { flags, .. },
+        ..
+    }) = parse(sql)?
+    else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    Ok(TableOptions {
+        without_rowid: flags.contains(TabFlags::WithoutRowid),
+        strict: flags.contains(TabFlags::Strict),
+    })
+}
+
+pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, String> {
+    let mut command = parse(sql)?;
+    let Cmd::Stmt(Stmt::CreateTable {
+        body: CreateTableBody::ColumnsAndConstraints { flags, .. },
+        ..
+    }) = &mut command
+    else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    if flags.contains(TabFlags::WithoutRowid) == options.without_rowid
+        && flags.contains(TabFlags::Strict) == options.strict
+    {
+        return Ok(sql.to_string());
+    }
+    flags.set(TabFlags::WithoutRowid, options.without_rowid);
+    flags.set(TabFlags::Strict, options.strict);
+    Ok(emit(command))
+}
+
 fn parse(sql: &str) -> Result<Cmd, String> {
     let mut parser = Parser::new(sql.as_bytes());
     let command = parser
@@ -137,6 +176,7 @@ pub fn rebuild_definition(
     original: &[ColDef],
     draft: &[ColDef],
     sources: &[Option<String>],
+    options: Option<TableOptions>,
 ) -> Result<String, String> {
     let mut command = parse(sql)?;
     let Cmd::Stmt(Stmt::CreateTable {
@@ -147,12 +187,16 @@ pub fn rebuild_definition(
             CreateTableBody::ColumnsAndConstraints {
                 columns,
                 constraints,
-                ..
+                flags,
             },
     }) = &mut command
     else {
         return Err("Modify Table requires an ordinary CREATE TABLE definition".into());
     };
+    if let Some(options) = options {
+        flags.set(TabFlags::WithoutRowid, options.without_rowid);
+        flags.set(TabFlags::Strict, options.strict);
+    }
     let key_changed = original.iter().any(|old| {
         old.pk
             != draft
@@ -242,7 +286,9 @@ pub fn rebuild_definition(
                     0 => {
                         old.notnull != col.notnull
                             || (old.pk
-                                && !col.pk
+                                && (!col.pk
+                                    || !flags
+                                        .intersects(TabFlags::Strict | TabFlags::WithoutRowid))
                                 && col.notnull
                                 && !item.constraints.iter().any(|value| {
                                     matches!(
@@ -527,7 +573,7 @@ mod tests {
             connection.execute_batch(sql).unwrap();
             let original = db::table_column_defs_in(&connection, "main", "t").unwrap();
             let sources: Vec<_> = original.iter().map(|column| Some(column.name.clone())).collect();
-            let generated = rebuild_definition(sql, "main", "copy", &original, &original, &sources).unwrap();
+            let generated = rebuild_definition(sql, "main", "copy", &original, &original, &sources, None).unwrap();
             connection.execute_batch(&generated).unwrap();
             assert_eq!(db::table_column_names(&connection, "t").unwrap(), db::table_column_names(&connection, "copy").unwrap());
             assert_eq!(parse(&generated).unwrap(), parse(&emit(parse(&generated).unwrap())).unwrap());
@@ -570,7 +616,8 @@ mod tests {
             "copy",
             &[],
             &[],
-            &[]
+            &[],
+            None
         )
         .is_err());
     }

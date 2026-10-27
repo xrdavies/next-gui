@@ -139,6 +139,11 @@ impl ColDef {
     }
 }
 
+pub fn table_options_in(conn: &Connection, schema: &str, table: &str) -> Result<crate::table_sql::TableOptions, String> {
+    let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", quote_ident(schema)), [table], |row| row.get(0)).map_err(|e| e.to_string())?;
+    crate::table_sql::table_options(&sql)
+}
+
 pub const COLUMN_TYPES: &[&str] = &["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC", "VARCHAR(255)"];
 
 /// Open connection (file or `:memory:`).
@@ -1412,7 +1417,7 @@ pub fn recreate_table_in(
             col.check_expression = old.check_expression.clone();
         }
     }
-    recreate_table_columns_in(conn, schema, old_name, new_name, &draft, &sources)
+    recreate_table_columns_in(conn, schema, old_name, new_name, &draft, &sources, None)
 }
 
 /// Apply column edits using explicit original identities; None denotes a new column.
@@ -1423,6 +1428,7 @@ pub fn recreate_table_columns_in(
     new_name: &str,
     cols: &[ColDef],
     sources: &[Option<String>],
+    options: Option<crate::table_sql::TableOptions>,
 ) -> Result<(), String> {
     let existing = table_column_defs_in(conn, schema, old_name)?;
     if existing.is_empty() {
@@ -1432,7 +1438,7 @@ pub fn recreate_table_columns_in(
         return Err("Column identities do not match the table draft; reopen Modify Table".into());
     }
     crate::table_sql::validate_primary_key(cols)?;
-    let mut rebuild = false;
+    let mut rebuild = match options { Some(options) => table_options_in(conn, schema, old_name)? != options, None => false };
     for (index, (col, source)) in cols.iter().zip(sources).enumerate() {
         if cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&col.name)) {
             return Err(format!("Duplicate column name: {}", col.name));
@@ -1520,7 +1526,7 @@ pub fn recreate_table_columns_in(
                 .map_err(|error| format!("Cannot rename column to {target}: {error}"))?;
         }
         if rebuild {
-            crate::table_migration::rebuild(conn, schema, old_name, &existing, cols, sources)?;
+            crate::table_migration::rebuild(conn, schema, old_name, &existing, cols, sources, options)?;
         } else {
             for col in added {
                 let ddl = create_table_ddl("unused", std::slice::from_ref(col));
@@ -1786,7 +1792,7 @@ mod tests {
                 let mut cols = table_column_defs_in(&conn, schema, "parent").unwrap();
                 let sources: Vec<_> = cols.iter().map(|col| Some(col.name.clone())).collect();
                 cols[0].name = "ID".into();
-                assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &sources).is_err());
+                assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &sources, None).is_err());
                 let after: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
                 assert_eq!(after, before);
                 conn.execute_batch("DROP TRIGGER temp.tr; DROP VIEW temp.viewed;").unwrap();
@@ -1801,24 +1807,24 @@ mod tests {
             bad.push(ColDef { default_value: "0; PRAGMA foreign_keys=OFF; --".into(), ..ColDef::new("tail", "TEXT") });
             let mut bad_sources = sources.clone();
             bad_sources.push(None);
-            assert!(recreate_table_columns_in(&conn, schema, "parent", "changed", &bad, &bad_sources).is_err());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "changed", &bad, &bad_sources, None).is_err());
             let after: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
             assert_eq!(after, original_schema);
             assert_eq!(count_browse_rows_in(&conn, schema, "child", None).unwrap(), 1);
             assert_eq!(conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
             assert!(!conn.is_autocommit());
-            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &sources[..2]).is_err());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &sources[..2], None).is_err());
             let mut invalid = sources.clone();
             invalid[1] = invalid[0].clone();
-            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &invalid).is_err());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &invalid, None).is_err());
             invalid[1] = Some("missing".into());
-            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &invalid).is_err());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &invalid, None).is_err());
             let mut duplicate = cols.clone();
             duplicate[2].name = "B".into();
-            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &duplicate, &sources).is_err());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &duplicate, &sources, None).is_err());
             cols.push(ColDef::new("untyped", ""));
             sources.push(None);
-            recreate_table_columns_in(&conn, schema, "parent", "changed.\"parent", &cols, &sources).unwrap_or_else(|error| panic!("{schema}: {error}"));
+            recreate_table_columns_in(&conn, schema, "parent", "changed.\"parent", &cols, &sources, None).unwrap_or_else(|error| panic!("{schema}: {error}"));
             let changed = qualified_name(schema, "changed.\"parent");
             let row: (i64, String, String, String, Option<String>) = conn.query_row(&format!("SELECT \"ID\",a,b,g,untyped FROM {changed}"), [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();
             assert_eq!(row, (1,"B".into(),"A".into(),"A!".into(),None));
@@ -1846,7 +1852,7 @@ mod tests {
         let before: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
         let cols = [ColDef::new("ID", ""), ColDef::new("changed", "")];
         let sources = [Some("id".into()), Some("a".into())];
-        assert!(recreate_table_columns_in(&conn, "main", "p", "p", &cols, &sources).is_err());
+        assert!(recreate_table_columns_in(&conn, "main", "p", "p", &cols, &sources, None).is_err());
         let after: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
         assert_eq!(after, before);
         assert_eq!(count_rows(&conn, "p").unwrap(), 2);

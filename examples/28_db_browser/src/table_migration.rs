@@ -135,6 +135,7 @@ pub fn rebuild(
     original: &[ColDef],
     draft: &[ColDef],
     sources: &[Option<String>],
+    options: Option<table_sql::TableOptions>,
 ) -> Result<(), String> {
     let old_without_rowid = without_rowid(conn, schema, table)?;
     let schema_sql = format!(
@@ -163,7 +164,7 @@ pub fn rebuild(
         number += 1;
     };
     let definition =
-        table_sql::rebuild_definition(&sql, schema, &temporary, original, draft, sources)?;
+        table_sql::rebuild_definition(&sql, schema, &temporary, original, draft, sources, options)?;
     let mut stmt = conn.prepare(&format!("SELECT sql FROM {}.sqlite_schema WHERE tbl_name=?1 AND type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type,name", db::quote_ident(schema))).map_err(|error| error.to_string())?;
     let mut dependencies = stmt
         .query_map([table], |row| row.get::<_, String>(0))
@@ -237,6 +238,7 @@ pub fn rebuild(
             let mut from = columns.clone();
             let mut copy_order = String::new();
             let new_primary = integer_primary_key(conn, schema, &temporary)?;
+            let new_without_rowid = without_rowid(conn, schema, &temporary)?;
             let old_primary = integer_primary_key(conn, schema, table)?;
             if new_primary.is_some()
                 && new_primary != old_primary
@@ -248,7 +250,7 @@ pub fn rebuild(
                     "Resolve existing foreign key violations before changing the rowid key".into(),
                 );
             }
-            if new_primary.is_none() && !old_without_rowid {
+            if new_primary.is_none() && !old_without_rowid && !new_without_rowid {
                 let source = rowid_alias(conn, schema, table)?
                     .or(old_primary.clone())
                     .ok_or(
@@ -373,6 +375,8 @@ pub fn rebuild(
             Ok(())
         })
     })();
+    let result = result
+        .map_err(|error: String| error.replace(&temporary, &db::qualified_name(schema, table)));
     let mut restoration = Vec::new();
     if let Err(error) =
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE, legacy_alter)
@@ -395,6 +399,222 @@ pub fn rebuild(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_options_preserve_data_keys_dependencies_and_pending_rollback() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            conn.execute_batch(&format!("CREATE TABLE {table}(a TEXT,b INTEGER,v TEXT CHECK(length(v)>0),CONSTRAINT named_key PRIMARY KEY(a,b),CONSTRAINT named_unique UNIQUE(v)); INSERT INTO {table}(rowid,a,b,v) VALUES(7,'Alpha',1,'one'),(9,'Beta',2,'two');
+                CREATE TABLE {}(a,b,FOREIGN KEY(a,b) REFERENCES t(a,b)); INSERT INTO {} VALUES('Alpha',1); CREATE INDEX {} ON t(b); CREATE TABLE {}(v); CREATE TRIGGER {} AFTER INSERT ON t BEGIN INSERT INTO audit VALUES(new.v); END; BEGIN;",db::qualified_name(schema,"child"),db::qualified_name(schema,"child"),db::qualified_name(schema,"ix"),db::qualified_name(schema,"audit"),db::qualified_name(schema,"tr"))).unwrap();
+            let sources = [Some("a".into()), Some("b".into()), Some("v".into())];
+            let mut draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            let mut options = table_sql::TableOptions {
+                strict: true,
+                without_rowid: false,
+            };
+            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
+                .unwrap();
+            assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+            assert!(conn
+                .execute(
+                    &format!("INSERT INTO {table} VALUES('Other','invalid integer','valid')"),
+                    []
+                )
+                .is_err());
+            draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            options.without_rowid = true;
+            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
+                .unwrap();
+            assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
+            assert!(conn.prepare(&format!("SELECT rowid FROM {table}")).is_err());
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE (a='Alpha' AND b=1 AND v='one') OR (a='Beta' AND b=2 AND v='two')")),2);
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}",
+                        db::qualified_name(schema, "child")
+                    )
+                ),
+                1
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}",
+                        db::qualified_name(schema, "audit")
+                    )
+                ),
+                0
+            );
+            assert!(conn
+                .execute(
+                    &format!("INSERT INTO {table} VALUES('Alpha',1,'different')"),
+                    []
+                )
+                .is_err());
+            draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            assert!(draft[0].notnull && draft[1].notnull);
+            options = table_sql::TableOptions::default();
+            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
+                .unwrap();
+            assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
+            assert!(conn.prepare(&format!("SELECT rowid FROM {table}")).is_ok());
+            assert!(
+                db::table_columns_in(&conn, schema, "t").unwrap()[0].notnull,
+                "keep the requested NN when implicit WITHOUT ROWID rules end"
+            );
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES(NULL,3,'another')"), [])
+                .is_err());
+            conn.execute(
+                &format!("INSERT INTO {table} VALUES('Other',3,'three')"),
+                [],
+            )
+            .unwrap();
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}",
+                        db::qualified_name(schema, "audit")
+                    )
+                ),
+                1
+            );
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES('Last',4,'')"), [])
+                .is_err());
+            let sql: String = conn
+                .query_row(
+                    &format!(
+                        "SELECT sql FROM {}.sqlite_schema WHERE name='t'",
+                        db::quote_ident(schema)
+                    ),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(sql.contains("named_key") && sql.contains("named_unique"));
+            assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
+            assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(
+                db::table_options_in(&conn, schema, "t").unwrap(),
+                table_sql::TableOptions::default()
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+            assert!(!db::table_columns_in(&conn, schema, "t").unwrap()[0].notnull);
+        }
+    }
+
+    #[test]
+    fn incompatible_table_options_roll_back_types_null_keys_autoincrement_and_pending_violations() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(id TEXT PRIMARY KEY,n INTEGER); INSERT INTO t(rowid,id,n) VALUES(7,'first','not an integer'); CREATE TABLE no_key(v INTEGER); CREATE TABLE ai(id INTEGER PRIMARY KEY AUTOINCREMENT); CREATE TABLE unsupported(v NUMERIC); BEGIN; INSERT INTO t(rowid,id,n) VALUES(9,'pending','pending text'),(11,NULL,3);").unwrap();
+        let strict = table_sql::TableOptions {
+            strict: true,
+            without_rowid: false,
+        };
+        let without_rowid = table_sql::TableOptions {
+            strict: false,
+            without_rowid: true,
+        };
+        for (name, options) in [
+            ("t", strict),
+            ("t", without_rowid),
+            ("no_key", without_rowid),
+            ("ai", without_rowid),
+            ("unsupported", strict),
+        ] {
+            let draft = db::table_column_defs_in(&conn, "main", name).unwrap();
+            let sources: Vec<_> = draft.iter().map(|col| Some(col.name.clone())).collect();
+            assert!(
+                db::recreate_table_columns_in(
+                    &conn,
+                    "main",
+                    name,
+                    name,
+                    &draft,
+                    &sources,
+                    Some(options)
+                )
+                .is_err(),
+                "{name}/{options:?}"
+            );
+            assert_eq!(
+                db::table_options_in(&conn, "main", name).unwrap(),
+                table_sql::TableOptions::default()
+            );
+            assert_eq!(
+                count(&conn, "SELECT count(*) FROM t WHERE rowid IN(7,9,11)"),
+                3
+            );
+            assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
+            assert!(!conn.is_autocommit());
+        }
+        conn.execute("UPDATE t SET id='filled' WHERE rowid=11", [])
+            .unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        draft[1].type_name = "ANY".into();
+        db::recreate_table_columns_in(
+            &conn,
+            "main",
+            "t",
+            "t",
+            &draft,
+            &[Some("id".into()), Some("n".into())],
+            Some(strict),
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT typeof(n) FROM t WHERE rowid=9", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "text"
+        );
+        conn.execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); CREATE TABLE bad(k TEXT PRIMARY KEY,p REFERENCES parent DEFERRABLE INITIALLY DEFERRED); INSERT INTO bad(rowid,k,p) VALUES(7,'kept',99);").unwrap();
+        let draft = db::table_column_defs_in(&conn, "main", "bad").unwrap();
+        assert!(db::recreate_table_columns_in(
+            &conn,
+            "main",
+            "bad",
+            "bad",
+            &draft,
+            &[Some("k".into()), Some("p".into())],
+            Some(without_rowid)
+        )
+        .is_err());
+        assert_eq!(count(&conn, "SELECT rowid FROM bad"), 7);
+        assert!(
+            !db::table_options_in(&conn, "main", "bad")
+                .unwrap()
+                .without_rowid
+        );
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+        assert_eq!(
+            db::table_columns(&conn, "t").unwrap()[1].type_name,
+            "INTEGER"
+        );
+    }
 
     #[test]
     fn column_checks_edit_first_named_constraint_and_keep_other_constraints_and_dependencies() {
@@ -1016,6 +1236,7 @@ mod tests {
             "renamed",
             &draft,
             &[Some("id".into()), Some("v".into())],
+            None,
         )
         .unwrap();
         assert_eq!(count(&conn, "SELECT count(*) FROM viewed"), 1);
@@ -1036,6 +1257,7 @@ mod tests {
             "child",
             &draft,
             &[Some("id".into()), Some("v".into())],
+            None,
         )
         .unwrap_err();
         assert!(error.contains("already another table"), "{error}");
@@ -1108,7 +1330,7 @@ mod tests {
         draft: &[ColDef],
         sources: &[Option<String>],
     ) -> Result<(), String> {
-        db::recreate_table_columns_in(conn, schema, table, table, draft, sources)
+        db::recreate_table_columns_in(conn, schema, table, table, draft, sources, None)
     }
 
     #[test]

@@ -407,6 +407,7 @@ pub struct AppState {
     pub wizard_schema: String,
     pub wizard_scroll: (f32, f32),
     pub wizard_table_name: String,
+    pub wizard_table_options: crate::table_sql::TableOptions,
     pub wizard_table_original: Option<SelectedObject>,
     pub wizard_cols: Vec<ColDef>,
     pub wizard_col_sources: Vec<Option<String>>,
@@ -671,6 +672,7 @@ impl AppState {
             overlay: None,
             wizard_schema: "main".into(),
             wizard_scroll: (0.0, 0.0),
+            wizard_table_options: crate::table_sql::TableOptions::default(),
             wizard_table_name: "new_table".into(),
             wizard_table_original: None,
             wizard_cols: vec![
@@ -1534,6 +1536,7 @@ impl AppState {
         self.wizard_scroll = (0.0, 0.0);
         self.wizard_table_name = "new_table".into();
         self.wizard_table_original = None;
+        self.wizard_table_options = crate::table_sql::TableOptions::default();
         self.wizard_cols = vec![
             ColDef {
                 name: "id".into(),
@@ -1569,6 +1572,7 @@ impl AppState {
         self.wizard_schema = sel.schema.clone();
         self.wizard_scroll = (0.0, 0.0);
         self.wizard_table_name = sel.name.clone();
+        self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         self.wizard_table_original = Some(sel);
         self.wizard_cols = cols;
         self.wizard_column_check_states = vec![None; self.wizard_cols.len()];
@@ -1667,11 +1671,11 @@ impl AppState {
         let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         if let Some(orig) = original.as_ref() {
-            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources)?;
+            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources, Some(self.wizard_table_options))?;
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
             for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
-            let ddl = db::create_table_ddl_in(&schema, &name, &self.wizard_cols);
+            let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &self.wizard_cols), self.wizard_table_options)?;
             db::execute_single_statement(conn, &ddl)?;
             self.log_sql(ddl);
         }

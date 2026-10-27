@@ -178,6 +178,8 @@ pub struct BuiltUi {
     pub ov_ai: WidgetId,
     pub ov_collation: WidgetId,
     pub ov_check: WidgetId,
+    pub ov_without_rowid: WidgetId,
+    pub ov_strict: WidgetId,
     pub ov_nn: WidgetId,
     pub ov_unique: WidgetId,
     pub ov_default: WidgetId,
@@ -454,6 +456,8 @@ pub fn build_ui(
     let mut ov_ai = z;
     let mut ov_collation = z;
     let mut ov_check = z;
+    let mut ov_without_rowid = z;
+    let mut ov_strict = z;
     let mut ov_nn = z;
     let mut ov_unique = z;
     let mut ov_default = z;
@@ -837,6 +841,14 @@ pub fn build_ui(
                                 c.row(row, |r| {
                                     r.text("Table name");
                                     ov_name = r.text_input_styled(&state.wizard_table_name, "name", name_s);
+                                });
+                                c.row(row, |r| {
+                                    r.tooltip("Requires a primary key; removes the hidden rowid and forbids AUTOINCREMENT", |r| {
+                                        ov_without_rowid = r.switch_styled("Without Rowid", state.wizard_table_options.without_rowid, sw);
+                                    });
+                                    r.tooltip("Enforce SQLite STRICT column types and stored values", |r| {
+                                        ov_strict = r.switch_styled("Strict", state.wizard_table_options.strict, sw);
+                                    });
                                 });
                                 let items: Vec<String> = state
                                     .wizard_cols
@@ -2053,6 +2065,8 @@ pub fn build_ui(
     ui.set_accessible_name(ov_ai, "Column autoincrement");
     ui.set_accessible_name(ov_collation, "Column collation (editable)");
     ui.set_accessible_name(ov_check, "Column CHECK expression");
+    ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
+    ui.set_accessible_name(ov_strict, "Table STRICT option");
     if state.overlay == Some(OverlayKind::EditIndex) {
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");
@@ -2235,6 +2249,8 @@ pub fn build_ui(
         ov_ai,
         ov_collation,
         ov_check,
+        ov_without_rowid,
+        ov_strict,
         ov_nn,
         ov_unique,
         ov_default,
