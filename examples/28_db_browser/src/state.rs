@@ -150,6 +150,15 @@ pub struct BrowseTabState {
 }
 
 impl BrowseTabState {
+    fn clear_selection(&mut self) {
+        self.sel_row = None;
+        self.sel_row_start = None;
+        self.sel_row_end = None;
+        self.sel_col = None;
+        self.sel_col_start = None;
+        self.sel_col_end = None;
+    }
+
     pub fn new(table: Option<String>) -> Self {
         let title = table.clone().unwrap_or_else(|| "Browse".into());
         Self {
@@ -944,7 +953,9 @@ impl AppState {
                 t.result = None;
                 t.rowids.clear();
                 t.total_rows = None;
+                t.clear_selection();
             }
+            self.clear_browse_editor();
             return Ok(());
         }
         let (table, order, desc, mut col_filters, mut prev_cols) = {
@@ -965,6 +976,8 @@ impl AppState {
             t.result = None;
             t.rowids.clear();
             t.total_rows = None;
+            t.clear_selection();
+            self.clear_browse_editor();
             return Ok(());
         };
         if prev_cols.is_empty() {
@@ -1060,15 +1073,9 @@ impl AppState {
             t.rowids = rowids;
             t.total_rows = Some(total_rows);
             t.result = Some(result);
-            t.sel_row = None;
-            t.sel_col = None;
+            t.clear_selection();
         }
-        self.edit_col.clear();
-        self.edit_value.clear();
-        self.edit_type = 0;
-        self.edit_original = rusqlite::types::Value::Null;
-        self.edit_saved = rusqlite::types::Value::Null;
-        self.edit_image_rgba = None;
+        self.clear_browse_editor();
         self.status_msg = format!(
             "Browse {} — {} rows {}–{} of {}{}{}",
             table,
@@ -1080,6 +1087,15 @@ impl AppState {
             order_note
         );
         Ok(())
+    }
+
+    fn clear_browse_editor(&mut self) {
+        self.edit_col.clear();
+        self.edit_value.clear();
+        self.edit_type = 0;
+        self.edit_original = rusqlite::types::Value::Null;
+        self.edit_saved = rusqlite::types::Value::Null;
+        self.edit_image_rgba = None;
     }
 
     pub fn browse_page(&mut self, next: bool) -> Result<(), String> {

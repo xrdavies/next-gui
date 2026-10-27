@@ -4393,33 +4393,50 @@ impl Ui {
         }
     }
 
-    /// Inclusive selected row range. A single click is a one-row range.
+    /// Inclusive selected row bounds, ordered from top to bottom.
     pub fn table_selected_rows(&self, id: WidgetId) -> Option<(usize, usize)> {
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Table { selected_range, selected_row, .. }) => selected_range.or_else(|| selected_row.map(|row| (row, row))),
+            Some(Kind::Table { selected_range, selected_row, .. }) => selected_range
+                .or_else(|| selected_row.map(|row| (row, row)))
+                .map(|(a, b)| (a.min(b), a.max(b))),
             _ => None,
         }
     }
 
-    /// Inclusive selected table column range, or the active cell column.
+    /// Inclusive selected column bounds, ordered from left to right.
     pub fn table_selected_cols(&self, id: WidgetId) -> Option<(usize, usize)> {
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Table { selected_col_range, selected_col, .. }) => selected_col_range.or_else(|| selected_col.map(|col| (col, col))),
+            Some(Kind::Table { selected_col_range, selected_col, .. }) => selected_col_range
+                .or_else(|| selected_col.map(|col| (col, col)))
+                .map(|(a, b)| (a.min(b), a.max(b))),
             _ => None,
         }
     }
 
-    /// Copy the selected table rows as tab-separated text.
+    /// Fixed selection anchor, for preserving Shift selection across rebuilds.
+    /// A missing column denotes a whole-row selection.
+    pub fn table_selection_anchor(&self, id: WidgetId) -> Option<(usize, Option<usize>)> {
+        let Kind::Table { selected_range, selected_col_range, selected_row, selected_col, .. } =
+            &self.widgets.get(&id)?.kind else { return None; };
+        Some((selected_range.map(|r| r.0).or(*selected_row)?,
+            selected_col_range.map(|r| r.0).or(*selected_col)))
+    }
+
+    /// Copy the selected cells as quoted tab-separated text.
     pub fn table_selected_text(&self, id: WidgetId) -> Option<String> {
-        let Some(Kind::Table { rows, columns, selected_col, selected_col_range, .. }) = self.widgets.get(&id).map(|w| &w.kind) else { return None; };
+        let Kind::Table { rows, columns, .. } = &self.widgets.get(&id)?.kind else { return None; };
         let (start, end) = self.table_selected_rows(id)?;
-        let end = end.min(rows.len().saturating_sub(1));
-        if start > end { return None; }
-        let (col_start, col_end) = selected_col_range
-            .or_else(|| selected_col.map(|col| (col, col)))
+        let (col_start, col_end) = self.table_selected_cols(id)
             .unwrap_or((0, columns.len().saturating_sub(1)));
-        if columns.is_empty() || col_start > col_end || col_end >= columns.len() { return None; }
-        Some((start..=end).map(|row| (col_start..=col_end).map(|col| rows[row].get(col).map(String::as_str).unwrap_or("")).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"))
+        if end >= rows.len() || columns.is_empty() || col_end >= columns.len() { return None; }
+        Some((start..=end).map(|row| (col_start..=col_end).map(|col| {
+            let value = rows[row].get(col).map(String::as_str).unwrap_or("");
+            if value.contains(['\t', '\r', '\n', '"']) {
+                format!("\"{}\"", value.replace('"', "\"\""))
+            } else {
+                value.to_string()
+            }
+        }).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"))
     }
 
     /// Drain last Table header click as `(table_id, column_index)`.
@@ -4485,11 +4502,15 @@ impl Ui {
                 rows,
                 selected_row,
                 selected_range,
+                selected_col,
+                selected_col_range,
                 ..
             } = &mut w.kind
             {
                 *selected_row = row.filter(|i| *i < rows.len());
                 *selected_range = selected_row.map(|i| (i, i));
+                if selected_row.is_none() { *selected_col = None; }
+                *selected_col_range = selected_col.map(|i| (i, i));
             }
         }
     }
@@ -4504,49 +4525,45 @@ impl Ui {
         true
     }
 
-    /// Set an inclusive table cell range.
+    /// Set a cell selection from anchor to active cell, preserving its direction.
     pub fn set_table_selected_cells(&mut self, id: WidgetId, rows: Option<(usize, usize)>, cols: Option<(usize, usize)>) -> bool {
         let Some(Widget { kind: Kind::Table { columns, rows: body, selected_row, selected_col, selected_range, selected_col_range, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
         let Some((row_start, row_end)) = rows else { *selected_row = None; *selected_range = None; *selected_col = None; *selected_col_range = None; return true; };
         let Some((col_start, col_end)) = cols else { return false; };
         if row_start >= body.len() || row_end >= body.len() || col_start >= columns.len() || col_end >= columns.len() { return false; }
         *selected_row = Some(row_end);
-        *selected_range = Some((row_start.min(row_end), row_start.max(row_end)));
+        *selected_range = Some((row_start, row_end));
         *selected_col = Some(col_end);
-        *selected_col_range = Some((col_start.min(col_end), col_start.max(col_end)));
+        *selected_col_range = Some((col_start, col_end));
         true
     }
 
-    /// Set an inclusive table row range without changing the active row.
+    /// Select rows from anchor to active row (the second endpoint).
     pub fn set_table_selected_rows(&mut self, id: WidgetId, range: Option<(usize, usize)>) -> bool {
         let Some(Widget { kind: Kind::Table { rows, selected_row, selected_range, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
-        let Some((start, end)) = range else { *selected_range = None; return true; };
+        let Some((start, end)) = range else { self.set_table_selected_row(id, None); return true; };
         if start >= rows.len() || end >= rows.len() { return false; }
-        *selected_range = Some((start.min(end), start.max(end)));
+        *selected_range = Some((start, end));
         *selected_row = Some(end);
         true
     }
 
-    /// Replace table body rows.
+    /// Replace table body rows, clamping both selection endpoints.
     pub fn set_table_rows(&mut self, id: WidgetId, rows: Vec<Vec<String>>) {
-        if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Table {
-                rows: slot,
-                selected_row,
-                selected_range,
-                scroll_y,
-                ..
-            } = &mut w.kind
-            {
-                *slot = rows;
-                if let Some(i) = *selected_row {
-                    if i >= slot.len() {
-                        *selected_row = slot.len().checked_sub(1);
-                        *selected_range = selected_row.map(|i| (i, i));
-                    }
-                }
-                *scroll_y = 0.0;
+        if let Some(Widget { kind: Kind::Table {
+            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, ..
+        }, .. }) = self.widgets.get_mut(&id) {
+            *slot = rows;
+            if let Some(last) = slot.len().checked_sub(1) {
+                *selected_row = selected_row.map(|i| i.min(last));
+                *selected_range = selected_range.map(|(a, b)| (a.min(last), b.min(last)));
+            } else {
+                *selected_row = None;
+                *selected_range = None;
+                *selected_col = None;
+                *selected_col_range = None;
             }
+            *scroll_y = 0.0;
         }
     }
 
@@ -5649,26 +5666,29 @@ impl Ui {
     }
 
     fn ensure_selected_visible_table(&mut self, id: WidgetId) {
-        let (sel, style, scroll_y) = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Table {
-                selected_row,
-                style,
-                scroll_y,
-                ..
-            }) => (*selected_row, *style, *scroll_y),
-            _ => return,
-        };
-        let Some(i) = sel else { return };
-        let body_h = style.height - style.header_height;
-        let row_top = i as f32 * style.row_height;
-        let row_bot = row_top + style.row_height;
-        let mut ny = scroll_y;
-        if row_top < scroll_y {
-            ny = row_top;
-        } else if row_bot > scroll_y + body_h {
-            ny = row_bot - body_h;
+        let Some(Kind::Table {
+            selected_row, selected_col, columns, frozen_cols, style, scroll_x, scroll_y, ..
+        }) = self.widgets.get(&id).map(|w| &w.kind) else { return; };
+        let (mut nx, mut ny) = (*scroll_x, *scroll_y);
+        if let Some(i) = selected_row {
+            let body_h = (style.height - style.header_height).max(0.0);
+            let row_top = *i as f32 * style.row_height;
+            let row_bot = row_top + style.row_height;
+            if row_top < ny { ny = row_top; }
+            else if row_bot > ny + body_h { ny = row_bot - body_h; }
         }
-        self.set_any_scroll(id, 0.0, ny);
+        if let Some(i) = selected_col.filter(|i| *i >= *frozen_cols && *i < columns.len()) {
+            let frozen_w: f32 = columns.iter().take(*frozen_cols).map(|c| c.width).sum();
+            let col_left: f32 = columns.iter().take(i).map(|c| c.width).sum();
+            let view_right = style.width - style.padding * 2.0;
+            let view_width = (view_right - frozen_w).max(0.0);
+            if col_left - nx < frozen_w || columns[i].width > view_width {
+                nx = col_left - frozen_w;
+            } else if col_left + columns[i].width - nx > view_right {
+                nx = col_left + columns[i].width - view_right;
+            }
+        }
+        self.set_any_scroll(id, nx, ny);
     }
 
     fn key_list(&mut self, id: WidgetId, key: UiKey) -> bool {
@@ -5776,63 +5796,32 @@ impl Ui {
     }
 
     fn key_table(&mut self, id: WidgetId, key: UiKey) -> bool {
-        let (n, cols) = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Table { rows, columns, .. }) => (rows.len(), columns.len()),
-            _ => return false,
-        };
-        if n == 0 {
-            return false;
-        }
-        let cur = self.table_selected_row(id);
+        let Some(Kind::Table {
+            rows, columns, selected_row, selected_col, selected_range, selected_col_range, ..
+        }) = self.widgets.get(&id).map(|w| &w.kind) else { return false; };
+        if rows.is_empty() { return false; }
+        let (mut row, mut col) = (selected_row.unwrap_or(0), *selected_col);
+        let extend = matches!(key, UiKey::SelectUp | UiKey::SelectDown | UiKey::SelectLeft | UiKey::SelectRight);
         match key {
-            UiKey::Down | UiKey::SelectDown => {
-                let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
-                let range_start = cur.unwrap_or(next);
-                self.set_table_selected_row(id, Some(next));
-                if key == UiKey::SelectDown { if let Some(w) = self.widgets.get_mut(&id) { if let Kind::Table { selected_range, .. } = &mut w.kind { *selected_range = Some((range_start, next)); } } }
-                self.ensure_selected_visible_table(id);
-                true
-            }
-            UiKey::Up | UiKey::SelectUp => {
-                let next = cur.map(|i| i.saturating_sub(1)).unwrap_or(0);
-                let range_start = cur.unwrap_or(next);
-                self.set_table_selected_row(id, Some(next));
-                if key == UiKey::SelectUp { if let Some(w) = self.widgets.get_mut(&id) { if let Kind::Table { selected_range, .. } = &mut w.kind { *selected_range = Some((range_start, next)); } } }
-                self.ensure_selected_visible_table(id);
-                true
-            }
-            UiKey::Left | UiKey::SelectLeft | UiKey::Right | UiKey::SelectRight => {
-                if cols == 0 { return false; }
-                let cur = self.table_selected_col(id);
-                let next = match key {
-                    UiKey::Left | UiKey::SelectLeft => cur.map(|i| i.saturating_sub(1)).unwrap_or(0),
-                    _ => cur.map(|i| (i + 1).min(cols - 1)).unwrap_or(0),
-                };
-                let range_start = cur.unwrap_or(next);
-                self.set_table_selected_col(id, Some(next));
-                if matches!(key, UiKey::SelectLeft | UiKey::SelectRight) {
-                    if let Some(w) = self.widgets.get_mut(&id) {
-                        if let Kind::Table { selected_col_range, .. } = &mut w.kind {
-                            *selected_col_range = Some((range_start, next));
-                        }
-                    }
-                }
-                true
-            }
-            UiKey::Home => {
-                self.set_table_selected_row(id, Some(0));
-                self.ensure_selected_visible_table(id);
-                true
-            }
-            UiKey::End => {
-                self.set_table_selected_row(id, Some(n - 1));
-                self.ensure_selected_visible_table(id);
-                true
-            }
-            _ => false,
+            UiKey::Down | UiKey::SelectDown => row = selected_row.map_or(0, |i| (i + 1).min(rows.len() - 1)),
+            UiKey::Up | UiKey::SelectUp => row = row.saturating_sub(1),
+            UiKey::Left | UiKey::SelectLeft if !columns.is_empty() => col = Some(col.unwrap_or(0).saturating_sub(1)),
+            UiKey::Right | UiKey::SelectRight if !columns.is_empty() => col = Some(col.map_or(0, |i| (i + 1).min(columns.len() - 1))),
+            UiKey::Home => row = 0,
+            UiKey::End => row = rows.len() - 1,
+            _ => return false,
         }
+        let anchor_row = if extend { selected_range.map(|r| r.0).or(*selected_row).unwrap_or(row) } else { row };
+        let anchor_col = if extend { selected_col_range.map(|r| r.0).or(*selected_col).or(col) } else { col };
+        if let Some(Widget { kind: Kind::Table { selected_row, selected_col, selected_range, selected_col_range, .. }, .. }) = self.widgets.get_mut(&id) {
+            *selected_row = Some(row);
+            *selected_col = col;
+            *selected_range = Some((anchor_row, row));
+            *selected_col_range = anchor_col.zip(col);
+        }
+        self.ensure_selected_visible_table(id);
+        true
     }
-
 
     /// Close any open Menu / ContextMenu / Select popup.
     pub fn close_popup(&mut self) -> bool {
@@ -22872,33 +22861,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod range_smoke_tests {
- use super::*;
- #[test]
- fn range_text_is_tsv() {
-  let mut ui=Ui::new(); let mut id=WidgetId(0);
-  ui.column(ColumnStyle { width: 220.0, height: 160.0, ..ColumnStyle::default() }, |c| {
-   id=c.table(vec![TableColumn::new("a",80.0)], vec![vec!["x".into()]], TableStyle::default());
-  });
-  ui.set_table_selected_row(id,Some(0)); assert_eq!(ui.table_selected_text(id).as_deref(),Some("x"));
- }
-
- #[test]
- fn cell_ranges_copy_as_a_rectangle() {
-  let mut ui=Ui::new(); let mut id=WidgetId(0);
-  ui.column(ColumnStyle { width: 320.0, height: 200.0, ..ColumnStyle::default() }, |c| {
-   id=c.table(
-    vec![TableColumn::new("a",80.0), TableColumn::new("b",80.0), TableColumn::new("c",80.0)],
-    vec![vec!["a1".into(),"b1".into(),"c1".into()], vec!["a2".into(),"b2".into(),"c2".into()], vec!["a3".into(),"b3".into(),"c3".into()]],
-    TableStyle::default(),
-   );
-  });
-  ui.set_table_selected_row(id,Some(1));
-  ui.set_table_selected_col(id,Some(1));
-  ui.set_focus(Some(id));
-  assert!(ui.key_input(UiKey::SelectRight));
-  assert!(ui.key_input(UiKey::SelectDown));
-  assert_eq!(ui.table_selected_cols(id), Some((1, 2)));
-  assert_eq!(ui.table_selected_text(id).as_deref(), Some("b2\tc2\nb3\tc3"));
- }
-}
+mod table_selection_tests;

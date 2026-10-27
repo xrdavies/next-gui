@@ -2473,21 +2473,20 @@ impl Demo {
         }
         if let Some(row) = self.ui.table_selected_row(self.ids.browse_table) {
             let col = self.ui.table_selected_col(self.ids.browse_table);
-            let col_changed = col.is_some() && col != self.state.browse().sel_col;
-            let rows = self.ui.table_selected_rows(self.ids.browse_table);
-            let cols = self.ui.table_selected_cols(self.ids.browse_table);
-            let expected_cols = self.state.browse().sel_col_start.zip(self.state.browse().sel_col_end);
-            let col_range_changed = cols != expected_cols;
-            if self.last_browse_row != Some(row) || col_changed || col_range_changed || rows.is_some_and(|(_, end)| self.state.browse().sel_row_end != Some(end)) {
+            let (anchor_row, anchor_col) = self.ui.table_selection_anchor(self.ids.browse_table)
+                .unwrap_or((row, col));
+            let tab = self.state.browse();
+            if tab.sel_row != Some(row) || tab.sel_col != col
+                || tab.sel_row_start != Some(anchor_row) || tab.sel_col_start != anchor_col
+            {
                 self.last_browse_row = Some(row);
-                self.state.browse_mut().sel_row = Some(row);
-                self.state.browse_mut().sel_row_start = rows.map(|(start, _)| start);
-                self.state.browse_mut().sel_row_end = rows.map(|(_, end)| end);
-                self.state.browse_mut().sel_col_start = cols.map(|(start, _)| start);
-                self.state.browse_mut().sel_col_end = cols.map(|(_, end)| end);
-                if let Some(c) = col {
-                    self.state.browse_mut().sel_col = Some(c);
-                }
+                let tab = self.state.browse_mut();
+                tab.sel_row = Some(row);
+                tab.sel_col = col;
+                tab.sel_row_start = Some(anchor_row);
+                tab.sel_row_end = Some(row);
+                tab.sel_col_start = anchor_col;
+                tab.sel_col_end = col;
                 self.state.sync_edit_cell_from_selection();
                 dirty = true;
             }
@@ -3258,6 +3257,42 @@ mod interaction_tests {
         demo.do_rebuild();
         assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 1)));
         assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 1)));
+    }
+
+    #[test]
+    fn backwards_browse_selection_keeps_anchor_through_every_rebuild() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.run_sql_text_sync("CREATE TABLE t(a,b,c,d); INSERT INTO t VALUES(0,1,2,3),(4,5,6,7),(8,9,10,11),(12,13,14,15);").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.tab = MainTab::Browse;
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((3, 3)), Some((3, 3)));
+        for key in [UiKey::SelectUp, UiKey::SelectUp, UiKey::SelectLeft, UiKey::SelectLeft] {
+            demo.ui.set_focus(Some(demo.ids.browse_table));
+            assert!(demo.ui.key_input(key));
+            demo.poll_selection_changes();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.table_selection_anchor(demo.ids.browse_table), Some((3, Some(3))));
+        }
+        assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((1, 3)));
+        assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((1, 3)));
+        assert_eq!(demo.ui.table_selected_row(demo.ids.browse_table), Some(1));
+        assert_eq!(demo.ui.table_selected_col(demo.ids.browse_table), Some(1));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+        demo.state.refresh_browse().unwrap();
+        assert!(demo.state.browse().sel_row_start.is_none());
+        assert!(demo.state.browse().sel_col_start.is_none());
+        demo.do_rebuild();
+        assert_eq!(demo.ui.table_selected_text(demo.ids.browse_table), None);
     }
 
     #[test]
