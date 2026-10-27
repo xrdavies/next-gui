@@ -13,6 +13,14 @@ use crate::db::{
     COLUMN_TYPES,
 };
 
+#[derive(Debug,Clone)]
+pub struct FieldCellEdit {
+    pub column: usize,
+    pub original: String,
+    pub input: Option<next_gui_ui::TextInputState>,
+    pub autocomplete: Option<next_gui_ui::AutocompleteState>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainTab {
     Structure = 0,
@@ -409,6 +417,7 @@ pub struct AppState {
     pub wizard_field_scroll: (f32, f32),
     pub wizard_field_widths: Vec<f32>,
     pub wizard_field_column: Option<usize>,
+    pub wizard_field_edit: Option<FieldCellEdit>,
     pub wizard_table_name: String,
     pub wizard_table_options: crate::table_sql::TableOptions,
     pub wizard_table_original: Option<SelectedObject>,
@@ -700,6 +709,7 @@ impl AppState {
             wizard_field_scroll: (0.0, 0.0),
             wizard_field_widths: Vec::new(),
             wizard_field_column: None,
+            wizard_field_edit: None,
             wizard_table_options: crate::table_sql::TableOptions::default(),
             wizard_table_name: "new_table".into(),
             wizard_table_original: None,
@@ -1587,6 +1597,7 @@ impl AppState {
         self.wizard_field_scroll = (0.0, 0.0);
         self.wizard_field_widths.clear();
         self.wizard_field_column = None;
+        self.wizard_field_edit = None;
         self.wizard_table_name = "new_table".into();
         self.wizard_table_original = None;
         self.wizard_table_options = crate::table_sql::TableOptions::default();
@@ -1649,6 +1660,7 @@ impl AppState {
         self.wizard_field_scroll = (0.0, 0.0);
         self.wizard_field_widths.clear();
         self.wizard_field_column = None;
+        self.wizard_field_edit = None;
         self.wizard_table_name = sel.name.clone();
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", db::quote_ident(&sel.schema)), [&sel.name], |row| row.get(0)).map_err(|error| error.to_string())?;

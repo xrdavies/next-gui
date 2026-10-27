@@ -182,6 +182,14 @@ box or press Space on the selected cell to toggle it; ordinary cells keep their
 selection behavior. Drain `take_table_check_change` and refresh copied row text
 when applying or rejecting the edit. Replacing rows clears this metadata.
 
+Editable tables opt in with `set_table_editable_columns`. Enter/F2, typing or
+clicking a selected cell queues `take_table_cell_edit`; applications snapshot the
+previous draft, build a standard TextInput/Autocomplete with `table_cell_editor`,
+then focus it. The child follows frozen/resized/scrolled geometry. Enter commits,
+Escape requests cancellation, and Tab/BackTab requests the next editable cell.
+IME composition and open suggestions keep their ordinary key handling first.
+Applications own commit/cancel values and same-document editor sessions.
+
 ## Menu and context popup navigation
 
 A focused Menu opens with Enter, Space or Down. An open Menu/ContextMenu consumes

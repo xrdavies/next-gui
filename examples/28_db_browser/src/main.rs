@@ -155,6 +155,7 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,
         KeyCode::Char(c) => UiKey::Char(c),
+        KeyCode::Function(2) => UiKey::Edit,
         KeyCode::Function(_) | KeyCode::Other(_) => return None,
         KeyCode::Tab => unreachable!(),
     })
@@ -293,6 +294,7 @@ struct BuiltUiIds {
     insert_modes: Vec<WidgetId>,
     ov_list: WidgetId,
     ov_fields_table: WidgetId,
+    ov_field_editor: WidgetId,
     ov_field_top: WidgetId,
     ov_field_bottom: WidgetId,
     ov_col_name: WidgetId,
@@ -509,6 +511,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             insert_modes: b.insert_modes.clone(),
             ov_list: b.ov_list,
             ov_fields_table: b.ov_fields_table,
+            ov_field_editor: b.ov_field_editor,
             ov_field_top: b.ov_field_top,
             ov_field_bottom: b.ov_field_bottom,
             ov_col_name: b.ov_col_name,
@@ -780,10 +783,11 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-fields" | "table-fields-references" | "table-field-checks" | "table-advanced" => {
+                "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-advanced" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE DEFAULT 'customer' CHECK(length(name)>0) COLLATE NOCASE,parent_id INTEGER REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL,amount REAL DEFAULT 0 CHECK(amount>=0),total REAL AS(amount*1.2) STORED); INSERT INTO records(name,parent_id,amount) VALUES('First customer',1,12.5),('Second customer',1,24);").unwrap();state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_col_sel=1;state.wizard_scroll=(0.0,180.0);state.wizard_field_column=Some(if tab=="table-fields-references" {9} else {0});state.wizard_field_scroll=(if tab=="table-fields-references" {10000.0} else {0.0},0.0);
-                    if tab=="table-field-checks" { state.wizard_scroll=(0.0,0.0); }
+                    if tab=="table-field-checks" || tab=="table-field-editor" {state.wizard_scroll=(0.0,0.0);}
+                    if tab=="table-field-editor" {state.wizard_field_edit=Some(state::FieldCellEdit {column:0,original:"name".into(),input:None,autocomplete:None});}
                     if tab=="table-advanced" { state.wizard_table_advanced=true; state.wizard_table_page=2; }
                     MainTab::Structure
                 }
@@ -1093,6 +1097,7 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if state.wizard_field_edit.is_some() {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);built.ui.sync(&mut built.scene);}
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
             built.ui.find_in_text_area(built.sql_area, &state.find_text);
@@ -1339,6 +1344,7 @@ impl Demo {
                 }
             }
             OverlayKind::EditTable => {
+                self.snapshot_field_cell_editor();
                 self.state.wizard_table_preview_state = self.ui.text_area_state(self.ids.ov_table_preview);
                 self.state.wizard_table_name_state = self.ui.text_input_state(self.ids.ov_name);
                 if let Some(page) = self.ui.tabs_selected(self.ids.ov_table_tabs) { self.state.wizard_table_page = page; }
@@ -1666,6 +1672,50 @@ impl Demo {
         self.ui.set_table_rows(self.ids.ov_fields_table,ui_build::table_field_rows(&self.state));
         self.ui.set_table_check_cells(self.ids.ov_fields_table,ui_build::table_field_checks(&self.state));
         if let Some((x,y)) = offset { self.ui.set_table_scroll_offset(self.ids.ov_fields_table,x,y); }
+    }
+
+    fn set_field_cell_value(&mut self,column:usize,value:&str) {
+        match column {
+            0=>{if self.ui.text_input_value(self.ids.ov_col_name)!=Some(value) {self.ui.set_text_input(self.ids.ov_col_name,value);}}
+            1=>{if self.ui.autocomplete_value(self.ids.ov_col_type)!=Some(value) {self.ui.set_autocomplete_value(self.ids.ov_col_type,value);}}
+            6=>{if self.ui.text_input_value(self.ids.ov_default)!=Some(value) {self.ui.set_text_input(self.ids.ov_default,value);}}
+            8=>{if self.ui.autocomplete_value(self.ids.ov_collation)!=Some(value) {self.ui.set_autocomplete_value(self.ids.ov_collation,value);}}
+            _=>{}
+        }
+    }
+
+    fn snapshot_field_cell_editor(&mut self) {
+        if self.ids.ov_field_editor.0==0 {return;}
+        let Some(edit)=&mut self.state.wizard_field_edit else {return;};
+        let id=self.ids.ov_field_editor;
+        edit.input=self.ui.text_input_state(id);edit.autocomplete=self.ui.autocomplete_state(id);
+        let column=edit.column;
+        let value=if column==1 || column==8 {self.ui.autocomplete_value(id)} else {self.ui.text_input_value(id)}.map(str::to_owned);
+        if let Some(value)=value {self.set_field_cell_value(column,&value);}
+        if self.ui.focused()!=Some(id) {self.state.wizard_field_edit=None;self.rebuild=true;}
+    }
+
+    fn handle_field_cell_edit(&mut self) {
+        let Some((table,event))=self.ui.take_table_cell_edit() else {return;};
+        if table!=self.ids.ov_fields_table || self.state.overlay!=Some(OverlayKind::EditTable) {return;}
+        let previous=self.state.wizard_field_edit.clone();
+        if !self.rebuild {self.snapshot_inputs();}
+        if self.rebuild {self.do_rebuild();}
+        match event {
+            next_gui_ui::TableCellEditEvent::Begin {row,column,key}=> {
+                if row!=self.state.wizard_col_sel || ![0,1,6,8].contains(&column) {return;}
+                let Some(definition)=self.state.wizard_cols.get(row) else {return;};
+                let original=match column {0=>&definition.name,1=>&definition.type_name,6=>&definition.default_value,8=>&definition.collation,_=>unreachable!()}.clone();
+                self.state.wizard_field_edit=Some(state::FieldCellEdit {column,original,input:None,autocomplete:None});
+                self.do_rebuild();let editor=self.ids.ov_field_editor;self.ui.set_focus(Some(editor));self.ui.key_input(UiKey::SelectAll);
+                if let Some(key)=key {self.ui.key_input(key);}
+                self.ui.sync(&mut self.scene);
+            }
+            next_gui_ui::TableCellEditEvent::End {cancel}=> {
+                if cancel {if let Some(edit)=previous {self.set_field_cell_value(edit.column,&edit.original);self.flush_wizard_col();self.sync_table_constraint_names();}}
+                self.state.wizard_field_edit=None;self.do_rebuild();self.ui.set_focus(Some(self.ids.ov_fields_table));self.ui.sync(&mut self.scene);
+            }
+        }
     }
 
     fn handle_field_check_change(&mut self) {
@@ -2029,6 +2079,7 @@ impl Demo {
         });
         let table_name_focused = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_name)
             && self.ui.text_input_value(self.ids.ov_name)==Some(self.state.wizard_table_name.as_str());
+        let field_editor_focused=self.state.wizard_field_edit.is_some() && self.ids.ov_field_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_field_editor);
         let fields_focused = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_fields_table);
         let reveal_field = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.table_selected_row(self.ids.ov_fields_table)!=Some(self.state.wizard_col_sel);
         let key_focused = self.state.overlay == Some(OverlayKind::EditTable) && self.ui.focused() == Some(self.ids.ov_key_columns)
@@ -2108,6 +2159,7 @@ impl Demo {
             if let Some(offset)=self.ui.table_scroll_offset(self.ids.ov_fields_table) { self.state.wizard_field_scroll=offset; }
         }
         if fields_focused { self.ui.set_focus(Some(self.ids.ov_fields_table)); self.ui.sync(&mut self.scene); }
+        if field_editor_focused && self.ids.ov_field_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_field_editor));self.ui.sync(&mut self.scene);}
         if table_tabs_focused { self.ui.set_focus(Some(self.ids.ov_table_tabs)); self.ui.sync(&mut self.scene); }
         if let Some(index) = foreign_key_focused {
             let area = [self.ids.ov_fk_columns, self.ids.ov_fk_clause][index]; self.ui.set_focus(Some(area));
@@ -4165,6 +4217,7 @@ impl Demo {
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
         self.handle_field_check_change();
+        self.handle_field_cell_edit();
         while let Some(id) = self.ui.take_button_activate() {
             self.snapshot_inputs();
             self.handle_button(id);
@@ -7532,6 +7585,55 @@ mod interaction_tests {
             assert_eq!(demo.ui.text_area_value(demo.ids.edit_value),Some("8"));
             demo.state.browse_mut().sel_col=Some(0); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
             assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(true));
+        }
+    }
+
+    #[test]
+    fn field_text_cells_edit_cancel_tab_restore_history_and_save_real_constraints() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY,name TEXT DEFAULT 'old' CHECK(length(name)>0) COLLATE NOCASE,n INTEGER); INSERT INTO records VALUES(7,'alpha',3); CREATE VIEW visible AS SELECT id,name,n FROM records;").unwrap();demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.do_rebuild();
+            let finish=|demo:&mut Demo| {demo.handle_field_check_change();demo.handle_field_cell_edit();if demo.rebuild {demo.do_rebuild();}demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}demo.ui.sync(&mut demo.scene);};
+            let begin=|demo:&mut Demo,row,column,key| {
+                demo.ui.set_table_selected_row(demo.ids.ov_fields_table,Some(row));demo.ui.set_table_selected_col(demo.ids.ov_fields_table,Some(column));demo.ui.set_focus(Some(demo.ids.ov_fields_table));demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}
+                assert!(demo.ui.key_input(key));finish(demo);assert_eq!(demo.ui.focused(),Some(demo.ids.ov_field_editor));assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,column);
+            };
+            assert_eq!(map_key(KeyCode::Function(2),Modifiers::default()),Some(UiKey::Edit));begin(&mut demo,1,0,UiKey::Edit);
+            demo.ui.paste_into_focused_text("customer_name");demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].name,"customer_name");assert!(demo.state.wizard_cols[1].check_expression.contains("customer_name"));
+            demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.ov_field_editor));assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].name,"name");assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].name,"customer_name");
+            assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert_eq!(demo.state.wizard_cols[1].name,"name");assert!(!demo.state.wizard_cols[1].check_expression.contains("customer_name"));assert!(demo.state.wizard_field_edit.is_none());assert_eq!(demo.state.overlay,Some(OverlayKind::EditTable));
+            begin(&mut demo,1,1,UiKey::Enter);demo.ui.paste_into_focused_text("VARCHAR(48)");demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].type_name,"VARCHAR(48)");assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());
+            begin(&mut demo,1,6,UiKey::Char('4'));assert_eq!(demo.ui.text_input_value(demo.ids.ov_field_editor),Some("4"));assert_eq!(demo.state.wizard_cols[1].default_value,"4");
+            assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,8);demo.ui.paste_into_focused_text("RTRIM");demo.snapshot_inputs();assert!(demo.ui.has_open_popup());
+            assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_some());assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());assert_eq!(demo.state.wizard_cols[1].collation,"RTRIM");
+            begin(&mut demo,1,8,UiKey::Edit);assert!(demo.ui.key_input(UiKey::BackTab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,6);assert_eq!(demo.ui.text_input_value(demo.ids.ov_field_editor),Some("4"));
+            assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_col_sel,2);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,0);
+            demo.ui.paste_into_focused_text("qty");demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[2].name,"qty");assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert_eq!(demo.state.wizard_cols[1].default_value,"4");
+            // A second click on the already selected Name cell starts the standard input.
+            demo.ui.set_table_selected_col(demo.ids.ov_fields_table,Some(0));demo.ui.set_table_scroll_offset(demo.ids.ov_fields_table,0.0,0.0);demo.ui.sync(&mut demo.scene);
+            let table=demo.ids.ov_fields_table;let bounds=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(table)).unwrap().bounds;let style=next_gui_ui::TableStyle::from_theme(&demo.theme);
+            let (x,y)=(bounds.x+40.0,bounds.y+style.header_height+style.row_height*2.5);assert!(demo.ui.pointer_pressed(&mut demo.scene,x,y));demo.ui.pointer_released();demo.snapshot_inputs();finish(&mut demo);assert_eq!(demo.ui.focused(),Some(demo.ids.ov_field_editor));demo.ui.paste_into_focused_text("amount");demo.snapshot_inputs();
+            assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert_eq!(demo.state.wizard_cols[2].name,"qty");
+            begin(&mut demo,1,6,UiKey::Edit);demo.ui.paste_into_focused_text("5");demo.snapshot_inputs();demo.ui.set_table_scroll_offset(demo.ids.ov_fields_table,0.0,0.0);demo.ui.sync(&mut demo.scene);
+            let table=demo.ids.ov_fields_table;let bounds=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(table)).unwrap().bounds;let widths=demo.ui.table_column_widths(table).unwrap();
+            let (x,y)=(bounds.x+style.padding+widths[..2].iter().sum::<f32>()+widths[2]*0.5,bounds.y+style.header_height+style.row_height*2.5);
+            assert!(demo.ui.pointer_pressed(&mut demo.scene,x,y));demo.ui.pointer_released();demo.snapshot_inputs();finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());assert_eq!(demo.state.wizard_cols[1].default_value,"5");assert!(demo.state.wizard_cols[2].notnull);
+            for (width,height) in [(1400,1000),(800,600)] {
+                demo.win_w=width;demo.win_h=height;demo.do_rebuild();begin(&mut demo,1,8,UiKey::Edit);demo.ui.sync(&mut demo.scene);
+                let editor=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(demo.ids.ov_field_editor)).unwrap();let grid=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(demo.ids.ov_fields_table)).unwrap();
+                let clip=editor.clip.unwrap();assert!(clip.width>20.0 && clip.height>10.0);assert!(clip.x>=grid.bounds.x && clip.x+clip.width<=grid.bounds.x+grid.bounds.width+0.001);assert!(clip.y>=grid.bounds.y+style.header_height);
+                if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_FIELD_EDITOR_QA_OUT") {
+                    demo.scene.mark_full_dirty(width as f32,height as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(width,height,clear);soft.render(&commands,&dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{width}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
+                    if let Ok(mut gpu)=GpuRenderer::try_new(width,height,clear) {gpu.render(&commands,&dirty);let a=soft.frame_pixels().unwrap().0;let b=gpu.frame_pixels().unwrap().0;write_ppm(&format!("{prefix}-{theme_name}-{width}-metal.ppm"),b,width,height).unwrap();let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}/{width}: {delta}");eprintln!("Field editor {theme_name}/{width}: Soft/Metal delta {delta}");}
+                    else {eprintln!("Field editor GPU comparison not_run: adapter unavailable");}
+                }
+                assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);
+            }
+            demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);let conn=demo.state.conn.as_ref().unwrap();
+            assert_eq!(conn.query_row("SELECT rowid+id+qty FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),17);assert_eq!(conn.query_row("SELECT qty FROM visible",[],|row|row.get::<_,i64>(0)).unwrap(),3);
+            assert_eq!(conn.query_row("SELECT count(*) FROM records WHERE name='alpha   '",[],|row|row.get::<_,i64>(0)).unwrap(),1);assert!(conn.execute("INSERT INTO records(name) VALUES('')",[]).is_err());conn.execute("INSERT INTO records(qty) VALUES(9)",[]).unwrap();assert_eq!(conn.query_row("SELECT name FROM records WHERE qty=9",[],|row|row.get::<_,String>(0)).unwrap(),"5");
+            assert_eq!(dbmod::table_column_defs_in(conn,"main","records").unwrap()[1].type_name.replace(' ',""),"VARCHAR(48)");demo.state.open_create_table_wizard();assert!(demo.state.wizard_field_edit.is_none());
         }
     }
 

@@ -33,6 +33,9 @@ use text_completion::TextAreaCompletion;
 mod tabs;
 mod autocomplete;
 pub use autocomplete::AutocompleteState;
+mod table_edit;
+pub use table_edit::TableCellEditEvent;
+use table_edit::TableCellEditor;
 mod text_input;
 pub use text_input::TextInputState;
 use text_input::InputEdit;
@@ -1804,6 +1807,8 @@ enum Kind {
         cell_bg: Vec<Vec<Option<Color>>>,
         /// Some(bool) renders an interactive checkbox in this cell.
         checks: Vec<Vec<Option<bool>>>,
+        editable_columns: Vec<usize>,
+        editor: Option<TableCellEditor>,
         /// When true, only a visible window of body rows is materialized in scene aux.
         virtualized: bool,
         style: TableStyle,
@@ -2331,6 +2336,7 @@ pub struct Ui {
     /// Last Table header column click; drained by [`Ui::take_table_header_click`].
     pending_table_header_click: Option<(WidgetId, usize)>,
     pending_table_check_change: Option<(WidgetId, usize, usize, bool)>,
+    pending_table_cell_edit: Option<(WidgetId, TableCellEditEvent)>,
     /// Queued notification toasts (global overlay).
     notifications: Vec<NotificationItem>,
     /// Next notification id.
@@ -2379,6 +2385,8 @@ pub enum UiKey {
     PageDown,
     /// Enter.
     Enter,
+    /// Edit the selected table cell (typically F2).
+    Edit,
     /// Tab (move focus forward).
     Tab,
     /// Shift+Tab (move focus backward).
@@ -2475,6 +2483,7 @@ impl Ui {
             pending_pagination_change: None,
             pending_table_header_click: None,
             pending_table_check_change: None,
+            pending_table_cell_edit: None,
             notifications: Vec::new(),
             next_notification_id: 1,
             notification_style: NotificationStyle::from_theme(&Theme::dark()),
@@ -3895,6 +3904,7 @@ impl Ui {
             | Kind::Form { children, .. }
             | Kind::Spin { children, .. }
             | Kind::Grid { children, .. } => children.as_slice(),
+            Kind::Table {editor:Some(editor),..}=>std::slice::from_ref(&editor.widget),
             _ => &[],
         }
     }
@@ -3919,6 +3929,7 @@ impl Ui {
         if Self::kind_is_focusable(&w.kind) {
             out.push(id);
         }
+        if matches!(&w.kind,Kind::Table {editor:Some(editor),rows,columns,..} if editor.row>=rows.len() || editor.column>=columns.len()) {return;}
         let kids: Vec<WidgetId> = Self::widget_children_ids(&w.kind).to_vec();
         for child in kids {
             self.collect_focusable_dfs(child, out);
@@ -4796,11 +4807,14 @@ impl Ui {
 
     /// Replace table body rows, clamping both selection endpoints.
     pub fn set_table_rows(&mut self, id: WidgetId, rows: Vec<Vec<String>>) {
+        let invalid_editor=match self.widgets.get(&id).map(|w|&w.kind) {
+            Some(Kind::Table {editor:Some(editor),..}) if editor.row>=rows.len()=>Some(editor.widget),_=>None};
         if let Some(Widget { kind: Kind::Table {
-            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, ..
+            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, editor, ..
         }, .. }) = self.widgets.get_mut(&id) {
             *slot = rows;
             checks.clear();
+            if let Some(editor)=editor {if editor.row>=slot.len() && self.focus==Some(editor.widget) {self.focus=None;}}
             if let Some(last) = slot.len().checked_sub(1) {
                 *selected_row = selected_row.map(|i| i.min(last));
                 *selected_range = selected_range.map(|(a, b)| (a.min(last), b.min(last)));
@@ -4812,6 +4826,7 @@ impl Ui {
             }
             *scroll_y = 0.0;
         }
+        if invalid_editor.is_some() && self.open_popup==invalid_editor {self.close_popup_internal();}
     }
 
     /// Pin the first `n` columns (horizontal freeze).
@@ -4933,6 +4948,7 @@ impl Ui {
                 return self.key_menu_popup(id, key);
             }
         }
+        if let Some(handled)=self.key_table_cell_editor(key) {return handled;}
         // P6d: Tab / BackTab move focus at the top (before widget dispatch / focus
         // requirement), so text fields do not swallow Tab. Modal/Drawer absorb.
         if matches!(key, UiKey::Tab | UiKey::BackTab) {
@@ -5883,6 +5899,7 @@ impl Ui {
         } else {
             -1
         };
+        let was_selected=matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Table {selected_row,selected_col,..}) if *selected_row==Some(idx as usize) && *selected_col==column_hit);
         let check_hit = column_hit.filter(|&col| table_check_rect(cells[col].0,
             body_top + idx as f32 * style.row_height - sy, columns[col].width,
             style.row_height, self.checkbox_style().box_size).contains(x, y));
@@ -5910,6 +5927,9 @@ impl Ui {
                     return true;
                 }
             }
+        }
+        if was_selected && idx>=0 {
+            if let Some(column)=column_hit {if self.begin_table_cell_edit(id,idx as usize,column,None) {self.drag=None;return true;}}
         }
         if style.drag_select && idx >= 0 && (idx as usize) < n_rows {
             self.drag = Some(DragState::TableSelection { table: id, bounds });
@@ -6161,13 +6181,21 @@ impl Ui {
 
     fn key_table(&mut self, id: WidgetId, key: UiKey) -> bool {
         let Some(Kind::Table {
-            rows, columns, selected_row, selected_col, selected_range, selected_col_range, ..
+            rows, selected_row, selected_col, ..
         }) = self.widgets.get(&id).map(|w| &w.kind) else { return false; };
         if rows.is_empty() { return false; }
+        let selected_cell=selected_row.zip(*selected_col);
+        if matches!(key,UiKey::Enter|UiKey::Edit|UiKey::Char(_)|UiKey::Backspace|UiKey::Delete|UiKey::Space) {
+            if let Some((row,column))=selected_cell {
+                let initial=match key {UiKey::Enter|UiKey::Edit=>None,UiKey::Space=>Some(UiKey::Char(' ')),_=>Some(key)};
+                if self.begin_table_cell_edit(id,row,column,initial) {return true;}
+            }
+        }
         if key == UiKey::Space {
-            let cell = selected_row.zip(*selected_col);
+            let cell = selected_cell;
             return cell.is_some_and(|(row, col)| self.toggle_table_check(id, row, col));
         }
+        let Some(Kind::Table {rows,columns,selected_row,selected_col,selected_range,selected_col_range,..})=self.widgets.get(&id).map(|w|&w.kind) else {return false;};
         let (mut row, mut col) = (selected_row.unwrap_or(0), *selected_col);
         let extend = matches!(key, UiKey::SelectUp | UiKey::SelectDown | UiKey::SelectLeft | UiKey::SelectRight | UiKey::SelectPageUp | UiKey::SelectPageDown);
         let page = self.table_visible_rows(id).unwrap_or(0).saturating_sub(1).max(1);
@@ -9814,6 +9842,7 @@ impl Ui {
                 node,
                 ..
             }) => (node.unwrap_or(parent), children.clone()),
+            Some(Widget {kind:Kind::Table {editor:Some(editor),..},node,..})=>(node.unwrap_or(parent),vec![editor.widget]),
             _ => return,
         };
         for child in children {
@@ -10336,6 +10365,7 @@ impl Ui {
         if let Some(w) = self.widgets.get(&child_id) {
             if let Some(node) = w.node {
                 scene.set_bounds(node, rect);
+                if matches!(w.kind,Kind::TextInput {..}) {scene.set_clip(node,Some(rect));}
                 let visible = !matches!(w.kind, Kind::Spacer { .. });
                 scene.set_visible(node, visible);
             }
@@ -10503,6 +10533,7 @@ impl Ui {
                     | Kind::Form { children, .. }
                     | Kind::Grid { children, .. }
                     | Kind::Spin { children, .. } => children.clone(),
+                    Kind::Table {editor:Some(editor),..}=>vec![editor.widget],
                     _ => Vec::new(),
                 };
                 (w.node, w.chrome_node, w.label_node, w.aux.clone(), children)
@@ -11581,13 +11612,14 @@ impl Ui {
                 } else {
                     style.border
                 };
-                scene.set_fill(node, style.bg);
+                let composing = focused && !preedit.is_empty();
+                let selected = focused && select_all && !value.is_empty() && !composing;
+                scene.set_fill(node,if selected {style.focus_border} else {style.bg});
                 scene.set_mask(node, None);
                 self.apply_corner_radius(scene, node, false);
                 let _ = border;
-                let before: String = value.chars().take(caret).collect();
-                let after: String = value.chars().skip(caret).collect();
-                let composing = focused && !preedit.is_empty();
+                let before: String = if composing && select_all {String::new()} else {value.chars().take(caret).collect()};
+                let after: String = if composing && select_all {String::new()} else {value.chars().skip(caret).collect()};
                 let (display, fg) = if !value.is_empty() || composing {
                     let mut s = String::with_capacity(value.len() + preedit.len());
                     s.push_str(&before);
@@ -11600,7 +11632,28 @@ impl Ui {
                     (placeholder.clone(), style.placeholder_fg)
                 };
                 let (_, mask) = self.font.rasterize_text(&display, style.size, None);
-                let lx = bounds.x + style.padding_x;
+                let caret_chars = if composing {
+                    let pre_chars = preedit.chars().count();
+                    let at = match preedit_cursor {
+                        Some((b, _)) => {
+                            // byte index → char index inside preedit
+                            preedit
+                                .get(..b.min(preedit.len()))
+                                .map(|s| s.chars().count())
+                                .unwrap_or(pre_chars)
+                        }
+                        None => pre_chars,
+                    };
+                    before.chars().count() + at
+                } else {
+                    caret
+                };
+                let prefix: String = display.chars().take(caret_chars).collect();
+                let (cw, _) = self.font.measure_line(&prefix, style.size);
+
+                let viewport=(bounds.width-2.0*style.padding_x-2.0).max(0.0);
+                let scroll=if focused {(cw-viewport).max(0.0)} else {0.0};
+                let lx = bounds.x + style.padding_x-scroll;
                 let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
                 if let Some(lid) = label_node {
                     scene.set_bounds(
@@ -11608,7 +11661,7 @@ impl Ui {
                         Rect::new(lx, ly, mask.width as f32, mask.height as f32),
                     );
                     scene.set_fill(lid, fg);
-                    if select_all && !value.is_empty() && !composing {
+                    if selected {
                         scene.set_fill(lid, Color::rgb(0xff, 0xff, 0xff));
                     }
                     scene.set_mask(
@@ -11634,25 +11687,7 @@ impl Ui {
                 }
                 if let Some(cid) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if focused {
-                        let caret_chars = if composing {
-                            let pre_chars = preedit.chars().count();
-                            let at = match preedit_cursor {
-                                Some((b, _)) => {
-                                    // byte index → char index inside preedit
-                                    preedit
-                                        .get(..b.min(preedit.len()))
-                                        .map(|s| s.chars().count())
-                                        .unwrap_or(pre_chars)
-                                }
-                                None => pre_chars,
-                            };
-                            before.chars().count() + at
-                        } else {
-                            caret
-                        };
-                        let prefix: String = display.chars().take(caret_chars).collect();
-                        let (cw, _) = self.font.measure_line(&prefix, style.size);
-                        let cx = bounds.x + style.padding_x + cw;
+                        let cx = lx + cw;
                         let cy = bounds.y + 4.0;
                         let ch = (bounds.height - 8.0).max(8.0);
                         // Hide caret when IME says so (cursor = None) during preedit.
@@ -12147,6 +12182,7 @@ impl Ui {
                     checks,
                     virtualized,
                     style,
+                    ..
                 },
             node,
             chrome_node,
@@ -12382,6 +12418,7 @@ impl Ui {
                 scene.set_visible(n, false);
             }
         }
+        self.paint_table_editor(scene,id);
     }
 
     fn paint_panel_title(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -18193,6 +18230,8 @@ impl FlexBuilder<'_> {
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
                     checks: Vec::new(),
+                    editable_columns: Vec::new(),
+                    editor: None,
                     virtualized: false,
                     style,
                 },
@@ -18853,6 +18892,8 @@ impl FlexBuilder<'_> {
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
                     checks: Vec::new(),
+                    editable_columns: Vec::new(),
+                    editor: None,
                     virtualized: true,
                     style,
                 },

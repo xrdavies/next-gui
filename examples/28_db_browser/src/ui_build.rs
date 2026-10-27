@@ -173,6 +173,7 @@ pub struct BuiltUi {
     pub insert_modes: Vec<WidgetId>,
     pub ov_list: WidgetId,
     pub ov_fields_table: WidgetId,
+    pub ov_field_editor: WidgetId,
     pub ov_field_top: WidgetId,
     pub ov_field_bottom: WidgetId,
     pub ov_col_name: WidgetId,
@@ -503,6 +504,7 @@ pub fn build_ui(
     let mut insert_modes = Vec::new();
     let mut ov_list = z;
     let mut ov_fields_table = z;
+    let mut ov_field_editor = z;
     let mut ov_field_top = z;
     let mut ov_field_bottom = z;
     let mut ov_col_name = z;
@@ -967,10 +969,22 @@ pub fn build_ui(
                                 let columns = [("Name",180.0),("Type",160.0),("NN",44.0),("PK",44.0),("AI",44.0),("U",44.0),
                                     ("Default",140.0),("Check",240.0),("Collation",140.0),("Foreign Key",280.0)].into_iter()
                                     .map(|(title,width)|TableColumn::new(title,width)).collect();
-                                // shortcut: text cells use selected-column controls; add inline text editors for DB4S parity.
+                                // shortcut: SQL cells use selected-column controls; add inline SQL editors for DB4S parity.
                                 ov_fields_table = c.table(columns,table_field_rows(state),fields_style);
                                 let sel = state.wizard_col_sel.min(state.wizard_cols.len().saturating_sub(1));
                                 let coldef = state.wizard_cols.get(sel);
+                                if let Some(edit)=&state.wizard_field_edit {
+                                    if let Some(column)=coldef {
+                                        let value=match edit.column {0=>column.name.as_str(),1=>column.type_name.as_str(),6=>column.default_value.as_str(),8=>column.collation.as_str(),_=>""};
+                                        ov_field_editor=c.table_cell_editor(ov_fields_table,sel,edit.column,|cell| {
+                                            if edit.column==1 || edit.column==8 {
+                                                let items=if edit.column==1 {state.column_type_names()} else {state.column_collation_names()};
+                                                cell.autocomplete_placeholder(items,value,"",next_gui_ui::AutocompleteStyle::from_theme(&theme))
+                                            } else {cell.text_input_styled(value,"",name_s)}
+                                        }).unwrap_or(z);
+                                    }
+                                }
+
                                 c.text(format!("Selected column #{}", sel + 1));
                                 c.row(row, |r| {
                                     r.text("Name");
@@ -2131,7 +2145,13 @@ pub fn build_ui(
         ui.set_table_selected_col(ov_fields_table,state.wizard_field_column);
         ui.set_table_frozen_cols(ov_fields_table,1);
         ui.set_table_check_cells(ov_fields_table,table_field_checks(state));
+        ui.set_table_editable_columns(ov_fields_table,vec![0,1,6,8]);
         for (column,width) in state.wizard_field_widths.iter().enumerate() { ui.set_table_column_width(ov_fields_table,column,*width); }
+        if let Some(edit)=&state.wizard_field_edit {
+            if let Some(session)=&edit.input {ui.restore_text_input_state(ov_field_editor,session);}
+            if let Some(session)=&edit.autocomplete {ui.set_autocomplete_state(ov_field_editor,session);}
+            ui.set_accessible_name(ov_field_editor,match edit.column {0=>"Column name cell",1=>"Column type cell",6=>"Column default cell",8=>"Column collation cell",_=>"Column cell"});
+        }
         ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key. Click a checkbox or press Space to toggle.");
         ui.set_accessible_name(ov_field_top,"Move selected column to top"); ui.set_accessible_name(ov_field_bottom,"Move selected column to bottom");
         for button in [ov_field_top,ov_btn_up] { ui.set_button_enabled(button,state.wizard_col_sel>0 && !state.wizard_cols.is_empty()); }
@@ -2513,6 +2533,7 @@ pub fn build_ui(
         insert_modes,
         ov_list,
         ov_fields_table,
+        ov_field_editor,
         ov_field_top,
         ov_field_bottom,
         ov_col_name,

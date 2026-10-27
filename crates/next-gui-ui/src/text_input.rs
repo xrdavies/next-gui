@@ -201,6 +201,24 @@ mod tests {
     }
 
     #[test]
+    fn input_selection_contrasts_in_both_themes_and_long_carets_and_ime_stay_visible() {
+        for theme in [crate::Theme::dark(),crate::Theme::light()] {
+            let mut ui=Ui::new();ui.set_theme(theme);let mut scene=Scene::new();let mut id=WidgetId(0);
+            let mut style=TextInputStyle::from_theme(&theme);style.width=80.0;
+            let original="very_long_列名称_for_cell_editing";
+            ui.column(ColumnStyle::default(),|c|{id=c.text_input_styled(original,"",style);});ui.set_focus(Some(id));ui.key_input(UiKey::SelectAll);ui.sync(&mut scene);
+            let w=&ui.widgets[&id];let (host,label,caret)=(w.node.unwrap(),w.label_node.unwrap(),w.chrome_node.unwrap());let bounds=scene.get(host).unwrap().bounds;
+            assert_eq!(scene.get(host).unwrap().fill,style.focus_border);assert_eq!(scene.get(label).unwrap().fill,crate::Color::rgb(255,255,255));assert_eq!(scene.get(host).unwrap().clip,Some(bounds));
+            ui.set_focus(None);ui.sync(&mut scene);assert_eq!(scene.get(host).unwrap().fill,style.bg);assert_eq!(scene.get(label).unwrap().fill,style.fg);
+            ui.set_focus(Some(id));ui.key_input(UiKey::Right);ui.key_input(UiKey::Char('x'));ui.sync(&mut scene);let caret_bounds=scene.get(caret).unwrap().bounds;
+            assert!(caret_bounds.x>=bounds.x && caret_bounds.x+caret_bounds.width<=bounds.x+bounds.width);assert!(scene.get(label).unwrap().bounds.x<bounds.x);
+            ui.key_input(UiKey::SelectAll);ui.ime_preedit("候選",Some((3,3)));ui.sync(&mut scene);assert_eq!(scene.get(host).unwrap().fill,style.bg);
+            let (_,mask)=ui.font.rasterize_text("候選",style.size,None);assert_eq!(scene.get(label).unwrap().bounds.width,mask.width as f32);assert_eq!(ui.text_input_value(id),Some(format!("{original}x").as_str()));
+            ui.key_input(UiKey::Escape);assert!(ui.ime_commit("中文"));assert_eq!(ui.text_input_value(id),Some("中文"));ui.key_input(UiKey::Undo);assert_eq!(ui.text_input_value(id),Some(format!("{original}x").as_str()));
+        }
+    }
+
+    #[test]
     fn input_history_covers_native_edit_routes_and_invalidates_redo_only_for_changes() {
         for autocomplete in [false, true] {
             let (mut ui, id) = field(autocomplete, "中文");
