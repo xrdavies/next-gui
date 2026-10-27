@@ -59,9 +59,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, basic PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
+| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
-| Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. Primary-key membership can also be added/changed/removed; AI/options/full constraint editing and moving tables remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
+| Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. Primary-key membership can also be added/changed/removed; AI can be enabled/disabled with type/key synchronization and sequence-safe rebuild; options/full constraint editing and moving tables remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
 
@@ -569,3 +569,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Primary key editing progress (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-67aa8705b3dd.md): existing PK controls now save absent/composite/single/no-key transitions through the safe rebuild. Key names, retained ordering/collation/conflict policy, requested implicit NN, hidden rowids and active AI sequences are preserved; NULL/duplicate/ambiguous FK identities roll back. 440 tests/strict checks, four Soft/Metal pairs and two native static forms inspected. PK-column deletion currently requires saving key removal first. AI/options/advanced constraints/move and exact original/native acceptance remain.
+
+### Autoincrement editing progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-1999dc2e641c.md): AI metadata now loads from inline/table-level keys. Its accessible control synchronizes INTEGER/PK/competing keys, saves through CREATE/rebuild and reopens accurately. Existing integer IDs survive; explicitly converting NULL IDs allocates after existing values. Active sequence history is retained, incompatible/exhausted IDs roll back, and disabling AI keeps PK. 443 tests/strict checks, four Soft/Metal pairs and two native static windows inspected. Exact original eager validation/cancellation, advanced constraints/options/move/layout and native input acceptance remain.
