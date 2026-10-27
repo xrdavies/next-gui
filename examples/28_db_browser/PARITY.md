@@ -120,7 +120,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Record / form view | partial | Cross-page navigation preserves the active column, reports query errors and guards drafts; empty results remain unselected. Filtered global record number is shown. Advanced inline editing and full DB4S form controls remain. |
+| Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Original visible-row Previous/Next, virtual scrolling and full form controls remain. |
 
 ## Edit Pragmas tab
 
@@ -356,3 +356,13 @@ child hits through full/partial repaint. 278 workspace tests pass; fresh e28
 Soft/Metal and every Office example window were visually inspected. This render
 check does not establish native input or full original interface parity. See
 [R-20261027-f434a694b24d](../../docs/reviews/R-20261027-f434a694b24d.md).
+
+### Record navigation checkpoint (2026-10-27)
+
+`ebeb580e892d` adds First/Last/Go to record and exposes shared Table selection
+reveal. Bounds, filtered ordering, failed-query restoration, drafts, empty/shrinking
+results and narrow-window hit targets pass regression tests. Workspace: 284 tests;
+clippy/build/platform features pass. Soft wide/narrow and native Metal captures
+were inspected. See [review and limitations](../../docs/reviews/R-20261027-ebeb580e892d.md).
+Original visible-row page stepping, whole-result scrolling and native input
+acceptance remain open; this checkpoint does not complete full reproduction.

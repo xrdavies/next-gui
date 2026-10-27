@@ -55,6 +55,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `de2e59c..ebeb580e892d` | Codex | issues — 284 tests/clippy/build/features pass; guarded first/last/goto and shared reveal, Soft wide/narrow and Metal inspected; full parity/native input remain | [Report](R-20261027-ebeb580e892d.md) |
 | 2026-10-27 | `3f05329..f434a694b24d` | Codex | issues — 278 tests/clippy/build/features pass; transparent wrapper black corners fixed, Soft/Metal and all Office renders inspected; full parity/native input remain | [Report](R-20261027-f434a694b24d.md) |
 | 2026-10-27 | `9031bee..a37bee216b33` | Codex | issues — 277 tests/clippy/build/features pass; ordered multi-sort, sorted exports, XML and pointer modifiers; full parity/native input remain | [Report](R-20261027-a37bee216b33.md) |
 | 2026-10-27 | `03b3ef74c0ec..a99567b81242` | Codex | issues — 271 tests/clippy/build/features pass; disabled buttons, browse boundaries and native Office render skim; full parity/native input remain | [Report](R-20261027-a99567b81242.md) |
