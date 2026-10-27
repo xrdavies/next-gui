@@ -59,7 +59,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
+| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default/Collation, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
 | Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. Primary-key membership can also be added/changed/removed; AI can be enabled/disabled with type/key synchronization and sequence-safe rebuild; options/full constraint editing and moving tables remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
@@ -573,3 +573,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Autoincrement editing progress (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-1999dc2e641c.md): AI metadata now loads from inline/table-level keys. Its accessible control synchronizes INTEGER/PK/competing keys, saves through CREATE/rebuild and reopens accurately. Existing integer IDs survive; explicitly converting NULL IDs allocates after existing values. Active sequence history is retained, incompatible/exhausted IDs roll back, and disabling AI keeps PK. 443 tests/strict checks, four Soft/Metal pairs and two native static windows inspected. Exact original eager validation/cancellation, advanced constraints/options/move/layout and native input acceptance remain.
+
+### Declared collation editing progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-3a5677711d33.md): the editable Collation control loads actual declared metadata, offers registered names, preserves IME/focus across rebuilds and clears to default BINARY. CREATE/rebuild use quoted names and preserve effective constraint names; actual NOCASE/RTRIM/BINARY comparisons, uniqueness/FK conflict rollback and unknown-name drafts pass. 446 tests/strict checks, four Soft/Metal pairs and two native static forms inspected. CHECK/FK/generated/options/full constraints/move, original grid/tab presentation and native input acceptance remain.
