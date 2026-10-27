@@ -637,3 +637,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Direct Fields checkboxes (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-672e462f70c8.md): NN/PK/AI/Unique can be toggled in the Fields grid by pointer or Space. Shared Table supports opt-in checks with frozen/scrolled geometry and visible unchecked outlines. Cross-row draft capture, invalid generated PK rollback, AI/type/membership coupling, invalid WITHOUT ROWID Save and qualified data/constraints are verified.508 tests/strict checks, two Soft/Metal pairs (delta1), both native themes and14 Office static captures inspected. Native input unavailable (black desktop/inactive target); inline text editors, original selectors/grids/full history and overall product/runtime parity remain unfinished.
+
+### Inline Fields text editors (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-0ff71c70e6fd.md): Name/Type/Default/Collation now edit in place with F2, typing, selected click, Tab/BackTab, Enter/Esc and standard history/IME/suggestions. Shared input selection contrast, long caret and frozen-filter clipping pass.512 tests/strict checks, four Soft/Metal pairs (delta1), both native themes/14 Office static captures inspected. Desktop locked; actual native input, inline SQL cells, original constraint grids/selectors, resizable preview, full cross-field history and broader product/runtime parity remain unfinished.
