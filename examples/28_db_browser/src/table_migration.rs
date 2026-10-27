@@ -401,6 +401,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn named_composite_foreign_keys_edit_clear_and_create_with_actions_and_atomic_validation() {
+        for schema in ["main","temp","aux.\"db"] {
+            let conn=Connection::open_in_memory().unwrap(); let child=db::qualified_name(schema,"child");
+            let parent=db::qualified_name(schema,"parent"); let audit=db::qualified_name(schema,"audit");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {parent}(a TEXT,b INTEGER,PRIMARY KEY(a,b)); INSERT INTO {parent} VALUES('first',1),('second',2);
+                CREATE TABLE {}(id INTEGER PRIMARY KEY); INSERT INTO {} VALUES(1);
+                CREATE TABLE {child}(id INTEGER PRIMARY KEY AUTOINCREMENT,x TEXT,y INTEGER CHECK(y>0),p INTEGER REFERENCES single(id),previous INTEGER,g INTEGER AS(y*2) STORED,
+                    CONSTRAINT \"pair.\"\"名\" FOREIGN KEY(x,y) REFERENCES parent(a,b),CONSTRAINT own FOREIGN KEY(previous) REFERENCES child(id) DEFERRABLE INITIALLY DEFERRED,UNIQUE(x,y));
+                CREATE TABLE {audit}(v); CREATE INDEX {} ON child(g);
+                CREATE VIEW {} AS SELECT id,x,y,g FROM child;
+                CREATE TRIGGER {} AFTER UPDATE OF x ON {child} BEGIN INSERT INTO audit VALUES(new.x); END;
+                INSERT INTO {child}(id,x,y,p,previous) VALUES(7,'first',1,1,NULL),(11,'second',2,1,7);
+                ",db::qualified_name(schema,"single"),db::qualified_name(schema,"single"),db::qualified_name(schema,"ix"),db::qualified_name(schema,"viewed"),db::qualified_name(schema,"tr"))).unwrap();
+            conn.execute_batch(&format!("INSERT INTO {parent} VALUES('reserve',3); INSERT INTO {child}(id,x,y,p) VALUES(99,'reserve',3,1); DELETE FROM {child} WHERE id=99; BEGIN; INSERT INTO {audit} VALUES('pending');")).unwrap();
+            let sql=|conn:&Connection| conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='child'",db::quote_ident(schema)),[],|row|row.get::<_,String>(0)).unwrap();
+            let original=table_sql::table_foreign_keys(&sql(&conn)).unwrap(); assert_eq!(original.len(),2); assert_eq!(original[0].name.as_deref(),Some("pair.\"名"));
+            let draft=db::table_column_defs_in(&conn,schema,"child").unwrap(); let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+            let mut keys=original.clone(); keys[0].name=Some("pair.新".into()); keys[0].clause="REFERENCES parent(a,b) ON UPDATE CASCADE ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED -- comment".into();
+            let mut options=db::table_options_in(&conn,schema,"child").unwrap(); options.foreign_keys=Some(keys.clone());
+            db::recreate_table_columns_in(&conn,schema,"child","child",&draft,&sources,Some(options.clone())).unwrap();
+            let saved=table_sql::table_foreign_keys(&sql(&conn)).unwrap(); assert_eq!(saved[0].name.as_deref(),Some("pair.新")); assert!(saved[0].clause.contains("INITIALLY DEFERRED")); assert_eq!(saved[1],original[1]);
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {child} WHERE (rowid=7 AND g=2) OR (rowid=11 AND g=4)")),2); assert_eq!(sequence(&conn,schema,"child").unwrap(),Some(99));
+            conn.execute(&format!("UPDATE {parent} SET a='changed' WHERE a='first'"),[]).unwrap();
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {child} WHERE id=7 AND x='changed'")),1); assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),2);
+            conn.execute_batch(&format!("SAVEPOINT deferred_case; INSERT INTO {child}(id,x,y,p) VALUES(42,'later',4,1); INSERT INTO {parent} VALUES('later',4);")).unwrap();
+            assert!(foreign_key_violations(&conn,schema).unwrap().is_empty()); conn.execute_batch("ROLLBACK TO deferred_case; RELEASE deferred_case").unwrap();
+            keys[0].clause="REFERENCES missing(a,b)".into(); options.foreign_keys=Some(keys);
+            assert!(db::recreate_table_columns_in(&conn,schema,"child","child",&draft,&sources,Some(options.clone())).is_err());
+            assert_eq!(table_sql::table_foreign_keys(&sql(&conn)).unwrap(),saved); assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),2);
+            conn.execute(&format!("DELETE FROM {parent} WHERE a='changed'"),[]).unwrap(); assert_eq!(count(&conn,&format!("SELECT count(*) FROM {child} WHERE id=7 AND x IS NULL AND y IS NULL AND g IS NULL")),1);
+            options.foreign_keys=Some(Vec::new()); db::recreate_table_columns_in(&conn,schema,"child","child",&draft,&sources,Some(options)).unwrap();
+            assert!(table_sql::table_foreign_keys(&sql(&conn)).unwrap().is_empty());
+            conn.execute(&format!("UPDATE {child} SET x='unreferenced',y=20 WHERE id=7"),[]).unwrap();
+            assert!(conn.execute(&format!("UPDATE {child} SET p=999 WHERE id=7"),[]).is_err()); assert!(conn.execute(&format!("UPDATE {child} SET y=0 WHERE id=7"),[]).is_err());
+            assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap()); assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap(); assert_eq!(table_sql::table_foreign_keys(&sql(&conn)).unwrap(),original); assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),0);
+            let created=db::qualified_name(schema,"created");
+            let ddl=table_sql::apply_table_options(&db::create_table_ddl_in(schema,"created",&[ColDef::new("x","TEXT"),ColDef::new("y","INTEGER")]),table_sql::TableOptions { foreign_keys:Some(vec![original[0].clone()]),..Default::default() }).unwrap();
+            db::execute_single_statement(&conn,&ddl).unwrap(); conn.execute(&format!("INSERT INTO {created} VALUES('first',1)"),[]).unwrap();
+            assert!(conn.execute(&format!("INSERT INTO {created} VALUES('missing',9)"),[]).is_err());
+        }
+    }
+
+    #[test]
+    fn composite_foreign_key_fields_reject_invalid_lists_clauses_and_sql_tails_without_mutation() {
+        let conn=Connection::open_in_memory().unwrap(); conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE t(v INTEGER,FOREIGN KEY(v) REFERENCES parent(id)); INSERT INTO t VALUES(1); BEGIN; INSERT INTO t VALUES(1);").unwrap();
+        let draft=db::table_column_defs_in(&conn,"main","t").unwrap();
+        for (columns,clause) in [("","REFERENCES parent(id)"),("v", ""),("v DESC","REFERENCES parent(id)"),("v COLLATE NOCASE","REFERENCES parent(id)"),("v","REFERENCES parent(id,id)"),("v","REFERENCES missing(id)"),("missing","REFERENCES parent(id)"),("v) REFERENCES parent(id),FOREIGN KEY(v","REFERENCES parent(id)"),("v","REFERENCES parent(id),CHECK(1)"),("v","REFERENCES parent(id)); PRAGMA foreign_keys=OFF; --"),("?1","REFERENCES parent(id)")] {
+            let options=table_sql::TableOptions { foreign_keys:Some(vec![table_sql::NamedForeignKey { name:Some("safe.\"名".into()),columns:columns.into(),clause:clause.into() }]),..Default::default() };
+            assert!(db::recreate_table_columns_in(&conn,"main","t","t",&draft,&[Some("v".into())],Some(options)).is_err(),"{columns}/{clause}");
+            assert_eq!(count(&conn,"SELECT count(*) FROM t WHERE v=1"),2); assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap()); assert!(!conn.is_autocommit());
+            let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap(); assert_eq!(table_sql::table_foreign_keys(&sql).unwrap()[0].clause,"REFERENCES parent (id)");
+        }
+    }
+
+    #[test]
     fn qualified_local_checks_survive_temporary_rebuild_and_final_table_renames() {
         for schema in ["main","temp","aux.\"db"] {
             let conn=Connection::open_in_memory().unwrap();
@@ -695,6 +752,7 @@ mod tests {
                 without_rowid: false,
                 primary_key_conflict: None,
             checks: None,
+            foreign_keys: None,
             };
             db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options.clone()))
                 .unwrap();
@@ -815,12 +873,14 @@ mod tests {
             without_rowid: false,
             primary_key_conflict: None,
             checks: None,
+            foreign_keys: None,
         };
         let without_rowid = table_sql::TableOptions {
             strict: false,
             without_rowid: true,
             primary_key_conflict: None,
             checks: None,
+            foreign_keys: None,
         };
         for (name, options) in [
             ("t", strict.clone()),

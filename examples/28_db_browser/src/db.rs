@@ -1471,6 +1471,9 @@ pub fn recreate_table_columns_in(
     let mut options = options;
     let mut draft = cols.to_vec();
     if old_name != new_name {
+        if let Some(keys) = options.as_mut().and_then(|options| options.foreign_keys.as_mut()) {
+            *keys = crate::table_sql::rename_foreign_keys(keys, new_name, old_name, &[])?;
+        }
         if let Some(checks) = options.as_mut().and_then(|options| options.checks.as_mut()) {
             *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
         }

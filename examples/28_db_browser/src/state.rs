@@ -415,8 +415,13 @@ pub struct AppState {
     pub wizard_table_preview_state: Option<next_gui_ui::TextAreaState>,
     pub wizard_table_page: usize,
     pub wizard_checks: Vec<crate::table_sql::NamedCheck>,
-    pub wizard_check_columns: Vec<String>,
-    pub wizard_check_table: String,
+    pub wizard_foreign_keys: Vec<crate::table_sql::NamedForeignKey>,
+    pub wizard_foreign_key_sel: usize,
+    pub wizard_foreign_key_states: Vec<[Option<next_gui_ui::TextAreaState>; 2]>,
+    pub wizard_foreign_key_scroll: (f32, f32),
+    pub wizard_foreign_key_list_scroll: f32,
+    pub wizard_constraint_columns: Vec<String>,
+    pub wizard_constraint_table: String,
     pub wizard_check_sel: usize,
     pub wizard_check_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub wizard_check_scroll: (f32, f32),
@@ -704,8 +709,13 @@ impl AppState {
             wizard_table_preview_state: None,
             wizard_table_page: 0,
             wizard_checks: Vec::new(),
-            wizard_check_columns: Vec::new(),
-            wizard_check_table: String::new(),
+            wizard_foreign_keys: Vec::new(),
+            wizard_foreign_key_sel: 0,
+            wizard_foreign_key_states: Vec::new(),
+            wizard_foreign_key_scroll: (0.0, 0.0),
+            wizard_foreign_key_list_scroll: 0.0,
+            wizard_constraint_columns: Vec::new(),
+            wizard_constraint_table: String::new(),
             wizard_check_sel: 0,
             wizard_check_states: Vec::new(),
             wizard_check_scroll: (0.0, 0.0),
@@ -1576,8 +1586,13 @@ impl AppState {
         self.wizard_table_preview_state = None;
         self.wizard_table_page = 0;
         self.wizard_checks.clear();
-        self.wizard_check_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
-        self.wizard_check_table = self.wizard_table_name.clone();
+        self.wizard_foreign_keys.clear();
+        self.wizard_foreign_key_sel = 0;
+        self.wizard_foreign_key_states.clear();
+        self.wizard_foreign_key_scroll = (0.0, 0.0);
+        self.wizard_foreign_key_list_scroll = 0.0;
+        self.wizard_constraint_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
+        self.wizard_constraint_table = self.wizard_table_name.clone();
         self.wizard_check_sel = 0;
         self.wizard_check_states.clear();
         self.wizard_check_scroll = (0.0, 0.0);
@@ -1605,8 +1620,13 @@ impl AppState {
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", db::quote_ident(&sel.schema)), [&sel.name], |row| row.get(0)).map_err(|error| error.to_string())?;
         self.wizard_checks = crate::table_sql::table_checks(&sql)?;
-        self.wizard_check_columns = cols.iter().map(|column| column.name.clone()).collect();
-        self.wizard_check_table = sel.name.clone();
+        self.wizard_foreign_keys = crate::table_sql::table_foreign_keys(&sql)?;
+        self.wizard_foreign_key_sel = 0;
+        self.wizard_foreign_key_states = vec![[None, None]; self.wizard_foreign_keys.len()];
+        self.wizard_foreign_key_scroll = (0.0, 0.0);
+        self.wizard_foreign_key_list_scroll = 0.0;
+        self.wizard_constraint_columns = cols.iter().map(|column| column.name.clone()).collect();
+        self.wizard_constraint_table = sel.name.clone();
         self.wizard_check_sel = 0;
         self.wizard_check_states = vec![None; self.wizard_checks.len()];
         self.wizard_check_scroll = (0.0, 0.0);
@@ -1698,36 +1718,57 @@ impl AppState {
             !column.name.trim().is_empty() && !self.wizard_cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&column.name)))
     }
 
+    fn wizard_constraint_renames(&self) -> Result<Vec<(&str, &str)>, String> {
+        if self.wizard_constraint_columns.len() != self.wizard_cols.len() { return Err("Constraint column identities do not match the table draft".into()); }
+        Ok(self.wizard_constraint_columns.iter().zip(&self.wizard_cols)
+            .filter(|(old, column)| **old != column.name).map(|(old, column)| (old.as_str(), column.name.as_str())).collect())
+    }
+
     fn renamed_wizard_checks(&self, checks: &[crate::table_sql::NamedCheck]) -> Result<Vec<crate::table_sql::NamedCheck>, String> {
         if checks.is_empty() { return Ok(Vec::new()); }
-        if self.wizard_check_columns.len() != self.wizard_cols.len() { return Err("CHECK column identities do not match the table draft".into()); }
-        let renames: Vec<_> = self.wizard_check_columns.iter().zip(&self.wizard_cols)
-            .filter(|(old, column)| **old != column.name).map(|(old, column)| (old.as_str(), column.name.as_str())).collect();
-        if renames.is_empty() && self.wizard_check_table == self.wizard_table_name.trim() { return Ok(checks.to_vec()); }
-        crate::table_sql::rename_checks(checks, &self.wizard_check_table, self.wizard_table_name.trim(), &renames)
+        let renames = self.wizard_constraint_renames()?;
+        if renames.is_empty() && self.wizard_constraint_table == self.wizard_table_name.trim() { return Ok(checks.to_vec()); }
+        crate::table_sql::rename_checks(checks, &self.wizard_constraint_table, self.wizard_table_name.trim(), &renames)
+    }
+
+    fn renamed_wizard_foreign_keys(&self, keys: &[crate::table_sql::NamedForeignKey]) -> Result<Vec<crate::table_sql::NamedForeignKey>, String> {
+        if keys.is_empty() { return Ok(Vec::new()); }
+        let renames = self.wizard_constraint_renames()?;
+        if renames.is_empty() && self.wizard_constraint_table == self.wizard_table_name.trim() { return Ok(keys.to_vec()); }
+        crate::table_sql::rename_foreign_keys(keys, &self.wizard_constraint_table, self.wizard_table_name.trim(), &renames)
     }
 
     fn table_wizard_options(&self) -> Result<crate::table_sql::TableOptions, String> {
         let mut options = self.wizard_table_options.clone();
         if let Some(checks) = &options.checks { options.checks = Some(self.renamed_wizard_checks(checks)?); }
+        if let Some(keys) = &options.foreign_keys { options.foreign_keys = Some(self.renamed_wizard_foreign_keys(keys)?); }
         Ok(options)
     }
 
-    pub fn sync_table_check_names(&mut self) -> Result<bool, String> {
+    pub fn sync_table_constraint_names(&mut self) -> Result<bool, String> {
         // Keep the last unambiguous identities while names are empty or temporarily duplicated.
         if !self.table_wizard_names_valid() { return Ok(false); }
         let checks = self.renamed_wizard_checks(&self.wizard_checks)?;
-        let changed = checks != self.wizard_checks;
+        let keys = self.renamed_wizard_foreign_keys(&self.wizard_foreign_keys)?;
+        let changed = checks != self.wizard_checks || keys != self.wizard_foreign_keys;
         for (index, (old, new)) in self.wizard_checks.iter().zip(&checks).enumerate() {
             if old.expression != new.expression {
                 // shortcut: reference renames reset CHECK history; transform past edits when adding wizard-wide Undo.
                 if let Some(session) = self.wizard_check_states.get_mut(index) { *session = None; }
             }
         }
+        for (index, (old, new)) in self.wizard_foreign_keys.iter().zip(&keys).enumerate() {
+            if old.columns != new.columns || old.clause != new.clause {
+                // shortcut: reference renames reset FK history; transform past edits when adding wizard-wide Undo.
+                if let Some(session) = self.wizard_foreign_key_states.get_mut(index) { *session = [None, None]; }
+            }
+        }
+        self.wizard_foreign_keys = keys;
+        if self.wizard_table_options.foreign_keys.is_some() { self.wizard_table_options.foreign_keys = Some(self.wizard_foreign_keys.clone()); }
         self.wizard_checks = checks;
         if self.wizard_table_options.checks.is_some() { self.wizard_table_options.checks = Some(self.wizard_checks.clone()); }
-        self.wizard_check_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
-        self.wizard_check_table = self.wizard_table_name.trim().to_string();
+        self.wizard_constraint_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
+        self.wizard_constraint_table = self.wizard_table_name.trim().to_string();
         Ok(changed)
     }
 

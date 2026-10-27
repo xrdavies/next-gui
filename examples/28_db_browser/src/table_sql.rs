@@ -29,12 +29,20 @@ pub struct TableOptions {
     pub strict: bool,
     pub primary_key_conflict: Option<ResolveType>,
     pub checks: Option<Vec<NamedCheck>>,
+    pub foreign_keys: Option<Vec<NamedForeignKey>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NamedCheck {
     pub name: Option<String>,
     pub expression: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NamedForeignKey {
+    pub name: Option<String>,
+    pub columns: String,
+    pub clause: String,
 }
 
 pub const PRIMARY_KEY_CONFLICTS: [(&str, Option<ResolveType>); 6] = [
@@ -87,6 +95,7 @@ fn table_options_of(command: &Cmd) -> Result<TableOptions, String> {
         strict: flags.contains(TabFlags::Strict),
         primary_key_conflict,
         checks: None,
+        foreign_keys: None,
     })
 }
 
@@ -146,6 +155,7 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
     flags.set(TabFlags::Strict, options.strict);
     set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
     if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
+    if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
     Ok(emit(command))
 }
 
@@ -173,10 +183,11 @@ pub fn rename_checks(checks: &[NamedCheck], table: &str, target: &str, renames: 
     checks.iter().map(|check| {
         let mut definition = check_definition(check)?;
         let TableConstraint::Check(expression) = &mut definition.constraint else { unreachable!() };
-        let original = expression.clone();
+        let original = expression.to_string();
         rename_table_expression(expression, &identifier(table), Some(target), renames)?;
-        if *expression == original { return Ok(check.clone()); }
-        Ok(NamedCheck { name: check.name.clone(), expression: expression.to_string() })
+        let expression = expression.to_string();
+        if expression == original { return Ok(check.clone()); }
+        Ok(NamedCheck { name: check.name.clone(), expression })
     }).collect()
 }
 
@@ -194,14 +205,69 @@ fn check_definition(check: &NamedCheck) -> Result<NamedTableConstraint, String> 
 }
 
 fn set_table_checks(command: &mut Cmd, checks: &[NamedCheck]) -> Result<(), String> {
-    let replacements = checks.iter().map(check_definition).collect::<Result<Vec<_>, _>>()?;
+    replace_table_constraints(command, checks.iter().map(check_definition).collect::<Result<Vec<_>, _>>()?, |constraint| matches!(constraint, TableConstraint::Check(_)))
+}
+
+fn foreign_key_fields(item: &NamedTableConstraint) -> Option<NamedForeignKey> {
+    let TableConstraint::ForeignKey { columns, clause, deref_clause } = &item.constraint else { return None; };
+    Some(NamedForeignKey {
+        name: item.name.as_ref().map(identifier_text),
+        columns: columns.iter().map(|column| SqlFragment(&column.col_name).to_string()).collect::<Vec<_>>().join(", "),
+        clause: format!("REFERENCES {}{}", SqlFragment(clause), deref_clause.as_ref().map(|defer| format!(" {}", SqlFragment(defer))).unwrap_or_default()),
+    })
+}
+
+pub fn table_foreign_keys(sql: &str) -> Result<Vec<NamedForeignKey>, String> {
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { constraints, .. }, .. }) = parse(sql)? else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    Ok(constraints.iter().flatten().filter_map(foreign_key_fields).collect())
+}
+
+fn foreign_key_definition(key: &NamedForeignKey) -> Result<NamedTableConstraint, String> {
+    if key.columns.trim().is_empty() { return Err("A foreign key requires at least one local column".into()); }
+    if key.clause.trim().is_empty() { return Err("A foreign key requires a REFERENCES clause".into()); }
+    let name = key.name.as_ref().map(|name| format!("CONSTRAINT {} ", db::quote_ident(name))).unwrap_or_default();
+    let sql = format!("CREATE TABLE __next_gui_fk(v, {name}FOREIGN KEY({}\n) {}\n);", key.columns.trim(), key.clause.trim());
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints: Some(mut constraints), flags }, .. }) = parse(&sql)? else {
+        return Err("A foreign-key field requires one FOREIGN KEY definition".into());
+    };
+    if columns.len() != 1 || constraints.len() != 1 || !flags.is_empty() { return Err("Foreign-key fields cannot add columns, other constraints or table options".into()); }
+    let TableConstraint::ForeignKey { columns, clause, .. } = &constraints[0].constraint else { return Err("Expected a FOREIGN KEY definition".into()); };
+    if columns.is_empty() || columns.iter().chain(clause.columns.iter().flatten()).any(|column| column.order.is_some() || column.collation_name.is_some()) {
+        return Err("Foreign-key columns must be column names without sorting or collations".into());
+    }
+    if clause.columns.as_ref().is_some_and(|parent| parent.len() != columns.len()) { return Err("Local and referenced foreign-key column counts must match".into()); }
+    Ok(constraints.remove(0))
+}
+
+pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, renames: &[(&str, &str)]) -> Result<Vec<NamedForeignKey>, String> {
+    keys.iter().map(|key| {
+        let mut definition = foreign_key_definition(key)?;
+        let original = SqlFragment(&definition).to_string();
+        let TableConstraint::ForeignKey { columns, clause, .. } = &mut definition.constraint else { unreachable!() };
+        for column in columns { rename_identifier(&mut column.col_name, renames); }
+        if clause.tbl_name.eq(table) {
+            clause.tbl_name = identifier(target);
+            for column in clause.columns.iter_mut().flatten() { rename_identifier(&mut column.col_name, renames); }
+        }
+        if SqlFragment(&definition).to_string() == original { return Ok(key.clone()); }
+        Ok(foreign_key_fields(&definition).unwrap())
+    }).collect()
+}
+
+fn set_table_foreign_keys(command: &mut Cmd, keys: &[NamedForeignKey]) -> Result<(), String> {
+    replace_table_constraints(command, keys.iter().map(foreign_key_definition).collect::<Result<Vec<_>, _>>()?, |constraint| matches!(constraint, TableConstraint::ForeignKey { .. }))
+}
+
+fn replace_table_constraints(command: &mut Cmd, replacements: Vec<NamedTableConstraint>, matches: impl Fn(&TableConstraint) -> bool) -> Result<(), String> {
     let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { constraints, .. }, .. }) = command else {
         return Err("Expected an ordinary CREATE TABLE definition".into());
     };
     let mut replacements = replacements.into_iter();
     let items = constraints.get_or_insert_with(Vec::new);
     items.retain_mut(|item| {
-        if !matches!(item.constraint, TableConstraint::Check(_)) { return true; }
+        if !matches(&item.constraint) { return true; }
         if let Some(replacement) = replacements.next() { *item = replacement; true } else { false }
     });
     items.extend(replacements);
@@ -832,6 +898,7 @@ pub fn rebuild_definition(
     if let Some(options) = options {
         set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
         if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
+        if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
     }
     Ok(emit(command))
 }
@@ -990,6 +1057,8 @@ mod tests {
         assert!(expression.contains("\"renamed\".\"b\" < \"a\"") && expression.contains("abs (\"b\")") && expression.contains("AS a") && expression.contains("COLLATE a") && expression.contains("'a'"),"{expression}");
         assert!(rename_checks(&[NamedCheck { name:None,expression:"a +".into() }],"t","renamed",&[("a","b")]).is_err());
         assert_eq!(check.expression,"t.a < b AND abs(a)>0 AND CAST(a AS a)>0 AND a COLLATE a != 'a'");
+        let case = rename_checks(&[NamedCheck { name:None,expression:"t.a > 0".into() }],"t","T",&[("a","A")]).unwrap();
+        assert_eq!(case[0].expression,"\"T\".\"A\" > 0");
     }
 
     #[test]

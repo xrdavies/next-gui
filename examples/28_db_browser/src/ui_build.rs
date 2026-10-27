@@ -191,6 +191,15 @@ pub struct BuiltUi {
     pub ov_check_del: WidgetId,
     pub ov_check_up: WidgetId,
     pub ov_check_down: WidgetId,
+    pub ov_fks_scroll: WidgetId,
+    pub ov_fks_list: WidgetId,
+    pub ov_fk_name: WidgetId,
+    pub ov_fk_columns: WidgetId,
+    pub ov_fk_clause: WidgetId,
+    pub ov_fk_add: WidgetId,
+    pub ov_fk_del: WidgetId,
+    pub ov_fk_up: WidgetId,
+    pub ov_fk_down: WidgetId,
     pub ov_without_rowid: WidgetId,
     pub ov_strict: WidgetId,
     pub ov_pk_conflict: WidgetId,
@@ -484,6 +493,15 @@ pub fn build_ui(
     let mut ov_check_del = z;
     let mut ov_check_up = z;
     let mut ov_check_down = z;
+    let mut ov_fks_scroll = z;
+    let mut ov_fks_list = z;
+    let mut ov_fk_name = z;
+    let mut ov_fk_columns = z;
+    let mut ov_fk_clause = z;
+    let mut ov_fk_add = z;
+    let mut ov_fk_del = z;
+    let mut ov_fk_up = z;
+    let mut ov_fk_down = z;
     let mut ov_without_rowid = z;
     let mut ov_strict = z;
     let mut ov_pk_conflict = z;
@@ -1000,6 +1018,27 @@ pub fn build_ui(
                                     let mut expression = area_s;
                                     expression.height = scroll.height.min(100.0);
                                     ov_check_expr = c.text_area(check.map_or("", |check| check.expression.as_str()), "e.g. amount > 0 AND amount < 100", expression);
+                                });
+                            });
+                            tabs.page("Foreign Keys", |c| {
+                                ov_fks_scroll = c.scroll_area(scroll, |c| {
+                                    c.text(format!("Table foreign keys · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.row(row, |r| {
+                                        ov_fk_add = r.tool_button("Add"); ov_fk_del = r.tool_button("Remove");
+                                        ov_fk_up = r.tool_button("Up"); ov_fk_down = r.tool_button("Down");
+                                    });
+                                    let mut keys_list = list_s; keys_list.width = area_s.width; keys_list.height = 120.0;
+                                    ov_fks_list = c.list(state.wizard_foreign_keys.iter().map(|key| format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), keys_list);
+                                    let key = state.wizard_foreign_keys.get(state.wizard_foreign_key_sel);
+                                    c.row(row, |r| {
+                                        r.text("Name"); ov_fk_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
+                                    });
+                                    c.text("Local columns · SQL identifiers, in order");
+                                    let mut columns = area_s; columns.height = scroll.height.min(56.0);
+                                    ov_fk_columns = c.text_area(key.map_or("", |key| key.columns.as_str()), "e.g. customer_id, region_id", columns);
+                                    c.text("References · SQL");
+                                    let mut clause = area_s; clause.height = scroll.height.min(100.0);
+                                    ov_fk_clause = c.text_area(key.map_or("", |key| key.clause.as_str()), "REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL", clause);
                                 });
                             });
                             });
@@ -2174,7 +2213,18 @@ pub fn build_ui(
     ui.set_button_enabled(ov_check_del, !state.wizard_checks.is_empty());
     ui.set_button_enabled(ov_check_up, !state.wizard_checks.is_empty() && state.wizard_check_sel > 0);
     ui.set_button_enabled(ov_check_down, state.wizard_check_sel + 1 < state.wizard_checks.len());
-    ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
+    ui.set_accessible_name(ov_fks_list, "Table foreign keys");
+    ui.set_list_selected(ov_fks_list, (!state.wizard_foreign_keys.is_empty()).then_some(state.wizard_foreign_key_sel));
+    ui.set_list_scroll_offset(ov_fks_list, state.wizard_foreign_key_list_scroll);
+    ui.set_accessible_name(ov_fk_name, "Table foreign key constraint name");
+    ui.set_accessible_name(ov_fk_columns, "Foreign key local columns SQL");
+    ui.set_accessible_name(ov_fk_clause, "Foreign key REFERENCES clause");
+    for area in [ov_fk_columns, ov_fk_clause] { ui.set_text_area_read_only(area, state.wizard_foreign_keys.is_empty() || !state.table_wizard_names_valid()); }
+    ui.set_accessible_name(ov_fk_add, "Add table foreign key"); ui.set_accessible_name(ov_fk_del, "Remove table foreign key");
+    ui.set_accessible_name(ov_fk_up, "Move table foreign key up"); ui.set_accessible_name(ov_fk_down, "Move table foreign key down");
+    ui.set_button_enabled(ov_fk_del, !state.wizard_foreign_keys.is_empty());
+    ui.set_button_enabled(ov_fk_up, !state.wizard_foreign_keys.is_empty() && state.wizard_foreign_key_sel > 0);
+    ui.set_button_enabled(ov_fk_down, state.wizard_foreign_key_sel + 1 < state.wizard_foreign_keys.len());
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_area_read_only(edit_value, generated_cell);
     ui.set_button_enabled(btn_edit_cell, !generated_cell);
@@ -2241,6 +2291,8 @@ pub fn build_ui(
         }
     }
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
+    ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
+    ui.set_scroll_offset(ov_fks_scroll, state.wizard_foreign_key_scroll.0, state.wizard_foreign_key_scroll.1);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
     ui.set_scroll_offset(page_scroll, page_offset.0, page_offset.1);
@@ -2263,6 +2315,12 @@ pub fn build_ui(
     crate::sql_syntax::apply(&mut ui, ov_table_preview, &theme);
     if let Some(Some(editor)) = state.wizard_check_states.get(state.wizard_check_sel) { ui.restore_text_area_state(ov_check_expr, editor); }
     crate::sql_syntax::apply(&mut ui, ov_check_expr, &theme);
+    for (index, area) in [ov_fk_columns, ov_fk_clause].into_iter().enumerate() {
+        if let Some(editors) = state.wizard_foreign_key_states.get(state.wizard_foreign_key_sel) {
+            if let Some(editor) = &editors[index] { ui.restore_text_area_state(area, editor); }
+        }
+        crate::sql_syntax::apply(&mut ui, area, &theme);
+    }
     if !state.sql_log_view.as_ref().is_some_and(|view| ui.restore_text_area_state(log_area, view)) {
         let len = ui.text_area_value(log_area).map_or(0, |s| s.chars().count());
         ui.select_text_area_range(log_area, len..len);
@@ -2382,6 +2440,15 @@ pub fn build_ui(
         ov_check_del,
         ov_check_up,
         ov_check_down,
+        ov_fks_scroll,
+        ov_fks_list,
+        ov_fk_name,
+        ov_fk_columns,
+        ov_fk_clause,
+        ov_fk_add,
+        ov_fk_del,
+        ov_fk_up,
+        ov_fk_down,
         ov_without_rowid,
         ov_strict,
         ov_pk_conflict,
