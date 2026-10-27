@@ -933,3 +933,170 @@ fn native_frozen_counts_are_validated_and_clamped_to_the_table_columns() {
         }
     }
 }
+
+#[test]
+fn header_context_uses_the_clicked_column_and_supports_keyboard_selection() {
+    let mut demo = demo();
+    demo.state.frozen_cols = 0;
+    demo.state.conn.as_ref().unwrap().execute_batch(
+        "ALTER TABLE t RENAME COLUMN label TO '姓 名'; ALTER TABLE t ADD COLUMN c; ALTER TABLE t ADD COLUMN d"
+    ).unwrap();
+    demo.state.refresh_browse().unwrap();
+    demo.state.browse_mut().sel_row = Some(0);
+    demo.state.browse_mut().sel_col = Some(0);
+    demo.state.browse_mut().column_widths = vec![240.0; 4];
+    demo.state.sync_edit_cell_from_selection();
+    demo.win_w = 1000;
+    demo.do_rebuild();
+    demo.ui
+        .set_table_scroll_offset(demo.ids.browse_table, 150.0, 0.0);
+    demo.ui.sync(&mut demo.scene);
+    let bounds = demo
+        .scene
+        .iter_paint_order()
+        .into_iter()
+        .find(|node| demo.ui.widget_from_node(node.id) == Some(demo.ids.browse_table))
+        .unwrap()
+        .bounds;
+    assert!(!demo.open_browse_header_menu(bounds.x + 270.0, bounds.y + 60.0));
+    assert!(demo.open_browse_header_menu(bounds.x + 270.0, bounds.y + 10.0));
+    assert_eq!(demo.browse_header_name(), Some("姓 名"));
+    assert_eq!(demo.state.browse().sel_col, Some(0));
+    assert_eq!(demo.state.edit_value, "1205");
+    demo.ui.sync(&mut demo.scene);
+    assert!(!demo.handle_browse_navigation_key(KeyCode::PageDown, Modifiers::default()));
+    demo.ui.key_input(UiKey::Home);
+    demo.ui.key_input(UiKey::Enter);
+    let (_, action) = demo.ui.take_menu_action().unwrap();
+    assert_eq!(action, mid::BROWSE_FREEZE);
+    demo.handle_menu(action);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse_frozen_cols(), 2);
+    assert_eq!(demo.state.browse().sel_col, Some(0));
+    assert!(demo.open_browse_header_menu(bounds.x + 270.0, bounds.y + 10.0));
+    demo.ui.key_input(UiKey::Home);
+    demo.ui.key_input(UiKey::Down);
+    demo.ui.key_input(UiKey::Enter);
+    let (_, action) = demo.ui.take_menu_action().unwrap();
+    assert_eq!(action, mid::BROWSE_SELECT_COLUMN);
+    demo.handle_menu(action);
+    demo.do_rebuild();
+    assert_eq!(
+        demo.ui.table_selected_cols(demo.ids.browse_table),
+        Some((1, 1))
+    );
+    assert_eq!(
+        demo.ui.table_selected_rows(demo.ids.browse_table),
+        Some((0, 499))
+    );
+    assert_eq!(demo.state.edit_value, "row 1205");
+    assert_eq!(demo.ui.table_selected_row(demo.ids.browse_table), Some(0));
+    demo.poll_selection_changes();
+    assert_eq!(demo.state.browse().sel_row, Some(0));
+    assert_eq!(demo.state.browse().sel_row_end, Some(499));
+    assert!(demo.state.status_msg.contains("500 records"));
+    assert!(!demo.state.dirty);
+    assert!(demo.open_browse_header_menu(bounds.x + 270.0, bounds.y + 10.0));
+    demo.ui.key_input(UiKey::End);
+    demo.ui.sync(&mut demo.scene);
+    assert_eq!(demo.browse_header_name(), Some("姓 名"));
+    if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+        demo.scene
+            .mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+        let dirty = demo.scene.take_dirty();
+        let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+        renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+        write_ppm(
+            &path,
+            renderer.frame_pixels().unwrap().0,
+            demo.win_w,
+            demo.win_h,
+        )
+        .unwrap();
+    }
+    demo.ui.key_input(UiKey::Enter);
+    assert_eq!(
+        demo.ui.take_menu_action(),
+        Some((demo.ids.browse_header_menu, mid::BROWSE_COPY_COLUMN))
+    );
+}
+
+#[test]
+fn header_context_keeps_drafts_and_refuses_obscured_busy_or_stale_targets() {
+    let mut demo = demo();
+    let bounds = demo
+        .scene
+        .iter_paint_order()
+        .into_iter()
+        .find(|node| demo.ui.widget_from_node(node.id) == Some(demo.ids.browse_table))
+        .unwrap()
+        .bounds;
+    let point = (bounds.x + 30.0, bounds.y + 10.0);
+    demo.state.overlay = Some(OverlayKind::Preferences);
+    assert!(!demo.open_browse_header_menu(point.0, point.1));
+    demo.state.overlay = None;
+    demo.state.confirm_open = true;
+    assert!(!demo.open_browse_header_menu(point.0, point.1));
+    demo.state.confirm_open = false;
+    demo.state.sql_busy = true;
+    assert!(!demo.open_browse_header_menu(point.0, point.1));
+    demo.state.sql_busy = false;
+    demo.ui
+        .set_text_area_value(demo.ids.edit_value, "keep draft");
+    assert!(demo.open_browse_header_menu(point.0, point.1));
+    demo.ui.key_input(UiKey::Home);
+    demo.ui.key_input(UiKey::Down);
+    demo.ui.key_input(UiKey::Enter);
+    assert_eq!(
+        demo.ui.take_menu_action(),
+        Some((demo.ids.browse_header_menu, mid::BROWSE_COPY_COLUMN))
+    );
+    assert_eq!(demo.state.edit_value, "keep draft");
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+    demo.handle_menu(mid::BROWSE_SELECT_COLUMN);
+    assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
+    assert_eq!(demo.state.edit_value, "keep draft");
+    demo.do_rebuild();
+    let count = demo.state.browse_frozen_cols();
+    demo.handle_menu(mid::BROWSE_FREEZE);
+    assert_eq!(demo.state.browse_frozen_cols(), count);
+    assert!(demo.state.has_cell_draft());
+    assert!(demo.open_browse_header_menu(point.0, point.1));
+    demo.handle_menu(mid::BROWSE_FREEZE);
+    demo.do_rebuild();
+    assert_eq!(
+        demo.state.browse_frozen_cols(),
+        if count == 0 { 1 } else { 0 }
+    );
+    assert_eq!(demo.state.edit_value, "keep draft");
+}
+
+#[test]
+fn selected_and_highlighted_labels_have_readable_contrast_in_both_themes() {
+    fn luminance(color: Color) -> f64 {
+        let linear = |channel: u8| {
+            let channel = f64::from(channel) / 255.0;
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    }
+    for base in [Theme::light(), Theme::dark()] {
+        let theme = ui_build::browser_theme(base, 13.0);
+        let table = next_gui_ui::TableStyle::from_theme(&theme);
+        let menu = next_gui_ui::MenuStyle::from_theme(&theme);
+        let context = next_gui_ui::ContextMenuStyle::from_theme(&theme);
+        for (foreground, background) in [
+            (table.selected_fg, table.selected_bg),
+            (menu.hover_fg, menu.hover_bg),
+            (context.hover_fg, context.hover_bg),
+        ] {
+            let (a, b) = (luminance(foreground), luminance(background));
+            let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(ratio >= 4.5, "{:?}: contrast {ratio}", theme.mode);
+        }
+    }
+}

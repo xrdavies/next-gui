@@ -174,6 +174,7 @@ struct Demo {
     cell_clipboard: Option<cell_clipboard::CellClipboard>,
     exit_requested: bool,
     reveal_browse_selection: bool,
+    browse_header_column: Option<usize>,
 }
 
 #[allow(dead_code)]
@@ -219,6 +220,7 @@ struct BuiltUiIds {
     btn_add_row: WidgetId,
     btn_del_row: WidgetId,
     browse_table: WidgetId,
+    browse_header_menu: WidgetId,
     browse_col_filters: Vec<WidgetId>,
     browse_tab_btns: Vec<WidgetId>,
     sql_tab_btns: Vec<WidgetId>,
@@ -380,6 +382,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_add_row: b.btn_add_row,
             btn_del_row: b.btn_del_row,
             browse_table: b.browse_table,
+            browse_header_menu: b.browse_header_menu,
             browse_col_filters: b.browse_col_filters.clone(),
             browse_tab_btns: b.browse_tab_btns.clone(),
             sql_tab_btns: b.sql_tab_btns.clone(),
@@ -514,7 +517,7 @@ impl Demo {
         let theme = ui_build::browser_theme(if state.prefs.default_theme_dark { Theme::dark() } else { Theme::light() }, state.prefs.font_size);
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             state.tab = match tab.to_ascii_lowercase().as_str() {
-                "browse" => MainTab::Browse,
+                "browse" | "header-menu" => MainTab::Browse,
                 "pragmas" => MainTab::Pragmas,
                 "sql" | "execute" | "sql-long" => MainTab::ExecuteSql,
                 "wizard" | "table" => {
@@ -707,6 +710,7 @@ impl Demo {
             cell_clipboard: None,
             exit_requested: false,
             reveal_browse_selection: false,
+            browse_header_column: None,
         }
     }
 
@@ -1130,6 +1134,7 @@ impl Demo {
         );
         self.last_body_ratio = built.ui.splitter_ratio(built.body_splitter);
         self.last_structure_ratio = built.ui.splitter_ratio(built.structure_splitter);
+        self.browse_header_column = None;
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
@@ -1532,8 +1537,115 @@ impl Demo {
         self.rebuild = true;
     }
 
+    fn toggle_browse_freeze(&mut self, column: usize) {
+        let count = if self.state.browse_frozen_cols() == 0 {
+            column.saturating_add(1)
+        } else {
+            0
+        };
+        self.state.browse_mut().frozen_cols = Some(count);
+        self.state.status_msg = format!("Frozen columns = {}", self.state.browse_frozen_cols());
+        self.rebuild = true;
+    }
+
+    fn open_browse_header_menu(&mut self, x: f32, y: f32) -> bool {
+        if self.state.tab != MainTab::Browse
+            || self.state.overlay.is_some()
+            || self.state.confirm_open
+            || self.state.conn.is_none()
+            || self.state.sql_busy
+            || self.ui.hit_widget(&self.scene, x, y) != Some(self.ids.browse_table)
+        {
+            return false;
+        }
+        let Some(column) = self
+            .ui
+            .table_header_column_at(&self.scene, self.ids.browse_table, x, y)
+        else {
+            return false;
+        };
+        self.snapshot_inputs();
+        self.browse_header_column = Some(column);
+        let can_select = !self.state.has_cell_draft()
+            && self
+                .state
+                .browse()
+                .result
+                .as_ref()
+                .is_some_and(|result| !result.rows.is_empty());
+        let items = vec![
+            next_gui_ui::MenuItem::new(
+                mid::BROWSE_FREEZE,
+                if self.state.browse_frozen_cols() == 0 {
+                    "Freeze Columns"
+                } else {
+                    "Unfreeze Columns"
+                },
+            ),
+            if can_select {
+                next_gui_ui::MenuItem::new(mid::BROWSE_SELECT_COLUMN, "Select Column")
+            } else {
+                next_gui_ui::MenuItem::disabled(mid::BROWSE_SELECT_COLUMN, "Select Column")
+            },
+            next_gui_ui::MenuItem::new(mid::BROWSE_COPY_COLUMN, "Copy Column Name"),
+        ];
+        self.ui
+            .open_context_menu(self.ids.browse_header_menu, items, x, y)
+    }
+
+    fn browse_header_name(&self) -> Option<&str> {
+        self.state
+            .browse()
+            .result
+            .as_ref()?
+            .columns
+            .get(self.browse_header_column?)
+            .map(String::as_str)
+    }
+
+    fn handle_browse_header_action(&mut self, item: u64) -> bool {
+        if !matches!(item, mid::BROWSE_FREEZE | mid::BROWSE_SELECT_COLUMN) {
+            return false;
+        }
+        let Some(column) = self.browse_header_column.take() else {
+            return true;
+        };
+        self.ui.close_popup();
+        if item == mid::BROWSE_FREEZE {
+            self.toggle_browse_freeze(column);
+        } else if self.state.has_cell_draft() {
+            self.set_error("Apply or discard the cell draft first");
+            self.rebuild = true;
+        } else if let Some(last) = self
+            .state
+            .browse()
+            .result
+            .as_ref()
+            .and_then(|result| result.rows.len().checked_sub(1))
+        {
+            // shortcut: column selection covers the current cache; extend with whole-result selection.
+            let tab = self.state.browse_mut();
+            tab.sel_row = Some(0);
+            tab.sel_row_start = Some(0);
+            tab.sel_row_end = Some(last);
+            tab.sel_col = Some(column);
+            tab.sel_col_start = Some(column);
+            tab.sel_col_end = Some(column);
+            self.state.sync_edit_cell_from_selection();
+            self.state.status_msg = format!(
+                "Selected {} records in column {}",
+                last + 1,
+                self.state.browse().result.as_ref().unwrap().columns[column]
+            );
+            self.reveal_browse_selection = true;
+            self.rebuild = true;
+        }
+        true
+    }
+
     fn handle_menu(&mut self, item: u64) {
         self.snapshot_inputs();
+        if self.handle_browse_header_action(item) { return; }
         let document_action = matches!(item, mid::FILE_NEW | mid::FILE_NEW_MEM | mid::FILE_OPEN | mid::FILE_OPEN_RO | mid::FILE_CLOSE | mid::FILE_PROJECT_OPEN | mid::FILE_PROJECT_CLOSE | mid::FILE_EXIT | mid::FILE_SAVE_ALL)
             || (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&item);
         if self.state.has_cell_draft() && !document_action {
@@ -1933,7 +2045,7 @@ impl Demo {
 
     fn handle_browse_navigation_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
         if self.state.tab != MainTab::Browse || self.state.overlay.is_some() || self.state.confirm_open
-            || self.ids.browse_table.0 == 0 || self.ui.focused() != Some(self.ids.browse_table)
+            || self.ids.browse_table.0 == 0 || self.ui.focused() != Some(self.ids.browse_table) || self.ui.has_open_popup()
             || modifiers.shift || modifiers.alt { return false; }
         if modifiers.commandish() && matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
             self.snapshot_inputs();
@@ -2328,12 +2440,7 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_freeze {
-            let count = if self.state.browse_frozen_cols() == 0 {
-                self.state.browse().sel_col.unwrap_or(0).saturating_add(1)
-            } else { 0 };
-            self.state.browse_mut().frozen_cols = Some(count);
-            self.state.status_msg = format!("Frozen columns = {}", self.state.browse_frozen_cols());
-            self.rebuild = true;
+            self.toggle_browse_freeze(self.state.browse().sel_col.unwrap_or(0));
             return;
         }
         if id == self.ids.btn_cond_fmt {
@@ -2778,8 +2885,16 @@ impl Demo {
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
             self.snapshot_inputs();
-            self.handle_menu(item);
+            if item == mid::BROWSE_COPY_COLUMN {
+                if let Some(name) = self.browse_header_name() {
+                    if let Err(error) = ctx.clipboard_set_text(name) { self.set_error(error.to_string()); }
+                }
+                self.browse_header_column = None;
+            } else {
+                self.handle_menu(item);
+            }
         }
+        if !self.ui.has_open_popup() { self.browse_header_column = None; }
         self.handle_modal();
         if !self.rebuild {
             self.snapshot_inputs();
@@ -2888,6 +3003,15 @@ impl AppCallbacks for Demo {
                 ctx.request_redraw();
             }
             Event::PointerButton {
+                button: PointerButton::Right,
+                pressed: true,
+                x, y, ..
+            } => {
+                if self.open_browse_header_menu(x as f32, y as f32) {
+                    self.after_ui(ctx);
+                }
+            }
+            Event::PointerButton {
                 button: PointerButton::Left,
                 pressed: true,
                 x,
@@ -2926,7 +3050,8 @@ impl AppCallbacks for Demo {
                 }
             }
             Event::PointerMoved { x, y, .. } => {
-                if self.ui.pointer_moved(x as f32, y as f32) {
+                let hovered = self.ui.pointer_hover(&self.scene, x as f32, y as f32);
+                if self.ui.pointer_moved(x as f32, y as f32) || hovered {
                     self.ui.sync(&mut self.scene);
                     self.needs_paint = true;
                     ctx.request_redraw();
@@ -2957,6 +3082,11 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
+                if self.browse_header_column.is_some() && self.ui.has_open_popup() {
+                    if let Some(key) = map_key(key, modifiers) { self.ui.key_input(key); }
+                    self.after_ui(ctx);
+                    return;
+                }
                 if self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) {
                     self.after_ui(ctx);
                     return;
@@ -3139,6 +3269,18 @@ impl AppCallbacks for Demo {
             }
         }
         self.refresh_sql_log();
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("header-menu") && !self.ui.has_open_popup() {
+            let bounds = self.scene.iter_paint_order().into_iter().find(
+                |node| self.ui.widget_from_node(node.id) == Some(self.ids.browse_table)
+            ).map(|node| node.bounds);
+            if let Some(bounds) = bounds {
+                if self.open_browse_header_menu(bounds.x + 30.0, bounds.y + 10.0) {
+                    self.ui.key_input(UiKey::End);
+                    self.ui.sync(&mut self.scene);
+                    self.needs_paint = true;
+                }
+            }
+        }
         if !self.needs_paint {
             return;
         }

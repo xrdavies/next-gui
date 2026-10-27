@@ -813,6 +813,8 @@ pub struct MenuStyle {
     pub popup_bg: Color,
     /// Selected / hover row background.
     pub hover_bg: Color,
+    /// Text on a selected / hover row.
+    pub hover_fg: Color,
 }
 
 impl Default for MenuStyle {
@@ -828,6 +830,7 @@ impl Default for MenuStyle {
             open_bg: Color::rgb(0x2f, 0x5b, 0xa8),
             popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
             hover_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            hover_fg: Color::rgb(0xff, 0xff, 0xff),
         }
     }
 }
@@ -857,6 +860,8 @@ pub struct ContextMenuStyle {
     pub disabled_fg: Color,
     /// Hover row background.
     pub hover_bg: Color,
+    /// Text on a selected / hover row.
+    pub hover_fg: Color,
 }
 
 impl Default for ContextMenuStyle {
@@ -873,6 +878,7 @@ impl Default for ContextMenuStyle {
             fg: Color::rgb(0xe0, 0xe4, 0xec),
             disabled_fg: Color::rgb(0x70, 0x74, 0x80),
             hover_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            hover_fg: Color::rgb(0xff, 0xff, 0xff),
         }
     }
 }
@@ -2241,6 +2247,7 @@ pub struct Ui {
     focus: Option<WidgetId>,
     /// Currently open popup owner (Menu / ContextMenu / Select); at most one.
     open_popup: Option<WidgetId>,
+    popup_menu_row: Option<usize>,
     /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
     pending_menu_action: Option<(WidgetId, u64)>,
     /// Last keyboard-activated Button; drained by [`Ui::take_button_activate`].
@@ -2394,6 +2401,7 @@ impl Ui {
             drag: None,
             focus: None,
             open_popup: None,
+            popup_menu_row: None,
             pending_menu_action: None,
             pending_button_activate: None,
             pending_button_group_change: None,
@@ -4498,6 +4506,38 @@ impl Ui {
         self.pending_table_header_click.take()
     }
 
+    /// Hit a table header using its current resized, scrolled and frozen geometry.
+    /// The caller should check [`Ui::hit_widget`] when occlusion matters.
+    pub fn table_header_column_at(
+        &self,
+        scene: &Scene,
+        id: WidgetId,
+        x: f32,
+        y: f32,
+    ) -> Option<usize> {
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        let widget = self.widgets.get(&id)?;
+        let Kind::Table {
+            columns,
+            style,
+            scroll_x,
+            frozen_cols,
+            ..
+        } = &widget.kind
+        else {
+            return None;
+        };
+        let bounds = scene.get(widget.node?)?.bounds;
+        if !bounds.contains(x, y) || y >= bounds.y + style.header_height {
+            return None;
+        }
+        table_column_rects(bounds, columns, style.padding, *scroll_x, *frozen_cols)
+            .iter()
+            .position(|(_, clip)| !clip.is_empty() && x >= clip.x && x < clip.x + clip.width)
+    }
+
     /// Current table column widths, including pointer resizing.
     pub fn table_column_widths(&self, id: WidgetId) -> Option<Vec<f32>> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -4576,6 +4616,39 @@ impl Ui {
         if col >= columns.len() { return false; }
         *selected_col = Some(col);
         *selected_col_range = Some((col, col));
+        true
+    }
+
+    /// Set the active cell inside the selected rectangle without changing its anchors.
+    pub fn set_table_active_cell(&mut self, id: WidgetId, row: usize, col: usize) -> bool {
+        let Some(Widget {
+            kind:
+                Kind::Table {
+                    rows,
+                    columns,
+                    selected_row,
+                    selected_col,
+                    selected_range,
+                    selected_col_range,
+                    ..
+                },
+            ..
+        }) = self.widgets.get_mut(&id)
+        else {
+            return false;
+        };
+        let inside = |value: usize, range: Option<(usize, usize)>| {
+            range.is_some_and(|(a, b)| value >= a.min(b) && value <= a.max(b))
+        };
+        if row >= rows.len()
+            || col >= columns.len()
+            || !inside(row, *selected_range)
+            || !inside(col, *selected_col_range)
+        {
+            return false;
+        }
+        *selected_row = Some(row);
+        *selected_col = Some(col);
         true
     }
 
@@ -4704,6 +4777,11 @@ impl Ui {
             }
             return self.close_popup_internal();
         }
+        if let Some(id) = self.open_popup {
+            if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Menu { .. } | Kind::ContextMenu { .. })) {
+                return self.key_menu_popup(id, key);
+            }
+        }
         // P6d: Tab / BackTab move focus at the top (before widget dispatch / focus
         // requirement), so text fields do not swallow Tab. Modal/Drawer absorb.
         if matches!(key, UiKey::Tab | UiKey::BackTab) {
@@ -4787,6 +4865,14 @@ impl Ui {
             Some(Kind::Table { .. }) => self.key_table(id, key),
             Some(Kind::Tabs { .. }) => self.key_tabs(id, key),
             Some(Kind::Select { .. }) => self.key_select(id, key),
+            Some(Kind::Menu { .. }) if matches!(key, UiKey::Enter | UiKey::Space | UiKey::Down) => {
+                if let Some(Widget { kind: Kind::Menu { open, .. }, .. }) = self.widgets.get_mut(&id) {
+                    *open = true;
+                }
+                self.open_popup = Some(id);
+                self.popup_menu_row = None;
+                self.key_menu_popup(id, UiKey::Home)
+            }
             Some(Kind::Autocomplete { .. }) => self.key_autocomplete(id, key),
             Some(Kind::Upload { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
                 self.pending_upload_browse = Some(id);
@@ -5923,10 +6009,16 @@ impl Ui {
         self.close_popup_internal()
     }
 
+    /// Whether a popup currently owns input.
+    pub fn has_open_popup(&self) -> bool {
+        self.open_popup.is_some()
+    }
+
     fn close_popup_internal(&mut self) -> bool {
         let Some(id) = self.open_popup.take() else {
             return false;
         };
+        self.popup_menu_row = None;
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
                 Kind::Menu { open, .. }
@@ -7837,7 +7929,45 @@ impl Ui {
         None
     }
 
+    /// Declare a context popup without adding a host region to the layout.
+    pub fn context_menu_popup(&mut self, style: ContextMenuStyle) -> WidgetId {
+        self.alloc_container(Kind::ContextMenu {
+            hint: String::new(),
+            items: Vec::new(),
+            open: false,
+            anchor_x: 0.0,
+            anchor_y: 0.0,
+            style,
+            children: Vec::new(),
+        })
+    }
+
+    /// Replace a context popup's items and open it at window coordinates.
+    /// Call [`Ui::sync`] afterwards; actions use [`Ui::take_menu_action`].
+    pub fn open_context_menu(
+        &mut self,
+        id: WidgetId,
+        items: Vec<MenuItem>,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        if !x.is_finite() || !y.is_finite() || items.is_empty() {
+            return false;
+        }
+        let Some(Widget {
+            kind: Kind::ContextMenu { items: current, .. },
+            ..
+        }) = self.widgets.get_mut(&id)
+        else {
+            return false;
+        };
+        *current = items;
+        self.open_context_menu_at(id, x, y);
+        true
+    }
+
     fn open_context_menu_at(&mut self, id: WidgetId, x: f32, y: f32) {
+        self.popup_menu_row = None;
         if self.open_popup != Some(id) {
             self.close_popup_internal();
         }
@@ -7855,6 +7985,54 @@ impl Ui {
             }
         }
         self.open_popup = Some(id);
+    }
+
+    fn key_menu_popup(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let items = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Menu { items, .. } | Kind::ContextMenu { items, .. }) => items,
+            _ => return false,
+        };
+        let enabled: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.enabled)
+            .map(|(i, _)| i)
+            .collect();
+        let current = self
+            .popup_menu_row
+            .and_then(|row| enabled.iter().position(|i| *i == row));
+        match key {
+            UiKey::Up | UiKey::Down | UiKey::Home | UiKey::End if !enabled.is_empty() => {
+                let next = match key {
+                    UiKey::Home => 0,
+                    UiKey::End => enabled.len() - 1,
+                    UiKey::Up => current.map_or(enabled.len() - 1, |i| {
+                        (i + enabled.len() - 1) % enabled.len()
+                    }),
+                    _ => current.map_or(0, |i| (i + 1) % enabled.len()),
+                };
+                self.popup_menu_row = Some(enabled[next]);
+            }
+            UiKey::Enter | UiKey::Space => {
+                if let Some(row) = current
+                    .map(|i| enabled[i])
+                    .or_else(|| enabled.first().copied())
+                {
+                    self.pending_menu_action = Some((id, items[row].id));
+                    self.close_popup_internal();
+                }
+            }
+            UiKey::Tab | UiKey::BackTab => {
+                self.close_popup_internal();
+                if key == UiKey::Tab {
+                    self.focus_next();
+                } else {
+                    self.focus_prev();
+                }
+            }
+            _ => {}
+        }
+        true
     }
 
     fn pointer_menu_title(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
@@ -8876,17 +9054,31 @@ impl Ui {
         None
     }
 
-    /// Update tooltip hover using scene hit-test.
+    /// Update tooltip and menu hover using scene hit-test.
     pub fn pointer_hover(&mut self, scene: &Scene, x: f32, y: f32) -> bool {
+        let previous_row = self.popup_menu_row;
+        if let Some(Widget { kind, aux, .. }) = self.open_popup.and_then(|id| self.widgets.get(&id))
+        {
+            let data = match kind {
+                Kind::Menu { items, style, .. } => Some((items, style.item_height)),
+                Kind::ContextMenu { items, style, .. } => Some((items, style.item_height)),
+                _ => None,
+            };
+            if let Some((items, height)) = data {
+                self.popup_menu_row = aux
+                    .first()
+                    .and_then(|node| scene.get(*node))
+                    .filter(|panel| panel.bounds.contains(x, y) && height > 0.0)
+                    .map(|panel| ((y - panel.bounds.y) / height) as usize)
+                    .filter(|row| items.get(*row).is_some_and(|item| item.enabled));
+            }
+        }
         let tip = self
             .hit_widget(scene, x, y)
             .and_then(|id| self.find_tooltip_ancestor(id));
-        if tip != self.tooltip_hover {
-            self.tooltip_hover = tip;
-            true
-        } else {
-            false
-        }
+        let changed = tip != self.tooltip_hover || previous_row != self.popup_menu_row;
+        self.tooltip_hover = tip;
+        changed
     }
 
     fn pointer_tag_close(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
@@ -15651,29 +15843,29 @@ impl Ui {
 
 
     fn paint_open_popups(&mut self, scene: &mut Scene) {
-        let Some(id) = self.open_popup else {
-            // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx/modal
-            for wid in self.widgets.keys().copied().collect::<Vec<_>>() {
-                if matches!(
-                    self.widgets.get(&wid).map(|w| &w.kind),
-                    Some(Kind::Menu { open: false, .. })
-                        | Some(Kind::ContextMenu { open: false, .. })
-                        | Some(Kind::Select { open: false, .. })
-                        | Some(Kind::TreeSelect { open: false, .. })
-                        | Some(Kind::Modal { open: false, .. })
-                        | Some(Kind::Drawer { open: false, .. })
-                        | Some(Kind::DateTime { open: false, .. })
-                        | Some(Kind::Popover { open: false, .. })
-                        | Some(Kind::Popconfirm { open: false, .. })
-                        | Some(Kind::Autocomplete { open: false, .. })
-                ) {
-                    if let Some(w) = self.widgets.get(&wid) {
-                        for &n in &w.aux {
-                            scene.set_visible(n, false);
-                        }
+        // Hide any leftover popup aux on closed widgets — walk menus/selects/ctx/modal
+        for wid in self.widgets.keys().copied().collect::<Vec<_>>() {
+            if matches!(
+                self.widgets.get(&wid).map(|w| &w.kind),
+                Some(Kind::Menu { open: false, .. })
+                    | Some(Kind::ContextMenu { open: false, .. })
+                    | Some(Kind::Select { open: false, .. })
+                    | Some(Kind::TreeSelect { open: false, .. })
+                    | Some(Kind::Modal { open: false, .. })
+                    | Some(Kind::Drawer { open: false, .. })
+                    | Some(Kind::DateTime { open: false, .. })
+                    | Some(Kind::Popover { open: false, .. })
+                    | Some(Kind::Popconfirm { open: false, .. })
+                    | Some(Kind::Autocomplete { open: false, .. })
+            ) {
+                if let Some(w) = self.widgets.get(&wid) {
+                    for &n in &w.aux {
+                        scene.set_visible(n, false);
                     }
                 }
             }
+        }
+        let Some(id) = self.open_popup else {
             return;
         };
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -15715,7 +15907,7 @@ impl Ui {
             .max(style.min_width);
         let popup_h = style.item_height * items.len().max(1) as f32;
         let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, popup_w, popup_h);
-        self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg);
+        self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg, style.hover_fg);
     }
 
     fn paint_context_popup(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -15735,8 +15927,14 @@ impl Ui {
             _ => return,
         };
         let popup_h = style.item_height * items.len().max(1) as f32;
-        let panel = Rect::new(ax, ay, style.popup_width, popup_h);
-        self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg);
+        let width = style.popup_width.min(self.viewport.0);
+        let panel = Rect::new(
+            ax.clamp(0.0, (self.viewport.0 - width).max(0.0)),
+            ay.clamp(0.0, (self.viewport.1 - popup_h).max(0.0)),
+            width,
+            popup_h,
+        );
+        self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg, style.hover_fg);
     }
 
     fn paint_select_popup(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -16306,7 +16504,8 @@ impl Ui {
         popup_bg: Color,
         fg: Color,
         disabled_fg: Color,
-        _hover_bg: Color,
+        hover_bg: Color,
+        hover_fg: Color,
     ) {
         self.ensure_overlay_aux(scene, id, 1 + items.len() * 2);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -16323,7 +16522,7 @@ impl Ui {
             let row = Rect::new(panel.x, y, panel.width, item_height);
             if let Some(&rbg) = aux.get(1 + i * 2) {
                 scene.set_bounds(rbg, row);
-                scene.set_fill(rbg, popup_bg);
+                scene.set_fill(rbg, if self.popup_menu_row == Some(i) && item.enabled { hover_bg } else { popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
                 self.node_to_widget.insert(rbg, id);
@@ -16333,7 +16532,7 @@ impl Ui {
                 let lx = row.x + 10.0;
                 let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-                scene.set_fill(lab, if item.enabled { fg } else { disabled_fg });
+                scene.set_fill(lab, if !item.enabled { disabled_fg } else if self.popup_menu_row == Some(i) { hover_fg } else { fg });
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
                 scene.set_visible(lab, true);
             }
@@ -20501,6 +20700,208 @@ mod tests {
         assert_eq!(ui.focus_next(), Some(fields[1]));
         ui.sync(&mut scene);
         assert!(!field_bounds(&scene, &ui, 1).clip.unwrap().is_empty());
+    }
+
+    #[test]
+    fn detached_context_menu_clamps_highlights_skips_disabled_items_and_retains_focus() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(300.0, 160.0);
+        let mut table = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 300.0,
+                height: 160.0,
+                padding: 0.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                table = col.table(
+                    vec![TableColumn::new("a", 120.0)],
+                    vec![vec!["1".into()]],
+                    TableStyle {
+                        width: 300.0,
+                        height: 160.0,
+                        ..TableStyle::default()
+                    },
+                );
+            },
+        );
+        let style = ContextMenuStyle {
+            popup_width: 180.0,
+            item_height: 28.0,
+            ..ContextMenuStyle::default()
+        };
+        let popup = ui.context_menu_popup(style);
+        ui.sync(&mut scene);
+        ui.set_focus(Some(table));
+        assert!(
+            ui.widgets[&popup].node.is_none(),
+            "a detached popup creates no host hit target"
+        );
+        let items = vec![
+            MenuItem::disabled(10, "disabled"),
+            MenuItem::new(11, "first"),
+            MenuItem::new(12, "last"),
+        ];
+        assert!(ui.open_context_menu(popup, items, 295.0, 155.0));
+        ui.sync(&mut scene);
+        let aux = ui.widgets[&popup].aux.clone();
+        let panel = scene.get(aux[0]).unwrap().bounds;
+        assert_eq!(panel, Rect::new(120.0, 76.0, 180.0, 84.0));
+        assert_eq!(ui.focused(), Some(table));
+        assert!(ui.key_input(UiKey::Down));
+        assert_eq!(ui.popup_menu_row, Some(1));
+        ui.key_input(UiKey::Up);
+        assert_eq!(ui.popup_menu_row, Some(2));
+        ui.key_input(UiKey::Home);
+        assert_eq!(ui.popup_menu_row, Some(1));
+        assert!(ui.pointer_hover(&scene, panel.x + 8.0, panel.y + 70.0));
+        ui.sync(&mut scene);
+        assert_eq!(ui.popup_menu_row, Some(2));
+        assert_eq!(scene.get(aux[5]).unwrap().fill, style.hover_bg);
+        assert_eq!(scene.get(aux[6]).unwrap().fill, style.hover_fg);
+        ui.key_input(UiKey::Enter);
+        assert_eq!(ui.take_menu_action(), Some((popup, 12)));
+        assert!(!ui.has_open_popup());
+        ui.sync(&mut scene);
+        assert!(aux.iter().all(|node| !scene.get(*node).unwrap().visible));
+        assert_eq!(ui.focused(), Some(table));
+        assert!(!ui.open_context_menu(table, vec![MenuItem::new(1, "wrong kind")], 0.0, 0.0));
+        assert!(!ui.open_context_menu(
+            popup,
+            vec![MenuItem::new(1, "invalid point")],
+            f32::NAN,
+            0.0
+        ));
+        assert!(!ui.open_context_menu(popup, Vec::new(), 0.0, 0.0));
+        assert!(ui.open_context_menu(popup, vec![MenuItem::disabled(1, "none")], 0.0, 0.0));
+        ui.key_input(UiKey::Down);
+        ui.key_input(UiKey::Enter);
+        assert_eq!(ui.take_menu_action(), None);
+        assert!(ui.key_input(UiKey::Escape));
+        assert_eq!(ui.focused(), Some(table));
+    }
+
+    #[test]
+    fn table_active_cell_preserves_the_rectangle_and_rejects_outside_targets() {
+        let mut ui = Ui::new();
+        let mut table = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            table = col.table(vec![TableColumn::new("a", 80.0), TableColumn::new("b", 80.0)],
+                vec![vec!["x".into(); 2]; 3], TableStyle::default());
+        });
+        ui.set_table_selected_cells(table, Some((0, 2)), Some((0, 1)));
+        assert!(ui.set_table_active_cell(table, 0, 1));
+        assert_eq!(ui.table_selected_row(table), Some(0));
+        assert_eq!(ui.table_selected_rows(table), Some((0, 2)));
+        assert_eq!(ui.table_selected_cols(table), Some((0, 1)));
+        assert_eq!(ui.table_selection_anchor(table), Some((0, Some(0))));
+        assert!(!ui.set_table_active_cell(table, 4, 1));
+        assert_eq!(ui.table_selected_row(table), Some(0));
+        ui.set_table_selected_cells(table, Some((0, 1)), Some((1, 1)));
+        assert!(!ui.set_table_active_cell(table, 2, 1));
+        assert!(!ui.set_table_active_cell(table, 0, 0));
+    }
+
+    #[test]
+    fn focused_menu_opens_with_enter_and_activates_an_enabled_item() {
+        let mut ui = Ui::new();
+        let mut menu = WidgetId(0);
+        ui.row(RowStyle::default(), |row| {
+            menu = row.menu(
+                "Menu",
+                vec![
+                    MenuItem::disabled(1, "disabled"),
+                    MenuItem::new(2, "action"),
+                ],
+                MenuStyle::default(),
+            );
+        });
+        ui.set_focus(Some(menu));
+        assert!(ui.key_input(UiKey::Enter));
+        assert!(ui.has_open_popup());
+        assert_eq!(ui.popup_menu_row, Some(1));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.take_menu_action(), Some((menu, 2)));
+        assert_eq!(ui.focused(), Some(menu));
+        assert!(!ui.has_open_popup());
+    }
+
+    #[test]
+    fn switching_context_menus_hides_the_previous_overlay() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let first = ui.context_menu_popup(ContextMenuStyle::default());
+        let second = ui.context_menu_popup(ContextMenuStyle::default());
+        ui.open_context_menu(first, vec![MenuItem::new(1, "first")], 10.0, 10.0);
+        ui.sync(&mut scene);
+        let old_nodes = ui.widgets[&first].aux.clone();
+        assert!(old_nodes
+            .iter()
+            .any(|node| scene.get(*node).unwrap().visible));
+        ui.open_context_menu(second, vec![MenuItem::new(2, "second")], 250.0, 10.0);
+        ui.sync(&mut scene);
+        assert!(old_nodes
+            .iter()
+            .all(|node| !scene.get(*node).unwrap().visible));
+        assert_eq!(ui.open_popup, Some(second));
+    }
+
+    #[test]
+    fn table_header_hit_uses_the_same_frozen_scroll_and_resize_geometry_as_sorting() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut table = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                width: 300.0,
+                height: 180.0,
+                padding: 0.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                table = col.table(
+                    vec![
+                        TableColumn::new("a", 80.0),
+                        TableColumn::new("b", 160.0),
+                        TableColumn::new("c", 200.0),
+                    ],
+                    vec![vec!["1".into(); 3]],
+                    TableStyle {
+                        width: 300.0,
+                        height: 180.0,
+                        ..TableStyle::default()
+                    },
+                );
+            },
+        );
+        ui.set_table_frozen_cols(table, 1);
+        ui.set_table_scroll_offset(table, 100.0, 0.0);
+        ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        for (x, column) in [(25.0, 0), (110.0, 1), (220.0, 2)] {
+            assert_eq!(
+                ui.table_header_column_at(&scene, table, bounds.x + x, bounds.y + 10.0),
+                Some(column)
+            );
+            ui.pointer_pressed(&mut scene, bounds.x + x, bounds.y + 10.0);
+            ui.pointer_released();
+            assert_eq!(ui.take_table_header_click(), Some((table, column)));
+        }
+        ui.set_table_column_width(table, 1, 240.0);
+        ui.sync(&mut scene);
+        assert_eq!(
+            ui.table_header_column_at(&scene, table, bounds.x + 180.0, bounds.y + 10.0),
+            Some(1)
+        );
+        for (x, y) in [
+            (bounds.x - 1.0, bounds.y + 10.0),
+            (bounds.x + 20.0, bounds.y + 80.0),
+            (f32::NAN, bounds.y),
+        ] {
+            assert_eq!(ui.table_header_column_at(&scene, table, x, y), None);
+        }
     }
 
     #[test]

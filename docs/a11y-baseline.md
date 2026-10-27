@@ -90,3 +90,27 @@ remain unselected. This operates on rows supplied to the widget; applications
 with virtual data must load further rows themselves (e28 plain PageUp/PageDown
 uses its guarded full-result navigation). This is keyboard behavior, not an OS
 accessibility-tree bridge or native input acceptance.
+
+## Menu and context popup navigation
+
+A focused Menu opens with Enter, Space or Down. An open Menu/ContextMenu consumes
+keys before its underlying widget: Up/Down wrap across enabled items, Home/End
+select the first/last enabled item, and Enter/Space queues `take_menu_action`.
+Escape closes; Tab/BackTab closes and continues focus traversal. Disabled entries
+cannot be activated. Menu hover uses the same highlight as keyboard navigation;
+`MenuStyle` and `ContextMenuStyle` expose `hover_fg` (theme `on_accent`) for
+legible highlighted labels. External exhaustive style literals need the new field;
+existing `..Default::default()` / theme constructors keep working. Applications must forward pointer motion to `Ui::pointer_hover` and sync on change.
+
+`Ui::context_menu_popup(style)` declares a popup without a layout host.
+`open_context_menu(id, items, x, y)` replaces its items and opens it, rejecting
+nonfinite coordinates, empty items and wrong widget IDs. It keeps the underlying
+focus; `has_open_popup` lets application shortcuts respect popup ownership.
+Context panels that fit the viewport are clamped to its edges. Very tall menu
+scrolling and a native accessibility bridge remain unimplemented.
+
+`table_header_column_at(scene, id, x, y)` shares resize/scroll/freeze geometry with
+Table painting and sorting. Applications check `hit_widget` for occlusion first.
+`set_table_active_cell` moves the active cell within an existing selection while
+retaining its range/anchors; e28 uses it to retain an entire-column selection
+across rebuilds. These are synthetic widget contracts, not native input acceptance.

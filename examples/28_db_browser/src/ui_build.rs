@@ -64,6 +64,10 @@ pub mod mid {
     pub const TOOLS_OPTIMIZE: u64 = 55;
     pub const TOOLS_ROWCOUNTS: u64 = 56;
 
+    pub const BROWSE_FREEZE: u64 = 70;
+    pub const BROWSE_SELECT_COLUMN: u64 = 71;
+    pub const BROWSE_COPY_COLUMN: u64 = 72;
+
     pub const HELP_ABOUT: u64 = 60;
     pub const HELP_WIKI: u64 = 61;
     pub const HELP_WEBSITE: u64 = 62;
@@ -120,6 +124,7 @@ pub struct BuiltUi {
     pub btn_add_row: WidgetId,
     pub btn_del_row: WidgetId,
     pub browse_table: WidgetId,
+    pub browse_header_menu: WidgetId,
     pub browse_col_filters: Vec<WidgetId>,
     pub browse_tab_btns: Vec<WidgetId>,
     pub sql_tab_btns: Vec<WidgetId>,
@@ -336,7 +341,7 @@ pub fn browser_theme(mut theme: Theme, font_size: f32) -> Theme {
     c.border = c.grid;
     c.sash = c.grid;
     c.chrome = if dark { Color::rgb(38, 53, 78) } else { Color::rgb(216, 230, 253) };
-    c.selected_bg = c.chrome;
+    c.selected_bg = c.accent;
     c.muted = c.surface_elevated;
     theme
 }
@@ -1854,6 +1859,9 @@ pub fn build_ui(
                     .zip(state.browse().sel_col_end)
                 {
                     ui.set_table_selected_cells(browse_table, Some(row_range), Some((col_start, col_end)));
+                    if let Some(col) = state.browse().sel_col {
+                        ui.set_table_active_cell(browse_table, row, col);
+                    }
                 }
             }
         }
@@ -1917,6 +1925,9 @@ pub fn build_ui(
     if state.confirm_open {
         let _ = ui.set_modal_open(modal, true);
     }
+
+    let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
+    ui.set_accessible_name(browse_header_menu, "Browse column actions");
 
     let browse = state.browse();
     let loaded = browse.result.as_ref().map_or(0, |r| r.rows.len());
@@ -1999,6 +2010,7 @@ pub fn build_ui(
         btn_add_row,
         btn_del_row,
         browse_table,
+        browse_header_menu,
         browse_col_filters,
         browse_tab_btns,
         sql_tab_btns,

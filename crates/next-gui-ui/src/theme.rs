@@ -850,6 +850,7 @@ impl MenuStyle {
             open_bg: c.hover_bg,
             popup_bg: c.popup,
             hover_bg: c.hover_bg,
+            hover_fg: c.on_accent,
         }
     }
 }
@@ -879,6 +880,7 @@ impl ContextMenuStyle {
             fg: c.text_primary,
             disabled_fg: c.disabled,
             hover_bg: c.hover_bg,
+            hover_fg: c.on_accent,
         }
     }
 }
