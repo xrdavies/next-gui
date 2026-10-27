@@ -597,3 +597,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Table SQL preview progress (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-5caa315d88e3.md): fixed live CREATE TABLE preview retains existing constraints and uses pure AST column/table/self-reference renames, preserving literals/functions/external identities without querying or mutating the database. Formatted read-only SQL updates immediately, supports selection/copy and survives themes/rebuilds/resizing. Geometry and own scrolling keep preview/Save available at800×600. Actual saved AST equality and 475 tests/strict checks, four Soft/Metal pairs/native top/bottom forms pass. Full named/composite/all-constraint pages, original field grid/tabs/advanced disclosure/move/polish/native acceptance remain.
+
+### Named table CHECK progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-8e840a8e2ed1.md): Check Constraints page edits optional names and multiline SQL, adds/removes/reorders all table CHECKs and updates the fixed preview. Qualified atomic rebuild preserves inline constraints/dependencies/rowids/sequence/settings/pending data; violations/injection fail without mutation. Independent undo/redo/composition survive page switches/reorders; failed drafts remain correctable. 478 tests/strict checks, four Soft/Metal pairs and native draft/saved windows inspected. Edited CHECK rename rebinding, remaining advanced pages/original grid/layout/move/polish/native acceptance remain.
