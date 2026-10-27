@@ -158,7 +158,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
 | EditIndexDialog | partial | Basic raw columns entry/unique; no partial clause or structured column order UI. |
-| ImportCsvDialog (delimiter, quote, encoding, …) | partial | Strict UTF-8 only; multiline quoting supported |
+| ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
 | PreferencesDialog | partial | Font/theme/drop confirmation/CSV delimiter/frozen count; Cancel preserves current frozen count (F11 addressed); full upstream preferences absent. |

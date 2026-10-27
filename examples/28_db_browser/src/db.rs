@@ -745,8 +745,32 @@ pub fn import_csv_parse_opts(
     opts: &CsvImportOptions,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let raw = fs::read(path).map_err(|e| e.to_string())?;
-    let text = String::from_utf8(raw).map_err(|e| format!("CSV must be UTF-8: {e}"))?;
+    let text = decode_csv_bytes(&raw)?;
     import_csv_from_text(&text, opts)
+}
+
+fn decode_csv_bytes(raw: &[u8]) -> Result<String, String> {
+    if raw.starts_with(&[0xff, 0xfe]) {
+        let units = raw[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        if raw[2..].len() % 2 != 0 {
+            return Err("CSV UTF-16LE has an incomplete code unit".into());
+        }
+        return String::from_utf16(&units).map_err(|e| format!("CSV UTF-16LE is invalid: {e}"));
+    }
+    if raw.starts_with(&[0xfe, 0xff]) {
+        let units = raw[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        if raw[2..].len() % 2 != 0 {
+            return Err("CSV UTF-16BE has an incomplete code unit".into());
+        }
+        return String::from_utf16(&units).map_err(|e| format!("CSV UTF-16BE is invalid: {e}"));
+    }
+    String::from_utf8(raw.to_vec()).map_err(|e| format!("CSV must be UTF-8 or UTF-16 with BOM: {e}"))
 }
 
 /// Parse CSV text (clipboard / file contents).
@@ -1688,6 +1712,17 @@ mod tests {
         assert_eq!(cols, vec!["a", "b"]);
         assert_eq!(rows[0][1], "hello, world");
         assert_eq!(rows[1][1], "x\"y");
+        for (name, little_endian) in [("utf16le.csv", true), ("utf16be.csv", false)] {
+            let mut bytes = vec![if little_endian { 0xff } else { 0xfe }, if little_endian { 0xfe } else { 0xff }];
+            for unit in "a,b\n1,東京\n".encode_utf16() {
+                bytes.extend(if little_endian { unit.to_le_bytes() } else { unit.to_be_bytes() });
+            }
+            let path = dir.join(name);
+            fs::write(&path, bytes).unwrap();
+            let (cols, rows) = import_csv_parse(&path).unwrap();
+            assert_eq!(cols, vec!["a", "b"]);
+            assert_eq!(rows[0][1], "東京");
+        }
 
         let (db_path, conn) = tmp_db();
         import_csv_into_table(&conn, "imported", &cols, &rows, true).unwrap();
