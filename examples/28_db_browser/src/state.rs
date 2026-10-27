@@ -106,8 +106,9 @@ pub enum OverlayKind {
     About,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SelectedObject {
+    pub schema: String,
     pub kind: ObjectKind,
     pub name: String,
 }
@@ -302,6 +303,7 @@ pub struct AppState {
     pub read_only: bool,
     pub dirty: bool,
     pub schema: Vec<SchemaObject>,
+    pub schema_names: Vec<String>,
     pub sql_completion: crate::sql_completion::Catalog,
     pub database_encoding: String,
     pub selected: Option<SelectedObject>,
@@ -507,7 +509,7 @@ impl AppState {
                 if let Some(t) = state
                     .schema
                     .iter()
-                    .find(|o| o.kind == ObjectKind::Table)
+                    .find(|o| o.schema == "main" && o.kind == ObjectKind::Table)
                     .map(|o| o.name.clone())
                 {
                     state.browse_tabs = vec![BrowseTabState::new(Some(t))];
@@ -549,6 +551,7 @@ impl AppState {
             read_only: false,
             dirty: false,
             schema: Vec::new(),
+            schema_names: Vec::new(),
             sql_completion: crate::sql_completion::Catalog::default(),
             database_encoding: String::new(),
             selected: None,
@@ -989,13 +992,17 @@ impl AppState {
     pub fn refresh_schema(&mut self) -> Result<(), String> {
         let Some(conn) = self.conn.as_ref() else {
             self.schema.clear();
+            self.schema_names.clear();
             self.sql_completion = crate::sql_completion::Catalog::default();
             self.database_encoding.clear();
             return Ok(());
         };
-        let schema = db::list_schema(conn)?;
+        let schema_names = db::database_names(conn)?;
+        let mut schema = Vec::new();
+        for name in &schema_names { schema.extend(db::list_schema_in(conn, name)?); }
         let encoding = db::read_pragma(conn, "main.encoding")?;
         self.schema = schema;
+        self.schema_names = schema_names;
         self.sql_completion = crate::sql_completion::Catalog::load(conn);
         self.database_encoding = encoding;
         Ok(())
@@ -1092,7 +1099,7 @@ impl AppState {
         let is_view = self
             .schema
             .iter()
-            .any(|o| o.name == table && o.kind == ObjectKind::View);
+            .any(|o| o.schema == "main" && o.name == table && o.kind == ObjectKind::View);
 
         let where_sql = Self::composed_where(self.browse(), &prev_cols)?;
 
@@ -1321,29 +1328,38 @@ impl AppState {
     }
 
     pub fn schema_selection_has_draft(&self, node_id: u64) -> bool {
-        let Some(obj) = node_id.checked_sub(10_000).and_then(|i| self.schema.get(i as usize)) else { return false; };
-        if self.selected.as_ref().is_some_and(|s| s.kind == obj.kind && s.name == obj.name) { return false; }
-        let source = self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.as_deref()).unwrap_or_default();
+        let obj = node_id.checked_sub(10_000).and_then(|i| self.schema.get(i as usize));
+        let group = node_id > 0 && node_id <= self.schema_names.len() as u64 * 5;
+        if obj.is_none() && !group { return false; }
+        if obj.is_some_and(|obj| self.selected.as_ref().is_some_and(|s| s.schema == obj.schema && s.kind == obj.kind && s.name == obj.name)) { return false; }
+        let source = self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.schema == s.schema && o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.as_deref()).unwrap_or_default();
         self.ddl_draft != source
     }
 
     pub fn select_schema_node(&mut self, node_id: u64) {
         if node_id < 10_000 {
+            if node_id > 0 && node_id <= self.schema_names.len() as u64 * 5 {
+                self.selected = None;
+                self.ddl_draft.clear();
+            }
             return;
         }
         let idx = (node_id - 10_000) as usize;
         if let Some(obj) = self.schema.get(idx).cloned() {
-            if self.selected.as_ref().is_some_and(|s| s.kind == obj.kind && s.name == obj.name) { return; }
+            if self.selected.as_ref().is_some_and(|s| s.schema == obj.schema && s.kind == obj.kind && s.name == obj.name) { return; }
             self.selected = Some(SelectedObject {
+                schema: obj.schema.clone(),
                 kind: obj.kind,
                 name: obj.name.clone(),
             });
             self.ddl_draft = obj.sql.clone().unwrap_or_default();
-            if matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
+            if obj.schema == "main" && matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
                 let t = self.browse_mut();
                 t.table = Some(obj.name.clone());
                 t.title = obj.name.clone();
                 let _ = self.refresh_browse();
+            } else if obj.schema != "main" {
+                self.status_msg = format!("Selected {}.{}; use Execute SQL for data and definition changes", obj.schema, obj.name);
             }
         }
     }
@@ -1377,11 +1393,11 @@ impl AppState {
             }
         }
         let sql = if columns.is_empty() {
-            format!("INSERT INTO {} DEFAULT VALUES", db::quote_ident(table))
+            format!("INSERT INTO {} DEFAULT VALUES", db::qualified_name("main", table))
         } else {
             format!(
                 "INSERT INTO {} ({}) VALUES ({})",
-                db::quote_ident(table),
+                db::qualified_name("main", table),
                 columns.join(","),
                 vec!["?"; values.len()].join(",")
             )
@@ -1424,6 +1440,7 @@ impl AppState {
         if sel.kind != ObjectKind::Table {
             return Err("Modify Table only works on tables".into());
         }
+        if sel.schema != "main" { return Err("Use Execute SQL with a qualified name to modify an attached/temp table".into()); }
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let cols = db::table_columns(conn, &sel.name)?;
         self.wizard_table_name = sel.name.clone();
@@ -1459,7 +1476,7 @@ impl AppState {
             .or_else(|| {
                 self.schema
                     .iter()
-                    .find(|o| o.kind == ObjectKind::Table)
+                    .find(|o| o.schema == "main" && o.kind == ObjectKind::Table)
                     .map(|o| o.name.clone())
             })
             .unwrap_or_default();
@@ -1479,16 +1496,17 @@ impl AppState {
         if sel.kind != ObjectKind::Index {
             return Err("Select an index object".into());
         }
+        if sel.schema != "main" { return Err("Use Execute SQL with a qualified name to modify an attached/temp index".into()); }
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let table = self
             .schema
             .iter()
-            .find(|o| o.name == sel.name && o.kind == ObjectKind::Index)
+            .find(|o| o.schema == sel.schema && o.name == sel.name && o.kind == ObjectKind::Index)
             .and_then(|o| o.tbl_name.clone())
             .ok_or("Index table missing")?;
         let (unique, partial): (bool, bool) = conn
             .query_row(
-                "SELECT \"unique\", partial FROM pragma_index_list(?1) WHERE name=?2",
+                "SELECT \"unique\", partial FROM pragma_index_list(?1, 'main') WHERE name=?2",
                 rusqlite::params![table, sel.name],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -1500,7 +1518,7 @@ impl AppState {
         }
         let mut stmt = conn
             .prepare(
-                "SELECT name, desc, coll FROM pragma_index_xinfo(?1) WHERE key=1 ORDER BY seqno",
+                "SELECT name, desc, coll FROM pragma_index_xinfo(?1, 'main') WHERE key=1 ORDER BY seqno",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -1579,7 +1597,7 @@ impl AppState {
         let conn = self.conn.as_ref().unwrap();
         db::with_savepoint(conn, || {
             if let Some(orig) = self.wizard_index_original.as_ref() {
-                db::drop_object(conn, ObjectKind::Index, orig)?;
+                db::drop_object(conn, ObjectKind::Index, "main", orig)?;
             }
             db::create_index(conn, &name, &table, &cols, self.wizard_index_unique)
         })?;
@@ -1649,7 +1667,7 @@ impl AppState {
         let names = self
             .schema
             .iter()
-            .filter(|o| o.kind == ObjectKind::Table)
+            .filter(|o| o.schema == "main" && o.kind == ObjectKind::Table)
             .map(|o| o.name.clone())
             .collect::<Vec<_>>();
         let preferred = ["products", "order_items", "orders"];
@@ -1667,9 +1685,10 @@ impl AppState {
     }
 
     pub fn table_names(&self) -> Vec<String> {
+        // shortcut: browse/plot selectors address main; carry schema identity through their models before enabling other databases.
         self.schema
             .iter()
-            .filter(|o| matches!(o.kind, ObjectKind::Table | ObjectKind::View))
+            .filter(|o| o.schema == "main" && matches!(o.kind, ObjectKind::Table | ObjectKind::View))
             .map(|o| o.name.clone())
             .collect()
     }
@@ -1691,6 +1710,7 @@ impl AppState {
         self.cipher_active = false;
         self.cipher_open_path = None;
         self.selected = None;
+        self.ddl_draft.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
         self.path = path;
@@ -1703,7 +1723,7 @@ impl AppState {
         let first = self
             .schema
             .iter()
-            .find(|o| o.kind == ObjectKind::Table)
+            .find(|o| o.schema == "main" && o.kind == ObjectKind::Table)
             .map(|o| o.name.clone());
         self.browse_tabs = vec![BrowseTabState::new(first)];
         self.browse_tab_idx = 0;
@@ -1756,6 +1776,7 @@ impl AppState {
         let conn = db::create_new(path)?;
         self.log_sql(format!("-- create {path}"));
         self.schema.clear();
+        self.schema_names.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
         self.adopt_conn(conn, path.to_string(), false)?;
@@ -1768,6 +1789,7 @@ impl AppState {
         let conn = open_shared_memory()?;
         self.log_sql("-- new in-memory");
         self.schema.clear();
+        self.schema_names.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
         self.adopt_conn(conn, ":memory:".into(), false)?;
@@ -1814,6 +1836,7 @@ impl AppState {
         self.read_only = false;
         self.dirty = false;
         self.begin_txn()?;
+        self.refresh_schema()?;
         self.push_recent(dst);
         self.status_msg = format!("Saved As {dst}");
         Ok(())
@@ -1836,9 +1859,11 @@ impl AppState {
             drop(conn);
         }
         self.schema.clear();
+        self.schema_names.clear();
         self.sql_completion = crate::sql_completion::Catalog::default();
         self.database_encoding.clear();
         self.selected = None;
+        self.ddl_draft.clear();
         self.browse_tabs = vec![BrowseTabState::new(None)];
         self.browse_tab_idx = 0;
         self.sql_result = None;
@@ -1911,7 +1936,7 @@ impl AppState {
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let table = self.browse().table.clone().or_else(|| {
-            self.schema.iter().find(|o| o.kind == ObjectKind::Table).map(|o| o.name.clone())
+            self.schema.iter().find(|o| o.schema == "main" && o.kind == ObjectKind::Table).map(|o| o.name.clone())
         });
         let old_index = self.browse_tab_idx;
         self.browse_tabs.push(BrowseTabState::new(table));
@@ -2881,7 +2906,7 @@ impl AppState {
                     &format!(
                         "SELECT {} FROM {} WHERE rowid=?1",
                         db::quote_ident(&key.from_col),
-                        db::quote_ident(&table)
+                        db::qualified_name("main", &table)
                     ),
                     [rowid],
                     |row| row.get_ref(0).map(db::CellValue::from),
@@ -3111,6 +3136,49 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn structure_catalog_includes_attached_and_temp_objects() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE temp_only(x);
+            ATTACH ':memory:' AS \"aux.\"\"db\";
+            CREATE TABLE \"aux.\"\"db\".attached_only(x);
+            ATTACH ':memory:' AS empty_db;").unwrap();
+        state.refresh_schema().unwrap();
+        assert!(state.schema.iter().any(|o| o.name == "attached_only"));
+        assert!(state.schema.iter().any(|o| o.name == "temp_only"));
+        assert_eq!(state.schema_names, ["main", "temp", "aux.\"db", "empty_db"]);
+        assert_eq!(state.table_names(), ["t"]);
+        let attached = state.schema.iter().position(|o| o.schema == "aux.\"db" && o.name == "attached_only").unwrap();
+        state.select_schema_node(10_000 + attached as u64);
+        assert_eq!(state.selected.as_ref().unwrap().schema, "aux.\"db");
+        let project = crate::project::ProjectFile::from_state(&state);
+        let mut restored = AppState::empty();
+        project.apply_to(&mut restored);
+        assert_eq!(restored.selected.as_ref().unwrap().schema, "aux.\"db");
+        assert_eq!(restored.ddl_draft, state.ddl_draft);
+        assert!(state.open_modify_table_wizard().is_err());
+        assert!(state.browse().table.is_none());
+        assert!(!state.schema_selection_has_draft(1));
+        state.ddl_draft.push_str(" -- retain");
+        assert!(state.schema_selection_has_draft(1));
+        assert!(!state.schema_selection_has_draft(u64::MAX));
+        state.conn.as_ref().unwrap().execute_batch("COMMIT; DETACH empty_db; DETACH \"aux.\"\"db\";").unwrap();
+        state.refresh_schema().unwrap();
+        assert_eq!(state.schema_names, ["main", "temp"]);
+        assert!(!state.schema.iter().any(|o| o.name == "attached_only"));
+        assert!(state.ddl_draft.ends_with(" -- retain"));
+        let dir = tempfile::tempdir().unwrap();
+        state.save_as(dir.path().join("copy.db").to_str().unwrap()).unwrap();
+        assert_eq!(state.schema_names, ["main"]);
+        assert!(!state.schema.iter().any(|o| o.schema == "temp"));
+        state.close_db();
+        assert!(state.schema_names.is_empty());
+        assert!(state.ddl_draft.is_empty());
+        state.ddl_draft = "saved earlier definition".into();
+        state.new_memory_db().unwrap();
+        assert!(state.ddl_draft.is_empty());
     }
 
     #[test]
@@ -3518,6 +3586,7 @@ mod chart_default_tests {
             .unwrap();
         state.refresh_schema().unwrap();
         state.selected = Some(SelectedObject {
+            schema: "main".into(),
             kind: ObjectKind::Index,
             name: "ix".into(),
         });
@@ -3540,6 +3609,7 @@ mod chart_default_tests {
             .unwrap();
         state.refresh_schema().unwrap();
         state.selected = Some(SelectedObject {
+            schema: "main".into(),
             kind: ObjectKind::Index,
             name: "partial_ix".into(),
         });

@@ -18,6 +18,7 @@ pub struct ProjectFile {
     pub chart_table: Option<String>,
     pub chart_column: String,
     pub ddl_draft: String,
+    pub selected_object: Option<crate::state::SelectedObject>,
     pub main_tab: usize,
     pub browse_table: Option<String>,
     pub browse_filter: String,
@@ -57,6 +58,7 @@ impl ProjectFile {
             chart_table: state.chart_table.clone(),
             chart_column: state.chart_column.clone(),
             ddl_draft: state.ddl_draft.clone(),
+            selected_object: state.selected.clone(),
             main_tab: state.tab.index(),
             browse_table: b.table.clone(),
             browse_filter: b.filter.clone(),
@@ -125,6 +127,7 @@ impl ProjectFile {
         state.chart_table = self.chart_table.clone();
         state.chart_column = self.chart_column.clone();
         state.ddl_draft = self.ddl_draft.clone();
+        state.selected = self.selected_object.clone();
         state.sql_files = self.sql_files.clone();
         state.sql_outputs.clear();
         state.sql_result = None;
@@ -171,6 +174,7 @@ impl Default for ProjectFile {
             chart_table: None,
             chart_column: String::new(),
             ddl_draft: String::new(),
+            selected_object: None,
             main_tab: 0,
             browse_table: None,
             browse_filter: String::new(),

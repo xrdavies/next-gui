@@ -9,7 +9,7 @@ use rusqlite::{params_from_iter, Connection, OpenFlags};
 use crate::cell_snapshot::CellSnapshot;
 
 /// Schema object kinds shown in the structure tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ObjectKind {
     Table,
     View,
@@ -39,6 +39,7 @@ impl ObjectKind {
 
 #[derive(Debug, Clone)]
 pub struct SchemaObject {
+    pub schema: String,
     pub kind: ObjectKind,
     pub name: String,
     pub sql: Option<String>,
@@ -286,17 +287,28 @@ pub fn seed_demo(conn: &Connection) -> Result<(), String> {
 }
 
 pub fn list_schema(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
+    list_schema_in(conn, "main")
+}
+
+pub fn database_names(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn.prepare("PRAGMA database_list").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| row.get(1)).map_err(|e| e.to_string())?;
+    rows
+        .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+pub fn list_schema_in(conn: &Connection, schema: &str) -> Result<Vec<SchemaObject>, String> {
     let mut stmt = conn
-        .prepare(
-            "SELECT type, name, tbl_name, sql FROM sqlite_master
+        .prepare(&format!(
+            "SELECT type, name, tbl_name, sql FROM {}.sqlite_schema
              WHERE name NOT GLOB 'sqlite_*'
              ORDER BY CASE type
                 WHEN 'table' THEN 0
                 WHEN 'view' THEN 1
                 WHEN 'index' THEN 2
                 WHEN 'trigger' THEN 3
-                ELSE 4 END, name COLLATE NOCASE",
-        )
+                ELSE 4 END, name COLLATE NOCASE", quote_ident(schema),
+        ))
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -309,6 +321,7 @@ pub fn list_schema(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
                 _ => ObjectKind::Table,
             };
             Ok(SchemaObject {
+                schema: schema.into(),
                 kind,
                 name: row.get(1)?,
                 tbl_name: row.get(2)?,
@@ -324,7 +337,7 @@ pub fn list_schema(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
 }
 
 pub fn table_columns(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let q = format!("PRAGMA table_info({})", quote_ident(table));
+    let q = format!("PRAGMA main.table_info({})", quote_ident(table));
     let mut stmt = conn.prepare(&q).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -349,6 +362,10 @@ pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+pub fn qualified_name(schema: &str, name: &str) -> String {
+    format!("{}.{}", quote_ident(schema), quote_ident(name))
+}
+
 fn cell_to_string(value: rusqlite::types::ValueRef<'_>) -> String {
     use rusqlite::types::ValueRef;
     match value {
@@ -371,7 +388,7 @@ pub const DEFAULT_LIMIT: usize = 500;
 /// Browse a table/view with optional ORDER BY, WHERE filter, and limit.
 pub fn table_column_names(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
     let stmt = conn
-        .prepare(&format!("SELECT * FROM {} LIMIT 0", quote_ident(table)))
+        .prepare(&format!("SELECT * FROM {} LIMIT 0", qualified_name("main", table)))
         .map_err(|e| e.to_string())?;
     Ok(stmt.column_names().into_iter().map(String::from).collect())
 }
@@ -406,7 +423,7 @@ pub fn browse_table(
     offset: usize,
 ) -> Result<QueryResult, String> {
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
-    let mut sql = format!("SELECT * FROM {}", quote_ident(table));
+    let mut sql = format!("SELECT * FROM {}", qualified_name("main", table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
@@ -425,7 +442,7 @@ pub fn count_browse_rows(
     table: &str,
     filter: Option<&str>,
 ) -> Result<usize, String> {
-    let mut sql = format!("SELECT COUNT(*) FROM {}", quote_ident(table));
+    let mut sql = format!("SELECT COUNT(*) FROM {}", qualified_name("main", table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
@@ -571,7 +588,7 @@ pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
 }
 
 pub fn count_rows(conn: &Connection, table: &str) -> Result<i64, String> {
-    let sql = format!("SELECT COUNT(*) FROM {}", quote_ident(table));
+    let sql = format!("SELECT COUNT(*) FROM {}", qualified_name("main", table));
     conn.query_row(&sql, [], |r| r.get(0))
         .map_err(|e| e.to_string())
 }
@@ -586,7 +603,7 @@ pub fn insert_row(
         return Err("column/value length mismatch".into());
     }
     if columns.is_empty() {
-        let sql = format!("INSERT INTO {} DEFAULT VALUES", quote_ident(table));
+        let sql = format!("INSERT INTO {} DEFAULT VALUES", qualified_name("main", table));
         conn.execute(&sql, []).map_err(|e| e.to_string())?;
         return Ok(conn.changes());
     }
@@ -601,7 +618,7 @@ pub fn insert_row(
         .join(", ");
     let sql = format!(
         "INSERT INTO {} ({cols}) VALUES ({placeholders})",
-        quote_ident(table)
+        qualified_name("main", table)
     );
     let params: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
     conn.execute(&sql, params_from_iter(params))
@@ -610,7 +627,7 @@ pub fn insert_row(
 }
 
 pub fn delete_row_by_rowid(conn: &Connection, table: &str, rowid: i64) -> Result<u64, String> {
-    let sql = format!("DELETE FROM {} WHERE rowid = ?1", quote_ident(table));
+    let sql = format!("DELETE FROM {} WHERE rowid = ?1", qualified_name("main", table));
     conn.execute(&sql, [rowid]).map_err(|e| e.to_string())?;
     Ok(conn.changes())
 }
@@ -624,7 +641,7 @@ pub fn update_cell(
 ) -> Result<u64, String> {
     let sql = format!(
         "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
-        quote_ident(table),
+        qualified_name("main", table),
         quote_ident(column)
     );
     conn.execute(&sql, rusqlite::params![value, rowid])
@@ -647,7 +664,7 @@ pub fn update_cells(
     let assignments = columns.iter().enumerate()
         .map(|(i, col)| format!("{} = ?{}", quote_ident(col), i + 1))
         .collect::<Vec<_>>().join(", ");
-    let sql = format!("UPDATE {} SET {assignments} WHERE rowid = ?{}", quote_ident(table), columns.len() + 1);
+    let sql = format!("UPDATE {} SET {assignments} WHERE rowid = ?{}", qualified_name("main", table), columns.len() + 1);
     with_savepoint(conn, || {
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         for (rowid, values) in updates {
@@ -671,7 +688,7 @@ pub fn browse_with_rowid(
     offset: usize,
 ) -> Result<QueryResult, String> {
     if conn
-        .prepare(&format!("SELECT * FROM {}", quote_ident(table)))
+        .prepare(&format!("SELECT * FROM {}", qualified_name("main", table)))
         .map_err(|e| e.to_string())?
         .column_names()
         .iter()
@@ -680,7 +697,7 @@ pub fn browse_with_rowid(
         return Err("Grid editing requires an unshadowed rowid".into());
     }
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
-    let mut sql = format!("SELECT rowid AS __rowid__, * FROM {}", quote_ident(table));
+    let mut sql = format!("SELECT rowid AS __rowid__, * FROM {}", qualified_name("main", table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
@@ -693,14 +710,14 @@ pub fn browse_with_rowid(
     query_preview(conn, &sql, limit)
 }
 
-pub fn drop_object(conn: &Connection, kind: ObjectKind, name: &str) -> Result<(), String> {
+pub fn drop_object(conn: &Connection, kind: ObjectKind, schema: &str, name: &str) -> Result<(), String> {
     let kw = match kind {
         ObjectKind::Table => "TABLE",
         ObjectKind::View => "VIEW",
         ObjectKind::Index => "INDEX",
         ObjectKind::Trigger => "TRIGGER",
     };
-    let sql = format!("DROP {kw} IF EXISTS {}", quote_ident(name));
+    let sql = format!("DROP {kw} {}.{}", quote_ident(schema), quote_ident(name));
     conn.execute_batch(&sql).map_err(|e| e.to_string())
 }
 
@@ -723,7 +740,7 @@ pub fn create_index(
     let uniq = if unique { "UNIQUE " } else { "" };
     let sql = format!(
         "CREATE {uniq}INDEX {} ON {} ({})",
-        quote_ident(name),
+        qualified_name("main", name),
         quote_ident(table),
         columns.trim()
     );
@@ -976,7 +993,7 @@ pub fn export_table(
     json: bool,
 ) -> Result<(), String> {
     guard_output_path(conn, path)?;
-    let mut sql = format!("SELECT * FROM {}", quote_ident(table));
+    let mut sql = format!("SELECT * FROM {}", qualified_name("main", table));
     if let Some(filter) = filter.filter(|s| !s.is_empty()) {
         sql.push_str(&format!(" WHERE {filter}"));
     }
@@ -1251,14 +1268,14 @@ pub fn recreate_table(
             let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
             conn.execute_batch(&format!(
                 "ALTER TABLE {} ADD COLUMN {definition}",
-                quote_ident(old_name)
+                qualified_name("main", old_name)
             ))
             .map_err(|e| e.to_string())?;
         }
         for col in removed {
             conn.execute_batch(&format!(
                 "ALTER TABLE {} DROP COLUMN {}",
-                quote_ident(old_name),
+                qualified_name("main", old_name),
                 quote_ident(&col.name)
             ))
             .map_err(|e| e.to_string())?;
@@ -1266,7 +1283,7 @@ pub fn recreate_table(
         if old_name != new_name {
             conn.execute_batch(&format!(
                 "ALTER TABLE {} RENAME TO {}",
-                quote_ident(old_name),
+                qualified_name("main", old_name),
                 quote_ident(new_name)
             ))
             .map_err(|e| e.to_string())?;
@@ -1394,7 +1411,7 @@ pub fn numeric_series(
     let sql = format!(
         "SELECT {} FROM {} LIMIT {limit}",
         quote_ident(column),
-        quote_ident(table),
+        qualified_name("main", table),
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
@@ -1426,6 +1443,59 @@ pub fn default_demo_path() -> PathBuf {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn main_browse_helpers_ignore_same_named_temp_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v); INSERT INTO main.t VALUES(1);
+            CREATE TEMP TABLE t(v, temp_only); INSERT INTO temp.t(v) VALUES(99);").unwrap();
+        let result = browse_table(&conn, "t", &[], None, 500, 0).unwrap();
+        assert_eq!(result.rows[0][0], "1");
+        update_cell(&conn, "t", 1, "v", &rusqlite::types::Value::Integer(2)).unwrap();
+        assert_eq!(conn.query_row("SELECT v FROM main.t", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+        assert_eq!(conn.query_row("SELECT v FROM temp.t", [], |r| r.get::<_, i64>(0)).unwrap(), 99);
+        assert_eq!(table_columns(&conn, "t").unwrap().len(), 1);
+        insert_row(&conn, "t", &["v".into()], &["3".into()]).unwrap();
+        assert_eq!(count_rows(&conn, "t").unwrap(), 2);
+        delete_row_by_rowid(&conn, "t", 2).unwrap();
+        recreate_table(&conn, "t", "t", &[ColDef::new("v", ""), ColDef::new("added", "TEXT")]).unwrap();
+        assert_eq!(table_column_names(&conn, "t").unwrap(), ["v", "added"]);
+        assert!(conn.prepare("SELECT temp_only FROM temp.t").is_ok());
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("main.json");
+        export_table(&conn, "t", &[], None, &out, true).unwrap();
+        let values: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(values[0]["v"], 2);
+    }
+
+    #[test]
+    fn schema_reads_and_drops_keep_namespace_identity() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";").unwrap();
+        for schema in ["main", "temp", "aux.\"db"] {
+            let table = qualified_name(schema, "same.\"name");
+            let view = qualified_name(schema, "same_view");
+            let index = qualified_name(schema, "same_index");
+            let trigger = qualified_name(schema, "same_trigger");
+            conn.execute_batch(&format!("CREATE TABLE {table}(v);
+                CREATE VIEW {view} AS SELECT * FROM {};
+                CREATE INDEX {index} ON {}(v);
+                CREATE TRIGGER {trigger} AFTER INSERT ON {} BEGIN SELECT 1; END;",
+                quote_ident("same.\"name"), quote_ident("same.\"name"), quote_ident("same.\"name"))).unwrap();
+            assert_eq!(list_schema_in(&conn, schema).unwrap().len(), 4);
+        }
+        assert!(list_schema(&conn).unwrap().iter().all(|o| o.schema == "main"));
+        for (kind, name) in [(ObjectKind::Trigger, "same_trigger"), (ObjectKind::Index, "same_index"), (ObjectKind::View, "same_view"), (ObjectKind::Table, "same.\"name")] {
+            drop_object(&conn, kind, "aux.\"db", name).unwrap();
+            assert_eq!(list_schema_in(&conn, "main").unwrap().len(), 4);
+            assert_eq!(list_schema_in(&conn, "temp").unwrap().len(), 4);
+            assert!(drop_object(&conn, kind, "aux.\"db", name).is_err());
+        }
+        assert!(list_schema_in(&conn, "aux.\"db").unwrap().is_empty());
+        assert!(list_schema_in(&conn, "missing\"; DROP TABLE main.\"same.\"\"name").is_err());
+        drop_object(&conn, ObjectKind::Table, "main", "same.\"name").unwrap();
+        assert_eq!(list_schema_in(&conn, "temp").unwrap().len(), 4);
+    }
 
     fn tmp_db() -> (PathBuf, crate::sql_log::LoggedConnection) {
         let nanos = SystemTime::now()
@@ -1967,7 +2037,7 @@ pub fn export_sql_dump_opts(
                 .map(|c| quote_ident(&c.name))
                 .collect();
             let all_columns: Vec<String> = conn
-                .prepare(&format!("SELECT * FROM {}", quote_ident(&obj.name)))
+                .prepare(&format!("SELECT * FROM {}", qualified_name("main", &obj.name)))
                 .map_err(|e| e.to_string())?
                 .column_names()
                 .iter()
@@ -1977,7 +2047,7 @@ pub fn export_sql_dump_opts(
             for alias in ["rowid", "_rowid_", "oid"] {
                 if !all_columns.iter().any(|c| c.eq_ignore_ascii_case(alias))
                     && conn
-                        .prepare(&format!("SELECT {alias} FROM {}", quote_ident(&obj.name)))
+                        .prepare(&format!("SELECT {alias} FROM {}", qualified_name("main", &obj.name)))
                         .is_ok()
                 {
                     cols.insert(0, alias.into());
@@ -1986,7 +2056,7 @@ pub fn export_sql_dump_opts(
             }
             let cols = cols.join(", ");
             let mut stmt = conn
-                .prepare(&format!("SELECT {cols} FROM {}", quote_ident(&obj.name)))
+                .prepare(&format!("SELECT {cols} FROM {}", qualified_name("main", &obj.name)))
                 .map_err(|e| e.to_string())?;
             let n = stmt.column_count();
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
@@ -2005,12 +2075,12 @@ pub fn export_sql_dump_opts(
             }
         }
         if conn
-            .prepare("SELECT name, seq FROM sqlite_sequence")
+            .prepare("SELECT name, seq FROM main.sqlite_sequence")
             .is_ok()
         {
             writeln!(f, "DELETE FROM sqlite_sequence;").map_err(|e| e.to_string())?;
             let mut stmt = conn
-                .prepare("SELECT name, seq FROM sqlite_sequence")
+                .prepare("SELECT name, seq FROM main.sqlite_sequence")
                 .map_err(|e| e.to_string())?;
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -2066,7 +2136,7 @@ pub struct FkRef {
 }
 
 pub fn list_foreign_keys(conn: &Connection, table: &str) -> Result<Vec<FkRef>, String> {
-    let sql = format!("PRAGMA foreign_key_list({})", quote_ident(table));
+    let sql = format!("PRAGMA main.foreign_key_list({})", quote_ident(table));
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -2085,7 +2155,7 @@ pub fn list_foreign_keys(conn: &Connection, table: &str) -> Result<Vec<FkRef>, S
         if fk.to_col.is_empty() {
             fk.to_col = conn
                 .query_row(
-                    "SELECT name FROM pragma_table_info(?1) WHERE pk=?2",
+                    "SELECT name FROM pragma_table_info(?1, 'main') WHERE pk=?2",
                     rusqlite::params![fk.to_table, fk.seq + 1],
                     |r| r.get(0),
                 )

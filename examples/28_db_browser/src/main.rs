@@ -38,6 +38,15 @@ use crate::db::{self as dbmod, ObjectKind};
 use crate::state::{AppState, ConfirmKind, DockKind, DocumentAction, MainTab, OverlayKind};
 use crate::ui_build::{build_ui, clear_color, mid, BuiltUi};
 
+const SCHEMA_NAMESPACE_QA_SQL: &str = "CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
+    INSERT INTO main.customers VALUES(1, 'Main customer');
+    CREATE TEMP TABLE customers(temp_value TEXT);
+    ATTACH ':memory:' AS analytics;
+    CREATE TABLE analytics.customers(id INTEGER PRIMARY KEY, region TEXT, revenue REAL);
+    CREATE VIEW analytics.customer_summary AS SELECT region, sum(revenue) FROM customers GROUP BY region;
+    CREATE INDEX analytics.customer_region ON customers(region);
+    ATTACH ':memory:' AS archive;";
+
 enum Backend {
     Soft(SoftRenderer),
     Gpu(GpuRenderer),
@@ -585,6 +594,15 @@ impl Demo {
                     MainTab::Browse
                 }
                 "schema" => {
+                    state.dock_focus = DockKind::Schema;
+                    MainTab::Structure
+                }
+                "schema-namespaces" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
+                    state.refresh_schema().unwrap();
+                    let i = state.schema.iter().position(|o| o.schema == "analytics" && o.name == "customers").unwrap();
+                    state.select_schema_node(10_000 + i as u64);
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
                 }
@@ -2442,6 +2460,11 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_run_ddl {
+            if self.state.selected.as_ref().is_some_and(|s| s.schema != "main") {
+                self.set_error("Use Execute SQL with a qualified object name for attached/temp DDL");
+                self.rebuild = true;
+                return;
+            }
             if let Err(e) = self.state.guard_writable() {
                 self.set_error(e);
                 self.rebuild = true;
@@ -2940,15 +2963,18 @@ impl Demo {
                     if let Err(e) = self.state.guard_writable() {
                         self.set_error(e);
                     } else if let Some(conn) = self.state.conn.as_ref() {
-                        match dbmod::drop_object(conn, sel.kind, &sel.name) {
+                        let unchanged_definition = self.state.schema.iter().find(|o| o.schema == sel.schema && o.kind == sel.kind && o.name == sel.name)
+                            .and_then(|o| o.sql.as_deref()).unwrap_or_default() == self.state.ddl_draft;
+                        match dbmod::drop_object(conn, sel.kind, &sel.schema, &sel.name) {
                             Ok(()) => {
                                 self.state
-                                    .log_sql(format!("DROP {:?} {}", sel.kind, sel.name));
+                                    .log_sql(format!("DROP {:?} {}.{}", sel.kind, dbmod::quote_ident(&sel.schema), dbmod::quote_ident(&sel.name)));
                                 self.state.mark_dirty();
                                 self.state.selected = None;
+                                if unchanged_definition { self.state.ddl_draft.clear(); }
                                 let _ = self.state.refresh_schema();
                                 let _ = self.state.refresh_browse();
-                                self.state.status_msg = format!("Dropped {} (unwritten)", sel.name);
+                                self.state.status_msg = format!("Dropped {}.{} (unwritten)", sel.schema, sel.name);
                                 self.clear_error();
                             }
                             Err(e) => self.set_error(e),
@@ -3968,6 +3994,94 @@ mod interaction_tests {
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 3);
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "3");
         assert!(db::has_pending_changes(demo.state.conn.as_ref().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn schema_namespace_selection_restores_identity_and_guards_main_actions() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.tab = MainTab::Structure;
+        let main = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "customers").unwrap();
+        let aux = demo.state.schema.iter().position(|o| o.schema == "analytics" && o.name == "customers").unwrap();
+        demo.state.select_schema_node(10_000 + main as u64);
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][1], "Main customer");
+        demo.state.open_insert_row().unwrap();
+        demo.state.insert_modes[1] = 2;
+        demo.state.insert_values[1] = "Created in main".into();
+        demo.state.apply_insert_row().unwrap();
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM main.customers", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM temp.customers", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        demo.do_rebuild();
+        demo.ui.set_tree_selected(demo.ids.tree, Some(10_000 + aux as u64));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.tree_selected(demo.ids.tree), Some(10_000 + aux as u64));
+        assert_eq!(demo.state.selected.as_ref().unwrap().schema, "analytics");
+        assert!(demo.ui.text_area_value(demo.ids.ddl_area).unwrap().contains("revenue"));
+        let dir = tempfile::tempdir().unwrap();
+        let project_path = dir.path().join("namespace.sqbpro");
+        crate::project::ProjectFile::from_state(&demo.state).save(&project_path).unwrap();
+        let restored = crate::project::ProjectFile::load(&project_path).unwrap();
+        assert_eq!(restored.selected_object.as_ref().unwrap().schema, "analytics");
+        assert_eq!(restored.ddl_draft, demo.state.ddl_draft);
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][1], "Main customer");
+        assert!(demo.state.open_modify_table_wizard().is_err());
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_run_ddl), Some(false));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_struct_modify), Some(false));
+        demo.ui.set_button_enabled(demo.ids.btn_run_ddl, true);
+        demo.handle_button(demo.ids.btn_run_ddl);
+        assert!(demo.state.error_msg.as_deref().unwrap().contains("qualified"));
+        demo.clear_error();
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.dock_focus = DockKind::Schema;
+            demo.do_rebuild();
+            demo.scene.mark_full_dirty(1400.0, 1000.0);
+            let dirty = demo.scene.take_dirty();
+            let commands = encode_scene(&demo.scene, &dirty);
+            let clear = clear_color(&demo.theme);
+            let mut soft = SoftRenderer::new(1400, 1000, clear);
+            soft.render(&commands, &dirty);
+            if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_SCHEMA_QA_OUT") {
+                write_ppm(&format!("{prefix}-{name}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+            }
+            if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                gpu.render(&commands, &dirty);
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_SCHEMA_QA_OUT") {
+                    write_ppm(&format!("{prefix}-{name}-metal.ppm"), gpu.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                }
+                let soft_pixels = soft.frame_pixels().unwrap().0;
+                let gpu_pixels = gpu.frame_pixels().unwrap().0;
+                let regions: Vec<_> = demo.scene.iter_paint_order().into_iter().filter(|n|
+                    demo.ui.widget_from_node(n.id).is_some_and(|id| [demo.ids.tree, demo.ids.ddl_area].contains(&id))
+                ).map(|n| n.bounds).collect();
+                assert_eq!(regions.len(), 2);
+                let max_delta = regions.iter().flat_map(|r|
+                    ((r.y.ceil() as usize + 2)..(r.y + r.height).floor() as usize - 2).flat_map(move |y|
+                        ((r.x.ceil() as usize + 2)..(r.x + r.width).floor() as usize - 2).map(move |x| y * 1400 + x)
+                    )
+                ).flat_map(|i| [0, 8, 16].map(|shift|
+                    (((soft_pixels[i] >> shift) & 255) as i32 - ((gpu_pixels[i] >> shift) & 255) as i32).abs()
+                )).max().unwrap();
+                assert!(max_delta <= 2, "schema {name} tree/DDL channel delta {max_delta}");
+                eprintln!("schema {name} tree/DDL Soft/Metal actual readback max channel delta {max_delta}");
+            } else { eprintln!("schema {name} GPU comparison not_run: adapter unavailable"); }
+        }
+        demo.state.prefs.confirm_drops = true;
+        demo.handle_menu(mid::EDIT_DELETE);
+        assert!(demo.state.confirm_open);
+        demo.state.confirm_open = false;
+        demo.apply_confirmed_action(ConfirmKind::DropObject);
+        assert!(!demo.state.schema.iter().any(|o| o.schema == "analytics" && o.name == "customers"));
+        assert!(demo.state.schema.iter().any(|o| o.schema == "main" && o.name == "customers"));
+        assert!(demo.state.schema.iter().any(|o| o.schema == "temp" && o.name == "customers"));
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT name FROM main.customers", [], |r| r.get::<_, String>(0)).unwrap(), "Main customer");
+        demo.do_rebuild();
+        demo.ui.set_tree_selected(demo.ids.tree, Some(1));
+        demo.poll_selection_changes();
+        assert!(demo.state.selected.is_none());
     }
 
     #[test]
@@ -5299,6 +5413,7 @@ mod interaction_tests {
         );
         demo.state.prefs.confirm_drops = false;
         demo.state.selected = Some(crate::state::SelectedObject {
+            schema: "main".into(),
             kind: ObjectKind::Table,
             name: "t".into(),
         });

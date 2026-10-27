@@ -10,7 +10,7 @@ use next_gui_ui::{
     ToolbarStyle, TreeNode, TreeStyle, TrendStyle, Ui, WidgetId,
 };
 
-use crate::db::ObjectKind;
+use crate::db::{self, ObjectKind};
 use crate::state::{AppState, ConfirmKind, DockKind, MainTab, OverlayKind};
 
 pub mod mid {
@@ -257,26 +257,17 @@ pub fn clear_color(theme: &Theme) -> Color {
 }
 
 fn schema_tree(state: &AppState) -> Vec<TreeNode> {
-    let mut tables = Vec::new();
-    let mut views = Vec::new();
-    let mut indexes = Vec::new();
-    let mut triggers = Vec::new();
-    for (i, obj) in state.schema.iter().enumerate() {
-        let id = 10_000 + i as u64;
-        let node = TreeNode::leaf(id, obj.name.clone());
-        match obj.kind {
-            ObjectKind::Table => tables.push(node),
-            ObjectKind::View => views.push(node),
-            ObjectKind::Index => indexes.push(node),
-            ObjectKind::Trigger => triggers.push(node),
-        }
-    }
-    vec![
-        TreeNode::new(1, format!("Tables ({})", tables.len()), tables),
-        TreeNode::new(2, format!("Views ({})", views.len()), views),
-        TreeNode::new(3, format!("Indexes ({})", indexes.len()), indexes),
-        TreeNode::new(4, format!("Triggers ({})", triggers.len()), triggers),
-    ]
+    state.schema_names.iter().enumerate().map(|(database, name)| {
+        let root = database as u64 * 5 + 1;
+        let groups = [ObjectKind::Table, ObjectKind::View, ObjectKind::Index, ObjectKind::Trigger]
+            .into_iter().enumerate().map(|(group, kind)| {
+                let objects: Vec<_> = state.schema.iter().enumerate()
+                    .filter(|(_, o)| o.schema == *name && o.kind == kind)
+                    .map(|(i, o)| TreeNode::leaf(10_000 + i as u64, o.name.clone())).collect();
+                TreeNode::new(root + group as u64 + 1, format!("{} ({})", kind.label(), objects.len()), objects)
+            }).collect();
+        TreeNode::new(root, name.clone(), groups)
+    }).collect()
 }
 
 fn decorate_browse_cols(state: &AppState, cols: &[String]) -> Vec<TableColumn> {
@@ -1116,7 +1107,7 @@ pub fn build_ui(
                 state
                     .schema
                     .iter()
-                    .map(|o| format!("{:?} · {}", o.kind, o.name))
+                    .map(|o| format!("{:?} · {}.{}", o.kind, db::quote_ident(&o.schema), db::quote_ident(&o.name)))
                     .collect()
             };
             let chart_points = if state.chart_points.is_empty() {
@@ -1316,7 +1307,10 @@ pub fn build_ui(
                                             btn_run_ddl = row.tool_button("Run DDL");
                                         });
                                         if let Some(sel) = &state.selected {
-                                            c.text(format!("Selected: {:?} {}", sel.kind, sel.name));
+                                            c.text(format!("Selected: {:?} {}.{}", sel.kind, db::quote_ident(&sel.schema), db::quote_ident(&sel.name)));
+                                            if sel.schema != "main" {
+                                                c.text("Definition preview · use Execute SQL for qualified DDL");
+                                            }
                                         } else {
                                             c.text("Selected: (none) — use New Table / New Index wizards");
                                         }
@@ -1839,13 +1833,21 @@ pub fn build_ui(
             let _ = ui.set_tabs_selected(dock_tabs, focus_idx);
         }
         if tree.0 != 0 {
-            ui.set_tree_expanded(tree, 1, true);
-            ui.set_tree_expanded(tree, 2, true);
+            for database in 0..state.schema_names.len() {
+                let root = database as u64 * 5 + 1;
+                ui.set_tree_expanded(tree, root, true);
+                ui.set_tree_expanded(tree, root + 1, true);
+                ui.set_tree_expanded(tree, root + 2, true);
+            }
             if let Some(sel) = &state.selected {
+                if let Some(database) = state.schema_names.iter().position(|name| *name == sel.schema) {
+                    let group = match sel.kind { ObjectKind::Table => 1, ObjectKind::View => 2, ObjectKind::Index => 3, ObjectKind::Trigger => 4 };
+                    ui.set_tree_expanded(tree, database as u64 * 5 + 1 + group, true);
+                }
                 if let Some(idx) = state
                     .schema
                     .iter()
-                    .position(|o| o.name == sel.name && o.kind == sel.kind)
+                    .position(|o| o.schema == sel.schema && o.name == sel.name && o.kind == sel.kind)
                 {
                     ui.set_tree_selected(tree, Some(10_000 + idx as u64));
                 }
@@ -1961,6 +1963,11 @@ pub fn build_ui(
     ui.set_button_enabled(btn_record_last, can_browse && total > 0 && (browse.sel_row.is_none() || record.saturating_add(1) < total));
     ui.set_button_enabled(btn_record_go, can_browse && total > 0);
     let can_write = state.conn.is_some() && !state.read_only && state.dirty && !state.sql_busy;
+    let main_selection = state.selected.as_ref().is_none_or(|s| s.schema == "main");
+    ui.set_text_area_read_only(ddl_area, !main_selection);
+    ui.set_button_enabled(btn_run_ddl, main_selection && state.conn.is_some() && !state.read_only && !state.sql_busy);
+    ui.set_button_enabled(btn_struct_modify, main_selection && state.selected.is_some() && !state.read_only && !state.sql_busy);
+    ui.set_button_enabled(btn_struct_delete, state.selected.is_some() && !state.read_only && !state.sql_busy);
     ui.set_button_enabled(btn_write, can_write);
     ui.set_button_enabled(btn_revert, can_write);
 
