@@ -625,3 +625,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Fields grid and endpoint movement (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-cdf760f3ad1d.md): Fields displays the original ten property columns with frozen names, resizable widths, retained scroll/cell/row/focus and live draft updates. Top/Bottom move complete identities/editor sessions with qualified migration/data/dependency checks.502 tests/strict checks, four Soft/Metal pairs and final native dark/light windows inspected. Native focus/select-all/paste rename updates dependent SQL; single-line Undo is missing (F01). Inline editors/checkboxes, original selectors/advanced layout, full history and remaining product/runtime acceptance are unfinished.
+
+### Single-line Undo and rebuild sessions (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-56b5b3eebc46.md): Shared TextInput/Autocomplete now retain bounded Undo/Redo for editing, clipboard, IME and suggestion selection, plus matching-document sessions. Focused table name/column name/default survive rebuild; constraint identity/preview/actual migrated values and enforcement are verified through Undo/Redo.505 tests/strict checks, two Soft/Metal pairs and15 native static windows inspected. Native shortcut re-test unavailable (black desktop/inactive target), so F01 remains in_progress. Full structural history, sessions across field switches, inline editing and original layout/product/runtime parity remain unfinished.
