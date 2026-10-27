@@ -326,10 +326,40 @@ fn schema_tree(state: &AppState) -> Vec<TreeNode> {
     }).collect()
 }
 
+pub fn status_text(state: &AppState) -> String {
+    let path = if state.path.is_empty() {
+        "(no database)".to_string()
+    } else {
+        state.path.clone()
+    };
+    let flags = format!(
+        "{}{}{}{} · {} · {}",
+        if state.read_only { "RO" } else { "RW" },
+        if state.dirty { " · modified" } else { "" },
+        if state.sql_busy { " · busy" } else { "" },
+        if state.cipher_linked {
+            " · SQLCipher"
+        } else {
+            ""
+        },
+        if state.database_encoding.is_empty() { "—" } else { &state.database_encoding },
+        if state.cipher_active {
+            "encrypted"
+        } else {
+            "not encrypted"
+        },
+    );
+    format!("{path} · {flags} · {}",state.status_msg)
+}
+
 fn constraint_cell_editor(c: &mut next_gui_ui::FlexBuilder<'_>, table: WidgetId, state: &AppState, theme: &Theme) -> WidgetId {
     let Some(edit) = &state.wizard_constraint_edit else { return WidgetId(0); };
     let Some(value) = state.constraint_cell_value(edit.page, edit.row, edit.column) else { return WidgetId(0); };
-    c.table_cell_editor(table, edit.row, edit.column, |cell| cell.text_input_styled(value, "", TextInputStyle::from_theme(theme))).unwrap_or(WidgetId(0))
+    c.table_cell_editor(table, edit.row, edit.column, |cell| {
+        if (edit.page,edit.column)==(0,1) {
+            cell.select(["PRIMARY KEY","UNIQUE"],Some(usize::from(!state.wizard_index_constraints[edit.row].primary)),"",SelectStyle::from_theme(theme))
+        } else {cell.text_input_styled(value,"",TextInputStyle::from_theme(theme))}
+    }).unwrap_or(WidgetId(0))
 }
 
 pub fn table_index_rows(state: &AppState) -> Vec<Vec<String>> {
@@ -2143,32 +2173,9 @@ pub fn build_ui(
     status_style.padding = 6.0;
     status_style.gap = 8.0;
     status_style.cross_align = CrossAlign::Start;
-    let path = if state.path.is_empty() {
-        "(no database)".to_string()
-    } else {
-        state.path.clone()
-    };
-    let flags = format!(
-        "{}{}{}{} · {} · {}",
-        if state.read_only { "RO" } else { "RW" },
-        if state.dirty { " · modified" } else { "" },
-        if state.sql_busy { " · busy" } else { "" },
-        if state.cipher_linked {
-            " · SQLCipher"
-        } else {
-            ""
-        },
-        if state.database_encoding.is_empty() { "—" } else { &state.database_encoding },
-        if state.cipher_active {
-            "encrypted"
-        } else {
-            "not encrypted"
-        },
-    );
-    let status_msg = state.status_msg.clone();
     let status_fg = theme.colors.text_secondary;
     ui.status_bar(status_style, |bar| {
-        status = bar.text_styled(format!("{path} · {flags} · {status_msg}"), status_fg, 12.0);
+        status = bar.text_styled(status_text(state), status_fg, 12.0);
     });
 
     if ov_cipher_pass.0 != 0 {
@@ -2192,13 +2199,13 @@ pub fn build_ui(
         for button in [ov_field_bottom,ov_btn_down] { ui.set_button_enabled(button,state.wizard_col_sel+1<state.wizard_cols.len()); }
         ui.set_button_enabled(ov_btn_del,!state.wizard_cols.is_empty());
     }
-    for (table, columns) in [(ov_keys_table,vec![2]),(ov_fks_table,if state.table_wizard_names_valid() {vec![1,2]} else {vec![1]}),(ov_checks_table,if state.table_wizard_names_valid() {vec![0,1]} else {vec![1]})] {
+    for (table, columns) in [(ov_keys_table,vec![1,2]),(ov_fks_table,if state.table_wizard_names_valid() {vec![1,2]} else {vec![1]}),(ov_checks_table,if state.table_wizard_names_valid() {vec![0,1]} else {vec![1]})] {
         ui.set_table_editable_columns(table,columns);
     }
     if let Some(edit) = &state.wizard_constraint_edit {
         if let Some(session) = &edit.input { ui.restore_text_input_state(ov_constraint_editor,session); }
         ui.set_accessible_name(ov_constraint_editor, match (edit.page,edit.column) {
-            (0,2) => "Index constraint name cell", (1,1) => "Foreign key name cell",
+            (0,1) => "Index constraint type cell", (0,2) => "Index constraint name cell", (1,1) => "Foreign key name cell",
             (1,2) => "Foreign key references cell", (2,0) => "CHECK expression cell", _ => "CHECK name cell",
         });
     }

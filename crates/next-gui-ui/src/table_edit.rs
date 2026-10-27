@@ -96,13 +96,13 @@ impl Ui {
 }
 
 impl FlexBuilder<'_> {
-    /// Mount one standard TextInput or Autocomplete inside a table cell, outside flex layout.
+    /// Mount one standard TextInput, Autocomplete or Select inside a table cell, outside flex layout.
     /// Rebuild without this call to end the editor. Invalid coordinates skip the builder.
     pub fn table_cell_editor<F>(&mut self,table:WidgetId,row:usize,column:usize,build:F)->Option<WidgetId>
     where F:FnOnce(&mut FlexBuilder<'_>)->WidgetId {
         if !matches!(self.ui.widgets.get(&table).map(|w|&w.kind),Some(Kind::Table {rows,columns,editor:None,..}) if row<rows.len() && column<columns.len()) {return None;}
         let widget=build(&mut FlexBuilder {ui:self.ui,parent:table});
-        if !matches!(self.ui.widgets.get(&widget).map(|w|&w.kind),Some(Kind::TextInput {..}|Kind::Autocomplete {..})) {return None;}
+        if !matches!(self.ui.widgets.get(&widget).map(|w|&w.kind),Some(Kind::TextInput {..}|Kind::Autocomplete {..}|Kind::Select {..})) {return None;}
         if let Some(Widget {kind:Kind::Table {editor,..},..})=self.ui.widgets.get_mut(&table) {*editor=Some(TableCellEditor {row,column,widget});}
         Some(widget)
     }
@@ -137,6 +137,24 @@ mod tests {
         assert!(ui.key_input(UiKey::Char('x')));assert_eq!(ui.take_table_cell_edit(),Some((table,TableCellEditEvent::Begin {row:0,column:0,key:Some(UiKey::Char('x'))})));
         ui.set_table_selected_col(table,Some(1));assert!(!ui.key_input(UiKey::Edit));
         ui.set_focus(Some(editor));ui.set_table_rows(table,Vec::new());ui.sync(&mut scene);assert_eq!(ui.focused(),None);assert!(!ui.focusable_widgets().contains(&editor));assert!(!scene.get(editor_node).unwrap().visible);
+    }
+
+    #[test]
+    fn select_cell_keeps_popup_focus_and_routes_commit_cancel_and_tab_before_grid_navigation() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut table=WidgetId(0);let mut editor=WidgetId(0);
+        ui.column(ColumnStyle {width:400.0,height:220.0,..Default::default()},|c| {
+            table=c.table(vec![TableColumn::new("Type",160.0),TableColumn::new("Name",150.0)],vec![vec!["UNIQUE".into(),"key_name".into()]],TableStyle {width:340.0,height:130.0,..Default::default()});
+            editor=c.table_cell_editor(table,0,0,|cell|cell.select(["PRIMARY KEY","UNIQUE"],Some(1),"",SelectStyle::default())).unwrap();
+        });
+        ui.set_table_editable_columns(table,vec![0,1]);ui.set_focus(Some(editor));ui.sync(&mut scene);
+        assert!(ui.key_input(UiKey::Space));assert!(ui.has_open_popup());assert!(ui.key_input(UiKey::Up));assert_eq!(ui.select_selected(editor),Some(0));
+        assert!(ui.key_input(UiKey::Escape));assert!(!ui.has_open_popup());assert_eq!(ui.focused(),Some(editor));assert_eq!(ui.take_table_cell_edit(),None);
+        assert!(ui.key_input(UiKey::Escape));assert_eq!(ui.take_table_cell_edit(),Some((table,TableCellEditEvent::End {cancel:true})));
+        ui.set_focus(Some(editor));assert!(ui.key_input(UiKey::Space));assert!(ui.key_input(UiKey::Down));assert_eq!(ui.select_selected(editor),Some(1));assert!(ui.key_input(UiKey::Enter));assert_eq!(ui.take_table_cell_edit(),None);assert_eq!(ui.focused(),Some(editor));
+        assert!(ui.key_input(UiKey::Enter));assert_eq!(ui.take_table_cell_edit(),Some((table,TableCellEditEvent::End {cancel:false})));
+        ui.set_focus(Some(editor));ui.key_input(UiKey::Space);assert!(ui.key_input(UiKey::Tab));assert!(!ui.has_open_popup());assert_eq!(ui.take_table_cell_edit(),Some((table,TableCellEditEvent::Begin {row:0,column:1,key:None})));
+        ui.set_focus(Some(editor));ui.set_table_scroll_offset(table,120.0,0.0);ui.sync(&mut scene);let node=scene.get(ui.widgets[&editor].node.unwrap()).unwrap();let host=scene.get(ui.widgets[&table].node.unwrap()).unwrap();let clip=node.clip.unwrap();assert!(clip.x>=host.bounds.x && clip.x+clip.width<=host.bounds.x+host.bounds.width);
+        let (x,y)=(node.bounds.x+10.0,node.bounds.y+10.0);assert!(ui.pointer_pressed(&mut scene,x,y));ui.pointer_released();assert!(ui.has_open_popup());ui.key_input(UiKey::Escape);assert_eq!(ui.focused(),Some(editor));
     }
 
     #[test]

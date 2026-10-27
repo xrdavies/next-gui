@@ -747,7 +747,7 @@ impl Demo {
                     if tab == "table-conflicted" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-keys" | "table-keys-saved" | "table-keys-grid" | "table-keys-editor" => {
+                "table-keys" | "table-keys-saved" | "table-keys-grid" | "table-keys-editor" | "table-key-type" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,customer TEXT CONSTRAINT customer_unique UNIQUE ON CONFLICT FAIL,region TEXT,CONSTRAINT customer_region UNIQUE(customer,region)); INSERT INTO records VALUES(7,'Northwind','west'),(11,'Contoso','east');").unwrap();
                     state.refresh_schema().unwrap();
@@ -757,7 +757,7 @@ impl Demo {
                     state.wizard_index_constraints[2].conflict=Some(sqlite3_parser::ast::ResolveType::Abort);
                     state.wizard_table_options.index_constraints=Some(state.wizard_index_constraints.clone());
                     state.wizard_cols[1].name="customer_name".into(); state.wizard_table_name="orders".into(); state.sync_table_constraint_names().unwrap();
-                    state.wizard_table_page=1; state.wizard_key_sel=2; state.wizard_key_scroll=(0.0,if tab.ends_with("-grid") || tab.ends_with("-editor") {0.0} else {10000.0});
+                    state.wizard_table_page=1; state.wizard_key_sel=2; state.wizard_key_scroll=(0.0,if tab.ends_with("-grid") || tab.ends_with("-editor") || tab=="table-key-type" {0.0} else {10000.0});
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
@@ -1100,15 +1100,16 @@ impl Demo {
             state.sql_tabs[0] = format!("{}SELECT coalesce(\n    substr('中文 SQL editor', 1,", "-- Function argument hints\n".repeat(24));
         }
         if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
-            let target=match tab.as_str() {"table-keys-editor"=>Some((0,state.wizard_key_sel,2)),"table-foreign-keys-editor"=>Some((1,state.wizard_foreign_key_sel,2)),"table-checks-editor"=>Some((2,state.wizard_check_sel,0)),_=>None};
+            let target=match tab.as_str() {"table-keys-editor"=>Some((0,state.wizard_key_sel,2)),"table-key-type"=>Some((0,state.wizard_key_sel,1)),"table-foreign-keys-editor"=>Some((1,state.wizard_foreign_key_sel,2)),"table-checks-editor"=>Some((2,state.wizard_check_sel,0)),_=>None};
             if let Some((page,row,column))=target {
                 let original=state.constraint_cell_value(page,row,column).unwrap().to_string();
+                let original=if (page,column)==(0,1) {state::ConstraintCellOriginal::Index(state.wizard_index_constraints[row].clone())} else {state::ConstraintCellOriginal::Text(original)};
                 state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None});
             }
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
-        if state.wizard_constraint_edit.is_some() {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(UiKey::SelectAll);built.ui.sync(&mut built.scene);}
+        if let Some(edit)=&state.wizard_constraint_edit {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});built.ui.sync(&mut built.scene);}
         if state.wizard_field_edit.is_some() {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);built.ui.sync(&mut built.scene);}
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
@@ -1723,13 +1724,37 @@ impl Demo {
         }
     }
 
+    fn change_table_index_type(&mut self,row:usize,primary:bool) {
+        let Some(current)=self.state.wizard_index_constraints.get(row) else {return;};
+        if current.primary==primary {return;}
+        let mut keys=self.state.wizard_index_constraints.clone();
+        keys[row].primary=primary;
+        if !primary {keys[row].auto_increment=false;}
+        match table_sql::columns_with_index_constraints(&self.state.wizard_cols,&keys) {
+            Ok(columns) => {
+                self.state.wizard_cols=columns;self.state.wizard_index_constraints=keys;
+                self.state.wizard_table_options.index_constraints=Some(self.state.wizard_index_constraints.clone());
+                self.state.wizard_table_options.primary_key_conflict=self.state.wizard_index_constraints.iter().find(|key|key.primary).and_then(|key|key.conflict);
+                self.refresh_table_index_controls();self.clear_error();
+                self.state.status_msg=format!("Constraint type: {} (draft)",if primary {"PRIMARY KEY"} else {"UNIQUE"});
+                self.ui.set_text(self.ids.status,ui_build::status_text(&self.state));
+            }
+            Err(error) => {
+                self.ui.set_select_selected(self.ids.ov_constraint_editor,Some(usize::from(!self.state.wizard_index_constraints[row].primary)));
+                self.set_error(error);self.rebuild=true;
+            }
+        }
+    }
+
     fn snapshot_constraint_cell_editor(&mut self) {
         let id=self.ids.ov_constraint_editor;
         if id.0==0 {return;}
         let Some(edit)=&mut self.state.wizard_constraint_edit else {return;};
         edit.input=self.ui.text_input_state(id);
-        let (page,column)=(edit.page,edit.column);
-        if let Some(value)=self.ui.text_input_value(id).map(str::to_owned) {self.set_constraint_cell_value(page,column,&value);}
+        let (page,row,column)=(edit.page,edit.row,edit.column);
+        if (page,column)==(0,1) {
+            if let Some(selected)=self.ui.select_selected(id) {self.change_table_index_type(row,selected==0);}
+        } else if let Some(value)=self.ui.text_input_value(id).map(str::to_owned) {self.set_constraint_cell_value(page,column,&value);}
         if self.ui.focused()!=Some(id) {self.state.wizard_constraint_edit=None;self.rebuild=true;}
     }
 
@@ -1741,14 +1766,22 @@ impl Demo {
             next_gui_ui::TableCellEditEvent::Begin {row,column,key} => {
                 if [self.state.wizard_key_sel,self.state.wizard_foreign_key_sel,self.state.wizard_check_sel][page]!=row {return;}
                 let Some(original)=self.state.constraint_cell_value(page,row,column).map(str::to_owned) else {return;};
+                let original=if (page,column)==(0,1) {state::ConstraintCellOriginal::Index(self.state.wizard_index_constraints[row].clone())} else {state::ConstraintCellOriginal::Text(original)};
                 self.state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None});
-                self.do_rebuild();let id=self.ids.ov_constraint_editor;self.ui.set_focus(Some(id));self.ui.key_input(UiKey::SelectAll);
+                self.do_rebuild();let id=self.ids.ov_constraint_editor;self.ui.set_focus(Some(id));self.ui.key_input(if (page,column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});
                 if let Some(key)=key {self.ui.key_input(key);}
             }
             next_gui_ui::TableCellEditEvent::End {cancel} => {
                 if cancel {if let Some(edit)=previous {
-                    self.set_constraint_cell_value(edit.page,edit.column,&edit.original);
-                    match edit.page {0=>self.flush_table_index_constraint(),1=>self.flush_table_foreign_key(),_=>self.flush_table_check()}
+                    match edit.original {
+                        state::ConstraintCellOriginal::Text(original) => {
+                            self.set_constraint_cell_value(edit.page,edit.column,&original);
+                            match edit.page {0=>self.flush_table_index_constraint(),1=>self.flush_table_foreign_key(),_=>self.flush_table_check()}
+                        }
+                        state::ConstraintCellOriginal::Index(original) => {
+                            self.state.wizard_index_constraints[edit.row]=original;self.apply_table_index_flags();
+                        }
+                    }
                     self.sync_table_constraint_names();
                 }}
                 self.state.wizard_constraint_edit=None;self.do_rebuild();
@@ -3419,7 +3452,7 @@ impl Demo {
         if explicit {
             if let Some(warning) = &self.state.sql_completion.warning {
                 self.state.status_msg = format!("Some completion metadata is unavailable: {warning}");
-                self.ui.set_text(self.ids.status, &self.state.status_msg);
+                self.ui.set_text(self.ids.status, ui_build::status_text(&self.state));
             }
         }
         self.ui.show_text_area_completions(area, range, items)
@@ -4694,6 +4727,11 @@ impl AppCallbacks for Demo {
             }
         }
         self.refresh_sql_log();
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("table-key-type")
+            && self.ids.ov_constraint_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_constraint_editor)
+            && self.ui.select_selected(self.ids.ov_constraint_editor).is_some() && !self.ui.has_open_popup() {
+            self.ui.key_input(UiKey::Space);self.ui.sync(&mut self.scene);self.needs_paint=true;
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("header-menu") && !self.ui.has_open_popup() {
             let bounds = self.scene.iter_paint_order().into_iter().find(
                 |node| self.ui.widget_from_node(node.id) == Some(self.ids.browse_table)
@@ -7751,6 +7789,39 @@ mod interaction_tests {
             conn.execute("UPDATE records SET value='beta'",[]).unwrap();assert_eq!(conn.query_row("SELECT value FROM visible",[],|row|row.get::<_,String>(0)).unwrap(),"beta");assert_eq!(conn.query_row("SELECT value FROM audit",[],|row|row.get::<_,String>(0)).unwrap(),"beta");
             conn.execute("INSERT INTO records(value,p) VALUES('gamma',1)",[]).unwrap();assert_eq!(conn.last_insert_rowid(),8);let sql=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='records'",[],|row|row.get::<_,String>(0)).unwrap();for page in 0..3 {assert!(sql.contains(&format!("edited_name_{page}")));}
             demo.state.open_create_table_wizard();assert!(demo.state.wizard_constraint_views.iter().all(|view|view.scroll==(0.0,0.0) && view.widths.is_empty() && view.column.is_none()));
+        }
+    }
+
+    #[test]
+    fn key_type_cells_validate_atomically_cancel_autoincrement_and_preserve_ordered_key_migrations() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,a TEXT,b INTEGER,g INTEGER GENERATED ALWAYS AS(id*2) STORED CONSTRAINT generated_unique UNIQUE,CONSTRAINT pair UNIQUE(b DESC,a COLLATE NOCASE ASC) ON CONFLICT FAIL); INSERT INTO records(id,a,b) VALUES(7,'West',1),(11,'East',2); CREATE VIEW visible AS SELECT id,a,b FROM records; CREATE TABLE audit(value); CREATE TRIGGER edited AFTER UPDATE OF a ON records BEGIN INSERT INTO audit VALUES(new.a); END;").unwrap();demo.state.refresh_schema().unwrap();let object=demo.state.schema.iter().position(|object|object.name=="records").unwrap();demo.state.select_schema_node(10_000+object as u64);demo.state.open_modify_table_wizard().unwrap();demo.state.wizard_table_page=1;demo.do_rebuild();
+            let finish=|demo:&mut Demo| {demo.handle_table_cell_edit();if demo.rebuild {demo.do_rebuild();}demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}demo.ui.sync(&mut demo.scene);};
+            let begin=|demo:&mut Demo,row| {demo.ui.set_table_selected_row(demo.ids.ov_keys_table,Some(row));demo.ui.set_table_selected_col(demo.ids.ov_keys_table,Some(1));demo.ui.set_focus(Some(demo.ids.ov_keys_table));demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}demo.ui.set_focus(Some(demo.ids.ov_keys_table));assert!(demo.ui.key_input(UiKey::Edit));finish(demo);assert_eq!(demo.ui.focused(),Some(demo.ids.ov_constraint_editor));assert!(demo.ui.has_open_popup());};
+            let column_flags=|demo:&Demo|demo.state.wizard_cols.iter().map(|column|(column.name.clone(),column.pk,column.auto_increment,column.unique,column.notnull)).collect::<Vec<_>>();
+            let original=demo.state.wizard_index_constraints.clone();let columns=column_flags(&demo);let id=original.iter().position(|key|key.primary).unwrap();let pair=original.iter().position(|key|key.name.as_deref()==Some("pair")).unwrap();let generated=original.iter().position(|key|key.name.as_deref()==Some("generated_unique")).unwrap();
+            begin(&mut demo,pair);demo.ui.key_input(UiKey::Up);finish(&mut demo);assert_eq!(demo.state.wizard_index_constraints,original);assert_eq!(column_flags(&demo),columns);assert_eq!(demo.ui.select_selected(demo.ids.ov_constraint_editor),Some(1));assert!(demo.state.error_msg.as_deref().unwrap().contains("only one primary key"));assert!(demo.ui.text_content(demo.ids.status).unwrap().contains("only one primary key"));demo.clear_error();demo.ui.key_input(UiKey::Escape);finish(&mut demo);
+            begin(&mut demo,id);demo.ui.key_input(UiKey::Down);finish(&mut demo);assert!(!demo.state.wizard_cols[0].pk && !demo.state.wizard_cols[0].auto_increment && demo.state.wizard_cols[0].unique);assert_eq!(demo.state.wizard_index_constraints[id].name,original[id].name);
+            assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(demo.state.wizard_constraint_edit.is_some());assert_eq!(demo.ui.focused(),Some(demo.ids.ov_constraint_editor));assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert_eq!(demo.state.wizard_index_constraints,original);assert_eq!(column_flags(&demo),columns);assert!(demo.state.wizard_cols[0].auto_increment);
+            begin(&mut demo,id);demo.ui.key_input(UiKey::Down);finish(&mut demo);demo.ui.key_input(UiKey::Enter);finish(&mut demo);demo.ui.key_input(UiKey::Enter);finish(&mut demo);assert!(demo.state.wizard_constraint_edit.is_none());
+            demo.state.wizard_table_options.without_rowid=true;demo.do_rebuild();demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.as_deref().unwrap().contains("PRIMARY KEY"));assert_eq!(demo.state.overlay,Some(OverlayKind::EditTable));assert!(demo.state.conn.as_ref().unwrap().query_row("SELECT sql FROM sqlite_schema WHERE name='records'",[],|row|row.get::<_,String>(0)).unwrap().contains("AUTOINCREMENT"));demo.state.wizard_table_options.without_rowid=false;demo.clear_error();demo.do_rebuild();
+            let before=demo.state.wizard_index_constraints.clone();let flags=column_flags(&demo);begin(&mut demo,generated);demo.ui.key_input(UiKey::Up);finish(&mut demo);assert_eq!(demo.state.wizard_index_constraints,before);assert_eq!(column_flags(&demo),flags);assert!(demo.state.error_msg.as_deref().unwrap().contains("Generated columns"));demo.clear_error();demo.ui.key_input(UiKey::Escape);finish(&mut demo);
+            begin(&mut demo,pair);demo.ui.key_input(UiKey::Up);finish(&mut demo);let key=&demo.state.wizard_index_constraints[pair];assert!(key.primary);assert_eq!(key.columns,original[pair].columns);assert_eq!(key.name,original[pair].name);assert_eq!(key.conflict,original[pair].conflict);assert!(demo.state.wizard_cols[1].pk && demo.state.wizard_cols[2].pk);assert_eq!(demo.ui.select_selected(demo.ids.ov_key_conflict),Some(3));assert_eq!(demo.state.wizard_table_options.primary_key_conflict,Some(sqlite3_parser::ast::ResolveType::Fail));assert!(demo.state.error_msg.is_none());assert!(demo.ui.text_content(demo.ids.status).unwrap().contains("Constraint type: PRIMARY KEY (draft)"));assert!(demo.ui.text_content(demo.ids.status).unwrap().contains("SQLCipher"));
+            demo.ui.key_input(UiKey::Enter);finish(&mut demo);assert!(demo.state.wizard_constraint_edit.is_some());demo.win_w=800;demo.win_h=600;demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.ov_constraint_editor));assert_eq!(demo.ui.select_selected(demo.ids.ov_constraint_editor),Some(0));
+            if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_KEY_TYPE_QA_OUT") {
+                demo.scene.mark_full_dirty(800.0,600.0);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(800,600,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-800.ppm"),soft.frame_pixels().unwrap().0,800,600).unwrap();
+                if let Ok(mut gpu)=GpuRenderer::try_new(800,600,clear) {gpu.render(&commands,&dirty);let delta=soft.frame_pixels().unwrap().0.iter().zip(gpu.frame_pixels().unwrap().0).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}: {delta}");eprintln!("Key type {theme_name}/800: Soft/Metal delta {delta}");} else {eprintln!("Key type GPU comparison not_run: adapter unavailable");}
+            }
+            demo.ui.key_input(UiKey::Enter);finish(&mut demo);demo.win_w=1400;demo.win_h=1000;demo.do_rebuild();begin(&mut demo,pair);
+            if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_KEY_TYPE_QA_OUT") {
+                demo.scene.mark_full_dirty(1400.0,1000.0);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(1400,1000,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-1400.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
+                if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear) {gpu.render(&commands,&dirty);let delta=soft.frame_pixels().unwrap().0.iter().zip(gpu.frame_pixels().unwrap().0).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}: {delta}");eprintln!("Key type {theme_name}/1400: Soft/Metal delta {delta}");} else {eprintln!("Key type GPU comparison not_run: adapter unavailable");}
+            }
+            demo.ui.key_input(UiKey::Enter);finish(&mut demo);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_constraint_edit.as_ref().unwrap().column,2);assert_eq!(demo.ui.text_input_value(demo.ids.ov_constraint_editor),Some("pair"));demo.ui.key_input(UiKey::Escape);finish(&mut demo);
+            demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT sum(rowid+id+b+g) FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),75);
+            let sql=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='records'",[],|row|row.get::<_,String>(0)).unwrap();assert!(!sql.contains("AUTOINCREMENT"));for fragment in ["CONSTRAINT \"pair\" PRIMARY KEY","DESC","COLLATE NOCASE ASC","ON CONFLICT FAIL"] {assert!(sql.contains(fragment),"{sql}");}
+            assert!(conn.execute("INSERT INTO records(id,a,b) VALUES(20,'west',1)",[]).is_err());conn.execute("UPDATE records SET a='North' WHERE id=7",[]).unwrap();assert_eq!(conn.query_row("SELECT a FROM visible WHERE id=7",[],|row|row.get::<_,String>(0)).unwrap(),"North");assert_eq!(conn.query_row("SELECT value FROM audit",[],|row|row.get::<_,String>(0)).unwrap(),"North");conn.execute("INSERT INTO records(id,a,b) VALUES(20,'South',3)",[]).unwrap();assert_eq!(conn.last_insert_rowid(),12);
         }
     }
 

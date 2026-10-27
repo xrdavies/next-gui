@@ -4948,7 +4948,7 @@ impl Ui {
                     }
                     _ => {}
                 }
-                if self.focus == Some(id) && !matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
+                if self.focus == Some(id) && !matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. } | Kind::Select { .. })) {
                     self.focus = None;
                 }
             }

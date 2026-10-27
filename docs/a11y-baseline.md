@@ -200,7 +200,7 @@ when applying or rejecting the edit. Replacing rows clears this metadata.
 
 Editable tables opt in with `set_table_editable_columns`. Enter/F2, typing or
 clicking a selected cell queues `take_table_cell_edit`; applications snapshot the
-previous draft, build a standard TextInput/Autocomplete with `table_cell_editor`,
+previous draft, build a standard TextInput/Autocomplete/Select with `table_cell_editor`,
 then focus it. The child follows frozen/resized/scrolled geometry. Enter commits,
 Escape requests cancellation, and Tab/BackTab requests the next editable cell.
 IME composition and open suggestions keep their ordinary key handling first.

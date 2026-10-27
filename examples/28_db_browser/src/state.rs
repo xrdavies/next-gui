@@ -29,11 +29,17 @@ pub struct FieldCellEdit {
 }
 
 #[derive(Debug, Clone)]
+pub enum ConstraintCellOriginal {
+    Text(String),
+    Index(crate::table_sql::NamedIndexConstraint),
+}
+
+#[derive(Debug, Clone)]
 pub struct ConstraintCellEdit {
     pub page: usize,
     pub row: usize,
     pub column: usize,
-    pub original: String,
+    pub original: ConstraintCellOriginal,
     pub input: Option<next_gui_ui::TextInputState>,
 }
 
@@ -626,6 +632,7 @@ pub enum DocumentAction {
 impl AppState {
     pub fn constraint_cell_value(&self, page: usize, row: usize, column: usize) -> Option<&str> {
         match (page, column) {
+            (0, 1) => Some(if self.wizard_index_constraints.get(row)?.primary {"PRIMARY KEY"} else {"UNIQUE"}),
             (0, 2) => Some(self.wizard_index_constraints.get(row)?.name.as_deref().unwrap_or("")),
             (1, 1) => Some(self.wizard_foreign_keys.get(row)?.name.as_deref().unwrap_or("")),
             (1, 2) => Some(&self.wizard_foreign_keys.get(row)?.clause),
