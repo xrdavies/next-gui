@@ -120,7 +120,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Original visible-row Previous/Next, virtual scrolling and full form controls remain. |
+| Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment, PageUp/PageDown and full form controls remain. |
 
 ## Edit Pragmas tab
 
@@ -366,3 +366,12 @@ clippy/build/platform features pass. Soft wide/narrow and native Metal captures
 were inspected. See [review and limitations](../../docs/reviews/R-20261027-ebeb580e892d.md).
 Original visible-row page stepping, whole-result scrolling and native input
 acceptance remain open; this checkpoint does not complete full reproduction.
+
+### Visible-row navigation checkpoint (2026-10-27)
+
+`5c9c20d208ae` replaces the fixed-page buttons with bottom Previous/Next controls
+that move by visible rows minus one. The shared counter accounts for half rows
+and resize; cross-cache selection, errors and drafts are covered. Workspace:
+287 tests, clippy/build/platform features pass. Soft wide/narrow and native Metal
+painting were inspected. See [review and remaining behavioral differences](../../docs/reviews/R-20261027-5c9c20d208ae.md).
+Original row/top alignment, whole-result scrolling and native input remain open.
