@@ -273,6 +273,8 @@ pub enum Event {
         x: f64,
         /// Y.
         y: f64,
+        /// Keyboard modifiers at press/release time (including Command on macOS).
+        modifiers: Modifiers,
     },
     /// Key event.
     Key {

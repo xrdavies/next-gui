@@ -146,3 +146,13 @@ retaining modifiers. They are not text/IME input. Applications with exhaustive
 key matches must handle this variant; Office examples ignore it unless they bind
 an action (e28 uses F3/Shift+F3 for SQL search). Native hardware acceptance remains
 separate from shared mapping tests and feature compilation.
+
+## Pointer modifiers
+
+`Event::PointerButton` includes `modifiers` at press/release time. Linux, macOS
+and Windows use the same current winit modifier state; Command is `meta` on macOS.
+Event consumers can use `modifiers.commandish()` for Ctrl/Command gestures. Direct
+constructors must supply the field; exhaustive patterns should include it or `..`.
+Touch backends call `synthesize_with_modifiers`; the existing `synthesize` helper
+continues to produce unmodified pointer events. Native gesture acceptance remains
+a separate check from compile and synthetic event tests.

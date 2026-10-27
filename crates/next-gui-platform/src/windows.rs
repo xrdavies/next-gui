@@ -327,6 +327,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                 // Suppress OS-mirrored left clicks while primary touch is active.
                 if !(button == PointerButton::Left && self.touch_synth.has_primary()) {
                     let (x, y) = host.cursor;
+                    let modifiers = host.modifiers;
                     let mut ctx = WindowCtx { inner: host };
                     self.app.on_event(
                         &mut ctx,
@@ -336,6 +337,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                             pressed,
                             x,
                             y,
+                            modifiers,
                         },
                     );
                 }
@@ -461,7 +463,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     y: t.location.y,
                 };
                 host.cursor = (touch.x, touch.y);
-                let synth = self.touch_synth.synthesize(WindowId(1), touch);
+                let synth = self.touch_synth.synthesize_with_modifiers(WindowId(1), touch, host.modifiers);
                 let mut ctx = WindowCtx { inner: host };
                 // Always forward raw Touch first; then primary-finger pointer synth (P6a).
                 self.app.on_event(

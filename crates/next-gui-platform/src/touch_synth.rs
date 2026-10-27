@@ -17,7 +17,7 @@
 //! is true. Suppression is best-effort: a late mouse-up after primary release, or
 //! a second pointing device during touch, may still produce an extra pointer event.
 
-use crate::{Event, PointerButton, TouchEvent, TouchPhase, WindowId};
+use crate::{Event, Modifiers, PointerButton, TouchEvent, TouchPhase, WindowId};
 
 /// Tracks the primary touch id and emits pointer events for HMI.
 #[derive(Debug, Default, Clone)]
@@ -52,6 +52,16 @@ impl TouchPointerSynth {
     ///   (Moved keeps the release position aligned; Cancelled must not leave a sticky press)
     /// - Secondary fingers → no pointer synthesis
     pub fn synthesize(&mut self, window: WindowId, touch: TouchEvent) -> Vec<Event> {
+        self.synthesize_with_modifiers(window, touch, Modifiers::default())
+    }
+
+    /// Synthesize with the keyboard modifiers held at this touch sample.
+    pub fn synthesize_with_modifiers(
+        &mut self,
+        window: WindowId,
+        touch: TouchEvent,
+        modifiers: Modifiers,
+    ) -> Vec<Event> {
         match touch.phase {
             TouchPhase::Started => {
                 if self.primary_id.is_some() {
@@ -68,6 +78,7 @@ impl TouchPointerSynth {
                         window,
                         button: PointerButton::Left,
                         pressed: true,
+                        modifiers,
                         x: touch.x,
                         y: touch.y,
                     },
@@ -98,6 +109,7 @@ impl TouchPointerSynth {
                         window,
                         button: PointerButton::Left,
                         pressed: false,
+                        modifiers,
                         x: touch.x,
                         y: touch.y,
                     },
@@ -138,7 +150,9 @@ mod tests {
                 pressed: p,
                 x: bx,
                 y: by,
+                modifiers,
             } => {
+                assert_eq!(*modifiers, Modifiers::default());
                 assert_eq!(*window, WindowId(1));
                 assert_eq!(*button, PointerButton::Left);
                 assert_eq!(*p, pressed);
@@ -146,6 +160,18 @@ mod tests {
                 assert_eq!(*by, y);
             }
             other => panic!("expected PointerButton, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn touch_pointer_preserves_modifiers_at_each_sample() {
+        let mut synth = TouchPointerSynth::new();
+        for (phase, modifiers, pressed) in [
+            (TouchPhase::Started, Modifiers { ctrl: true, ..Modifiers::default() }, true),
+            (TouchPhase::Ended, Modifiers { meta: true, shift: true, ..Modifiers::default() }, false),
+        ] {
+            let events = synth.synthesize_with_modifiers(WindowId(1), touch(1, phase, 2.0, 3.0), modifiers);
+            assert!(matches!(events[1], Event::PointerButton { modifiers: actual, pressed: actual_pressed, .. } if actual == modifiers && actual_pressed == pressed));
         }
     }
 
