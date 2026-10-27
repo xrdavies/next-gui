@@ -50,6 +50,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 ## Review runs
 
+| 2026-10-27 | `0b52704..832cebe` | Codex | issues — BOM-aware UTF-8/UTF-16 CSV import verified; e28 96 tests/clippy/build pass; native/full parity remain | [Report](R-20261027-832cebe.md) |
+
 | 2026-10-27 | `f9d523e..8f86cc7` | Codex | issues — Form View crosses filtered 500-row pages; e28 96 tests/clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-8f86cc7.md) |
 
 | 2026-10-27 | `7063588..b818a89` | Codex | issues — browse sort asc/desc/clear cycle verified; e28 sort regression passes; multi-sort/native/full parity remain | [Report](R-20261027-b818a89.md) |
