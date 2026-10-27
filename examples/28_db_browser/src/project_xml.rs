@@ -507,27 +507,36 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         attached.push(db);
     }
     let settings = root.ensure("tab_browse").ensure("browse_table_settings");
+    let mut table_options = std::collections::BTreeMap::new();
     for tab in &project.browse_tabs {
-        let Some(name) = &tab.table else {
-            continue;
-        };
-        let columns = db::table_column_names(conn, name)?;
-        let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == "main" && e.attr("name") == Some(name))).unwrap_or_else(|| {
+        table_options.extend(tab.table_options.clone());
+    }
+    for tab in &project.browse_tabs {
+        if let Some(name) = &tab.table {
+            table_options.insert(name.clone(), tab.options());
+        }
+    }
+    for (name, options) in table_options {
+        let columns = db::table_column_names(conn, &name)?;
+        if columns.is_empty() { continue; }
+        let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == "main" && e.attr("name") == Some(name.as_str()))).unwrap_or_else(|| {
             let mut table = Element::new("table");
-            table.set("schema", "main"); table.set("name", name);
+            table.set("schema", "main"); table.set("name", &name);
             settings.push(table);
             settings.content.len() - 1
         });
         let Content::Element(table) = &mut settings.content[index] else {
             unreachable!()
         };
-        table.set("freeze_columns", project.frozen_cols.min(columns.len()));
+        if project.browse_tabs.iter().any(|tab| tab.table.as_deref() == Some(name.as_str())) {
+            table.set("freeze_columns", project.frozen_cols.min(columns.len()));
+        }
         let sort = table.ensure("sort");
         let old_ordering = sort.children().filter(|e| e.name == "column").filter_map(|column| {
             column.attr("index").and_then(|i| i.parse::<usize>().ok()).and_then(|i| columns.get(i))
                 .map(|name| db::OrderBy { column: name.clone(), descending: column.attr("mode") == Some("1") })
         }).collect::<Vec<_>>();
-        let ordering = tab.ordering();
+        let ordering = options.ordering;
         if old_ordering != ordering {
             sort.retain_elements(|e| e.name != "column");
             for order in &ordering {
@@ -541,7 +550,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         }
         let widths = table.ensure("column_widths");
         widths.retain_elements(|e| e.name != "column");
-        for (index, width) in tab.column_widths.iter().enumerate().take(columns.len()) {
+        for (index, width) in options.column_widths.iter().enumerate().take(columns.len()) {
             let mut column = Element::new("column");
             column.set("index", index);
             column.set("value", width.round().max(32.0) as u32);
@@ -549,7 +558,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         }
         let filters = table.ensure("filter_values");
         filters.retain_elements(|e| e.name != "column");
-        for (index, value) in tab.col_filters.iter().enumerate().take(columns.len()).filter(|(_, value)| !value.is_empty()) {
+        for (index, value) in options.col_filters.iter().enumerate().take(columns.len()).filter(|(_, value)| !value.is_empty()) {
             let mut column = Element::new("column");
             column.set("index", index);
             column.set("value", value);
@@ -557,7 +566,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         }
         let global = table.ensure("global_filter");
         global.retain_elements(|e| e.name != "filter");
-        for value in &tab.global_filters {
+        for value in &options.global_filters {
             let mut filter = Element::new("filter");
             filter.set("value", value);
             global.push(filter);
@@ -568,71 +577,110 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
 }
 
 /// Map column indices only after the database schema is available.
+fn restore_table_options(
+    tab: &mut BrowseTabState,
+    table: &Element,
+    columns: &[String],
+) -> Result<(), String> {
+    if let Some(sort) = table.child("sort") {
+        tab.set_ordering(
+            sort.children()
+                .filter(|e| e.name == "column")
+                .filter_map(|column| {
+                    column
+                        .attr("index")
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .and_then(|i| columns.get(i))
+                        .map(|name| db::OrderBy {
+                            column: name.clone(),
+                            descending: column.attr("mode") == Some("1"),
+                        })
+                })
+                .collect(),
+        );
+    }
+    if let Some(widths) = table.child("column_widths") {
+        tab.column_widths.resize(columns.len(), 140.0);
+        for column in widths.children().filter(|e| e.name == "column") {
+            if let Some(index) = column
+                .attr("index")
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|&i| i < columns.len())
+            {
+                let width = column
+                    .attr("value")
+                    .unwrap_or("140")
+                    .parse::<f32>()
+                    .map_err(|_| "Invalid project column width")?;
+                if !width.is_finite() || width <= 0.0 {
+                    return Err("Invalid project column width".into());
+                }
+                tab.column_widths[index] = width.clamp(32.0, 10000.0);
+            }
+        }
+    }
+    if let Some(filters) = table.child("filter_values") {
+        tab.col_filters = vec![String::new(); columns.len()];
+        for column in filters.children().filter(|e| e.name == "column") {
+            let index = column
+                .attr("index")
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|&i| i < columns.len())
+                .ok_or("Invalid project filter column index")?;
+            tab.col_filters[index] = column.attr("value").unwrap_or("").into();
+        }
+    }
+    if let Some(global) = table.child("global_filter") {
+        tab.global_filters = global
+            .children()
+            .filter(|e| e.name == "filter")
+            .map(|e| e.attr("value").unwrap_or("").into())
+            .collect();
+    }
+    Ok(())
+}
+
 pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<(), String> {
     let Some(source) = &project.db4s_xml else {
         return Ok(());
     };
     let root = parse(source)?;
-    let settings = root
+    let Some(settings) = root
         .child("tab_browse")
-        .and_then(|e| e.child("browse_table_settings"));
+        .and_then(|e| e.child("browse_table_settings"))
+    else {
+        return Ok(());
+    };
     for tab in &mut project.browse_tabs {
-        let Some(name) = &tab.table else {
-            continue;
-        };
-        let Some(table) = settings.and_then(|s| {
-            s.children().find(|e| {
-                e.name == "table"
-                    && e.attr("schema").unwrap_or("main") == "main"
-                    && e.attr("name") == Some(name)
-            })
-        }) else {
-            continue;
-        };
-        let columns = db::table_column_names(conn, name)?;
-        if let Some(sort) = table.child("sort") {
-            tab.set_ordering(sort.children().filter(|e| e.name == "column").filter_map(|column| {
-                column.attr("index").and_then(|i| i.parse::<usize>().ok()).and_then(|i| columns.get(i))
-                    .map(|name| db::OrderBy { column: name.clone(), descending: column.attr("mode") == Some("1") })
-            }).collect());
-        }
-        if let Some(widths) = table.child("column_widths") {
-            tab.column_widths.resize(columns.len(), 140.0);
-            for column in widths.children().filter(|e| e.name == "column") {
-                if let Some(index) = column
-                    .attr("index")
+        for table in settings
+            .children()
+            .filter(|e| e.name == "table" && e.attr("schema").unwrap_or("main") == "main")
+        {
+            let Some(name) = table.attr("name") else {
+                continue;
+            };
+            let columns = db::table_column_names(conn, name)?;
+            if columns.is_empty() {
+                continue;
+            }
+            let active = tab.table.as_deref() == Some(name);
+            let mut stored = BrowseTabState::new(Some(name.into()));
+            if active {
+                stored.set_options(tab.options());
+            } else if let Some(options) = tab.table_options.get(name) {
+                stored.set_options(options.clone());
+            }
+            restore_table_options(&mut stored, table, &columns)?;
+            if active {
+                tab.set_options(stored.options());
+                project.frozen_cols = table
+                    .attr("freeze_columns")
                     .and_then(|s| s.parse::<usize>().ok())
-                    .filter(|&i| i < columns.len())
-                {
-                    let width = column
-                        .attr("value")
-                        .unwrap_or("140")
-                        .parse::<f32>()
-                        .map_err(|_| "Invalid project column width")?;
-                    if !width.is_finite() || width <= 0.0 {
-                        return Err("Invalid project column width".into());
-                    }
-                    tab.column_widths[index] = width.clamp(32.0, 10000.0);
-                }
+                    .unwrap_or(project.frozen_cols)
+                    .min(columns.len());
             }
+            tab.table_options.insert(name.into(), stored.options());
         }
-        if let Some(filters) = table.child("filter_values") {
-            tab.col_filters = vec![String::new(); columns.len()];
-            for column in filters.children().filter(|e| e.name == "column") {
-                let index = column.attr("index").and_then(|s| s.parse::<usize>().ok())
-                    .filter(|&i| i < columns.len()).ok_or("Invalid project filter column index")?;
-                tab.col_filters[index] = column.attr("value").unwrap_or("").into();
-            }
-        }
-        if let Some(global) = table.child("global_filter") {
-            tab.global_filters = global.children().filter(|e| e.name == "filter")
-                .map(|e| e.attr("value").unwrap_or("").into()).collect();
-        }
-        project.frozen_cols = table
-            .attr("freeze_columns")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(project.frozen_cols)
-            .min(columns.len());
     }
     Ok(())
 }

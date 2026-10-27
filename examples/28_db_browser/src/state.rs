@@ -1,6 +1,6 @@
 //! Application state for the DB Browser example (DB4S chrome + Phase 2 wizards).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -112,6 +112,16 @@ pub struct SelectedObject {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct BrowseTableOptions {
+    pub filter: String,
+    pub global_filters: Vec<String>,
+    pub col_filters: Vec<String>,
+    pub ordering: Vec<db::OrderBy>,
+    pub column_widths: Vec<f32>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrowseTabState {
     pub title: String,
@@ -132,6 +142,8 @@ pub struct BrowseTabState {
     pub column_widths: Vec<f32>,
     #[serde(default)]
     pub scroll: (f32, f32),
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub table_options: BTreeMap<String, BrowseTableOptions>,
     #[serde(skip)]
     pub result: Option<QueryResult>,
     #[serde(skip)]
@@ -155,6 +167,24 @@ pub struct BrowseTabState {
 }
 
 impl BrowseTabState {
+    pub fn options(&self) -> BrowseTableOptions {
+        BrowseTableOptions {
+            filter: self.filter.clone(),
+            global_filters: self.global_filters.clone(),
+            col_filters: self.col_filters.clone(),
+            ordering: self.ordering(),
+            column_widths: self.column_widths.clone(),
+        }
+    }
+
+    pub fn set_options(&mut self, options: BrowseTableOptions) {
+        self.filter = options.filter;
+        self.global_filters = options.global_filters;
+        self.col_filters = options.col_filters;
+        self.set_ordering(options.ordering);
+        self.column_widths = options.column_widths;
+    }
+
     pub fn ordering(&self) -> Vec<db::OrderBy> {
         self.order_col.iter().map(|column| db::OrderBy { column: column.clone(), descending: self.order_desc })
             .chain(self.additional_order.iter().cloned()).collect()
@@ -190,6 +220,7 @@ impl BrowseTabState {
             additional_order: Vec::new(),
             column_widths: Vec::new(),
             scroll: (0.0, 0.0),
+            table_options: BTreeMap::new(),
             result: None,
             rowids: Vec::new(),
             sel_row: None,
@@ -1150,8 +1181,18 @@ impl AppState {
         if !self.table_names().iter().any(|table| table == name) { return Err("Select a valid table or view".into()); }
         if self.browse().table.as_deref() == Some(name) { return Ok(()); }
         let previous = self.browse().clone();
-        // shortcut: prior per-table options are not retained; restore them for DB4S settings parity.
-        *self.browse_mut() = BrowseTabState::new(Some(name.into()));
+        let mut next = BrowseTabState::new(Some(name.into()));
+        next.table_options = previous.table_options.clone();
+        if let Some(table) = &previous.table {
+            next.table_options.insert(table.clone(), previous.options());
+        }
+        if let Some(options) = next.table_options.get(name).cloned() {
+            if options.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
+                return Err("Invalid saved table column width".into());
+            }
+            next.set_options(options);
+        }
+        *self.browse_mut() = next;
         if let Err(error) = self.refresh_browse() {
             *self.browse_mut() = previous;
             return Err(error);
@@ -2204,13 +2245,32 @@ impl AppState {
             }
         }
         for tab in &pf.browse_tabs {
-            let Some(table) = &tab.table else { continue; };
-            let result = (|| {
+            if let Some(table) = &tab.table {
+                if tab.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
+                    return Err(format!("Browse tab {}: invalid column width", tab.title));
+                }
+                let result = (|| {
+                    let columns = db::table_column_names(conn, table)?;
+                    db::browse_table(conn, table, &tab.ordering(),
+                        Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
+                })();
+                result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
+            }
+            for (table, options) in &tab.table_options {
+                if tab.table.as_ref() == Some(table) { continue; }
                 let columns = db::table_column_names(conn, table)?;
-                db::browse_table(conn, table, &tab.ordering(),
-                    Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
-            })();
-            result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
+                if columns.is_empty() { continue; }
+                if options.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
+                    return Err(format!("Saved table {table}: invalid column width"));
+                }
+                let mut stored = BrowseTabState::new(Some(table.clone()));
+                stored.set_options(options.clone());
+                let result = (|| {
+                    db::browse_table(conn, table, &stored.ordering(),
+                        Self::composed_where(&stored, &columns)?.as_deref(), 1, 0)
+                })();
+                result.map_err(|error| format!("Saved table {table}: {error}"))?;
+            }
         }
         Ok(())
     }

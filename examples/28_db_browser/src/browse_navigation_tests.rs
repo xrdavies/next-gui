@@ -524,7 +524,11 @@ fn command_page_shortcuts_cycle_tables_and_views_in_both_directions() {
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             assert_eq!(demo.state.browse().sel_row, None);
             assert!(demo.state.edit_col.is_empty());
-            assert!(demo.state.browse().ordering().is_empty());
+            if names[index] == "t" {
+                assert_eq!(demo.state.browse().ordering()[0].column, "n");
+            } else {
+                assert!(demo.state.browse().ordering().is_empty());
+            }
             assert_eq!(demo.state.browse().offset, 0);
             assert_eq!(demo.ui.focused(), Some(demo.ids.browse_table));
         }
@@ -567,4 +571,216 @@ fn table_switch_apply_guards_drafts_and_busy_queries_without_mutating_the_tab() 
     assert_eq!(selected(&demo), (500, 0, "205"));
     assert_eq!(demo.state.edit_value, "row 205");
     assert!(!demo.state.dirty);
+}
+
+#[test]
+fn per_table_filters_sort_and_widths_restore_in_each_tab_and_project_roundtrip() {
+    let mut demo = demo();
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch("CREATE TABLE u(other TEXT); INSERT INTO u VALUES('u')")
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    let options = state::BrowseTableOptions {
+        filter: "n%2=1".into(),
+        global_filters: vec!["row".into()],
+        col_filters: vec!["<=999".into(), String::new()],
+        ordering: vec![
+            db::OrderBy {
+                column: "n".into(),
+                descending: true,
+            },
+            db::OrderBy {
+                column: "label".into(),
+                descending: false,
+            },
+        ],
+        column_widths: vec![147.0, 231.0],
+    };
+    demo.state.browse_mut().set_options(options.clone());
+    demo.state.refresh_browse().unwrap();
+    demo.state.switch_browse_table("u").unwrap();
+    assert!(demo.state.browse().filter.is_empty());
+    assert!(demo.state.browse().global_filters.is_empty());
+    assert!(demo.state.browse().ordering().is_empty());
+    assert!(demo.state.browse().column_widths.is_empty());
+    assert_eq!(demo.state.browse().table_options["t"], options);
+    demo.state.browse_mut().filter = "other='u'".into();
+    demo.state.refresh_browse().unwrap();
+    let project = project::ProjectFile::from_state(&demo.state);
+    let json = serde_json::to_string(&project).unwrap();
+    let xml = project_xml::encode(&project, std::path::Path::new("options.sqbpro")).unwrap();
+    for restored in [
+        serde_json::from_str::<project::ProjectFile>(&json).unwrap(),
+        project_xml::decode(&xml).unwrap(),
+    ] {
+        restored.apply_to(&mut demo.state);
+        demo.state.switch_browse_table("t").unwrap();
+        assert_eq!(demo.state.browse().options(), options);
+        assert_eq!(
+            demo.state.browse().result.as_ref().unwrap().rows[0][0],
+            "999"
+        );
+        assert_eq!(demo.state.browse().sel_row, None);
+        assert!(demo.state.edit_col.is_empty());
+        demo.state.switch_browse_table("u").unwrap();
+        assert_eq!(demo.state.browse().filter, "other='u'");
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "u");
+    }
+    demo.state.add_browse_tab().unwrap();
+    demo.state.switch_browse_table("t").unwrap();
+    assert!(
+        demo.state.browse().filter.is_empty(),
+        "a new browse tab has independent options"
+    );
+    demo.state.switch_browse_tab(0).unwrap();
+    demo.state.switch_browse_table("t").unwrap();
+    assert_eq!(demo.state.browse().options(), options);
+    if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+        demo.state.browse_mut().sel_row = Some(0);
+        demo.state.browse_mut().sel_col = Some(1);
+        demo.state.sync_edit_cell_from_selection();
+        demo.do_rebuild();
+        demo.scene
+            .mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+        let dirty = demo.scene.take_dirty();
+        let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+        renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+        write_ppm(
+            &path,
+            renderer.frame_pixels().unwrap().0,
+            demo.win_w,
+            demo.win_h,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn invalid_saved_table_options_do_not_replace_the_current_result() {
+    let mut demo = demo();
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch("CREATE TABLE u(other)")
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    demo.state.goto_browse_record(501).unwrap();
+    for options in [
+        state::BrowseTableOptions {
+            column_widths: vec![-1.0],
+            ..Default::default()
+        },
+        state::BrowseTableOptions {
+            filter: "missing_function()".into(),
+            ..Default::default()
+        },
+    ] {
+        demo.state
+            .browse_mut()
+            .table_options
+            .insert("u".into(), options.clone());
+        assert!(demo.state.switch_browse_table("u").is_err());
+        assert_eq!(demo.state.browse().table.as_deref(), Some("t"));
+        assert_eq!(selected(&demo), (500, 0, "205"));
+        assert_eq!(demo.state.edit_value, "row 205");
+        assert_eq!(demo.state.browse().table_options["u"], options);
+    }
+}
+
+#[test]
+fn native_xml_restores_and_writes_options_for_tables_that_are_not_active() {
+    let mut demo = demo();
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch("CREATE TABLE u(other); INSERT INTO u VALUES('u')")
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    let source = "<sqlb_project><db path=':memory:'/>
+        <tab_browse><table table='4,1:mainu'/><browse_table_settings>
+        <table name='t' schema='main' freeze_columns='1'><sort><column index='0' mode='1'/></sort>
+        <column_widths><column index='0' value='177'/><column index='1' value='233'/></column_widths>
+        <filter_values><column index='0' value='&lt;=9'/></filter_values>
+        <global_filter><filter value='row'/></global_filter></table>
+        <table name='u' schema='main'/></browse_table_settings></tab_browse></sqlb_project>";
+    let mut project = project_xml::decode(source).unwrap();
+    project_xml::restore_browse(&mut project, demo.state.conn.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        project.frozen_cols, 0,
+        "inactive freeze setting does not leak into the active table"
+    );
+    project.apply_to(&mut demo.state);
+    demo.state.switch_browse_table("t").unwrap();
+    assert_eq!(demo.state.browse().column_widths, [177.0, 233.0]);
+    assert_eq!(demo.state.browse().global_filters, ["row"]);
+    assert_eq!(demo.state.browse().col_filters[0], "<=9");
+    assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "9");
+    demo.state.browse_mut().col_filters[0] = "<7".into();
+    demo.state.refresh_browse().unwrap();
+    demo.state.switch_browse_table("u").unwrap();
+    let mut project = project::ProjectFile::from_state(&demo.state);
+    project_xml::capture_connection(&mut project, demo.state.conn.as_ref().unwrap()).unwrap();
+    let mut xml = project_xml::encode(&project, std::path::Path::new("native.sqbpro")).unwrap();
+    let start = xml.find("<next_gui").unwrap();
+    let end = xml.find("</next_gui>").unwrap() + "</next_gui>".len();
+    xml.replace_range(start..end, "");
+    let mut native = project_xml::decode(&xml).unwrap();
+    project_xml::restore_browse(&mut native, demo.state.conn.as_ref().unwrap()).unwrap();
+    assert_eq!(native.browse_tabs[0].table.as_deref(), Some("u"));
+    let stored = &native.browse_tabs[0].table_options["t"];
+    assert_eq!(stored.col_filters[0], "<7");
+    assert_eq!(stored.column_widths, [177.0, 233.0]);
+    assert_eq!(stored.ordering[0].column, "n");
+    assert!(stored.ordering[0].descending);
+    assert_eq!(stored.global_filters, ["row"]);
+    native.browse_tabs[0].table = Some("t".into());
+    project_xml::restore_browse(&mut native, demo.state.conn.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        native.frozen_cols, 1,
+        "inactive freeze metadata survives saving other options"
+    );
+}
+
+#[test]
+fn opening_a_project_preflights_saved_tables_before_replacing_the_database() {
+    let mut demo = demo();
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("other.db");
+    let conn = rusqlite::Connection::open(&database).unwrap();
+    conn.execute_batch("CREATE TABLE t(n,label); CREATE TABLE u(other)")
+        .unwrap();
+    drop(conn);
+    demo.state.checkpoint_project();
+    for active in [Some("t".to_string()), None] {
+        let mut tab = state::BrowseTabState::new(active);
+        tab.table_options.insert(
+            "u".into(),
+            state::BrowseTableOptions {
+                filter: "missing_function()".into(),
+                ..Default::default()
+            },
+        );
+        let project = project::ProjectFile {
+            db_path: database.to_string_lossy().into_owned(),
+            browse_tabs: vec![tab],
+            ..Default::default()
+        };
+        let path = dir.path().join("bad.json");
+        project.save(&path).unwrap();
+        let error = demo.state.open_project(&path).unwrap_err();
+        assert!(error.contains("Saved table u"), "{error}");
+        assert!(error.contains("missing_function"), "{error}");
+        assert_eq!(demo.state.path, ":memory:");
+        assert_eq!(selected(&demo), (0, 0, "1205"));
+        assert_eq!(demo.state.edit_value, "row 1205");
+        assert_eq!(
+            db::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
+            1205
+        );
+    }
 }
