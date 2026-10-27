@@ -54,6 +54,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `9031bee..a37bee216b33` | Codex | issues — 277 tests/clippy/build/features pass; ordered multi-sort, sorted exports, XML and pointer modifiers; full parity/native input remain | [Report](R-20261027-a37bee216b33.md) |
 | 2026-10-27 | `03b3ef74c0ec..a99567b81242` | Codex | issues — 271 tests/clippy/build/features pass; disabled buttons, browse boundaries and native Office render skim; full parity/native input remain | [Report](R-20261027-a99567b81242.md) |
 | 2026-10-27 | `e4f4cb17eb23..5e23229548d4` | Codex | issues — 266 tests, clippy/build/features pass; typed clipboard, atomic paste/cut, bounded snapshots, drag/focus and navigation repaired; evidence corrected; full parity/native input remain | [Report](R-20261027-5e23229548d4.md) |
 | 2026-10-27 | `0b52704..832cebe` | Codex | issues — BOM-aware UTF-8/UTF-16 CSV import verified; e28 96 tests/clippy/build pass; native/full parity remain | [Report](R-20261027-832cebe.md) |

@@ -103,7 +103,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Schema tree Tables/Views/Indexes/Triggers | partial | Main schema only; no attached/temp schema navigation, column/detail tree or object context actions. |
 | Object SQL preview | done | |
 | Run DDL | partial | Synchronous execution on UI thread; long DDL can block interaction. |
-| Print schema | done | File → Print Schema… |
+| Print schema | partial | Text export only; no OS print dialog or preview. |
 
 ## Browse Data tab
 
@@ -112,7 +112,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Table selector | done | |
 | Filter / WHERE | partial | Raw WHERE and original any-column term search share export conditions; Clear Filters, Enter and Cmd/Ctrl+Alt+F. Automatic debounce and escape preferences remain. |
 | Data grid | partial | Filtered totals and clamped 500-row pages; resize, frozen columns, scrollbars and focus reveal. Anchored Shift ranges and pointer drag rectangles survive rebuilds. Copy/cut/paste supports typed internal cells with HTML provenance, quoted TSV, headers (Cmd/Ctrl+Shift+C), INSERT statements (Cmd/Ctrl+Alt+C), single-cell fill, and atomic row updates/rollback. External TSV preserves literal NULL as text. Inline editors, discontiguous/cross-page ranges, stationary edge autoscroll, hiding/reorder and complete bulk operations remain. |
-| Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort cycles ascending/descending/clear, while multi-sort UI remains. |
+| Header-click sort | done | Ordinary clicks toggle one column; Ctrl/Cmd clicks append/toggle priorities. Priority labels and Clear Sort match upstream; filtered CSV/JSON exports and native XML retain all terms. Native modifier gestures await OS input acceptance. |
 | Filter-per-column | partial | Shared inputs align with resized/scrolled/frozen columns. DB4S comparisons, numeric ranges, NULL/empty text, wildcards and Unicode PCRE2 REGEXP are supported. Escape preference and automatic debounce remain. |
 | Multi browse tabs | partial | Add/switch/close guard cell drafts and restore the current tab on query failure; last-tab close clears the editor. Reorder, per-tab close affordances and selection restoration on switching remain. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
@@ -279,7 +279,7 @@ with backwards-compatible defaults.
   toolbars remain scrollable. Font fallbacks supply missing macOS symbols.
 - `.sqbpro` now uses the DB4S 3.13.1 XML structure. Legacy JSON remains readable.
   Core paths/tabs/file references, access mode, five connection PRAGMAs, attached
-  files, main-schema widths/primary sort are supported. Unknown XML is retained.
+  files, main-schema widths/multi-column sort are supported. Unknown XML is retained.
   Qt dock state, advanced browse filters/formats/plots and attached-schema browse
   tabs are reported as retained but unapplied. Extra local state lives in a
   next_gui extension ignored by DB4S. This remains partial interoperability.
@@ -337,3 +337,13 @@ disconnected databases disable Write/Revert. 271 workspace tests pass. Native
 Metal browse and Office renders were inspected; OS input/IME/clipboard acceptance
 and complete upstream action-state coverage remain. See
 [R-20261027-a99567b81242](../../docs/reviews/R-20261027-a99567b81242.md).
+
+## Multi-column sorting (2026-10-27)
+
+Replaced the earlier incorrect three-state cycle with upstream two-direction
+header gestures, Ctrl/Cmd priority sorting and explicit Clear Sort. Native XML and
+complete filtered CSV/JSON exports retain all priorities. Pointer button events
+now carry modifiers on every host, including touch synthesis. 277 workspace tests
+pass; native rendering was inspected, while native gesture and DB4S binary
+interoperability acceptance remain. See
+[R-20261027-a37bee216b33](../../docs/reviews/R-20261027-a37bee216b33.md).
