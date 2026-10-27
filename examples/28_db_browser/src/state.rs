@@ -990,10 +990,11 @@ impl AppState {
 
         let where_sql = Self::composed_where(self.browse(), &prev_cols)?;
 
-        let offset = self.browse().offset;
+        let total_rows = db::count_browse_rows(self.conn.as_ref().unwrap(), &table, where_sql.as_deref())?;
+        let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
+        let offset = self.browse().offset.min(last_page);
         let (total_rows, result, rowids) = {
             let conn = self.conn.as_ref().unwrap();
-            let total_rows = db::count_browse_rows(conn, &table, where_sql.as_deref())?;
             if is_view {
                 (
                     total_rows,
@@ -1070,6 +1071,7 @@ impl AppState {
         {
             let t = self.browse_mut();
             t.col_filters = col_filters;
+            t.offset = offset;
             t.title = table.clone();
             t.rowids = rowids;
             t.total_rows = Some(total_rows);
@@ -1709,28 +1711,52 @@ impl AppState {
         }
     }
 
-    pub fn add_browse_tab(&mut self) {
+    pub fn add_browse_tab(&mut self) -> Result<(), String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let table = self.browse().table.clone().or_else(|| {
-            self.schema
-                .iter()
-                .find(|o| o.kind == ObjectKind::Table)
-                .map(|o| o.name.clone())
+            self.schema.iter().find(|o| o.kind == ObjectKind::Table).map(|o| o.name.clone())
         });
+        let old_index = self.browse_tab_idx;
         self.browse_tabs.push(BrowseTabState::new(table));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
-        let _ = self.refresh_browse();
+        if let Err(e) = self.refresh_browse() {
+            self.browse_tabs.pop();
+            self.browse_tab_idx = old_index;
+            return Err(e);
+        }
+        Ok(())
     }
 
-    pub fn close_browse_tab(&mut self) {
+    pub fn close_browse_tab(&mut self) -> Result<(), String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.browse_tabs.len() <= 1 {
             self.browse_tabs[0] = BrowseTabState::new(None);
             self.browse_tab_idx = 0;
+            self.clear_browse_editor();
         } else {
-            self.browse_tabs.remove(self.browse_tab_idx);
-            self.browse_tab_idx = self.browse_tab_idx.min(self.browse_tabs.len() - 1);
+            let old_index = self.browse_tab_idx;
+            let closed = self.browse_tabs.remove(old_index);
+            self.browse_tab_idx = old_index.min(self.browse_tabs.len() - 1);
+            if let Err(e) = self.refresh_browse() {
+                self.browse_tabs.insert(old_index, closed);
+                self.browse_tab_idx = old_index;
+                return Err(e);
+            }
         }
-        let _ = self.refresh_browse();
         self.status_msg = "Browse tab closed".into();
+        Ok(())
+    }
+
+    pub fn switch_browse_tab(&mut self, index: usize) -> Result<(), String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        if index >= self.browse_tabs.len() { return Err("Browse tab no longer exists".into()); }
+        let old_index = self.browse_tab_idx;
+        self.browse_tab_idx = index;
+        if let Err(e) = self.refresh_browse() {
+            self.browse_tab_idx = old_index;
+            return Err(e);
+        }
+        Ok(())
     }
 
     pub fn apply_attach(&mut self) -> Result<(), String> {
@@ -2710,55 +2736,41 @@ impl AppState {
         }
     }
 
-    pub fn form_next_record(&mut self) {
-        let (n, offset, total, cur) = {
-            let tab = self.browse();
-            (
-                tab.result.as_ref().map(|r| r.rows.len()).unwrap_or(0),
-                tab.offset,
-                tab.total_rows.unwrap_or(0),
-                tab.sel_row.unwrap_or(0),
-            )
-        };
-        if n == 0 {
-            return;
-        }
-        if cur + 1 >= n && offset.saturating_add(n) < total {
-            self.browse_mut().offset = offset.saturating_add(db::DEFAULT_LIMIT);
-            if self.refresh_browse().is_err() {
-                self.browse_mut().offset = offset;
-                return;
-            }
-            self.browse_mut().sel_row = Some(0);
-        } else {
-            self.browse_mut().sel_row = Some((cur + 1).min(n - 1));
-        }
-        if self.browse().sel_col.is_none() {
-            self.browse_mut().sel_col = Some(0);
-        }
-        self.sync_edit_cell_from_selection();
+    pub fn form_next_record(&mut self) -> Result<(), String> {
+        self.move_form_record(true)
     }
 
-    pub fn form_prev_record(&mut self) {
-        let (offset, cur) = {
-            let tab = self.browse();
-            (tab.offset, tab.sel_row.unwrap_or(0))
-        };
-        if cur == 0 && offset >= db::DEFAULT_LIMIT {
-            self.browse_mut().offset = offset - db::DEFAULT_LIMIT;
-            if self.refresh_browse().is_err() {
-                self.browse_mut().offset = offset;
-                return;
+    pub fn form_prev_record(&mut self) -> Result<(), String> {
+        self.move_form_record(false)
+    }
+
+    fn move_form_record(&mut self, next: bool) -> Result<(), String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        let tab = self.browse();
+        let n = tab.result.as_ref().map_or(0, |r| r.rows.len());
+        if n == 0 { return Ok(()); }
+        let col = tab.sel_col.unwrap_or(0);
+        let row = tab.sel_row.unwrap_or(0).min(n - 1);
+        let target = if tab.sel_row.is_none() {
+            0
+        } else if next && row + 1 == n && tab.offset.saturating_add(n) < tab.total_rows.unwrap_or(0) {
+            self.browse_page(true)?;
+            0
+        } else if !next && row == 0 && tab.offset > 0 {
+            self.browse_page(false)?;
+            self.browse().result.as_ref().map_or(0, |r| r.rows.len().saturating_sub(1))
+        } else if next { (row + 1).min(n - 1) }
+        else { row.saturating_sub(1) };
+        let tab = self.browse_mut();
+        tab.clear_selection();
+        if let Some(result) = &tab.result {
+            if !result.rows.is_empty() {
+                tab.sel_row = Some(target.min(result.rows.len() - 1));
+                tab.sel_col = Some(col.min(result.columns.len().saturating_sub(1)));
             }
-            let last = self.browse().result.as_ref().map(|r| r.rows.len()).unwrap_or(1).saturating_sub(1);
-            self.browse_mut().sel_row = Some(last);
-        } else {
-            self.browse_mut().sel_row = Some(cur.saturating_sub(1));
-        }
-        if self.browse().sel_col.is_none() {
-            self.browse_mut().sel_col = Some(0);
         }
         self.sync_edit_cell_from_selection();
+        Ok(())
     }
 
     pub fn decode_edit_image(&mut self) {
@@ -3511,12 +3523,81 @@ mod chart_default_tests {
         assert_eq!(state.browse().offset, 0);
         state.browse_view = BrowseViewMode::Form;
         state.browse_mut().sel_row = Some(499);
-        state.form_next_record();
+        state.form_next_record().unwrap();
         assert_eq!(state.browse().offset, 500);
         assert_eq!(state.browse().sel_row, Some(0));
-        state.form_prev_record();
+        state.form_prev_record().unwrap();
         assert_eq!(state.browse().offset, 0);
         assert_eq!(state.browse().sel_row, Some(499));
+    }
+
+    #[test]
+    fn browse_navigation_rejects_drafts_and_query_errors_without_losing_the_current_tab() {
+        let mut state = test_state();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.edit_value = "keep this draft".into();
+        assert!(state.has_cell_draft());
+        assert!(state.form_next_record().is_err());
+        assert!(state.form_prev_record().is_err());
+        assert!(state.add_browse_tab().is_err());
+        assert!(state.close_browse_tab().is_err());
+        assert!(state.switch_browse_tab(0).is_err());
+        assert_eq!(state.browse_tabs.len(), 1);
+        assert_eq!(state.browse().sel_row, Some(0));
+        assert_eq!(state.edit_value, "keep this draft");
+        state.discard_cell_draft();
+        let mut bad = BrowseTabState::new(Some("t".into()));
+        bad.filter = ")".into();
+        state.browse_tabs.push(bad);
+        assert!(state.switch_browse_tab(1).is_err());
+        assert!(state.close_browse_tab().is_err());
+        assert_eq!(state.browse_tab_idx, 0);
+        assert_eq!(state.browse_tabs.len(), 2);
+        assert_eq!(state.browse().sel_row, Some(0));
+        assert_eq!(state.edit_value, "saved");
+    }
+
+    #[test]
+    fn form_navigation_preserves_column_reports_page_errors_and_clamps_shrunken_pages() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("DROP TABLE t; CREATE TABLE t(a,b);
+            WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<601) INSERT INTO t SELECT x,'v'||x FROM c;").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(499);
+        state.browse_mut().sel_col = Some(1);
+        state.sync_edit_cell_from_selection();
+        state.browse_mut().filter = ")".into();
+        assert!(state.form_next_record().is_err());
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_row, Some(499));
+        assert_eq!(state.browse().sel_col, Some(1));
+        assert_eq!(state.edit_value, "v500");
+        state.browse_mut().filter.clear();
+        state.form_next_record().unwrap();
+        assert_eq!(state.browse().offset, 500);
+        assert_eq!(state.browse().sel_col, Some(1));
+        assert_eq!(state.edit_value, "v501");
+        state.form_prev_record().unwrap();
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_col, Some(1));
+        assert_eq!(state.edit_value, "v500");
+        state.browse_page(true).unwrap();
+        state.browse_mut().filter = "a<3".into();
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().total_rows, Some(2));
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        state.browse_mut().filter = "0".into();
+        state.refresh_browse().unwrap();
+        state.form_next_record().unwrap();
+        state.form_prev_record().unwrap();
+        assert_eq!(state.browse().sel_row, None);
+        assert_eq!(state.browse().total_rows, Some(0));
     }
 
     #[test]
@@ -3527,10 +3608,10 @@ mod chart_default_tests {
             BrowseTabState::new(Some("other".into())),
         ];
         state.browse_tab_idx = 1;
-        state.close_browse_tab();
+        state.close_browse_tab().unwrap();
         assert_eq!(state.browse_tabs.len(), 1);
         assert_eq!(state.browse().table.as_deref(), Some("t"));
-        state.close_browse_tab();
+        state.close_browse_tab().unwrap();
         assert_eq!(state.browse_tabs.len(), 1);
         assert!(state.browse().table.is_none());
     }

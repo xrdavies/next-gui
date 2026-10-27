@@ -2148,20 +2148,19 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_browse_new_tab {
-            self.state.add_browse_tab();
+            if let Err(e) = self.state.add_browse_tab() { self.set_error(e); }
             self.rebuild = true;
             return;
         }
         if id == self.ids.btn_browse_close_tab {
-            self.state.close_browse_tab();
+            if let Err(e) = self.state.close_browse_tab() { self.set_error(e); }
             self.rebuild = true;
             return;
         }
         for (i, bid) in self.ids.browse_tab_btns.iter().enumerate() {
             if id == *bid {
                 self.snapshot_inputs();
-                self.state.browse_tab_idx = i;
-                let _ = self.state.refresh_browse();
+                if let Err(e) = self.state.switch_browse_tab(i) { self.set_error(e); }
                 self.rebuild = true;
                 return;
             }
@@ -2288,14 +2287,12 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_form_prev {
-            self.state.form_prev_record();
-            self.state.sync_edit_cell_from_selection();
+            if let Err(e) = self.state.form_prev_record() { self.set_error(e); }
             self.rebuild = true;
             return;
         }
         if id == self.ids.btn_form_next {
-            self.state.form_next_record();
-            self.state.sync_edit_cell_from_selection();
+            if let Err(e) = self.state.form_next_record() { self.set_error(e); }
             self.rebuild = true;
             return;
         }
