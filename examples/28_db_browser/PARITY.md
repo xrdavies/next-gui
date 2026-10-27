@@ -117,7 +117,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Multi browse tabs | partial | Add/switch/close guard cell drafts and restore the current tab on query failure; last-tab close clears the editor. Reorder, per-tab close affordances and selection restoration on switching remain. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
 | Edit cell → Edit Cell dock | partial | Explicit NULL/INTEGER/REAL/TEXT/BLOB and multiline editing; numeric types retained; Hex validation errors preserve the draft (F06 addressed). SQLite affinity still applies. |
-| Frozen columns | partial | Freeze through the active column; per-table/tab overrides, JSON/extension and native XML counts restore. Legacy global counts retained. Original header context gesture remains. |
+| Frozen columns | partial | Freeze through the active column; per-table/tab overrides, JSON/extension and native XML counts restore. Legacy global counts retained. Header right-click freezing supported; native viewport index mapping remains (fdbf1e3 F03). |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
 | Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-tab/per-table filters, ordering, widths and frozen counts restore across switches and JSON/XML projects. Hidden/formats and attached/temp schemas remain. |
@@ -416,3 +416,17 @@ active column, table switches restore counts, native XML counts validate/clamp,
 and old global counts still load. Duplicate-table tabs keep separate extension
 state. 299 workspace tests and strict checks pass; Soft geometry and native Metal
 painting inspected. Header context actions and native input acceptance remain.
+
+### Header-menu checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-fdbf1e3c3942.md): header right-click actions
+freeze through the clicked column, select the current cache's column, and copy its
+name. Shared detached menus support keys, enabled-item navigation, hover contrast
+and owner cleanup. Active cells can be retained inside a rectangular selection.
+Both themes' selected/highlighted style pairs meet 4.5 contrast; 307 tests and
+strict checks pass, with Soft/Metal and 14 Office render inspections.
+
+F03 remains open: original DB4S viewport widths/frozen counts include its leading
+row-id logical column; sort/filter indices do not. Current handcrafted native XML
+fixtures do not prove correct original viewport mapping. Row-id display, complete
+header actions, whole-result column selection and native input remain absent.

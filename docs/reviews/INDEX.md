@@ -14,6 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-fdbf1e3c3942-F01 | verified | P2 | grok | e28 / shared | existing branch | see report | Popup owner changes hide the previous overlay | [F01](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f01) | fdbf1e3c3942 | fdbf1e3c3942 |
+| R-20261027-fdbf1e3c3942-F02 | verified | P2 | grok | e28 / shared | existing branch | see report | Light selection and menu highlight text contrast repaired | [F02](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f02) | fdbf1e3c3942 | fdbf1e3c3942 |
+| R-20261027-fdbf1e3c3942-F03 | open | P2 | grok | e28 / shared | existing branch | see report | Native DB4S viewport widths and frozen counts need row-id index translation | [F03](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f03) | — | — |
 | R-20261027-5bd5104966ae-F01 | verified | P1 | grok | e28 / shared | existing branch | project_xml::decode | Same-table tabs retain independent extension state by index | [F01](R-20261027-5bd5104966ae.md#r-20261027-5bd5104966ae-f01) | 5bd5104966ae | 5bd5104966ae |
 | R-20261027-8ab0778f3a16-F01 | verified | P1 | codex | e28 / all | pre-existing selector | apply_browse_select / poll_selection_changes | 切表查询失败恢复旧表、结果、编辑器并显示错误 | [F01](R-20261027-8ab0778f3a16.md#r-20261027-8ab0778f3a16-f01) | 8ab0778f3a16 | 8ab0778f3a16 |
 | R-20261027-f434a694b24d-F01 | verified | P2 | codex | shared / all | pre-existing layout | UI flex/panel/grid layout | 无背景容器被重新显示导致黑色底角；七类容器像素与命中回归通过 | [F01](R-20261027-f434a694b24d.md#r-20261027-f434a694b24d-f01) | f434a694b24d | f434a694b24d |
@@ -57,6 +60,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `103ee81..fdbf1e3c3942` | Codex | issues — 307 tests/clippy/build/features pass; header actions, menu input and contrast verified; Soft/Metal/14 Office renders inspected; native viewport convention finding open | [Report](R-20261027-fdbf1e3c3942.md) |
 | 2026-10-27 | `46ad9d6..5bd5104966ae` | Codex | issues — 299 tests/clippy/build/features pass; per-table frozen prefixes, legacy/native XML and same-table tab recovery verified; Soft/Metal inspected; header/full parity remain | [Report](R-20261027-5bd5104966ae.md) |
 | 2026-10-27 | `ec2ae64..db7f25222647` | Codex | issues — 296 tests/clippy/build/features pass; per-table filters/order/widths and inactive native XML, preflight and Soft/Metal inspected; full settings/native input remain | [Report](R-20261027-db7f25222647.md) |
 | 2026-10-27 | `5d9310e..8ab0778f3a16` | Codex | issues — 292 tests/clippy/build/features pass; failed-view baseline and restoration verified, cyclic table shortcuts and Soft/Metal inspected; per-table settings/full parity remain | [Report](R-20261027-8ab0778f3a16.md) |
