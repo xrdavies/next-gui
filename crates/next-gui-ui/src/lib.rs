@@ -4145,28 +4145,13 @@ impl Ui {
         if matches!(w.kind, Kind::TextArea { .. }) {
             return self.text_area_position_area(scene, id, None);
         }
-        let Kind::TextInput {
-            value,
-            caret,
-            preedit,
-            style,
-            ..
-        } = &w.kind
-        else {
-            return None;
-        };
-        let bounds = w.node.and_then(|n| scene.get(n).map(|n| n.bounds))?;
-        let before: String = value.chars().take(*caret).collect();
-        let (bw, _) = self.font.measure_line(&before, style.size);
-        let (pw, _) = if preedit.is_empty() {
-            (0.0, 0.0)
-        } else {
-            self.font.measure_line(preedit, style.size)
-        };
-        let cx = bounds.x + style.padding_x + bw + pw;
-        let cy = bounds.y + 4.0;
-        let ch = (bounds.height - 8.0).max(8.0);
-        Some((cx, cy, 2.0_f32.max(1.0), ch))
+        let Kind::TextInput {style,..} = &w.kind else {return None;};
+        let bounds = w.node.and_then(|node|scene.get(node).map(|node|node.bounds))?;
+        let (display,caret,_) = self.single_line_input_display(id)?;
+        let prefix:String=display.chars().take(caret).collect();
+        let (width,_) = self.font.measure_line(&prefix,style.size);
+        let visible=(bounds.width-2.0*style.padding_x-2.0).max(0.0);
+        Some((bounds.x+style.padding_x+width.min(visible),bounds.y+4.0,2.0,(bounds.height-8.0).max(8.0)))
     }
 
     /// Update IME preedit on the focused editor. Empty `text` clears composition.
@@ -11614,74 +11599,19 @@ impl Ui {
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
             }
-            Kind::TextInput {
-                value,
-                secret,
-                placeholder,
-                caret,
-                select_all,
-                preedit,
-                preedit_cursor,
-                style,
-                ..
-            } => {
-                let value = if *secret {
-                    "*".repeat(value.chars().count())
-                } else {
-                    value.clone()
-                };
-                let placeholder = placeholder.clone();
-                let caret = *caret;
-                let select_all = *select_all;
-                let preedit = if *secret {
-                    "*".repeat(preedit.chars().count())
-                } else {
-                    preedit.clone()
-                };
-                let preedit_cursor = *preedit_cursor;
-                let style = *style;
-                let focused = self.focus == Some(id);
-                let border = if focused {
-                    style.focus_border
-                } else {
-                    style.border
-                };
-                let composing = focused && !preedit.is_empty();
-                let selected = focused && select_all && !value.is_empty() && !composing;
+            Kind::TextInput {placeholder,select_all,preedit_cursor,style,..} => {
+                let placeholder=placeholder.replace(['\r','\n','\t']," ");
+                let select_all=*select_all;let preedit_cursor=*preedit_cursor;let style=*style;
+                let focused=self.focus==Some(id);
+                let (text,caret_chars,composition)=self.single_line_input_display(id).unwrap();
+                let composing=!composition.is_empty();
+                let selected=focused && select_all && !text.is_empty() && !composing;
+                let before:String=text.chars().take(composition.start).collect();
+                let preedit:String=text.chars().skip(composition.start).take(composition.end-composition.start).collect();
+                let (display,fg)=if text.is_empty() {(placeholder,style.placeholder_fg)} else {(text,style.fg)};
                 scene.set_fill(node,if selected {style.focus_border} else {style.bg});
-                scene.set_mask(node, None);
-                self.apply_corner_radius(scene, node, false);
-                let _ = border;
-                let before: String = if composing && select_all {String::new()} else {value.chars().take(caret).collect()};
-                let after: String = if composing && select_all {String::new()} else {value.chars().skip(caret).collect()};
-                let (display, fg) = if !value.is_empty() || composing {
-                    let mut s = String::with_capacity(value.len() + preedit.len());
-                    s.push_str(&before);
-                    if composing {
-                        s.push_str(&preedit);
-                    }
-                    s.push_str(&after);
-                    (s, style.fg)
-                } else {
-                    (placeholder.clone(), style.placeholder_fg)
-                };
-                let (_, mask) = self.font.rasterize_text(&display, style.size, None);
-                let caret_chars = if composing {
-                    let pre_chars = preedit.chars().count();
-                    let at = match preedit_cursor {
-                        Some((b, _)) => {
-                            // byte index → char index inside preedit
-                            preedit
-                                .get(..b.min(preedit.len()))
-                                .map(|s| s.chars().count())
-                                .unwrap_or(pre_chars)
-                        }
-                        None => pre_chars,
-                    };
-                    before.chars().count() + at
-                } else {
-                    caret
-                };
+                scene.set_mask(node,None);self.apply_corner_radius(scene,node,false);
+                let (_,mask)=self.font.rasterize_text(&display,style.size,None);
                 let prefix: String = display.chars().take(caret_chars).collect();
                 let (cw, _) = self.font.measure_line(&prefix, style.size);
 

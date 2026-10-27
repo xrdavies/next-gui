@@ -28,6 +28,15 @@ pub struct FieldCellEdit {
     pub autocomplete: Option<next_gui_ui::AutocompleteState>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConstraintCellEdit {
+    pub page: usize,
+    pub row: usize,
+    pub column: usize,
+    pub original: String,
+    pub input: Option<next_gui_ui::TextInputState>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainTab {
     Structure = 0,
@@ -425,6 +434,7 @@ pub struct AppState {
     pub wizard_field_widths: Vec<f32>,
     pub wizard_field_column: Option<usize>,
     pub wizard_field_edit: Option<FieldCellEdit>,
+    pub wizard_constraint_edit: Option<ConstraintCellEdit>,
     pub wizard_table_name: String,
     pub wizard_table_options: crate::table_sql::TableOptions,
     pub wizard_table_original: Option<SelectedObject>,
@@ -614,6 +624,17 @@ pub enum DocumentAction {
 }
 
 impl AppState {
+    pub fn constraint_cell_value(&self, page: usize, row: usize, column: usize) -> Option<&str> {
+        match (page, column) {
+            (0, 2) => Some(self.wizard_index_constraints.get(row)?.name.as_deref().unwrap_or("")),
+            (1, 1) => Some(self.wizard_foreign_keys.get(row)?.name.as_deref().unwrap_or("")),
+            (1, 2) => Some(&self.wizard_foreign_keys.get(row)?.clause),
+            (2, 0) => Some(&self.wizard_checks.get(row)?.expression),
+            (2, 1) => Some(self.wizard_checks.get(row)?.name.as_deref().unwrap_or("")),
+            _ => None,
+        }
+    }
+
     pub fn new_with_demo() -> Self {
         #[cfg(not(test))]
         let demo = db::default_demo_path();
@@ -716,6 +737,7 @@ impl AppState {
             wizard_field_widths: Vec::new(),
             wizard_field_column: None,
             wizard_field_edit: None,
+            wizard_constraint_edit: None,
             wizard_table_options: crate::table_sql::TableOptions::default(),
             wizard_table_name: "new_table".into(),
             wizard_table_original: None,
@@ -1603,6 +1625,7 @@ impl AppState {
         self.wizard_field_widths.clear();
         self.wizard_field_column = None;
         self.wizard_field_edit = None;
+        self.wizard_constraint_edit = None;
         self.wizard_table_name = "new_table".into();
         self.wizard_table_original = None;
         self.wizard_table_options = crate::table_sql::TableOptions::default();
@@ -1665,6 +1688,7 @@ impl AppState {
         self.wizard_field_widths.clear();
         self.wizard_field_column = None;
         self.wizard_field_edit = None;
+        self.wizard_constraint_edit = None;
         self.wizard_table_name = sel.name.clone();
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", db::quote_ident(&sel.schema)), [&sel.name], |row| row.get(0)).map_err(|error| error.to_string())?;

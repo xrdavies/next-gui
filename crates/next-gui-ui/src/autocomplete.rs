@@ -159,39 +159,6 @@ impl Ui {
         Some((panel, first..(first + rows).min(count)))
     }
 
-    // Character ranges keep candidate placement and the painted composition aligned.
-    fn autocomplete_display(&self, id: WidgetId) -> Option<(String, usize, Range<usize>)> {
-        let Kind::Autocomplete {
-            value,
-            caret,
-            select_all,
-            preedit,
-            preedit_cursor,
-            ..
-        } = &self.widgets.get(&id)?.kind
-        else {
-            return None;
-        };
-        if self.focus != Some(id) || preedit.is_empty() {
-            return Some((value.clone(), *caret, 0..0));
-        }
-        let before: String = value
-            .chars()
-            .take(if *select_all { 0 } else { *caret })
-            .collect();
-        let after: String = if *select_all {
-            String::new()
-        } else {
-            value.chars().skip(*caret).collect()
-        };
-        let start = before.chars().count();
-        let end = start + preedit.chars().count();
-        let cursor = preedit_cursor
-            .and_then(|(b, _)| preedit.get(..b))
-            .map_or(end, |s| start + s.chars().count());
-        Some((format!("{before}{preedit}{after}"), cursor, start..end))
-    }
-
     pub(super) fn autocomplete_cursor_area(
         &self,
         scene: &Scene,
@@ -202,7 +169,7 @@ impl Ui {
             return None;
         };
         let bounds = scene.get(widget.node?)?.bounds;
-        let (text, caret, _) = self.autocomplete_display(id)?;
+        let (text, caret, _) = self.single_line_input_display(id)?;
         let prefix: String = text.chars().take(caret).collect();
         let (width, _) = self.font.measure_line(&prefix, style.size);
         let visible = (bounds.width - 2.0 * style.padding - 2.0).max(0.0);
@@ -238,8 +205,8 @@ impl Ui {
         let focused = self.focus == Some(id);
         let select_all = focused && *select_all && !value.is_empty();
         let cursor_visible = preedit_cursor.is_some();
-        let placeholder = placeholder.clone();
-        let (text, caret, composition) = self.autocomplete_display(id).unwrap();
+        let placeholder = placeholder.replace(['\r','\n','\t']," ");
+        let (text, caret, composition) = self.single_line_input_display(id).unwrap();
         let composing = composition.start != composition.end;
         let selected = select_all && !composing;
         let bounds = scene.get(host).map_or_else(Rect::empty, |n| n.bounds);
@@ -378,7 +345,7 @@ mod tests {
         ui.sync(&mut scene);
         assert!(!ui.has_open_popup());
         assert_eq!(
-            ui.autocomplete_display(id).unwrap(),
+            ui.single_line_input_display(id).unwrap(),
             ("V中文ARYING CHARACTER(123456789)".into(), 2, 1..3)
         );
         let at = ui.ime_cursor_area(&scene).unwrap();
@@ -405,7 +372,7 @@ mod tests {
         let selection = rebuilt.autocomplete_state(new_id).unwrap();
         assert!(rebuilt.set_autocomplete_state(new_id, &selection));
         assert!(rebuilt.ime_preedit("型", None));
-        assert_eq!(rebuilt.autocomplete_display(new_id).unwrap().0, "型");
+        assert_eq!(rebuilt.single_line_input_display(new_id).unwrap().0, "型");
         rebuilt.set_focus(None);
         rebuilt.sync(&mut next_scene);
         assert!(rebuilt

@@ -45,6 +45,7 @@ Autocomplete 复用 TextInput 的全选、删除、Home/End、字符输入路径
 IME/剪贴板 API。组合文本带下划线、候选位置跟随可见光标；长值在字段内裁剪并跟随光标。
 建议窗口按视口向上/下展开，方向键或滚轮翻动候选，Escape 关闭建议并保留编辑焦点。
 单行 TextInput / Autocomplete 支持 Undo/Redo，覆盖输入、删除、剪切、粘贴、IME 提交和建议项选择。
+粘贴内容中的换行和制表符按空格显示，原始文字、复制和历史保持不变。光标与 IME 候选使用相同的单行显示和水平滚动位置。
 每个历史栈最多保留100次/8 MiB（单次超大编辑仍保留）；组合期间 Undo/Redo 先取消组合。
 `text_input_state` / `restore_text_input_state` 保留光标、全选、组合和历史，仅恢复文字和密码模式都匹配的输入框。
 程序调用 `set_text_input` / `set_autocomplete_value` 会清空历史，改变密码模式也清空旧历史。

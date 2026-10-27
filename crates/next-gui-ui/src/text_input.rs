@@ -34,6 +34,25 @@ pub struct TextInputState {
 }
 
 impl Ui {
+    pub(super) fn single_line_input_display(&self, id: WidgetId) -> Option<(String, usize, std::ops::Range<usize>)> {
+        let (value,caret,select_all,preedit,preedit_cursor,secret)=match &self.widgets.get(&id)?.kind {
+            Kind::TextInput {value,caret,select_all,preedit,preedit_cursor,secret,..} => (value,caret,select_all,preedit,preedit_cursor,*secret),
+            Kind::Autocomplete {value,caret,select_all,preedit,preedit_cursor,..} => (value,caret,select_all,preedit,preedit_cursor,false),
+            _ => return None,
+        };
+        let composing=self.focus==Some(id) && !preedit.is_empty();
+        let (text,cursor,composition)=if composing {
+            let before:String=value.chars().take(if *select_all {0} else {*caret}).collect();
+            let after:String=if *select_all {String::new()} else {value.chars().skip(*caret).collect()};
+            let start=before.chars().count();let end=start+preedit.chars().count();
+            let cursor=preedit_cursor.and_then(|(byte,_)|preedit.get(..byte)).map_or(end,|prefix|start+prefix.chars().count());
+            (format!("{before}{preedit}{after}"),cursor,start..end)
+        } else {(value.clone(),*caret,0..0)};
+        // Preserve the document and character positions while painting one physical line.
+        let text=if secret {"*".repeat(text.chars().count())} else {text.replace(['\r','\n','\t']," ")};
+        Some((text,cursor,composition))
+    }
+
     pub(super) fn input_snapshot(&self, id: WidgetId) -> Option<InputSnapshot> {
         let (Kind::TextInput {
             value,
@@ -198,6 +217,28 @@ mod tests {
         ui.text_input_value(id)
             .or_else(|| ui.autocomplete_value(id))
             .unwrap()
+    }
+
+    #[test]
+    fn single_line_paint_keeps_multiline_documents_and_matches_ime_scroll_and_secret_geometry() {
+        let original=format!("REFERENCES parent(id)\r\nON UPDATE CASCADE\t中文{}"," long".repeat(30));
+        for autocomplete in [false,true] {
+            let (mut ui,id)=field(autocomplete,"");let mut scene=Scene::new();
+            assert!(ui.paste_into_focused_text(&original));ui.sync(&mut scene);
+            let (display,caret,composition)=ui.single_line_input_display(id).unwrap();
+            assert_eq!(display,original.replace(['\r','\n','\t']," "));assert_eq!(caret,original.chars().count());assert!(composition.is_empty());assert_eq!(value(&ui,id),original);
+            let w=&ui.widgets[&id];let (size,padding)=match &w.kind {Kind::TextInput {style,..}=>(style.size,style.padding_x),Kind::Autocomplete {style,..}=>(style.size,style.padding),_=>unreachable!()};
+            let (_,expected)=ui.font.rasterize_text(&display,size,None);let mask=scene.get(w.label_node.unwrap()).unwrap().mask.as_ref().unwrap();assert_eq!((mask.width,mask.height,&mask.pixels),(expected.width,expected.height,&expected.pixels));
+            let bounds=scene.get(w.node.unwrap()).unwrap().bounds;let at=ui.ime_cursor_area(&scene).unwrap();assert!((at.0-(bounds.x+bounds.width-padding-2.0)).abs()<0.01);
+            if !autocomplete {assert_eq!(at.0,scene.get(w.chrome_node.unwrap()).unwrap().bounds.x);}
+            ui.key_input(UiKey::SelectAll);assert_eq!(ui.focused_text_for_copy().as_deref(),Some(original.as_str()));ui.ime_preedit("候\n選",Some((4,4)));ui.sync(&mut scene);
+            assert_eq!(ui.single_line_input_display(id).unwrap(),("候 選".into(),2,0..3));let at=ui.ime_cursor_area(&scene).unwrap();let (width,_)=ui.font.measure_line("候 ",size);assert!((at.0-(bounds.x+padding+width)).abs()<0.01);
+            ui.ime_commit("候選");ui.key_input(UiKey::Undo);assert_eq!(value(&ui,id),original);ui.key_input(UiKey::Redo);assert_eq!(value(&ui,id),"候選");
+            if !autocomplete {
+                ui.set_text_input(id,&original);ui.set_text_input_secret(id,true);ui.key_input(UiKey::End);ui.sync(&mut scene);let (masked,_,_)=ui.single_line_input_display(id).unwrap();assert_eq!(masked,"*".repeat(original.chars().count()));assert_eq!(ui.focused_text_for_copy(),None);
+                let at=ui.ime_cursor_area(&scene).unwrap();let w=&ui.widgets[&id];assert_eq!(at.0,scene.get(w.chrome_node.unwrap()).unwrap().bounds.x);
+            }
+        }
     }
 
     #[test]

@@ -176,6 +176,7 @@ pub struct BuiltUi {
     pub ov_list: WidgetId,
     pub ov_fields_table: WidgetId,
     pub ov_field_editor: WidgetId,
+    pub ov_constraint_editor: WidgetId,
     pub ov_field_top: WidgetId,
     pub ov_field_bottom: WidgetId,
     pub ov_col_name: WidgetId,
@@ -323,6 +324,12 @@ fn schema_tree(state: &AppState) -> Vec<TreeNode> {
             }).collect();
         TreeNode::new(root, name.clone(), groups)
     }).collect()
+}
+
+fn constraint_cell_editor(c: &mut next_gui_ui::FlexBuilder<'_>, table: WidgetId, state: &AppState, theme: &Theme) -> WidgetId {
+    let Some(edit) = &state.wizard_constraint_edit else { return WidgetId(0); };
+    let Some(value) = state.constraint_cell_value(edit.page, edit.row, edit.column) else { return WidgetId(0); };
+    c.table_cell_editor(table, edit.row, edit.column, |cell| cell.text_input_styled(value, "", TextInputStyle::from_theme(theme))).unwrap_or(WidgetId(0))
 }
 
 pub fn table_index_rows(state: &AppState) -> Vec<Vec<String>> {
@@ -526,6 +533,7 @@ pub fn build_ui(
     let mut ov_list = z;
     let mut ov_fields_table = z;
     let mut ov_field_editor = z;
+    let mut ov_constraint_editor = z;
     let mut ov_field_top = z;
     let mut ov_field_bottom = z;
     let mut ov_col_name = z;
@@ -1075,6 +1083,7 @@ pub fn build_ui(
                                     });
                                     let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
                                     ov_keys_table=c.table([("Columns",240.0),("Type",180.0),("Name",180.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_index_rows(state),grid);
+                                    if state.wizard_constraint_edit.as_ref().is_some_and(|edit| edit.page == 0) { ov_constraint_editor=constraint_cell_editor(c,ov_keys_table,state,&theme); }
                                     let key = state.wizard_index_constraints.get(state.wizard_key_sel);
                                     c.row(row, |r| {
                                         r.text("Name"); ov_key_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
@@ -1097,6 +1106,7 @@ pub fn build_ui(
                                     });
                                     let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
                                     ov_fks_table=c.table([("Columns",240.0),("Name",180.0),("References",400.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_foreign_key_rows(state),grid);
+                                    if state.wizard_constraint_edit.as_ref().is_some_and(|edit| edit.page == 1) { ov_constraint_editor=constraint_cell_editor(c,ov_fks_table,state,&theme); }
                                     let key = state.wizard_foreign_keys.get(state.wizard_foreign_key_sel);
                                     c.row(row, |r| {
                                         r.text("Name"); ov_fk_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
@@ -1121,6 +1131,7 @@ pub fn build_ui(
                                     });
                                     let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
                                     ov_checks_table=c.table([("Check",400.0),("Name",180.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_check_rows(state),grid);
+                                    if state.wizard_constraint_edit.as_ref().is_some_and(|edit| edit.page == 2) { ov_constraint_editor=constraint_cell_editor(c,ov_checks_table,state,&theme); }
                                     let check = state.wizard_checks.get(state.wizard_check_sel);
                                     c.row(row, |r| {
                                         r.text("Name");
@@ -2181,6 +2192,16 @@ pub fn build_ui(
         for button in [ov_field_bottom,ov_btn_down] { ui.set_button_enabled(button,state.wizard_col_sel+1<state.wizard_cols.len()); }
         ui.set_button_enabled(ov_btn_del,!state.wizard_cols.is_empty());
     }
+    for (table, columns) in [(ov_keys_table,vec![2]),(ov_fks_table,if state.table_wizard_names_valid() {vec![1,2]} else {vec![1]}),(ov_checks_table,if state.table_wizard_names_valid() {vec![0,1]} else {vec![1]})] {
+        ui.set_table_editable_columns(table,columns);
+    }
+    if let Some(edit) = &state.wizard_constraint_edit {
+        if let Some(session) = &edit.input { ui.restore_text_input_state(ov_constraint_editor,session); }
+        ui.set_accessible_name(ov_constraint_editor, match (edit.page,edit.column) {
+            (0,2) => "Index constraint name cell", (1,1) => "Foreign key name cell",
+            (1,2) => "Foreign key references cell", (2,0) => "CHECK expression cell", _ => "CHECK name cell",
+        });
+    }
     if state.overlay.is_none() {
         let _ = ui.set_tabs_selected(tabs, state.tab.index());
         if docks_on && dock_tabs.0 != 0 {
@@ -2564,6 +2585,7 @@ pub fn build_ui(
         ov_list,
         ov_fields_table,
         ov_field_editor,
+        ov_constraint_editor,
         ov_field_top,
         ov_field_bottom,
         ov_col_name,
