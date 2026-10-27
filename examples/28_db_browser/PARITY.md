@@ -516,3 +516,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Schema wizard helper checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-30de3bbd49ad.md): explicit main/temp/attached CREATE TABLE, CREATE INDEX and atomic native ALTER helpers pass 396 workspace tests and strict checks. Index-dependent column removals are guarded against quoted attached-column conversion; expression-index removals require an explicit migration. Controls remain main-only until UI integration. Full schema migration/editor and native acceptance remain unfinished.
+
+
+## Qualified schema wizard controls checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-6a2fb87f7784.md): basic table create/modify and atomic index create/replace now carry main/temp/attached identities. Renaming follows browse tabs/settings/formats/Plot; custom/empty types and edited DDL survive. Scrollable forms keep Save visible at narrow sizes. 399 tests/strict checks, ten frames per renderer and two native static captures pass; input interiors differ by 1, primitive edges up to 73 remain F01. F02 tracks column-setting refresh after ALTER. Full constraint/migration, expression/partial-index, original appearance and native input acceptance remain unfinished.
