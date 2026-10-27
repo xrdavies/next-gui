@@ -83,6 +83,7 @@ pub mod mid {
 #[allow(dead_code)]
 pub struct BuiltUi {
     pub ui: Ui,
+    pub column_picker: crate::column_picker::Controls,
     pub body_splitter: WidgetId,
     pub structure_splitter: WidgetId,
     pub shell_scroll: WidgetId,
@@ -2199,7 +2200,7 @@ pub fn build_ui(
         for button in [ov_field_bottom,ov_btn_down] { ui.set_button_enabled(button,state.wizard_col_sel+1<state.wizard_cols.len()); }
         ui.set_button_enabled(ov_btn_del,!state.wizard_cols.is_empty());
     }
-    for (table, columns) in [(ov_keys_table,vec![1,2]),(ov_fks_table,if state.table_wizard_names_valid() {vec![1,2]} else {vec![1]}),(ov_checks_table,if state.table_wizard_names_valid() {vec![0,1]} else {vec![1]})] {
+    for (table, columns) in [(ov_keys_table,if state.table_wizard_names_valid() {vec![0,1,2]} else {vec![1,2]}),(ov_fks_table,if state.table_wizard_names_valid() {vec![0,1,2]} else {vec![1]}),(ov_checks_table,if state.table_wizard_names_valid() {vec![0,1]} else {vec![1]})] {
         ui.set_table_editable_columns(table,columns);
     }
     if let Some(edit) = &state.wizard_constraint_edit {
@@ -2442,7 +2443,9 @@ pub fn build_ui(
     ui.set_image_view(edit_image, state.edit_image_view);
     ui.set_text_area_line_numbers(sql_area, true);
     ui.set_text_area_read_only(log_area, true);
+    let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     ui.sync(&mut scene);
+    crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
     ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
     if state.overlay == Some(OverlayKind::EditIndex) {
         for (index, list) in [ov_list, ov_idx_available].into_iter().enumerate() {
@@ -2500,6 +2503,7 @@ pub fn build_ui(
 
     BuiltUi {
         ui,
+        column_picker,
         body_splitter,
         structure_splitter,
         shell_scroll,

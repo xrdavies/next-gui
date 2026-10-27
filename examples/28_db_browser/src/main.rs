@@ -9,6 +9,7 @@ mod cell_snapshot;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
+mod column_picker;
 mod table_migration;
 mod filters;
 mod prefs;
@@ -213,6 +214,7 @@ struct Demo {
 
 #[allow(dead_code)]
 struct BuiltUiIds {
+    column_picker: column_picker::Controls,
     status: WidgetId,
     body_splitter: WidgetId,
     structure_splitter: WidgetId,
@@ -432,6 +434,7 @@ struct BuiltUiIds {
 impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
+            column_picker: b.column_picker,
             status: b.status,
             body_splitter: b.body_splitter,
             structure_splitter: b.structure_splitter,
@@ -747,7 +750,7 @@ impl Demo {
                     if tab == "table-conflicted" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-keys" | "table-keys-saved" | "table-keys-grid" | "table-keys-editor" | "table-key-type" => {
+                "table-keys" | "table-keys-saved" | "table-keys-grid" | "table-keys-editor" | "table-key-type" | "table-key-columns" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,customer TEXT CONSTRAINT customer_unique UNIQUE ON CONFLICT FAIL,region TEXT,CONSTRAINT customer_region UNIQUE(customer,region)); INSERT INTO records VALUES(7,'Northwind','west'),(11,'Contoso','east');").unwrap();
                     state.refresh_schema().unwrap();
@@ -757,7 +760,7 @@ impl Demo {
                     state.wizard_index_constraints[2].conflict=Some(sqlite3_parser::ast::ResolveType::Abort);
                     state.wizard_table_options.index_constraints=Some(state.wizard_index_constraints.clone());
                     state.wizard_cols[1].name="customer_name".into(); state.wizard_table_name="orders".into(); state.sync_table_constraint_names().unwrap();
-                    state.wizard_table_page=1; state.wizard_key_sel=2; state.wizard_key_scroll=(0.0,if tab.ends_with("-grid") || tab.ends_with("-editor") || tab=="table-key-type" {0.0} else {10000.0});
+                    state.wizard_table_page=1; state.wizard_key_sel=2; state.wizard_key_scroll=(0.0,if tab.ends_with("-grid") || tab.ends_with("-editor") || tab=="table-key-type" || tab=="table-key-columns" {0.0} else {10000.0});
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
@@ -774,7 +777,7 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-foreign-keys" | "table-foreign-keys-saved" | "table-foreign-keys-grid" | "table-foreign-keys-editor" => {
+                "table-foreign-keys" | "table-foreign-keys-saved" | "table-foreign-keys-grid" | "table-foreign-keys-editor" | "table-fk-columns" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE customers(id INTEGER,region TEXT,PRIMARY KEY(id,region)); INSERT INTO customers VALUES(1,'west'),(2,'east'); CREATE TABLE records(id INTEGER PRIMARY KEY,customer INTEGER,region TEXT,CONSTRAINT customer_region FOREIGN KEY(customer,region) REFERENCES customers(id,region)); INSERT INTO records VALUES(7,1,'west'),(11,2,'east');").unwrap();
                     state.refresh_schema().unwrap();
@@ -783,7 +786,7 @@ impl Demo {
                     state.wizard_foreign_keys[0].clause="REFERENCES customers(id,region)\nON UPDATE CASCADE ON DELETE SET NULL\nDEFERRABLE INITIALLY DEFERRED".into();
                     state.wizard_table_options.foreign_keys=Some(state.wizard_foreign_keys.clone());
                     state.wizard_cols[1].name="customer_id".into(); state.wizard_table_name="orders".into(); state.sync_table_constraint_names().unwrap();
-                    state.wizard_table_page=2; state.wizard_foreign_key_scroll=(0.0,if tab.ends_with("-grid") || tab.ends_with("-editor") {0.0} else {10000.0});
+                    state.wizard_table_page=2; state.wizard_foreign_key_scroll=(0.0,if tab.ends_with("-grid") || tab.ends_with("-editor") || tab=="table-fk-columns" {0.0} else {10000.0});
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
@@ -1100,6 +1103,9 @@ impl Demo {
             state.sql_tabs[0] = format!("{}SELECT coalesce(\n    substr('中文 SQL editor', 1,", "-- Function argument hints\n".repeat(24));
         }
         if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if let Some((page,row))=match tab.as_str() {"table-key-columns"=>Some((0,state.wizard_key_sel)),"table-fk-columns"=>Some((1,state.wizard_foreign_key_sel)),_=>None} {
+                state.wizard_column_picker=Some(column_picker::Draft::new(&state,page,row).unwrap());
+            }
             let target=match tab.as_str() {"table-keys-editor"=>Some((0,state.wizard_key_sel,2)),"table-key-type"=>Some((0,state.wizard_key_sel,1)),"table-foreign-keys-editor"=>Some((1,state.wizard_foreign_key_sel,2)),"table-checks-editor"=>Some((2,state.wizard_check_sel,0)),_=>None};
             if let Some((page,row,column))=target {
                 let original=state.constraint_cell_value(page,row,column).unwrap().to_string();
@@ -1179,6 +1185,7 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        self.snapshot_column_picker();
         if self.ids.tree.0 != 0 {
             for (database, name) in self.last_schema_names.iter().enumerate() {
                 let root = database as u64 * 5 + 1;
@@ -1765,6 +1772,7 @@ impl Demo {
         match event {
             next_gui_ui::TableCellEditEvent::Begin {row,column,key} => {
                 if [self.state.wizard_key_sel,self.state.wizard_foreign_key_sel,self.state.wizard_check_sel][page]!=row {return;}
+                if page < 2 && column == 0 {self.open_column_picker(page,row);self.do_rebuild();return;}
                 let Some(original)=self.state.constraint_cell_value(page,row,column).map(str::to_owned) else {return;};
                 let original=if (page,column)==(0,1) {state::ConstraintCellOriginal::Index(self.state.wizard_index_constraints[row].clone())} else {state::ConstraintCellOriginal::Text(original)};
                 self.state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None});
@@ -2170,6 +2178,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        self.snapshot_column_picker();
         let advanced_focused=self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_table_advanced);
         let column_input_session = self.state.wizard_cols.get(self.state.wizard_col_sel).and_then(|column| {
             if self.state.overlay!=Some(OverlayKind::EditTable) || self.ui.text_input_value(self.ids.ov_col_name)!=Some(column.name.as_str()) { return None; }
@@ -2879,6 +2888,7 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
+        if self.state.wizard_column_picker.is_some() { return; }
         self.snapshot_inputs();
         if self.handle_browse_header_action(item) { return; }
         let document_action = matches!(item, mid::FILE_NEW | mid::FILE_NEW_MEM | mid::FILE_OPEN | mid::FILE_OPEN_RO | mid::FILE_CLOSE | mid::FILE_PROJECT_OPEN | mid::FILE_PROJECT_CLOSE | mid::FILE_EXIT | mid::FILE_SAVE_ALL)
@@ -3556,6 +3566,7 @@ impl Demo {
 
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
+        if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
         self.snapshot_inputs();
         if id == self.ids.log_clear {
             self.state.sql_log.clear(crate::sql_log::Source::from_filter(self.state.sql_log_filter));
@@ -4327,6 +4338,8 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
+        self.handle_column_picker_dismiss();
+        self.handle_column_list_activate();
         self.handle_field_check_change();
         self.handle_table_cell_edit();
         while let Some(id) = self.ui.take_button_activate() {
@@ -4495,6 +4508,9 @@ impl AppCallbacks for Demo {
                 pressed: false,
                 ..
             } => {
+                if self.release_column_picker_pointer() {
+                    self.needs_paint = true; ctx.request_redraw(); return;
+                }
                 if self.ui.is_dragging() {
                     self.ui.pointer_released();
                     self.snapshot_inputs();
@@ -4537,6 +4553,10 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
+                if self.ui.active_dialog().is_some() {
+                    if let Some(key)=map_key(key,modifiers) {self.ui.key_input(key);}
+                    self.after_ui(ctx);return;
+                }
                 if self.browse_header_column.is_some() && self.ui.has_open_popup() {
                     if let Some(key) = map_key(key, modifiers) { self.ui.key_input(key); }
                     self.after_ui(ctx);

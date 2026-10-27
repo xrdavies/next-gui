@@ -319,6 +319,13 @@ pub fn foreign_key_sql(key: &NamedForeignKey) -> Result<String, String> {
     } else {Ok(SqlFragment(foreign_key_definition(key)?).to_string())}
 }
 
+pub fn foreign_key_columns(key: &NamedForeignKey) -> Result<Vec<(String, String)>, String> {
+    // Local-column selection must also work while the REFERENCES draft is incomplete.
+    let local = NamedForeignKey { name: None, columns: key.columns.clone(), clause: "REFERENCES __next_gui_parent".into(), inline: false };
+    let NamedTableConstraint { constraint: TableConstraint::ForeignKey { columns, .. }, .. } = foreign_key_definition(&local)? else { unreachable!() };
+    Ok(columns.into_iter().map(|column| (identifier_text(&column.col_name), SqlFragment(column.col_name).to_string())).collect())
+}
+
 pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, renames: &[(&str, &str)]) -> Result<Vec<NamedForeignKey>, String> {
     keys.iter().map(|key| {
         if key.inline {
@@ -528,6 +535,14 @@ pub fn index_constraint_sql(key: &NamedIndexConstraint) -> Result<String, String
     let definition=index_constraint_definition(key)?;
     Ok(if let Some((_,inline))=inline_index_constraint(key,&definition) {SqlFragment(inline).to_string()}
         else {SqlFragment(definition).to_string()})
+}
+
+pub fn index_constraint_columns(key: &NamedIndexConstraint) -> Result<Vec<(String, String)>, String> {
+    let columns = match index_constraint_definition(key)?.constraint {
+        TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => columns,
+        _ => unreachable!(),
+    };
+    Ok(columns.into_iter().map(|column| (identifier_text(&index_column_name(&column.expr).unwrap()), SqlFragment(column).to_string())).collect())
 }
 
 fn index_column_name(expr: &Expr) -> Option<Name> {

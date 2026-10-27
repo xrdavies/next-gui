@@ -33,6 +33,7 @@ use text_completion::TextAreaCompletion;
 mod tabs;
 mod autocomplete;
 pub use autocomplete::AutocompleteState;
+mod dialog;
 mod table_edit;
 pub use table_edit::TableCellEditEvent;
 use table_edit::TableCellEditor;
@@ -1873,6 +1874,12 @@ enum Kind {
         style: TooltipStyle,
         children: Vec<WidgetId>,
     },
+    Dialog {
+        title: String,
+        children: Vec<WidgetId>,
+        open: bool,
+        style: ModalStyle,
+    },
     Modal {
         title: String,
         body: String,
@@ -2291,6 +2298,10 @@ pub struct Ui {
     focus: Option<WidgetId>,
     /// Currently open popup owner (Menu / ContextMenu / Select); at most one.
     open_popup: Option<WidgetId>,
+    dialogs: Vec<(WidgetId, Option<WidgetId>)>,
+    pending_dialog_dismiss: Option<WidgetId>,
+    list_activation: HashMap<WidgetId, Option<(usize, std::time::Instant)>>,
+    pending_list_activate: Option<(WidgetId, usize)>,
     popup_menu_row: Option<usize>,
     text_completion: Option<TextAreaCompletion>,
     text_area_hint: Option<TextAreaHint>,
@@ -2463,6 +2474,10 @@ impl Ui {
             drag: None,
             focus: None,
             open_popup: None,
+            dialogs: Vec::new(),
+            pending_dialog_dismiss: None,
+            list_activation: HashMap::new(),
+            pending_list_activate: None,
             popup_menu_row: None,
             text_completion: None,
             text_area_hint: None,
@@ -3195,6 +3210,7 @@ impl Ui {
     /// Begin a pointer press with primary (`secondary = false`) or secondary
     /// / right button (`secondary = true`, opens [`Kind::ContextMenu`]).
     pub fn pointer_press(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool) -> bool {
+        self.enforce_dialog_scope();
         if self.pointer_text_area_hint(scene, x, y, secondary) { return true; }
         // Open popup hit first (overlay sits above everything).
         if let Some(pid) = self.open_popup {
@@ -3209,10 +3225,19 @@ impl Ui {
         }
 
         let Some(id) = self.hit_widget(scene, x, y) else {
+            for last in self.list_activation.values_mut() { *last = None; }
             self.focus = None;
             return true;
         };
 
+        for (&list, last) in &mut self.list_activation {
+            if list != id || secondary { *last = None; }
+        }
+
+        if let Some(dialog)=self.dialog_focus_scope() {
+            if id==dialog {return self.pointer_dialog(scene,dialog,x,y,secondary);}
+            if !self.dialog_contains(dialog,id) {return true;}
+        }
         if secondary {
             // Right-click: open context menu if host (or ancestor) is ContextMenu.
             if let Some(cm) = self.find_context_menu_ancestor(id) {
@@ -3561,6 +3586,7 @@ impl Ui {
 
     /// Apply mouse-wheel scroll at (x,y); returns true if a scrollable scrolled.
     pub fn pointer_scroll(&mut self, scene: &Scene, x: f32, y: f32, dx: f32, dy: f32) -> bool {
+        self.enforce_dialog_scope();
         if !dx.is_finite() || !dy.is_finite() {
             return false;
         }
@@ -3577,6 +3603,9 @@ impl Ui {
             }
         }
         if self.wheel_text_area_hint(scene, x, y, dy) { return true; }
+        if let Some(dialog)=self.dialog_focus_scope() {
+            if !self.hit_widget(scene,x,y).is_some_and(|id|id!=dialog && self.dialog_contains(dialog,id)) {return true;}
+        }
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
         };
@@ -3637,6 +3666,7 @@ impl Ui {
 
     /// Set focus explicitly.
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
+        if id.is_some_and(|id|self.dialog_focus_scope().is_some_and(|dialog|!self.dialog_contains(dialog,id))) {return;}
         self.focus = id.filter(|id| self.button_enabled(*id) != Some(false));
     }
 
@@ -3682,6 +3712,7 @@ impl Ui {
             }
             Kind::Panel { title, .. }
             | Kind::Menu { title, .. }
+            | Kind::Dialog { title, .. }
             | Kind::Modal { title, .. }
             | Kind::Drawer { title, .. }
             | Kind::Card { title, .. } => {
@@ -3914,7 +3945,8 @@ impl Ui {
             Kind::Column { children, .. }
             | Kind::Row { children, .. }
             | Kind::Toolbar { children, .. }
-            | Kind::Panel { children, .. }
+            | Kind::Dialog { children, .. }
+                    | Kind::Panel { children, .. }
             | Kind::StatusBar { children, .. }
             | Kind::Splitter { children, .. }
             | Kind::ScrollArea { children, .. }
@@ -3937,6 +3969,7 @@ impl Ui {
     /// `docs/a11y-baseline.md`.
     pub fn focusable_widgets(&self) -> Vec<WidgetId> {
         let mut out = Vec::new();
+        if let Some(dialog)=self.dialog_focus_scope() {self.collect_focusable_dfs(dialog,&mut out);return out;}
         for &root in &self.roots {
             self.collect_focusable_dfs(root, &mut out);
         }
@@ -3947,6 +3980,7 @@ impl Ui {
         let Some(w) = self.widgets.get(&id) else {
             return;
         };
+        if matches!(w.kind,Kind::Dialog {open:false,..}) {return;}
         if Self::kind_is_focusable(&w.kind) {
             out.push(id);
         }
@@ -4467,6 +4501,25 @@ impl Ui {
         }
     }
 
+    /// Opt a list into Enter and primary double-click activation (500 ms).
+    /// Other lists retain selection-only behavior.
+    pub fn set_list_activatable(&mut self, id: WidgetId, enabled: bool) -> bool {
+        if !matches!(self.widgets.get(&id).map(|widget| &widget.kind), Some(Kind::List { .. })) { return false; }
+        if enabled { self.list_activation.entry(id).or_insert(None); }
+        else {
+            self.list_activation.remove(&id);
+            if self.pending_list_activate.is_some_and(|event| event.0 == id) { self.pending_list_activate = None; }
+        }
+        true
+    }
+
+    /// Drain the most recent opt-in list activation as (list, row).
+    pub fn take_list_activate(&mut self) -> Option<(WidgetId, usize)> {
+        let (id, row) = self.pending_list_activate.take()?;
+        let valid = matches!(self.widgets.get(&id).map(|widget| &widget.kind), Some(Kind::List { items, .. }) if row < items.len());
+        (valid && self.dialog_focus_scope().is_none_or(|dialog| self.dialog_contains(dialog, id))).then_some((id, row))
+    }
+
     /// Set list selection.
     pub fn set_list_selected(&mut self, id: WidgetId, selected: Option<usize>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -4928,6 +4981,8 @@ impl Ui {
 
     /// Deliver a key to the focused widget. Returns true if handled.
     pub fn key_input(&mut self, key: UiKey) -> bool {
+        for last in self.list_activation.values_mut() { *last = None; }
+        self.enforce_dialog_scope();
         if let Some(handled) = self.key_text_completion(key) { return handled; }
         if key == UiKey::Escape && self.dismiss_text_area_hint() { return true; }
         if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
@@ -4960,6 +5015,7 @@ impl Ui {
             }
         }
         if let Some(handled)=self.key_table_cell_editor(key) {return handled;}
+        if key==UiKey::Escape && self.escape_dialog() {return true;}
         // P6d: Tab / BackTab move focus at the top (before widget dispatch / focus
         // requirement), so text fields do not swallow Tab. Modal/Drawer absorb.
         if matches!(key, UiKey::Tab | UiKey::BackTab) {
@@ -5785,6 +5841,12 @@ impl Ui {
             -1
         };
         if idx >= 0 && (idx as usize) < n_items {
+            if let Some(last) = self.list_activation.get_mut(&id) {
+                let now = std::time::Instant::now();
+                if last.is_some_and(|(row, time)| row == idx as usize && now.duration_since(time) <= std::time::Duration::from_millis(500)) {
+                    self.pending_list_activate = Some((id, idx as usize)); *last = None;
+                } else { *last = Some((idx as usize, now)); }
+            }
             if let Some(w) = self.widgets.get_mut(&id) {
                 if let Kind::List { selected, .. } = &mut w.kind {
                     let new = Some(idx as usize);
@@ -5793,7 +5855,7 @@ impl Ui {
                     }
                 }
             }
-        }
+        } else if let Some(last) = self.list_activation.get_mut(&id) { *last = None; }
         let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
         self.drag = Some(DragState::Scroll {
             area: id,
@@ -6096,6 +6158,10 @@ impl Ui {
         }
         let cur = self.list_selected(id);
         match key {
+            UiKey::Enter if self.list_activation.contains_key(&id) => {
+                if let Some(row) = cur { self.pending_list_activate = Some((id, row)); return true; }
+                false
+            }
             UiKey::Down => {
                 let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
                 self.set_list_selected(id, Some(next));
@@ -9342,6 +9408,7 @@ impl Ui {
 
     /// Ensure scene nodes exist, run layout, paint labels into the scene.
     pub fn sync(&mut self, scene: &mut Scene) {
+        self.enforce_dialog_scope();
         self.scrub_unfocused_ime();
         let parent = scene.root();
         for root in self.roots.clone() {
@@ -9355,6 +9422,7 @@ impl Ui {
                 self.paint_widget(scene, root);
             }
         }
+        self.paint_dialogs(scene);
         if let Some((x, y)) = self.last_pointer {
             let tip = self
                 .hit_widget(scene, x, y)
@@ -9368,6 +9436,7 @@ impl Ui {
     }
 
     fn ensure_mounted(&mut self, scene: &mut Scene, parent: NodeId, id: WidgetId) {
+        let parent=if matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Dialog {..})) {self.ensure_overlay_host(scene)} else {parent};
         let already = self.widgets.get(&id).and_then(|w| w.node).is_some();
         if !already {
             let (fill, visible) = match self.widgets.get(&id).map(|w| &w.kind) {
@@ -9419,7 +9488,7 @@ impl Ui {
                 Some(Kind::Tag { style, .. }) => (style.bg, true),
                 Some(Kind::Badge { style, .. }) => (style.bg, true),
                 Some(Kind::Tooltip { .. }) => (Color::rgba(0, 0, 0, 0), false),
-                Some(Kind::Modal { .. }) => (Color::rgba(0, 0, 0, 0), false),
+                Some(Kind::Dialog { .. } | Kind::Modal { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::Progress { style, .. }) => (style.track, true),
                 Some(Kind::Alert { style, tone, .. }) => {
                     let bg = match tone {
@@ -9704,6 +9773,7 @@ impl Ui {
                     self.node_to_widget.insert(node, id);
                     scene.set_mask(node, Some(AlphaMask::empty()));
                 }
+                Some(Kind::Dialog { .. }) => {self.node_to_widget.insert(node,id);scene.set_visible(node,false);}
                 Some(Kind::Modal { .. }) => {
                     // Overlay-only when open; host stays invisible.
                     scene.set_visible(node, false);
@@ -9844,6 +9914,7 @@ impl Ui {
                     Kind::Column { children, .. }
                     | Kind::Row { children, .. }
                     | Kind::Toolbar { children, .. }
+                    | Kind::Dialog { children, .. }
                     | Kind::Panel { children, .. }
                     | Kind::StatusBar { children, .. }
                     | Kind::Splitter { children, .. }
@@ -10042,7 +10113,7 @@ impl Ui {
                     ChildMeasure::new(0.0, 0.0)
                 }
             }
-            Some(Kind::Modal { .. }) => ChildMeasure::new(0.0, 0.0),
+            Some(Kind::Dialog { .. } | Kind::Modal { .. }) => ChildMeasure::new(0.0, 0.0),
             Some(Kind::Progress { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Alert {
                 dismissed,
@@ -10167,6 +10238,7 @@ impl Ui {
     }
 
     fn layout_widget(&mut self, scene: &mut Scene, id: WidgetId) {
+        if matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Dialog {..})) {return;}
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Splitter { .. })
@@ -10538,6 +10610,7 @@ impl Ui {
                     Kind::Column { children, .. }
                     | Kind::Row { children, .. }
                     | Kind::Toolbar { children, .. }
+                    | Kind::Dialog { children, .. }
                     | Kind::Panel { children, .. }
                     | Kind::StatusBar { children, .. }
                     | Kind::Splitter { children, .. }
@@ -11135,6 +11208,7 @@ impl Ui {
     }
 
     fn paint_widget(&mut self, scene: &mut Scene, id: WidgetId) {
+        if matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Dialog {..})) {self.hide_widget_subtree(scene,id);return;}
         self.paint_widget_content(scene, id);
         self.paint_scrollbars(scene, id);
     }
@@ -11846,6 +11920,7 @@ impl Ui {
             | Kind::Tag { .. }
             | Kind::Badge { .. }
             | Kind::Tooltip { .. }
+            | Kind::Dialog { .. }
             | Kind::Modal { .. }
             | Kind::Progress { .. }
             | Kind::Alert { .. }
@@ -15863,6 +15938,9 @@ impl Ui {
             Some(Kind::Autocomplete { .. }) => self.paint_autocomplete_popup(scene, id),
             _ => {}
         }
+        if !self.dialogs.is_empty() {
+            if let Some(widget)=self.widgets.get(&id) {for &node in &widget.aux {scene.raise(node);}}
+        }
     }
 
     fn paint_menu_popup(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -18790,7 +18868,8 @@ impl FlexBuilder<'_> {
                 Kind::Column { children, .. }
                 | Kind::Row { children, .. }
                 | Kind::Toolbar { children, .. }
-                | Kind::Panel { children, .. }
+                | Kind::Dialog { children, .. }
+                    | Kind::Panel { children, .. }
                 | Kind::StatusBar { children, .. }
                 | Kind::Splitter { children, .. }
                 | Kind::ScrollArea { children, .. }

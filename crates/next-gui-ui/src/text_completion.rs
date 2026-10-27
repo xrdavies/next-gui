@@ -126,6 +126,10 @@ impl Ui {
             .filter(|id| self.open_popup == Some(*id))
     }
 
+    pub(super) fn text_completion_owner(&self, popup: WidgetId) -> Option<WidgetId> {
+        self.text_completion.as_ref().filter(|completion| completion.popup == popup).map(|completion| completion.owner)
+    }
+
     fn text_completion_valid(&self) -> bool {
         let Some(c) = &self.text_completion else {
             return false;
