@@ -135,7 +135,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). PageUp/PageDown with Shift selection now moves the caret/viewport by visual lines. Desired-column retention, syntax, completion, line numbers and grapheme-aware navigation remain. |
+| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). PageUp/PageDown with Shift selection now moves the caret/viewport by visual lines. Vertical keys retain the desired column through short lines and same-layout sessions. Syntax, completion, line numbers and grapheme-aware navigation remain. |
 | Execute / message / results table | partial | Final statement preview, at most 500 displayed rows; results/messages/export snapshots belong to each SQL tab (F09 addressed). |
 | Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Selection/whole-script execution, source-bound Save/Save As and shortcuts; external file changes reject overwrite; opening preserves existing drafts. |
 | Multi SQL tabs | partial | Independent drafts/sessions/results, file names and dirty markers; Close Tab, move arrows and Cmd/Ctrl+T/W/S/Shift+S. Pointer tab dragging, close affordances and rename remain. |
@@ -441,3 +441,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### TextArea page navigation checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-4bb6e7d46905.md): shared TextArea now handles page movement/Shift selection for SQL and read-only text. Wrapped/tiny/empty bounds and rebuild sessions pass. A middle-line test exposed a fractional-height row drift; keyboard targets now use nearest layout rows, preserving pointer behavior. 320 workspace tests and strict checks pass; dark/light selected page views, native SQL painting and all fourteen Office windows inspected. Desired-column retention across short lines (F03), complete editor and native acceptance remain open.
+
+
+### Desired-column checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-4356e82aef7b.md): vertical/page/Shift movement remembers its horizontal goal through shorter lines and rebuild. Explicit placements/edits and changed font/width reset it. The 14-vs-21 baseline now passes; 322 tests and strict checks pass, with Soft page-session and native SQL/all Office render inspection. This closes page checkpoint F03. Complete editor, dock overflow refinement and full native/original acceptance remain open.
