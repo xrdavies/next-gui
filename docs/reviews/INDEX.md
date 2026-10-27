@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-4511f2bc5257-F01 | verified | P2 | grok | e28 / all | 605b048 | Catalog columns | Schema-qualified PRAGMA keeps real/generated/attached/temp/quoted columns available despite same-named user tables | [F01](R-20261027-4511f2bc5257.md#r-20261027-4511f2bc5257-f01) | 4511f2bc5257 | 4511f2bc5257 |
 | R-20261027-76baeacfe7e5-F03 | verified | P2 | grok | e28 / all | incomplete parity | SQL calltips | Original function roles/help and override guards; browsable overloads, long-text scrolling and retained editor sessions verified | [F03](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f03) | 6ee1edbad2a0 | 6ee1edbad2a0 |
 | R-20261027-76baeacfe7e5-F01 | verified | P2 | grok | shared / all | existing branch | Tooltip painter | Switching hosts hides the previous overlay; bounded wrapping and clipping | [F01](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f01) | 76baeacfe7e5 | 76baeacfe7e5 |
 | R-20261027-76baeacfe7e5-F02 | verified | P2 | grok | e28 / all | 605b048 | Function metadata | PRAGMA reader ignores a same-named user table and fake function rows | [F02](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f02) | 76baeacfe7e5 | 76baeacfe7e5 |
@@ -73,6 +74,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `0170054..4511f2bc5257` | Codex | pass for column metadata — 372 tests/strict checks; shadowing baseline fixed across quoted/generated/temp/attached columns; completion Metal delta 1; full/native parity remain | [Report](R-20261027-4511f2bc5257.md) |
 | 2026-10-27 | `615b893..6ee1edbad2a0` | Codex | issues — F03 verified: 371 tests/strict checks, overload/long-text/session behavior, Metal delta 1/2 and native e28/14 Office static inspection pass; full/native parity remain | [Report](R-20261027-6ee1edbad2a0.md) |
 | 2026-10-27 | `edbe0f1..f6bf184f24b3` | Codex | issues — 366 tests/strict checks, descriptive function roles and custom override guards, Soft/Metal delta 1 and native static painting verified; F03 overload interaction continues | [Report](R-20261027-f6bf184f24b3.md) |
 | 2026-10-27 | `c365bf6..3855f40fe8ba` | Codex | issues — F02 verified: 353 tests/strict checks; original extra words, keyword case/Cancel/defaults, dark/light/Metal delta 1 pass; native acceptance remains unavailable | [Report](R-20261027-3855f40fe8ba.md) |

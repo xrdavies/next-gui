@@ -487,3 +487,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Function overload browsing checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-6ee1edbad2a0.md): F03 verified for descriptive function help with one overload per page, previous/next controls, Cmd/Ctrl+Shift+Space open/cycle, and clipped-text wheel/Cmd/Ctrl+Shift+Page scrolling. Selection, focus, Undo and page/scroll sessions survive refresh/rebuild; preferred overload follows changed argument context. Sixteen overload and 127-argument stress cases pass. 371 tests and strict checks pass; dark/light actual Metal delta 1/2, Soft endpoints, native e28/all fourteen Office inspected. Static capture is not native input acceptance. Full editor, large-font layout/preferences and complete DB4S parity remain unfinished.
+
+
+## Column metadata resilience checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-4511f2bc5257.md): a user table named pragma_table_xinfo no longer disables column completion. Schema-qualified PRAGMA loading preserves generated/temp/attached columns and quoted names. Baseline error reproduced; 372 workspace tests and strict checks pass, with both-theme completion Metal delta 1. Query-only fix; no fresh UI/native acceptance claim. Complete DB4S parity remains unfinished.
