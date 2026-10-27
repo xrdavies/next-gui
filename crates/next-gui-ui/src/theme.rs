@@ -819,6 +819,7 @@ impl TableStyle {
             bg: c.list_bg,
             header_bg: c.header_bg,
             selected_bg: c.selected_bg,
+            drag_select: false,
             grid: c.grid,
             focus_border: c.focus,
         }

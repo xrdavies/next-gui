@@ -105,3 +105,48 @@ fn copy_quotes_tabs_line_breaks_and_quotes() {
     ui.set_table_selected_rows(id, None);
     assert_eq!(ui.table_selected_text(id), None);
 }
+
+#[test]
+fn drag_selection_respects_scrolled_frozen_columns_and_keeps_its_anchor() {
+    let (mut ui, id) = grid();
+    let mut scene = Scene::new();
+    if let Kind::Table { style, .. } = &mut ui.widgets.get_mut(&id).unwrap().kind {
+        style.drag_select = true;
+    }
+    ui.set_table_frozen_cols(id, 1);
+    ui.set_table_scroll_offset(id, 150.0, 26.0);
+    ui.sync(&mut scene);
+    let bounds = scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+    let y = bounds.y + ui.table_style().header_height + 5.0;
+    assert!(ui.pointer_pressed(&mut scene, bounds.x + 120.0, y));
+    assert!(ui.is_dragging());
+    assert_eq!(ui.table_selection_anchor(id), Some((1, Some(2))));
+    assert!(ui.pointer_moved(bounds.x + 50.0, y + 52.0));
+    assert_eq!(ui.table_selected_cols(id), Some((0, 2)));
+    assert_eq!(ui.table_selected_rows(id), Some((1, 3)));
+    assert_eq!(ui.table_selection_anchor(id), Some((1, Some(2))));
+    assert!(!ui.pointer_moved(f32::NAN, y));
+    assert!(ui.pointer_moved(bounds.x + 1000.0, bounds.y + 1000.0));
+    assert_eq!(ui.table_selected_col(id), Some(5));
+    assert_eq!(ui.table_selected_row(id), Some(5));
+    ui.pointer_released();
+    assert!(!ui.is_dragging());
+    let selection = ui.table_selected_text(id);
+    ui.pointer_moved(0.0, 0.0);
+    assert_eq!(ui.table_selected_text(id), selection);
+}
+
+#[test]
+fn default_table_body_drag_still_pans_without_extending_the_selection() {
+    let (mut ui, id) = grid();
+    let mut scene = Scene::new();
+    ui.sync(&mut scene);
+    let bounds = scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+    let x = bounds.x + 120.0;
+    let y = bounds.y + 60.0;
+    ui.pointer_pressed(&mut scene, x, y);
+    assert!(ui.pointer_moved(x - 80.0, y - 30.0));
+    assert_eq!(ui.table_scroll_offset(id), Some((80.0, 30.0)));
+    assert_eq!(ui.table_selected_rows(id), Some((1, 1)));
+    assert_eq!(ui.table_selected_cols(id), Some((1, 1)));
+}

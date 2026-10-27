@@ -1098,6 +1098,8 @@ impl Demo {
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
         let log_focused = self.ids.log_area.0 != 0 && self.ui.focused() == Some(self.ids.log_area)
             && self.state.dock_log && self.state.dock_focus == DockKind::Log && self.state.overlay.is_none();
+        let browse_focused = self.state.tab == MainTab::Browse && self.ids.browse_table.0 != 0
+            && self.ui.focused() == Some(self.ids.browse_table);
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
         let built = build_ui(
             self.font.clone(),
@@ -1111,6 +1113,10 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if browse_focused && self.ids.browse_table.0 != 0 {
+            self.ui.set_focus(Some(self.ids.browse_table));
+            self.ui.sync(&mut self.scene);
+        }
         if sql_focused {
             self.ui.set_focus(Some(self.ids.sql_area));
             self.ui.sync(&mut self.scene);
@@ -2409,6 +2415,7 @@ impl Demo {
     }
 
     fn poll_selection_changes(&mut self) {
+        if self.ui.is_dragging() { return; }
         if let Some(index) = self.ui.select_selected(self.ids.log_filter) {
             if index != self.state.sql_log_filter {
                 self.state.sql_log_filter = index;
@@ -2846,6 +2853,7 @@ impl AppCallbacks for Demo {
                 if self.ui.is_dragging() {
                     self.ui.pointer_released();
                     self.snapshot_inputs();
+                    self.poll_selection_changes();
                     self.do_rebuild();
                     self.needs_paint = true;
                     ctx.request_redraw();
@@ -3278,6 +3286,46 @@ mod interaction_tests {
     }
 
     #[test]
+    fn browse_drag_commits_selection_after_release_and_keeps_the_editor_value() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.run_sql_text_sync("CREATE TABLE t(a,b,c); INSERT INTO t VALUES('a','b','c'),('d','e','f'),('g','h','i');").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.tab = MainTab::Browse;
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        let bounds = demo.scene.iter_paint_order().into_iter()
+            .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table)).unwrap().bounds;
+        let x = bounds.x + 10.0;
+        let y = bounds.y + demo.ui.table_style().header_height + 5.0;
+        assert!(demo.ui.pointer_pressed(&mut demo.scene, x, y));
+        assert!(demo.ui.is_dragging());
+        demo.poll_selection_changes();
+        assert_eq!(demo.state.browse().sel_row, None);
+        assert!(!demo.rebuild);
+        let widths = demo.ui.table_column_widths(demo.ids.browse_table).unwrap();
+        assert!(demo.ui.pointer_moved(x + widths[0] + widths[1], y + demo.ui.table_style().row_height * 2.0));
+        demo.ui.sync(&mut demo.scene);
+        demo.ui.pointer_released();
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 2)));
+        assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 2)));
+        assert_eq!(demo.state.edit_value, "i");
+        assert!(!demo.state.has_cell_draft());
+        assert_eq!(demo.ui.focused(), Some(demo.ids.browse_table));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+    }
+
+    #[test]
     fn backwards_browse_selection_keeps_anchor_through_every_rebuild() {
         let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
         demo.state.new_memory_db().unwrap();
@@ -3288,11 +3336,12 @@ mod interaction_tests {
         demo.state.refresh_browse().unwrap();
         demo.do_rebuild();
         demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((3, 3)), Some((3, 3)));
+        demo.ui.set_focus(Some(demo.ids.browse_table));
         for key in [UiKey::SelectUp, UiKey::SelectUp, UiKey::SelectLeft, UiKey::SelectLeft] {
-            demo.ui.set_focus(Some(demo.ids.browse_table));
             assert!(demo.ui.key_input(key));
             demo.poll_selection_changes();
             demo.do_rebuild();
+            assert_eq!(demo.ui.focused(), Some(demo.ids.browse_table));
             assert_eq!(demo.ui.table_selection_anchor(demo.ids.browse_table), Some((3, Some(3))));
         }
         assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((1, 3)));

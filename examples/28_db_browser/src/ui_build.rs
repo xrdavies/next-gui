@@ -1187,6 +1187,7 @@ pub fn build_ui(
             col_filt_style.height = 26.0;
 
             let mut browse_table_style = TableStyle::from_theme(&theme);
+            browse_table_style.drag_select = true;
             browse_table_style.width = main_w - 24.0;
             browse_table_style.height = (tab_page_h - 232.0).max(160.0);
 

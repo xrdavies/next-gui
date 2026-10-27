@@ -727,6 +727,8 @@ pub struct TableStyle {
     pub header_bg: Color,
     /// Selected row background.
     pub selected_bg: Color,
+    /// Drag across body cells to select a rectangle instead of panning.
+    pub drag_select: bool,
     /// Grid / separator hint.
     pub grid: Color,
     /// Focus border hint.
@@ -750,6 +752,7 @@ impl Default for TableStyle {
             bg: Color::rgb(0x22, 0x22, 0x28),
             header_bg: Color::rgb(0x32, 0x32, 0x3a),
             selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            drag_select: false,
             grid: Color::rgb(0x3a, 0x3a, 0x44),
             focus_border: Color::rgb(0x3b, 0x82, 0xf6),
         }
@@ -2115,6 +2118,7 @@ impl Widget {
 
 #[derive(Debug, Clone)]
 enum DragState {
+    TableSelection { table: WidgetId, bounds: Rect },
     TextArea { area: WidgetId, bounds: Rect },
     TableColumn {
         table: WidgetId,
@@ -3362,6 +3366,7 @@ impl Ui {
             return self.update_tooltip_hover_xy(x, y);
         };
         match drag {
+            DragState::TableSelection { table, bounds } => self.drag_table_selection(table, bounds, x, y),
             DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
             DragState::TableColumn {
                 table,
@@ -5601,6 +5606,10 @@ impl Ui {
                 }
             }
         }
+        if style.drag_select && idx >= 0 && (idx as usize) < n_rows {
+            self.drag = Some(DragState::TableSelection { table: id, bounds });
+            return true;
+        }
         let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));
         self.drag = Some(DragState::Scroll {
             area: id,
@@ -5610,6 +5619,38 @@ impl Ui {
             start_scroll_y: scroll_y,
         });
         true
+    }
+
+    fn drag_table_selection(&mut self, id: WidgetId, bounds: Rect, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() { return false; }
+        let Some(Kind::Table { style, scroll_x, scroll_y, .. }) = self.widgets.get(&id).map(|w| &w.kind) else { return false; };
+        let body_top = bounds.y + style.header_height;
+        let left = bounds.x + style.padding;
+        let right = (bounds.x + bounds.width - style.padding - 1.0).max(left);
+        let bottom = (bounds.y + bounds.height - 1.0).max(body_top);
+        let scroll_changed = self.set_any_scroll(id,
+            scroll_x + x - x.clamp(left, right), scroll_y + y - y.clamp(body_top, bottom));
+        let Some(Widget { kind: Kind::Table {
+            rows, columns, style, scroll_x, scroll_y, frozen_cols,
+            selected_row, selected_col, selected_range, selected_col_range, ..
+        }, .. }) = self.widgets.get_mut(&id) else { return scroll_changed; };
+        if rows.is_empty() || style.row_height <= 0.0 { return scroll_changed; }
+        let row = (((y.clamp(body_top, bottom) - body_top + *scroll_y) / style.row_height).floor() as usize).min(rows.len() - 1);
+        let anchor_row = selected_range.map_or(row, |r| r.0);
+        let col = if selected_col_range.is_some() {
+            let px = x.clamp(left, right);
+            table_column_rects(bounds, columns, style.padding, *scroll_x, *frozen_cols).iter()
+                .position(|(_, clip)| !clip.is_empty() && px >= clip.x && px < clip.x + clip.width)
+                .or(*selected_col)
+        } else { None };
+        let changed = *selected_row != Some(row) || *selected_col != col;
+        *selected_row = Some(row);
+        *selected_range = Some((anchor_row, row));
+        *selected_col = col;
+        if let (Some((anchor, _)), Some(col)) = (*selected_col_range, col) {
+            *selected_col_range = Some((anchor, col));
+        }
+        changed || scroll_changed
     }
 
     fn ensure_selected_visible_list(&mut self, id: WidgetId) {
