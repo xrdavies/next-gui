@@ -14,7 +14,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R-20261027-76baeacfe7e5-F03 | open | P2 | grok | e28 / all | incomplete parity | SQL calltips | Runtime signatures/current argument work; original parameter names/descriptions and long overload interaction remain | [F03](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f03) | — | — |
+| 2026-10-27 | `edbe0f1..f6bf184f24b3` | Codex | issues — 366 tests/strict checks, descriptive function roles and custom override guards, Soft/Metal delta 1 and native static painting verified; F03 overload interaction continues | [Report](R-20261027-f6bf184f24b3.md) |
+| R-20261027-76baeacfe7e5-F03 | in_progress | P2 | grok | e28 / all | incomplete parity | SQL calltips | Original function parameter roles/descriptions and override guards verified; long overload selection/browsing remains | [F03](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f03) | — | — |
 | R-20261027-76baeacfe7e5-F01 | verified | P2 | grok | shared / all | existing branch | Tooltip painter | Switching hosts hides the previous overlay; bounded wrapping and clipping | [F01](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f01) | 76baeacfe7e5 | 76baeacfe7e5 |
 | R-20261027-76baeacfe7e5-F02 | verified | P2 | grok | e28 / all | 605b048 | Function metadata | PRAGMA reader ignores a same-named user table and fake function rows | [F02](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f02) | 76baeacfe7e5 | 76baeacfe7e5 |
 | 2026-10-27 | `c365bf6..3855f40fe8ba` | Codex | issues — F02 verified: 353 tests/strict checks; original extra words, keyword case/Cancel/defaults, dark/light/Metal delta 1 pass; native acceptance remains unavailable | [Report](R-20261027-3855f40fe8ba.md) |

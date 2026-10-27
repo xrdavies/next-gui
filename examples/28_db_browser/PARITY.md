@@ -477,3 +477,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Runtime function hint checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-76baeacfe7e5.md): shared passive TextArea hints wrap/clip/flip within the window, retain focus, pass pointer/wheel input through and preserve Escape suppression in matching editing sessions. Cached SQLite function arities provide nested-call/current-argument, overload, variadic and zero-argument hints. Stale tooltip-host overlays and shadowed function metadata were reproduced and fixed. 363 tests and strict checks pass; both-theme actual Metal delta 1, Soft views, native e28 and all fourteen Office static windows inspected. Native actuation still shows no app window and activation fails, so key/IME/clipboard acceptance remains open. F03 tracks meaningful argument names/descriptions and long overload/help interaction. Complete editor and full DB4S parity remain unfinished.
+
+
+## Descriptive function help checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-f6bf184f24b3.md): original-covered core/date/aggregate/window/math functions now show meaningful parameter roles and concise explanations, gated by live built-in arities. Custom overrides retain generic help; current arguments follow fixed and repeated roles. 366 workspace tests and strict checks pass; both-theme Soft/Metal delta 1 and native e28 static painting inspected. F03 stays in progress for long overload selection/browsing. Full editor, native input and complete DB4S acceptance remain unfinished.
