@@ -1536,6 +1536,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "next-gui-render",
+ "next-gui-render-soft",
  "next-gui-scene",
  "pollster",
  "wgpu",

@@ -5550,7 +5550,6 @@ mod interaction_tests {
                         let bounds = |id| demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(id)).unwrap().bounds;
                         let viewport = bounds(demo.ids.ov_scroll);
                         let save = bounds(demo.ids.ov_btn_ok);
-                        let input_bounds: Vec<_> = [demo.ids.ov_name, demo.ids.ov_schema, demo.ids.ov_col_name, demo.ids.ov_col_type, demo.ids.ov_default, demo.ids.ov_idx_table, demo.ids.ov_idx_cols].into_iter().filter(|id| id.0 != 0).map(bounds).collect();
                         assert!(viewport.y + viewport.height <= save.y && save.y + save.height <= height as f32);
                         if *phase == "bottom" {
                             let field = bounds(demo.ids.ov_default);
@@ -5572,15 +5571,8 @@ mod interaction_tests {
                                 let delta = ((viewport.y.ceil() as usize + 2)..(viewport.y + viewport.height).floor() as usize - 2).flat_map(|y|
                                     ((viewport.x.ceil() as usize + 2)..(viewport.x + viewport.width).floor() as usize - 2).map(move |x| y * width as usize + x)
                                 ).flat_map(|i| [0, 8, 16].map(|shift| (((a[i] >> shift) & 255) as i32 - ((b[i] >> shift) & 255) as i32).abs())).max().unwrap();
-                                let interior = input_bounds.iter().flat_map(|r| {
-                                    let left = (r.x + 8.0).max(viewport.x + 2.0).ceil() as usize;
-                                    let right = (r.x + r.width - 8.0).min(viewport.x + viewport.width - 2.0).floor() as usize;
-                                    let top = (r.y + 8.0).max(viewport.y + 2.0).ceil() as usize;
-                                    let bottom = (r.y + r.height - 8.0).min(viewport.y + viewport.height - 2.0).floor().max(0.0) as usize;
-                                    (top..bottom).flat_map(move |y| (left..right).map(move |x| y * width as usize + x))
-                                }).flat_map(|i| [0, 8, 16].map(|shift| (((a[i] >> shift) & 255) as i32 - ((b[i] >> shift) & 255) as i32).abs())).max().unwrap();
-                                assert!(interior <= 2, "Wizard {kind}/{theme_name}/{width}/{phase} input interior channel delta {interior}");
-                                eprintln!("Wizard {kind}/{theme_name}/{width}/{phase} Soft/Metal actual readback: input interior {interior}; full viewport including primitive edges {delta}");
+                                assert!(delta <= 2, "Wizard {kind}/{theme_name}/{width}/{phase} full viewport channel delta {delta}");
+                                eprintln!("Wizard {kind}/{theme_name}/{width}/{phase} Soft/Metal actual readback: full viewport including primitive edges {delta}");
                             } else { eprintln!("Wizard GPU comparison not_run: adapter unavailable"); }
                         }
                     }

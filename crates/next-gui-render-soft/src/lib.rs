@@ -37,109 +37,69 @@ impl SoftRenderer {
         self.clear = clear;
     }
 
-    fn fill_rect_clipped(&mut self, rect: &Rect, color: Color, clip: &Rect) {
-        let area = rect.intersect(clip);
-        let Some((x0, y0, w, h)) = area.clip_to_buffer(self.width, self.height) else {
+    fn write_rect_clipped(&mut self, rect: &Rect, color: Color, clip: &Rect) {
+        let Some((x0, y0, w, h)) = image_pixel_bounds(rect, clip, self.width, self.height) else {
             return;
         };
         let px = color.to_xrgb8888();
         for y in y0..y0 + h {
-            let row = (y * self.width) as usize;
+            let start = (y * self.width + x0) as usize;
+            self.pixels[start..start + w as usize].fill(px);
+        }
+    }
+
+    fn blend_pixel(&mut self, index: usize, color: Color, alpha: u32) {
+        if alpha >= 255 {
+            self.pixels[index] = color.to_xrgb8888();
+        } else if alpha > 0 {
+            let dst = self.pixels[index];
+            let inv = 255 - alpha;
+            let r = (color.r as u32 * alpha + ((dst >> 16) & 255) * inv) / 255;
+            let g = (color.g as u32 * alpha + ((dst >> 8) & 255) * inv) / 255;
+            let b = (color.b as u32 * alpha + (dst & 255) * inv) / 255;
+            self.pixels[index] = (r << 16) | (g << 8) | b;
+        }
+    }
+
+    fn fill_rect_clipped(&mut self, rect: &Rect, color: Color, clip: &Rect) {
+        if color.a == 255 {
+            self.write_rect_clipped(rect, color, clip);
+            return;
+        }
+        let Some((x0, y0, w, h)) = image_pixel_bounds(rect, clip, self.width, self.height) else {
+            return;
+        };
+        for y in y0..y0 + h {
             for x in x0..x0 + w {
-                self.pixels[row + x as usize] = px;
+                self.blend_pixel((y * self.width + x) as usize, color, color.a as u32);
             }
         }
     }
 
-    /// Fill a rounded rect; coverage falls off across ~1px at the rounded edge.
+    /// Match the GPU signed-distance coverage, including fractional straight edges.
     fn fill_rounded_rect_clipped(&mut self, rect: &Rect, color: Color, radius: f32, clip: &Rect) {
+        let r = radius.min(rect.width * 0.5).min(rect.height * 0.5).max(0.0);
+        if r < 0.5 {
+            self.fill_rect_clipped(rect, color, clip);
+            return;
+        }
         let Some((x0, y0, w, h)) = image_pixel_bounds(rect, clip, self.width, self.height) else {
             return;
         };
-        if radius <= 0.0 {
-            self.fill_rect_clipped(rect, color, clip);
-            return;
-        }
-        let r = radius.min(rect.width * 0.5).min(rect.height * 0.5).max(0.0);
-        if r <= 0.0 {
-            self.fill_rect_clipped(rect, color, clip);
-            return;
-        }
-        let left = rect.x;
-        let top = rect.y;
-        let right = rect.x + rect.width;
-        let bottom = rect.y + rect.height;
-        // Inner sharp region (outside the four corner circles).
-        let ix0 = left + r;
-        let iy0 = top + r;
-        let ix1 = right - r;
-        let iy1 = bottom - r;
-        let cr = color.r as u32;
-        let cg = color.g as u32;
-        let cb = color.b as u32;
-        let ca = color.a as u32;
-        for py in y0..y0 + h {
-            for px in x0..x0 + w {
-                let fx = px as f32 + 0.5;
-                let fy = py as f32 + 0.5;
-                // Distance to rounded shape: 0 inside, >0 outside.
-                let (cx, cy) = if fx < ix0 && fy < iy0 {
-                    (ix0, iy0)
-                } else if fx > ix1 && fy < iy0 {
-                    (ix1, iy0)
-                } else if fx < ix0 && fy > iy1 {
-                    (ix0, iy1)
-                } else if fx > ix1 && fy > iy1 {
-                    (ix1, iy1)
-                } else {
-                    // Inside the axis-aligned body (including edge strips).
-                    let dest_i = (py * self.width + px) as usize;
-                    if ca >= 255 {
-                        self.pixels[dest_i] = color.to_xrgb8888();
-                    } else if ca > 0 {
-                        let dst = self.pixels[dest_i];
-                        let dr = (dst >> 16) & 0xff;
-                        let dg = (dst >> 8) & 0xff;
-                        let db = dst & 0xff;
-                        let inv = 255 - ca;
-                        let nr = (cr * ca + dr * inv) / 255;
-                        let ng = (cg * ca + dg * inv) / 255;
-                        let nb = (cb * ca + db * inv) / 255;
-                        self.pixels[dest_i] = (nr << 16) | (ng << 8) | nb;
-                    }
-                    continue;
-                };
-                let dx = fx - cx;
-                let dy = fy - cy;
-                let d = (dx * dx + dy * dy).sqrt();
-                let coverage = if d <= r - 0.5 {
-                    1.0
-                } else if d >= r + 0.5 {
-                    0.0
-                } else {
-                    (r + 0.5 - d).clamp(0.0, 1.0)
-                };
-                if coverage <= 0.0 {
-                    continue;
-                }
-                let a = ((coverage * ca as f32).round() as u32).min(255);
-                if a == 0 {
-                    continue;
-                }
-                let dest_i = (py * self.width + px) as usize;
-                if a >= 255 {
-                    self.pixels[dest_i] = color.to_xrgb8888();
-                } else {
-                    let dst = self.pixels[dest_i];
-                    let dr = (dst >> 16) & 0xff;
-                    let dg = (dst >> 8) & 0xff;
-                    let db = dst & 0xff;
-                    let inv = 255 - a;
-                    let nr = (cr * a + dr * inv) / 255;
-                    let ng = (cg * a + dg * inv) / 255;
-                    let nb = (cb * a + db * inv) / 255;
-                    self.pixels[dest_i] = (nr << 16) | (ng << 8) | nb;
-                }
+        let hw = rect.width * 0.5;
+        let hh = rect.height * 0.5;
+        let cx = rect.x + hw;
+        let cy = rect.y + hh;
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                let qx = (x as f32 + 0.5 - cx).abs() - (hw - r).max(0.0);
+                let qy = (y as f32 + 0.5 - cy).abs() - (hh - r).max(0.0);
+                let dx = qx.max(0.0);
+                let dy = qy.max(0.0);
+                let sd = (dx * dx + dy * dy).sqrt() + qx.max(qy).min(0.0) - r;
+                let coverage = (0.5 - sd).clamp(0.0, 1.0);
+                let alpha = (coverage * color.a as f32).round() as u32;
+                self.blend_pixel((y * self.width + x) as usize, color, alpha);
             }
         }
     }
@@ -251,7 +211,7 @@ impl Renderer for SoftRenderer {
         }
         for d in &dirty.rects {
             // Clear dirty patch to background first.
-            self.fill_rect_clipped(d, self.clear, d);
+            self.write_rect_clipped(d, self.clear, d);
             for cmd in commands {
                 match cmd {
                     DrawCommand::BlitRgba { rect, clip, image } => {
@@ -306,6 +266,43 @@ mod tests {
     use next_gui_render::{encode_scene, DrawCommand};
     use next_gui_scene::Scene;
     use std::sync::Arc;
+
+    #[test]
+    fn fractional_primitives_sample_centers_and_blend_edges() {
+        let mut dirty = DirtyRegion::new();
+        dirty.add(Rect::new(0.0, 0.0, 16.0, 16.0));
+        let mut soft = SoftRenderer::new(16, 16, Color::rgb(100, 0, 0));
+        soft.render(
+            &[DrawCommand::FillRect {
+                rect: Rect::new(1.75, 1.75, 3.0, 3.0),
+                color: Color {
+                    r: 0,
+                    g: 0,
+                    b: 255,
+                    a: 128,
+                },
+            }],
+            &dirty,
+        );
+        assert_eq!(soft.pixel(1, 2), Some(0x640000));
+        assert_eq!(soft.pixel(2, 2), Some(0x310080));
+        assert_eq!(soft.pixel(4, 4), Some(0x310080));
+        assert_eq!(soft.pixel(5, 4), Some(0x640000));
+        let mut soft = SoftRenderer::new(16, 16, Color::rgb(0, 0, 0));
+        soft.render(
+            &[DrawCommand::FillRoundedRect {
+                rect: Rect::new(2.25, 2.25, 10.5, 10.5),
+                clip: Rect::new(0.0, 0.0, 16.0, 16.0),
+                color: Color::rgb(255, 0, 0),
+                radius: 2.0,
+            }],
+            &dirty,
+        );
+        assert_eq!(soft.pixel(7, 1), Some(0));
+        assert_eq!(soft.pixel(7, 2), Some(0xbf0000));
+        assert_eq!(soft.pixel(7, 3), Some(0xff0000));
+        assert_eq!(soft.pixel(2, 2), Some(0x060000));
+    }
 
     #[test]
     fn dirty_fill_writes_pixels() {

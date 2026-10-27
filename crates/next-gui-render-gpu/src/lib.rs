@@ -74,7 +74,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let half = in.boxp.xy;
     let r = in.boxp.z;
     let sd = sd_round_box(in.local, half, r);
-    // Soft-like ~1px coverage AA along the signed distance field.
+    // Shared Soft/GPU 1px coverage along the signed distance field.
     let coverage = clamp(0.5 - sd, 0.0, 1.0);
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
 }
@@ -232,6 +232,7 @@ pub struct GpuRenderer {
     clear: Color,
     pixels: Vec<u32>,
     target: Option<TargetTextures>,
+    clear_pipeline: wgpu::RenderPipeline,
     solid_pipeline: wgpu::RenderPipeline,
     rounded_pipeline: wgpu::RenderPipeline,
     blit_pipeline: wgpu::RenderPipeline,
@@ -366,38 +367,42 @@ impl GpuRenderer {
 
         let target_format = wgpu::TextureFormat::Rgba8Unorm;
 
-        let solid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("solid-pipeline"),
-            layout: Some(&solid_layout),
-            vertex: wgpu::VertexState {
-                module: &solid_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<SolidVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &solid_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let make_solid_pipeline = |label, blend| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&solid_layout),
+                vertex: wgpu::VertexState {
+                    module: &solid_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<SolidVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &solid_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let clear_pipeline = make_solid_pipeline("clear-pipeline", wgpu::BlendState::REPLACE);
+        let solid_pipeline = make_solid_pipeline("solid-pipeline", wgpu::BlendState::ALPHA_BLENDING);
 
         let rounded_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("rounded-pipeline"),
@@ -623,6 +628,7 @@ impl GpuRenderer {
             clear,
             pixels: Vec::new(),
             target: None,
+            clear_pipeline,
             solid_pipeline,
             rounded_pipeline,
             blit_pipeline,
@@ -1201,7 +1207,7 @@ impl Renderer for GpuRenderer {
                         contents: bytemuck::cast_slice(&clear_verts),
                         usage: wgpu::BufferUsages::VERTEX,
                     });
-                pass.set_pipeline(&self.solid_pipeline);
+                pass.set_pipeline(&self.clear_pipeline);
                 pass.set_vertex_buffer(0, clear_buf.slice(..));
                 pass.draw(0..6, 0..1);
                 solid_bufs.push(clear_buf);
@@ -1416,6 +1422,76 @@ mod tests {
     use super::*;
     use next_gui_render::DrawCommand;
     use std::sync::Arc;
+
+    #[test]
+    fn fractional_primitives_match_soft_coverage_and_dirty_clips() {
+        let Ok(mut gpu) = GpuRenderer::try_new(40, 24, Color::rgb(0, 0, 0)) else {
+            eprintln!("skip fractional primitive comparison: adapter unavailable");
+            return;
+        };
+        let mut observed = 0;
+        for clear in [Color::rgb(23, 26, 31), Color::rgb(242, 244, 248)] {
+            for radius in [4.0, 0.0, 0.25, 0.5, 100.0] {
+                for alpha in [255, 128, 0] {
+                    let color = Color {
+                        r: 57,
+                        g: 113,
+                        b: 220,
+                        a: alpha,
+                    };
+                    let commands = [
+                        DrawCommand::FillRoundedRect {
+                            rect: Rect::new(4.25, 3.75, 11.5, 12.25),
+                            clip: Rect::new(5.6, 2.6, 20.1, 15.2),
+                            color,
+                            radius,
+                        },
+                        DrawCommand::FillRect {
+                            rect: Rect::new(22.75, 4.25, 8.3, 12.25),
+                            color,
+                        },
+                    ];
+                    let mut soft = next_gui_render_soft::SoftRenderer::new(40, 24, clear);
+                    gpu.set_clear_color(clear);
+                    let mut dirty = DirtyRegion::new();
+                    dirty.add(Rect::new(0.0, 0.0, 40.0, 24.0));
+                    soft.render(&commands, &dirty);
+                    gpu.render(&commands, &dirty);
+                    for patch in [None, Some(Rect::new(5.6, 3.6, 24.1, 13.1))] {
+                        if let Some(rect) = patch {
+                            let mut dirty = DirtyRegion::new();
+                            dirty.add(rect);
+                            soft.render(&commands, &dirty);
+                            gpu.render(&commands, &dirty);
+                        }
+                        let expected = soft.frame_pixels().unwrap().0;
+                        let actual = gpu.frame_pixels().unwrap().0;
+                        let (index, delta) = expected
+                            .iter()
+                            .zip(actual)
+                            .enumerate()
+                            .map(|(i, (s, g))| {
+                                (
+                                    i,
+                                    [0, 8, 16]
+                                        .into_iter()
+                                        .map(|shift| {
+                                            ((s >> shift) & 255).abs_diff((g >> shift) & 255)
+                                        })
+                                        .max()
+                                        .unwrap(),
+                                )
+                            })
+                            .max_by_key(|(_, delta)| *delta)
+                            .unwrap();
+                        observed = observed.max(delta);
+                        assert!(delta <= 2, "primitive Soft/GPU delta {delta} at ({},{}), radius {radius}, alpha {alpha}, patch {patch:?}", index % 40, index / 40);
+                    }
+                }
+            }
+        }
+        eprintln!("fractional primitives: actual Soft/GPU readback max channel delta {observed}");
+    }
 
     #[test]
     fn rgba_image_tiles_beyond_adapter_texture_limit() {

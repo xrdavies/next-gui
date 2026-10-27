@@ -18,14 +18,15 @@ pub enum DrawCommand {
         /// Shared, validated source pixels.
         image: RgbaImage,
     },
-    /// Fill an axis-aligned rectangle.
+    /// Fill an axis-aligned rectangle at covered pixel centers, with straight-alpha blending.
     FillRect {
         /// Rectangle in scene/window coordinates.
         rect: Rect,
         /// Fill color.
         color: Color,
     },
-    /// Fill a rectangle with uniform corner radius (soft AA at edges).
+    /// Fill a rectangle with uniform corner radius and straight-alpha blending.
+    /// Radii below 0.5px use sharp edges; otherwise signed-distance coverage spans 1px.
     FillRoundedRect {
         /// Original rectangle in scene/window coordinates, retained when clipped.
         rect: Rect,
