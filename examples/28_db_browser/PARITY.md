@@ -120,7 +120,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment, PageUp/PageDown and full form controls remain. |
+| Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment and full form controls remain. Plain PageUp/PageDown and Ctrl/Cmd+Home/End reach the full result; Shift ranges remain cache-local. |
 
 ## Edit Pragmas tab
 
@@ -375,3 +375,13 @@ and resize; cross-cache selection, errors and drafts are covered. Workspace:
 287 tests, clippy/build/platform features pass. Soft wide/narrow and native Metal
 painting were inspected. See [review and remaining behavioral differences](../../docs/reviews/R-20261027-5c9c20d208ae.md).
 Original row/top alignment, whole-result scrolling and native input remain open.
+
+### Page-key checkpoint (2026-10-27)
+
+`3f3153b4c200` forwards PageUp/PageDown from all desktop hosts and implements shared
+Table page/range keys. e28 plain page keys and Ctrl/Cmd+Home/End use guarded
+full-result navigation. All exhaustive Office key adapters were migrated.
+Workspace: 289 tests, clippy/build/platform features pass. e28 Soft/Metal and all
+14 Office windows were inspected. Native hardware input, cross-cache Shift ranges,
+whole-result scrolling and original row/top alignment remain open. See
+[review and API migration](../../docs/reviews/R-20261027-3f3153b4c200.md).
