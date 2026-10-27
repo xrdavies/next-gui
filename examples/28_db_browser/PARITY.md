@@ -99,9 +99,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | wizards + Modify wired |
-| Schema tree Tables/Views/Indexes/Triggers | partial | Main schema only; no attached/temp schema navigation, column/detail tree or object context actions. |
-| Object SQL preview | done | |
+| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | Main wizards + Modify wired; schema-qualified Delete covers all namespaces. Attached/temp structured modify remains. |
+| Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Column/detail tree, object context actions and expansion/viewport sessions remain. |
+| Object SQL preview | partial | Schema identity retained in projects; attached/temp stored definitions are read-only, since SQLite removes their database/TEMP qualifiers. Structured qualified editing remains. |
 | Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
 | Print schema | partial | Text export only; no OS print dialog or preview. |
 
@@ -179,7 +179,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | SQLCipher | partial | Core unlock/encrypted export tested; upstream compatibility controls/rekey/decrypt absent. |
 | Extensions | done | Load Extension… |
 | In-memory DB | done | Isolated connection, shared with worker by ownership transfer |
-| ATTACH DATABASE | partial | Usable from SQL on the live connection; attached-schema tree/browse selector remains |
+| ATTACH DATABASE | partial | Live connection and namespace tree/definition/deletion work; attached data/plot selectors and structured modification remain. Main data helpers explicitly avoid temp shadowing. |
 
 ---
 

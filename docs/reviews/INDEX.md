@@ -14,6 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `3f65f21..443ef848a739` | Codex | issues — 381 tests/strict checks, namespace identity/main safety, both-theme tree/DDL delta 1 and native static inspection; full namespace/native parity remain | [Report](R-20261027-443ef848a739.md) |
+| R-20261027-443ef848a739-F01 | verified | P1 | grok | e28 / all | existing branch | Main-only data helpers | Explicit main identity prevents temp shadowing in browse/edit/insert/delete/ALTER/export | [F01](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f01) | 443ef848a739 | 443ef848a739 |
+| R-20261027-443ef848a739-F02 | in_progress | P2 | grok | e28 / all | incomplete parity | Schema workflows | Tree/selection/project context/qualified DROP verified; attached browse/plot/wizards, details/context and Tree sessions remain | [F02](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f02) | — | — |
 | 2026-10-27 | `a336bf8..9b2aa4774163` | Codex | pass for DDL selection — 377 tests/strict checks, Keep/Discard/Cancel and Soft/native static modal inspected; full/native parity remain | [Report](R-20261027-9b2aa4774163.md) |
 | R-20261027-9b2aa4774163-F01 | verified | P1 | grok | e28 / all | existing branch | Structure selection | Keep/discard/cancel protects edited DDL without touching other SQL/project or pending database edits | [F01](R-20261027-9b2aa4774163.md#r-20261027-9b2aa4774163-f01) | 9b2aa4774163 | 9b2aa4774163 |
 | R-20261027-f4d258fe1169-F01 | verified | P2 | grok | shared / e28 | incomplete parity | Word editing | Platform word shortcuts, Unicode identifier boundaries, selection/Undo/session and read-only/IME guards verified | [F01](R-20261027-f4d258fe1169.md#r-20261027-f4d258fe1169-f01) | f4d258fe1169 | f4d258fe1169 |
