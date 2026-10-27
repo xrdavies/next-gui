@@ -376,11 +376,31 @@ pub fn table_column_names(conn: &Connection, table: &str) -> Result<Vec<String>,
     Ok(stmt.column_names().into_iter().map(String::from).collect())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OrderBy {
+    pub column: String,
+    pub descending: bool,
+}
+
+fn append_order_by(conn: &Connection, table: &str, sql: &mut String, ordering: &[OrderBy]) -> Result<(), String> {
+    if ordering.is_empty() { return Ok(()); }
+    let columns = table_column_names(conn, table)?;
+    if let Some(order) = ordering.iter().find(|order| !columns.iter().any(|column| column.eq_ignore_ascii_case(&order.column))) {
+        return Err(format!("Sort column does not exist: {}", order.column));
+    }
+    sql.push_str(" ORDER BY ");
+    for (index, order) in ordering.iter().enumerate() {
+        if index > 0 { sql.push_str(", "); }
+        sql.push_str(&quote_ident(&order.column));
+        sql.push_str(if order.descending { " DESC" } else { " ASC" });
+    }
+    Ok(())
+}
+
 pub fn browse_table(
     conn: &Connection,
     table: &str,
-    order_col: Option<&str>,
-    order_desc: bool,
+    ordering: &[OrderBy],
     filter: Option<&str>,
     limit: usize,
     offset: usize,
@@ -391,15 +411,7 @@ pub fn browse_table(
         sql.push_str(" WHERE ");
         sql.push_str(f);
     }
-    if let Some(col) = order_col.map(str::trim).filter(|s| !s.is_empty()) {
-        sql.push_str(" ORDER BY ");
-        sql.push_str(&quote_ident(col));
-        if order_desc {
-            sql.push_str(" DESC");
-        } else {
-            sql.push_str(" ASC");
-        }
-    }
+    append_order_by(conn, table, &mut sql, ordering)?;
     sql.push_str(&format!(
         " LIMIT {} OFFSET {offset}",
         limit.saturating_add(1)
@@ -653,8 +665,7 @@ pub fn update_cells(
 pub fn browse_with_rowid(
     conn: &Connection,
     table: &str,
-    order_col: Option<&str>,
-    order_desc: bool,
+    ordering: &[OrderBy],
     filter: Option<&str>,
     limit: usize,
     offset: usize,
@@ -674,11 +685,7 @@ pub fn browse_with_rowid(
         sql.push_str(" WHERE ");
         sql.push_str(f);
     }
-    if let Some(col) = order_col.map(str::trim).filter(|s| !s.is_empty()) {
-        sql.push_str(" ORDER BY ");
-        sql.push_str(&quote_ident(col));
-        sql.push_str(if order_desc { " DESC" } else { " ASC" });
-    }
+    append_order_by(conn, table, &mut sql, ordering)?;
     sql.push_str(&format!(
         " LIMIT {} OFFSET {offset}",
         limit.saturating_add(1)
@@ -959,10 +966,11 @@ pub fn guard_output_path(conn: &Connection, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Export the complete filtered table, independent of the grid preview limit.
+/// Export the complete filtered/sorted table, independent of the grid preview limit.
 pub fn export_table(
     conn: &Connection,
     table: &str,
+    ordering: &[OrderBy],
     filter: Option<&str>,
     path: &Path,
     json: bool,
@@ -972,6 +980,7 @@ pub fn export_table(
     if let Some(filter) = filter.filter(|s| !s.is_empty()) {
         sql.push_str(&format!(" WHERE {filter}"));
     }
+    append_order_by(conn, table, &mut sql, ordering)?;
     let mut stmt = prepare_browse(conn, &sql)?;
     let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let parent = path
@@ -1526,12 +1535,12 @@ mod tests {
         conn.execute_batch("CREATE TABLE t(v); WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<601) INSERT INTO t SELECT x FROM c;").unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rows.json");
-        export_table(&conn, "t", None, &path, true).unwrap();
+        export_table(&conn, "t", &[], None, &path, true).unwrap();
         let rows: Vec<serde_json::Value> =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(rows.len(), 601);
         assert_eq!(rows[600]["v"], 601);
-        export_table(&conn, "t", Some("v>500"), &path, false).unwrap();
+        export_table(&conn, "t", &[], Some("v>500"), &path, false).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap().lines().count(), 102);
     }
 
@@ -1631,7 +1640,7 @@ mod tests {
     fn generated_rowid_is_not_used_as_an_edit_or_dump_identity() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE t(v, rowid GENERATED ALWAYS AS (1)); INSERT INTO t(_rowid_,v) VALUES(7,'first'),(9,'second');").unwrap();
-        assert!(browse_with_rowid(&conn, "t", None, false, None, 500, 0).is_err());
+        assert!(browse_with_rowid(&conn, "t", &[], None, 500, 0).is_err());
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("dump.sql");
         export_sql_dump(&conn, &dump).unwrap();
@@ -1654,8 +1663,8 @@ mod tests {
         conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(1)")
             .unwrap();
         let filter = Some("1; DELETE FROM t; --");
-        assert!(browse_table(&conn, "t", None, false, filter, 500, 0).is_err());
-        assert!(browse_with_rowid(&conn, "t", None, false, filter, 500, 0).is_err());
+        assert!(browse_table(&conn, "t", &[], filter, 500, 0).is_err());
+        assert!(browse_with_rowid(&conn, "t", &[], filter, 500, 0).is_err());
         assert!(count_browse_rows(&conn, "t", filter).is_err());
         assert_eq!(count_browse_rows(&conn, "t", Some("v = 1")).unwrap(), 1);
         assert_eq!(count_rows(&conn, "t").unwrap(), 1);
@@ -1668,15 +1677,15 @@ mod tests {
                 let conn = Connection::open_in_memory().unwrap();
                 conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('; literal'); PRAGMA foreign_keys=OFF;").unwrap();
                 let browse = if rowids { browse_with_rowid } else { browse_table };
-                assert!(browse(&conn, "t", None, false, Some(filter), 500, 0).is_err());
+                assert!(browse(&conn, "t", &[], Some(filter), 500, 0).is_err());
                 assert_eq!(read_pragma(&conn, "foreign_keys").unwrap(), "0");
                 let dir = tempfile::tempdir().unwrap();
                 let output = dir.path().join("keep.json");
                 fs::write(&output, "previous export").unwrap();
-                assert!(export_table(&conn, "t", Some(filter), &output, true).is_err());
+                assert!(export_table(&conn, "t", &[], Some(filter), &output, true).is_err());
                 assert_eq!(fs::read_to_string(&output).unwrap(), "previous export");
                 copy_database_file(&conn, &dir.path().join("copy.db")).unwrap();
-                assert_eq!(browse(&conn, "t", None, false, Some("v='; literal' /* ; harmless */"), 500, 0).unwrap().rows.len(), 1);
+                assert_eq!(browse(&conn, "t", &[], Some("v='; literal' /* ; harmless */"), 500, 0).unwrap().rows.len(), 1);
             }
         }
     }
@@ -1759,10 +1768,10 @@ mod tests {
         let schema = list_schema(&conn).unwrap();
         assert!(schema.iter().any(|o| o.name == "customers"));
         assert!(schema.iter().any(|o| o.kind == ObjectKind::View));
-        let q = browse_table(&conn, "products", Some("price"), true, None, 10, 0).unwrap();
+        let q = browse_table(&conn, "products", &[OrderBy { column: "price".into(), descending: true }], None, 10, 0).unwrap();
         assert!(q.columns.contains(&"sku".into()));
         assert!(!q.rows.is_empty());
-        let preview = browse_table(&conn, "products", None, false, None, 2, 0).unwrap();
+        let preview = browse_table(&conn, "products", &[], None, 2, 0).unwrap();
         assert_eq!(preview.rows.len(), 2);
         assert!(preview.truncated);
         let n = count_rows(&conn, "customers").unwrap();
@@ -1821,7 +1830,7 @@ mod tests {
 
         let (db_path, conn) = tmp_db();
         import_csv_into_table(&conn, "imported", &cols, &rows, true).unwrap();
-        let q = browse_table(&conn, "imported", None, false, None, 10, 0).unwrap();
+        let q = browse_table(&conn, "imported", &[], None, 10, 0).unwrap();
         assert_eq!(q.rows.len(), 2);
         drop(conn);
         let _ = fs::remove_file(db_path);

@@ -203,6 +203,7 @@ struct BuiltUiIds {
     browse_filter: WidgetId,
     browse_global_filter: WidgetId,
     btn_browse_clear_filters: WidgetId,
+    btn_browse_clear_sort: WidgetId,
     btn_browse_go: WidgetId,
     btn_page_prev: WidgetId,
     btn_page_next: WidgetId,
@@ -359,6 +360,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             browse_filter: b.browse_filter,
             browse_global_filter: b.browse_global_filter,
             btn_browse_clear_filters: b.btn_browse_clear_filters,
+            btn_browse_clear_sort: b.btn_browse_clear_sort,
             btn_browse_go: b.btn_browse_go,
             btn_page_prev: b.btn_page_prev,
             btn_page_next: b.btn_page_next,
@@ -2095,6 +2097,14 @@ impl Demo {
             self.rebuild = true;
             return;
         }
+        if id == self.ids.btn_browse_clear_sort {
+            match self.state.set_browse_ordering(Vec::new()) {
+                Ok(()) => self.clear_error(),
+                Err(e) => self.set_error(e),
+            }
+            self.rebuild = true;
+            return;
+        }
         if id == self.ids.btn_page_prev || id == self.ids.btn_page_next {
             match self.state.browse_page(id == self.ids.btn_page_next) {
                 Ok(()) => self.clear_error(),
@@ -2394,7 +2404,7 @@ impl Demo {
                     tab.scroll = (0.0, 0.0);
                     tab.result = None;
                     tab.offset = 0;
-                    tab.order_col = None;
+                    tab.set_ordering(Vec::new());
                 }
                 tab.table = Some(name.clone());
                 tab.title = name.clone();
@@ -2504,7 +2514,7 @@ impl Demo {
         }
     }
 
-    fn poll_header_sort(&mut self) {
+    fn poll_header_sort(&mut self, append: bool) {
         if self.state.has_cell_draft() {
             if self.ui.take_table_header_click().is_some() {
                 self.set_error("Apply or discard the cell draft first");
@@ -2522,22 +2532,7 @@ impl Demo {
             let Some(col_name) = res.columns.get(col_idx).cloned() else {
                 return;
             };
-            {
-                let tab = self.state.browse_mut();
-                tab.offset = 0;
-                if tab.order_col.as_deref() == Some(col_name.as_str()) {
-                    if tab.order_desc {
-                        tab.order_col = None;
-                        tab.order_desc = false;
-                    } else {
-                        tab.order_desc = true;
-                    }
-                } else {
-                    tab.order_col = Some(col_name);
-                    tab.order_desc = false;
-                }
-            }
-            match self.state.refresh_browse() {
+            match self.state.sort_browse_column(col_name, append) {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
@@ -2720,7 +2715,6 @@ impl Demo {
         self.handle_modal();
         if !self.rebuild {
             self.snapshot_inputs();
-            self.poll_header_sort();
             self.poll_selection_changes();
         }
         if self.state.poll_sql_job() {
@@ -2830,11 +2824,14 @@ impl AppCallbacks for Demo {
                 pressed: true,
                 x,
                 y,
+                modifiers,
                 ..
             } => {
                 let xf = x as f32;
                 let yf = y as f32;
                 if self.ui.pointer_pressed(&mut self.scene, xf, yf) {
+                    self.snapshot_inputs();
+                    self.poll_header_sort(modifiers.commandish());
                     self.after_ui(ctx);
                     return;
                 }
@@ -3616,7 +3613,7 @@ mod interaction_tests {
         demo.ui.set_text_area_value(demo.ids.edit_value, "8");
         demo.snapshot_inputs();
         demo.poll_selection_changes();
-        demo.poll_header_sort();
+        demo.poll_header_sort(false);
         assert!(
             !demo.rebuild,
             "Typing a cell draft must keep the editor session intact"
@@ -4121,7 +4118,7 @@ mod interaction_tests {
             .bounds;
         demo.ui
             .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
-        demo.poll_header_sort();
+        demo.poll_header_sort(false);
         assert_eq!(demo.state.browse().order_col.as_deref(), Some("score ▲"));
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "1");
         demo.do_rebuild();
@@ -4134,7 +4131,7 @@ mod interaction_tests {
             .bounds;
         demo.ui
             .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
-        demo.poll_header_sort();
+        demo.poll_header_sort(false);
         assert!(demo.state.browse().order_desc);
         demo.do_rebuild();
         let bounds = demo
@@ -4146,8 +4143,11 @@ mod interaction_tests {
             .bounds;
         demo.ui
             .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
-        demo.poll_header_sort();
-        assert!(demo.state.browse().order_col.is_none());
+        demo.poll_header_sort(false);
+        assert!(!demo.state.browse().order_desc);
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.btn_browse_clear_sort);
+        assert!(demo.state.browse().ordering().is_empty());
     }
 
     #[test]
@@ -4307,3 +4307,6 @@ mod interaction_tests {
         demo.state.revert_changes().unwrap();
     }
 }
+
+#[cfg(test)]
+mod browse_sort_tests;

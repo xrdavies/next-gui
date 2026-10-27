@@ -109,6 +109,7 @@ pub struct BuiltUi {
     pub browse_filter: WidgetId,
     pub browse_global_filter: WidgetId,
     pub btn_browse_clear_filters: WidgetId,
+    pub btn_browse_clear_sort: WidgetId,
     pub btn_browse_go: WidgetId,
     pub btn_page_prev: WidgetId,
     pub btn_page_next: WidgetId,
@@ -273,19 +274,13 @@ fn decorate_browse_cols(state: &AppState, cols: &[String]) -> Vec<TableColumn> {
     if cols.is_empty() {
         return vec![TableColumn::new("—", 120.0)];
     }
-    let order = state.browse().order_col.as_deref();
-    let desc = state.browse().order_desc;
+    let ordering = state.browse().ordering();
     cols.iter()
         .map(|c| {
-            let title = if order == Some(c.as_str()) {
-                if desc {
-                    format!("{c} ▼")
-                } else {
-                    format!("{c} ▲")
-                }
-            } else {
-                c.clone()
-            };
+            let title = if let Some((priority, order)) = ordering.iter().enumerate().find(|(_, o)| o.column == *c) {
+                let arrow = if order.descending { "▼" } else { "▲" };
+                if ordering.len() > 1 { format!("{c} {arrow}{}", priority + 1) } else { format!("{c} {arrow}") }
+            } else { c.clone() };
             TableColumn::new(title, w)
         })
         .collect()
@@ -384,6 +379,7 @@ pub fn build_ui(
     let mut browse_filter = z;
     let mut browse_global_filter = z;
     let mut btn_browse_clear_filters = z;
+    let mut btn_browse_clear_sort = z;
     let mut btn_browse_go = z;
     let mut btn_page_prev = z;
     let mut btn_page_next = z;
@@ -1352,6 +1348,7 @@ pub fn build_ui(
                                 );
                                 btn_browse_go = row.tool_button("Apply");
                                 btn_browse_clear_filters = row.tool_button("Clear Filters");
+                                btn_browse_clear_sort = row.tool_button("Clear Sort");
                             });
                             p.scroll_row(tool_row, |row| {
                                 btn_form_view = row.tool_button(match state.browse_view {
@@ -1444,7 +1441,7 @@ pub fn build_ui(
                             }
                             p.text_styled(
                                 format!(
-                                    "Tip: header sort · filters · Freeze={} · Cond rules={} · FK → parent",
+                                    "Tip: Ctrl/Cmd+header adds sort · filters · Freeze={} · Cond rules={} · FK → parent",
                                     state.frozen_cols,
                                     state.cond_rules.len()
                                 ),
@@ -1923,6 +1920,7 @@ pub fn build_ui(
     let loaded = browse.result.as_ref().map_or(0, |r| r.rows.len());
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
+    ui.set_button_enabled(btn_browse_clear_sort, can_browse && !browse.ordering().is_empty());
     ui.set_button_enabled(btn_page_prev, can_browse && browse.offset > 0);
     ui.set_button_enabled(btn_page_next, can_browse && browse.offset.saturating_add(loaded) < total);
     let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));
@@ -1984,6 +1982,7 @@ pub fn build_ui(
         browse_filter,
         browse_global_filter,
         btn_browse_clear_filters,
+        btn_browse_clear_sort,
         btn_browse_go,
         btn_page_prev,
         btn_page_next,

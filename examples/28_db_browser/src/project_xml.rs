@@ -523,23 +523,20 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         };
         table.set("freeze_columns", project.frozen_cols.min(columns.len()));
         let sort = table.ensure("sort");
-        let first = sort.children().find(|e| e.name == "column");
-        let old_order = first
-            .and_then(|e| e.attr("index"))
-            .and_then(|s| s.parse::<usize>().ok())
-            .and_then(|i| columns.get(i));
-        let old_desc = first.and_then(|e| e.attr("mode")) == Some("1");
-        if old_order != tab.order_col.as_ref() || old_desc != tab.order_desc {
+        let old_ordering = sort.children().filter(|e| e.name == "column").filter_map(|column| {
+            column.attr("index").and_then(|i| i.parse::<usize>().ok()).and_then(|i| columns.get(i))
+                .map(|name| db::OrderBy { column: name.clone(), descending: column.attr("mode") == Some("1") })
+        }).collect::<Vec<_>>();
+        let ordering = tab.ordering();
+        if old_ordering != ordering {
             sort.retain_elements(|e| e.name != "column");
-            if let Some(index) = tab
-                .order_col
-                .as_ref()
-                .and_then(|name| columns.iter().position(|c| c == name))
-            {
-                let mut column = Element::new("column");
-                column.set("index", index);
-                column.set("mode", u8::from(tab.order_desc));
-                sort.push(column);
+            for order in &ordering {
+                if let Some(index) = columns.iter().position(|c| c == &order.column) {
+                    let mut column = Element::new("column");
+                    column.set("index", index);
+                    column.set("mode", u8::from(order.descending));
+                    sort.push(column);
+                }
             }
         }
         let widths = table.ensure("column_widths");
@@ -593,15 +590,11 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             continue;
         };
         let columns = db::table_column_names(conn, name)?;
-        if let Some(column) = table
-            .child("sort")
-            .and_then(|e| e.children().find(|e| e.name == "column"))
-        {
-            tab.order_col = column
-                .attr("index")
-                .and_then(|s| s.parse::<usize>().ok())
-                .and_then(|i| columns.get(i).cloned());
-            tab.order_desc = column.attr("mode") == Some("1");
+        if let Some(sort) = table.child("sort") {
+            tab.set_ordering(sort.children().filter(|e| e.name == "column").filter_map(|column| {
+                column.attr("index").and_then(|i| i.parse::<usize>().ok()).and_then(|i| columns.get(i))
+                    .map(|name| db::OrderBy { column: name.clone(), descending: column.attr("mode") == Some("1") })
+            }).collect());
         }
         if let Some(widths) = table.child("column_widths") {
             tab.column_widths.resize(columns.len(), 140.0);
@@ -679,9 +672,7 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
                     table
                         .child(key)
                         .is_some_and(|e| e.children().next().is_some())
-                }) || table
-                    .child("sort")
-                    .is_some_and(|e| e.children().count() > 1)
+                })
                 {
                     notes.push("advanced browse filters/formatting/plots");
                     break;

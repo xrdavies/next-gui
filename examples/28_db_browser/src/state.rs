@@ -123,8 +123,11 @@ pub struct BrowseTabState {
     pub col_filters: Vec<String>,
     #[serde(default)]
     pub offset: usize,
+    /// Primary sort kept in the original fields for legacy JSON projects.
     pub order_col: Option<String>,
     pub order_desc: bool,
+    #[serde(default)]
+    pub additional_order: Vec<db::OrderBy>,
     #[serde(default)]
     pub column_widths: Vec<f32>,
     #[serde(default)]
@@ -150,6 +153,18 @@ pub struct BrowseTabState {
 }
 
 impl BrowseTabState {
+    pub fn ordering(&self) -> Vec<db::OrderBy> {
+        self.order_col.iter().map(|column| db::OrderBy { column: column.clone(), descending: self.order_desc })
+            .chain(self.additional_order.iter().cloned()).collect()
+    }
+
+    pub fn set_ordering(&mut self, mut ordering: Vec<db::OrderBy>) {
+        let first = if ordering.is_empty() { None } else { Some(ordering.remove(0)) };
+        self.order_col = first.as_ref().map(|o| o.column.clone());
+        self.order_desc = first.is_some_and(|o| o.descending);
+        self.additional_order = ordering;
+    }
+
     fn clear_selection(&mut self) {
         self.sel_row = None;
         self.sel_row_start = None;
@@ -170,6 +185,7 @@ impl BrowseTabState {
             offset: 0,
             order_col: None,
             order_desc: false,
+            additional_order: Vec::new(),
             column_widths: Vec::new(),
             scroll: (0.0, 0.0),
             result: None,
@@ -940,6 +956,7 @@ impl AppState {
         db::export_table(
             conn,
             table,
+            &tab.ordering(),
             Self::composed_where(tab, &columns)?.as_deref(),
             path,
             json,
@@ -958,12 +975,11 @@ impl AppState {
             self.clear_browse_editor();
             return Ok(());
         }
-        let (table, order, desc, mut col_filters, mut prev_cols) = {
+        let (table, ordering, mut col_filters, mut prev_cols) = {
             let t = self.browse_mut();
             (
                 t.table.clone(),
-                t.order_col.clone(),
-                t.order_desc,
+                t.ordering(),
                 t.col_filters.clone(),
                 t.result
                     .as_ref()
@@ -1001,8 +1017,7 @@ impl AppState {
                     db::browse_table(
                         conn,
                         &table,
-                        order.as_deref(),
-                        desc,
+                        &ordering,
                         where_sql.as_deref(),
                         db::DEFAULT_LIMIT,
                         offset,
@@ -1013,8 +1028,7 @@ impl AppState {
                 match db::browse_with_rowid(
                     conn,
                     &table,
-                    order.as_deref(),
-                    desc,
+                    &ordering,
                     where_sql.as_deref(),
                     db::DEFAULT_LIMIT,
                     offset,
@@ -1041,8 +1055,7 @@ impl AppState {
                         db::browse_table(
                             conn,
                             &table,
-                            order.as_deref(),
-                            desc,
+                            &ordering,
                             where_sql.as_deref(),
                             db::DEFAULT_LIMIT,
                             offset,
@@ -1057,16 +1070,8 @@ impl AppState {
         col_filters.resize(n, String::new());
         let nrows = result.rows.len();
         let truncated = result.truncated;
-        let order_note = {
-            let t = self.browse();
-            match &t.order_col {
-                Some(c) => format!(
-                    " ORDER BY {} {}",
-                    c,
-                    if t.order_desc { "DESC" } else { "ASC" }
-                ),
-                None => String::new(),
-            }
+        let order_note = if ordering.is_empty() { String::new() } else {
+            format!(" ORDER BY {}", ordering.iter().map(|order| format!("{} {}", db::quote_ident(&order.column), if order.descending { "DESC" } else { "ASC" })).collect::<Vec<_>>().join(", "))
         };
         {
             let t = self.browse_mut();
@@ -1099,6 +1104,40 @@ impl AppState {
         self.edit_original = rusqlite::types::Value::Null;
         self.edit_saved = rusqlite::types::Value::Null;
         self.edit_image_rgba = None;
+    }
+
+    pub fn sort_browse_column(&mut self, column: String, append: bool) -> Result<(), String> {
+        let column_index = self.browse().result.as_ref().and_then(|r| r.columns.iter().position(|c| *c == column))
+            .ok_or("Select a valid sort column")?;
+        let mut ordering = self.browse().ordering();
+        if append {
+            if let Some(order) = ordering.iter_mut().find(|o| o.column == column) {
+                order.descending = !order.descending;
+            } else { ordering.push(db::OrderBy { column, descending: false }); }
+        } else if ordering.len() == 1 && ordering[0].column == column {
+            ordering[0].descending = !ordering[0].descending;
+        } else { ordering = vec![db::OrderBy { column, descending: false }]; }
+        self.set_browse_ordering(ordering)?;
+        if self.browse().result.as_ref().is_some_and(|r| !r.rows.is_empty()) {
+            self.browse_mut().sel_row = Some(0);
+            self.browse_mut().sel_col = Some(column_index);
+        }
+        self.sync_edit_cell_from_selection();
+        Ok(())
+    }
+
+    pub fn set_browse_ordering(&mut self, ordering: Vec<db::OrderBy>) -> Result<(), String> {
+        if self.conn.is_none() { return Err("No database open".into()); }
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        if self.sql_busy { return Err("Wait for SQL to finish before sorting".into()); }
+        let previous = self.browse().clone();
+        self.browse_mut().set_ordering(ordering);
+        self.browse_mut().offset = 0;
+        if let Err(error) = self.refresh_browse() {
+            *self.browse_mut() = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn browse_page(&mut self, next: bool) -> Result<(), String> {
@@ -2125,7 +2164,7 @@ impl AppState {
             let Some(table) = &tab.table else { continue; };
             let result = (|| {
                 let columns = db::table_column_names(conn, table)?;
-                db::browse_table(conn, table, tab.order_col.as_deref(), tab.order_desc,
+                db::browse_table(conn, table, &tab.ordering(),
                     Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
             })();
             result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
