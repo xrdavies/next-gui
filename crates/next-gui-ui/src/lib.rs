@@ -33,6 +33,9 @@ use text_completion::TextAreaCompletion;
 mod tabs;
 mod autocomplete;
 pub use autocomplete::AutocompleteState;
+mod text_input;
+pub use text_input::TextInputState;
+use text_input::InputEdit;
 pub use tabs::TabsState;
 use tabs::TabStripState;
 mod scrollbars;
@@ -1736,6 +1739,7 @@ enum Kind {
     },
     TextInput {
         value: String,
+        edit: InputEdit,
         secret: bool,
         placeholder: String,
         caret: usize,
@@ -2073,6 +2077,7 @@ enum Kind {
     Autocomplete {
         options: Vec<String>,
         value: String,
+        edit: InputEdit,
         caret: usize,
         select_all: bool,
         preedit: String,
@@ -3964,19 +3969,21 @@ impl Ui {
     /// Mask a password input and exclude its value from copy and accessible labels.
     pub fn set_text_input_secret(&mut self, id: WidgetId, secret: bool) {
         if let Some(Widget {
-            kind: Kind::TextInput { secret: value, .. },
+            kind: Kind::TextInput { secret: value, edit, .. },
             ..
         }) = self.widgets.get_mut(&id)
         {
+            if *value != secret { *edit = InputEdit::default(); }
             *value = secret;
         }
     }
 
-    /// Set TextInput value; resets caret to end.
+    /// Set TextInput value; resets caret to end and clears editing history.
     pub fn set_text_input(&mut self, id: WidgetId, value: impl Into<String>) {
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::TextInput {
                 value: v,
+                edit,
                 caret,
                 select_all,
                 preedit,
@@ -3985,6 +3992,7 @@ impl Ui {
             } = &mut w.kind
             {
                 *v = value.into();
+                *edit = InputEdit::default();
                 *caret = v.chars().count();
                 *select_all = false;
                 preedit.clear();
@@ -4039,6 +4047,7 @@ impl Ui {
         if text.is_empty() {
             return false;
         }
+        let before = self.input_snapshot(id);
         match self.widgets.get_mut(&id).map(|w| &mut w.kind) {
             Some(Kind::TextInput {
                 value,
@@ -4066,6 +4075,7 @@ impl Ui {
                 if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
                     self.refresh_autocomplete_popup(id);
                 }
+                self.remember_input_change(id, before);
                 true
             }
             Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, text),
@@ -4150,40 +4160,14 @@ impl Ui {
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
-        if let Kind::TextArea { preedit, preedit_cursor, .. } = &mut w.kind {
+        if let Kind::TextInput { preedit, preedit_cursor, .. }
+            | Kind::Autocomplete { preedit, preedit_cursor, .. }
+            | Kind::TextArea { preedit, preedit_cursor, .. } = &mut w.kind {
             preedit.clear();
             *preedit_cursor = None;
             return self.paste_into_focused_text(text);
         }
-        let (Kind::TextInput {
-            value,
-            caret,
-            select_all,
-            preedit,
-            preedit_cursor,
-            ..
-        } | Kind::Autocomplete { value, caret, select_all, preedit, preedit_cursor, .. }) = &mut w.kind
-        else {
-            return false;
-        };
-        preedit.clear();
-        *preedit_cursor = None;
-        let mut chars: Vec<char> = value.chars().collect();
-        *caret = (*caret).min(chars.len());
-        if *select_all {
-            chars.clear();
-            *caret = 0;
-            *select_all = false;
-        }
-        for c in text.chars() {
-            chars.insert(*caret, c);
-            *caret += 1;
-        }
-        *value = chars.into_iter().collect();
-        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
-            self.refresh_autocomplete_popup(id);
-        }
-        true
+        false
     }
 
     /// Clear preedit on the focused editor (IME disabled / cancelled).
@@ -5153,6 +5137,14 @@ impl Ui {
     }
 
     fn key_text_input(&mut self, id: WidgetId, key: UiKey) -> bool {
+        if matches!(key, UiKey::Undo | UiKey::Redo) { return self.input_history(id, key); }
+        let before = matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete).then(|| self.input_snapshot(id)).flatten();
+        let handled = self.edit_text_input(id, key);
+        self.remember_input_change(id, before);
+        handled
+    }
+
+    fn edit_text_input(&mut self, id: WidgetId, key: UiKey) -> bool {
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
@@ -6480,12 +6472,13 @@ impl Ui {
         }
     }
 
-    /// Set autocomplete text (closes popup; does not emit change).
+    /// Set autocomplete text (closes popup and clears history; does not emit change).
     pub fn set_autocomplete_value(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
         let value = value.into();
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::Autocomplete {
                 value: v,
+                edit,
                 caret,
                 select_all,
                 preedit,
@@ -6497,6 +6490,7 @@ impl Ui {
             {
                 *caret = value.chars().count();
                 *v = value;
+                *edit = InputEdit::default();
                 *select_all = false;
                 preedit.clear();
                 *preedit_cursor = None;
@@ -8553,7 +8547,13 @@ impl Ui {
     }
 
     fn commit_autocomplete(&mut self, id: WidgetId, value: String) {
-        self.set_autocomplete_value(id, value.clone());
+        let before = self.input_snapshot(id);
+        let Some(widget) = self.widgets.get_mut(&id) else { return; };
+        let Kind::Autocomplete { value: current, caret, select_all, preedit, preedit_cursor, .. } = &mut widget.kind else { return; };
+        *current = value.clone(); *caret = value.chars().count(); *select_all = false;
+        preedit.clear(); *preedit_cursor = None;
+        self.close_popup_internal();
+        self.remember_input_change(id, before);
         self.pending_autocomplete_change = Some((id, value));
     }
 
@@ -8745,7 +8745,7 @@ impl Ui {
             }
             _ => {
                 let changed = self.key_text_input(id, key);
-                if changed && matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete) {
+                if changed && matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete | UiKey::Undo | UiKey::Redo) {
                     self.refresh_autocomplete_popup(id);
                 }
                 changed
@@ -11504,6 +11504,7 @@ impl Ui {
                 preedit,
                 preedit_cursor,
                 style,
+                ..
             } => {
                 let value = if *secret {
                     "*".repeat(value.chars().count())
@@ -17913,6 +17914,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::TextInput {
                     value,
+                    edit: InputEdit::default(),
                     secret: false,
                     placeholder: placeholder.into(),
                     caret,
@@ -19414,6 +19416,7 @@ impl FlexBuilder<'_> {
                 kind: Kind::Autocomplete {
                     options,
                     value,
+                    edit: InputEdit::default(),
                     caret,
                     select_all: false,
                     preedit: String::new(),

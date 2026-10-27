@@ -1,0 +1,310 @@
+use crate::{Kind, Ui, UiKey, WidgetId};
+
+#[derive(Debug, Clone)]
+pub(super) struct InputSnapshot {
+    value: String,
+    caret: usize,
+    select_all: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct InputEdit {
+    undo: Vec<InputSnapshot>,
+    redo: Vec<InputSnapshot>,
+}
+
+fn remember(stack: &mut Vec<InputSnapshot>, snapshot: InputSnapshot) {
+    // shortcut: match TextArea's 100 edits / 8 MiB per stack; use deltas for large inputs.
+    stack.push(snapshot);
+    let mut bytes: usize = stack.iter().map(|s| s.value.len()).sum();
+    while stack.len() > 1 && (stack.len() > 100 || bytes > 8 * 1024 * 1024) {
+        bytes -= stack.remove(0).value.len();
+    }
+}
+
+/// Opaque single-line editing session, including caret, selection, composition and history.
+/// Restore only into the same document value and secret mode; does not set focus.
+#[derive(Debug, Clone)]
+pub struct TextInputState {
+    snapshot: InputSnapshot,
+    edit: InputEdit,
+    secret: bool,
+    preedit: String,
+    preedit_cursor: Option<(usize, usize)>,
+}
+
+impl Ui {
+    pub(super) fn input_snapshot(&self, id: WidgetId) -> Option<InputSnapshot> {
+        let (Kind::TextInput {
+            value,
+            caret,
+            select_all,
+            ..
+        }
+        | Kind::Autocomplete {
+            value,
+            caret,
+            select_all,
+            ..
+        }) = &self.widgets.get(&id)?.kind
+        else {
+            return None;
+        };
+        Some(InputSnapshot {
+            value: value.clone(),
+            caret: *caret,
+            select_all: *select_all,
+        })
+    }
+
+    pub(super) fn remember_input_change(&mut self, id: WidgetId, before: Option<InputSnapshot>) {
+        let Some(before) = before else {
+            return;
+        };
+        if let Some(widget) = self.widgets.get_mut(&id) {
+            if let Kind::TextInput { value, edit, .. } | Kind::Autocomplete { value, edit, .. } =
+                &mut widget.kind
+            {
+                if *value != before.value {
+                    remember(&mut edit.undo, before);
+                    edit.redo.clear();
+                }
+            }
+        }
+    }
+
+    pub(super) fn input_history(&mut self, id: WidgetId, key: UiKey) -> bool {
+        let Some(widget) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let (Kind::TextInput {
+            value,
+            caret,
+            select_all,
+            edit,
+            preedit,
+            preedit_cursor,
+            ..
+        }
+        | Kind::Autocomplete {
+            value,
+            caret,
+            select_all,
+            edit,
+            preedit,
+            preedit_cursor,
+            ..
+        }) = &mut widget.kind
+        else {
+            return false;
+        };
+        if !preedit.is_empty() {
+            preedit.clear();
+            *preedit_cursor = None;
+            return true;
+        }
+        let (from, to) = if key == UiKey::Undo {
+            (&mut edit.undo, &mut edit.redo)
+        } else {
+            (&mut edit.redo, &mut edit.undo)
+        };
+        let Some(snapshot) = from.pop() else {
+            return false;
+        };
+        remember(
+            to,
+            InputSnapshot {
+                value: std::mem::replace(value, snapshot.value),
+                caret: *caret,
+                select_all: *select_all,
+            },
+        );
+        *caret = snapshot.caret.min(value.chars().count());
+        *select_all = snapshot.select_all;
+        *preedit_cursor = None;
+        true
+    }
+
+    /// Capture a TextInput session for rebuilding the same field.
+    pub fn text_input_state(&self, id: WidgetId) -> Option<TextInputState> {
+        let Kind::TextInput {
+            edit,
+            secret,
+            preedit,
+            preedit_cursor,
+            ..
+        } = &self.widgets.get(&id)?.kind
+        else {
+            return None;
+        };
+        Some(TextInputState {
+            snapshot: self.input_snapshot(id)?,
+            edit: edit.clone(),
+            secret: *secret,
+            preedit: preedit.clone(),
+            preedit_cursor: *preedit_cursor,
+        })
+    }
+
+    /// Restore a matching TextInput session without changing its value or focus.
+    pub fn restore_text_input_state(&mut self, id: WidgetId, state: &TextInputState) -> bool {
+        let Some(widget) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let Kind::TextInput {
+            value,
+            caret,
+            select_all,
+            edit,
+            secret,
+            preedit,
+            preedit_cursor,
+            ..
+        } = &mut widget.kind
+        else {
+            return false;
+        };
+        if *value != state.snapshot.value || *secret != state.secret {
+            return false;
+        }
+        *caret = state.snapshot.caret.min(value.chars().count());
+        *select_all = state.snapshot.select_all;
+        *edit = state.edit.clone();
+        *preedit = state.preedit.clone();
+        *preedit_cursor = state.preedit_cursor;
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AutocompleteStyle, ColumnStyle, Scene, TextInputStyle};
+
+    fn field(autocomplete: bool, value: &str) -> (Ui, WidgetId) {
+        let mut ui = Ui::new();
+        let mut id = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            id = if autocomplete {
+                c.autocomplete(["INTEGER", "TEXT"], value, AutocompleteStyle::default())
+            } else {
+                c.text_input_styled(value, "name", TextInputStyle::default())
+            };
+        });
+        ui.set_focus(Some(id));
+        (ui, id)
+    }
+    fn value(ui: &Ui, id: WidgetId) -> &str {
+        ui.text_input_value(id)
+            .or_else(|| ui.autocomplete_value(id))
+            .unwrap()
+    }
+
+    #[test]
+    fn input_history_covers_native_edit_routes_and_invalidates_redo_only_for_changes() {
+        for autocomplete in [false, true] {
+            let (mut ui, id) = field(autocomplete, "中文");
+            ui.key_input(UiKey::SelectAll);
+            assert!(ui.paste_into_focused_text("customer_name"));
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "中文");
+            assert!(ui.key_input(UiKey::Redo));
+            assert_eq!(value(&ui, id), "customer_name");
+            assert!(ui.delete_focused_text_selection());
+            assert_eq!(value(&ui, id), "");
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "customer_name");
+            ui.key_input(UiKey::Home);
+            assert!(ui.key_input(UiKey::Delete));
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "customer_name");
+            ui.key_input(UiKey::SelectAll);
+            ui.ime_preedit("列", Some((3, 3)));
+            assert!(!ui.key_input(UiKey::Char('x')));
+            assert!(ui.ime_commit("列名"));
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "customer_name");
+            assert!(ui.key_input(UiKey::Redo));
+            assert_eq!(value(&ui, id), "列名");
+            ui.key_input(UiKey::End);
+            assert!(ui.key_input(UiKey::Char('!')));
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "列名");
+            ui.key_input(UiKey::Home);
+            assert!(!ui.key_input(UiKey::Backspace));
+            assert!(ui.key_input(UiKey::Redo));
+            assert_eq!(value(&ui, id), "列名!");
+            ui.key_input(UiKey::SelectAll);
+            assert!(ui.paste_into_focused_text("same"));
+            ui.key_input(UiKey::SelectAll);
+            assert!(ui.paste_into_focused_text("same"));
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "列名!");
+            ui.key_input(UiKey::End);
+            ui.key_input(UiKey::Backspace);
+            assert!(!ui.key_input(UiKey::Redo));
+            assert_eq!(value(&ui, id), "列名");
+            ui.ime_preedit("候", Some((3, 3)));
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "列名");
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui, id), "列名!");
+            if autocomplete {
+                ui.set_autocomplete_value(id, "TEXT");
+            } else {
+                ui.set_text_input(id, "TEXT");
+            }
+            assert!(!ui.key_input(UiKey::Undo));
+            assert!(!ui.key_input(UiKey::Redo));
+        }
+    }
+
+    #[test]
+    fn input_sessions_and_autocomplete_acceptance_keep_bounded_history_and_composition() {
+        let (mut ui, id) = field(false, "name");
+        ui.key_input(UiKey::SelectAll);
+        ui.paste_into_focused_text("new_name");
+        ui.key_input(UiKey::Home);
+        ui.ime_preedit("新", Some((3, 3)));
+        let session = ui.text_input_state(id).unwrap();
+        let (mut rebuilt, next) = field(false, "new_name");
+        assert!(rebuilt.restore_text_input_state(next, &session));
+        let mut scene = Scene::new();
+        rebuilt.sync(&mut scene);
+        assert!(rebuilt.ime_cursor_area(&scene).is_some());
+        rebuilt.ime_commit("新");
+        assert_eq!(value(&rebuilt, next), "新new_name");
+        rebuilt.key_input(UiKey::Undo);
+        assert_eq!(value(&rebuilt, next), "new_name");
+        rebuilt.key_input(UiKey::Undo);
+        assert_eq!(value(&rebuilt, next), "name");
+        assert!(!rebuilt.restore_text_input_state(next, &session));
+        rebuilt.set_text_input(next, "new_name");
+        rebuilt.set_text_input_secret(next, true);
+        assert!(!rebuilt.restore_text_input_state(next, &session));
+        rebuilt.set_text_input_secret(next, false);
+        for _ in 0..105 {
+            rebuilt.key_input(UiKey::Char('a'));
+        }
+        for _ in 0..100 {
+            assert!(rebuilt.key_input(UiKey::Undo));
+        }
+        assert!(!rebuilt.key_input(UiKey::Undo));
+        assert_eq!(value(&rebuilt, next), "new_nameaaaaa");
+        let (mut ui, id) = field(true, "");
+        ui.paste_into_focused_text("EX");
+        ui.key_input(UiKey::Enter);
+        assert_eq!(ui.take_autocomplete_change(), Some((id, "TEXT".into())));
+        assert_eq!(value(&ui, id), "TEXT");
+        let session = ui.autocomplete_state(id).unwrap();
+        let (mut rebuilt, next) = field(true, "TEXT");
+        assert!(rebuilt.set_autocomplete_state(next, &session));
+        assert!(rebuilt.key_input(UiKey::Undo));
+        assert_eq!(value(&rebuilt, next), "EX");
+        assert!(rebuilt.key_input(UiKey::Undo));
+        assert_eq!(value(&rebuilt, next), "");
+        assert!(rebuilt.key_input(UiKey::Redo));
+        assert!(rebuilt.key_input(UiKey::Redo));
+        assert_eq!(value(&rebuilt, next), "TEXT");
+    }
+}

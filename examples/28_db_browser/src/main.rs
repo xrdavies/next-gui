@@ -2000,6 +2000,13 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let column_input_session = self.state.wizard_cols.get(self.state.wizard_col_sel).and_then(|column| {
+            if self.state.overlay!=Some(OverlayKind::EditTable) || self.ui.text_input_value(self.ids.ov_col_name)!=Some(column.name.as_str()) { return None; }
+            [self.ids.ov_col_name,self.ids.ov_default].into_iter().enumerate().find_map(|(index,id)|
+                (self.ui.focused()==Some(id)).then(||self.ui.text_input_state(id).map(|session|(index,session))).flatten())
+        });
+        let table_name_session = (self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_name)
+            && self.ui.text_input_value(self.ids.ov_name)==Some(self.state.wizard_table_name.as_str())).then(||self.ui.text_input_state(self.ids.ov_name)).flatten();
         let fields_focused = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_fields_table);
         let reveal_field = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.table_selected_row(self.ids.ov_fields_table)!=Some(self.state.wizard_col_sel);
         let key_focused = self.state.overlay == Some(OverlayKind::EditTable) && self.ui.focused() == Some(self.ids.ov_key_columns)
@@ -2068,6 +2075,13 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some((index,session))=column_input_session {
+            let id=[self.ids.ov_col_name,self.ids.ov_default][index];
+            if self.ui.restore_text_input_state(id,&session) { self.ui.set_focus(Some(id)); self.ui.sync(&mut self.scene); }
+        }
+        if let Some(session)=table_name_session {
+            if self.ui.restore_text_input_state(self.ids.ov_name,&session) { self.ui.set_focus(Some(self.ids.ov_name)); self.ui.sync(&mut self.scene); }
+        }
         if reveal_field {
             self.ui.reveal_table_selection(self.ids.ov_fields_table); self.ui.sync(&mut self.scene);
             if let Some(offset)=self.ui.table_scroll_offset(self.ids.ov_fields_table) { self.state.wizard_field_scroll=offset; }
@@ -4586,6 +4600,47 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn single_line_wizard_undo_updates_constraint_identity_preview_and_survives_focused_rebuild() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer); demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap(); demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY,name TEXT DEFAULT 'kept' CHECK(length(name)>0)); INSERT INTO records VALUES(7,'customer'); CREATE VIEW visible AS SELECT name FROM records;").unwrap();
+            demo.state.refresh_schema().unwrap(); let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap(); demo.state.select_schema_node(10_000+row as u64);
+            demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_col_sel=1; demo.state.wizard_scroll=(0.0,180.0); demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_col_name)); demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text("customer_name"); demo.snapshot_inputs();
+            assert_eq!(demo.state.wizard_cols[1].name,"customer_name"); assert!(demo.state.wizard_cols[1].check_expression.contains("customer_name"));
+            assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs(); assert_eq!(demo.state.wizard_cols[1].name,"name");
+            assert!(demo.ui.key_input(UiKey::Redo)); demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.focused(),Some(demo.ids.ov_col_name)); assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs();
+            assert_eq!(demo.state.wizard_cols[1].name,"name");
+            demo.ui.key_input(UiKey::SelectAll); demo.ui.ime_preedit("顾",Some((3,3))); demo.snapshot_inputs(); demo.do_rebuild();
+            assert!(demo.ui.ime_commit("顾客名")); demo.snapshot_inputs(); assert_eq!(demo.state.wizard_cols[1].name,"顾客名");
+            assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs(); assert_eq!(demo.state.wizard_cols[1].name,"name");
+            assert!(demo.ui.key_input(UiKey::Redo)); demo.snapshot_inputs();
+            demo.ui.set_focus(Some(demo.ids.ov_default)); demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text("'new'"); demo.snapshot_inputs(); demo.do_rebuild();
+            assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs(); assert_eq!(demo.state.wizard_cols[1].default_value,"'kept'");
+            assert!(demo.ui.key_input(UiKey::Redo)); demo.snapshot_inputs();
+            demo.ui.set_focus(Some(demo.ids.ov_name)); demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text("orders"); demo.snapshot_inputs(); demo.do_rebuild();
+            assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs(); assert_eq!(demo.state.wizard_table_name,"records");
+            assert!(demo.ui.key_input(UiKey::Redo)); demo.snapshot_inputs();
+            assert!(demo.ui.text_area_value(demo.ids.ov_table_preview).unwrap().contains("顾客名"));
+            demo.ui.sync(&mut demo.scene);
+            if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_INPUT_HISTORY_QA_OUT") {
+                demo.scene.mark_full_dirty(1400.0,1000.0); let dirty=demo.scene.take_dirty(); let commands=encode_scene(&demo.scene,&dirty); let mut soft=SoftRenderer::new(1400,1000,clear_color(&demo.theme)); soft.render(&commands,&dirty);
+                write_ppm(&format!("{prefix}-{theme_name}.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
+                if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear_color(&demo.theme)) {
+                    gpu.render(&commands,&dirty); let delta=soft.frame_pixels().unwrap().0.iter().zip(gpu.frame_pixels().unwrap().0).flat_map(|(a,b)|[0,8,16].map(|shift|((a>>shift)&255).abs_diff((b>>shift)&255))).max().unwrap_or(0);
+                    eprintln!("Input history {theme_name}: full-frame Soft/Metal delta {delta}"); assert!(delta<=2); write_ppm(&format!("{prefix}-{theme_name}-metal.ppm"),gpu.frame_pixels().unwrap().0,1400,1000).unwrap();
+                } else { eprintln!("Input history GPU comparison not_run: adapter unavailable"); }
+            }
+            demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            let conn=demo.state.conn.as_ref().unwrap(); assert_eq!(conn.query_row("SELECT rowid,顾客名 FROM orders",[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?))).unwrap(),(7,"customer".into()));
+            assert_eq!(conn.query_row("SELECT * FROM visible",[],|row|row.get::<_,String>(0)).unwrap(),"customer");
+            assert!(conn.execute("UPDATE orders SET 顾客名=''",[]).is_err()); conn.execute("INSERT INTO orders(id) VALUES(8)",[]).unwrap();
+            assert_eq!(conn.query_row("SELECT 顾客名 FROM orders WHERE id=8",[],|row|row.get::<_,String>(0)).unwrap(),"new");
+        }
+    }
 
     #[test]
     fn browse_buttons_follow_page_record_and_write_boundaries() {

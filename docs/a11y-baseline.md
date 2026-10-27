@@ -44,7 +44,11 @@ Theme 的 `disabled`、背景使用 `muted`，重新启用恢复原有样式。�
 Autocomplete 复用 TextInput 的全选、删除、Home/End、字符输入路径，并支持共享
 IME/剪贴板 API。组合文本带下划线、候选位置跟随可见光标；长值在字段内裁剪并跟随光标。
 建议窗口按视口向上/下展开，方向键或滚轮翻动候选，Escape 关闭建议并保留编辑焦点。
-`autocomplete_state` / `set_autocomplete_state` 保留光标、全选、组合和按文字定位的候选，
+单行 TextInput / Autocomplete 支持 Undo/Redo，覆盖输入、删除、剪切、粘贴、IME 提交和建议项选择。
+每个历史栈最多保留100次/8 MiB（单次超大编辑仍保留）；组合期间 Undo/Redo 先取消组合。
+`text_input_state` / `restore_text_input_state` 保留光标、全选、组合和历史，仅恢复文字和密码模式都匹配的输入框。
+程序调用 `set_text_input` / `set_autocomplete_value` 会清空历史，改变密码模式也清空旧历史。
+`autocomplete_state` / `set_autocomplete_state` 保留光标、全选、组合、历史和按文字定位的候选，
 只恢复文字仍相同的控件；应用负责恢复焦点及转发 OS IME/剪贴板事件。
 `delete_focused_text_selection` 在剪贴板写入成功后删除对应复制范围；单行控件删除整值，
 多行控件仅删除选区，密码和只读保护仍生效。这些逻辑测试不代表 OS 输入验收。

@@ -5,6 +5,7 @@ use std::ops::Range;
 #[derive(Debug, Clone)]
 pub struct AutocompleteState {
     value: String,
+    edit: crate::text_input::InputEdit,
     caret: usize,
     select_all: bool,
     preedit: String,
@@ -18,6 +19,7 @@ impl Ui {
     pub fn autocomplete_state(&self, id: WidgetId) -> Option<AutocompleteState> {
         let Kind::Autocomplete {
             value,
+            edit,
             caret,
             select_all,
             preedit,
@@ -31,6 +33,7 @@ impl Ui {
         };
         Some(AutocompleteState {
             value: value.clone(),
+            edit: edit.clone(),
             caret: *caret,
             select_all: *select_all,
             preedit: preedit.clone(),
@@ -59,6 +62,7 @@ impl Ui {
         };
         let Kind::Autocomplete {
             caret,
+            edit,
             select_all,
             preedit,
             preedit_cursor,
@@ -70,6 +74,7 @@ impl Ui {
             return false;
         };
         *caret = state.caret.min(state.value.chars().count());
+        *edit = state.edit.clone();
         *select_all = state.select_all;
         *preedit = state.preedit.clone();
         *preedit_cursor = state.preedit_cursor;
