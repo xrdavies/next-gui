@@ -541,3 +541,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Expression and partial index checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-68b65c9c64b6.md): live main/temp/attached definitions now retain nested expression keys, collation/order, comments and partial WHERE through editing and atomic replacement. Actual unique/partial behavior and invalid-condition/tail rollback pass; WHERE is available in both themes at narrow widths. 407 tests/strict checks, ten Soft/Metal pairs and two native static forms pass. Full ordered-key controls, multiline editing polish, table constraints/migration and original interface/native acceptance remain unfinished.
+
+## Multiline index editing checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-abc0450a381d.md): syntax-colored key and partial WHERE TextAreas preserve focus, selection and Undo through rebuilding; multiline expressions/comments and failed replacement retain their exact drafts. Narrow top/bottom scrolling keeps actions reachable. 407 tests/strict checks, twelve Soft/Metal pairs and two native static forms inspected. Available/ordered key controls, SQL preview, full table migration and native input acceptance remain unfinished.
