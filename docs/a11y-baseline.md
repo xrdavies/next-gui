@@ -47,6 +47,14 @@ Theme 的 `disabled`、背景使用 `muted`，重新启用恢复原有样式。�
 撤销/重做或程序替换内容后清除。组合输入期间暂不显示旧范围。
 颜色之外的结果计数与当前匹配说明由应用提供；这不是 OS 可访问搜索结果接口。
 
+### 1.4 可撤销范围替换
+
+`Ui::replace_text_area_range(id, range, text)` 使用 Unicode scalar 范围，
+在不预先改变选区的情况下记录一次编辑，Undo 恢复原光标和选区方向。
+非法范围、错误控件和只读文本区返回 false 且不改变编辑会话。
+`replace_text_area_selection` 复用同一实现；相同文档的 `TextAreaState`
+可保留范围编辑的撤销/重做历史。实际修改清除旧高亮和组合文本并显示新光标。
+
 ## 2. 可访问名
 
 | API | 说明 |

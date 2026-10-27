@@ -142,7 +142,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Find / Replace | partial | Shared editor in Find panel highlights/reveals matches; Replace acts on the selected match and Replace All is undoable (F04 addressed). Match case/whole words/wrap/backwards/selection-only/PCRE2, Find All highlights and capture replacement are implemented; upstream regex dialect, large-document worker and native acceptance remain. |
 | Async query + cancel | done | Live connection moves to worker; Write/Revert/keys/ATTACH shared; completion polled on redraw; Stop interrupts |
 | Results → CSV / JSON / Save as view | done | Full snapshot export without re-execution; editable view name and source tied to the executed result statement. |
-| Toggle comment | partial | All physical lines only; no selected-block handling. Removing comments strips all leading hyphens, not exactly two. |
+| Toggle comment | partial | Current/selected physical lines, first-line mode, exact two-hyphen removal, LF/CRLF preservation and one undo/redo edit. Ctrl/Cmd+/ and toolbar retain tab/file sessions. CR-only editor lines and native acceptance remain. |
 | Execute current line | done | Uses Unicode caret position; never replaces editor contents; one physical line |
 
 ## Docks
@@ -431,3 +431,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Native viewport compatibility checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-caca01ed09f6.md): source-aligned ordinary/view/WITHOUT ROWID fixtures, native-only save/reload, old e28 project migration, independent tab widths and row-id metadata preservation pass. The before-fix regression reproduced shifted widths and an extra frozen visible column. 310 workspace tests and strict checks pass; Soft imported viewport and native Metal painting inspected. Original-binary interchange and native input remain unverified.
+
+
+### SQL comment checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-3ab164fed903.md): comments now affect current/selected lines, preserve unrelated SQL and LF/CRLF, and restore selection/history through rebuild/tab switches. A shared validated TextArea range replacement also serves search/replace. File drafts stay in memory; disk SQL and database are untouched. Baseline whole-document/EOL corruption reproduced before the fix. 316 tests and strict checks pass; dark/light Soft, native SQL painting and all fourteen Office windows inspected. CR-only lines, complete SQL editor and native acceptance remain open.

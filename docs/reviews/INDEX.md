@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-3ab164fed903-F01 | verified | P1 | grok | e28 / shared | existing branch | SQL comment action | Selected-line comments preserve unrelated SQL, EOLs and undo sessions | [F01](R-20261027-3ab164fed903.md#r-20261027-3ab164fed903-f01) | 3ab164fed903 | 3ab164fed903 |
 | R-20261027-fdbf1e3c3942-F01 | verified | P2 | grok | e28 / shared | existing branch | see report | Popup owner changes hide the previous overlay | [F01](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f01) | fdbf1e3c3942 | fdbf1e3c3942 |
 | R-20261027-fdbf1e3c3942-F02 | verified | P2 | grok | e28 / shared | existing branch | see report | Light selection and menu highlight text contrast repaired | [F02](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f02) | fdbf1e3c3942 | fdbf1e3c3942 |
 | R-20261027-fdbf1e3c3942-F03 | verified | P2 | grok | e28 / shared | existing branch | see report | Native DB4S viewport widths and frozen counts translate row-id indices | [F03](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f03) | caca01ed09f6 | caca01ed09f6 |
