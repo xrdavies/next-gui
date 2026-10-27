@@ -2280,6 +2280,38 @@ impl AppState {
             &result.columns[first_col..=last_col], cells, headers, sql))
     }
 
+    pub fn cut_browse_cells(&mut self) -> Result<(), String> {
+        self.guard_writable()?;
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        let tab = self.browse();
+        let result = tab.result.as_ref().ok_or("No browse data")?;
+        let table = tab.table.clone().ok_or("No browse table")?;
+        let row = tab.sel_row.ok_or("Select browse cells first")?;
+        let anchor = tab.sel_row_start.unwrap_or(row);
+        let (first, last) = (row.min(anchor), row.max(anchor));
+        let (first_col, last_col) = if let Some(col) = tab.sel_col {
+            let anchor = tab.sel_col_start.unwrap_or(col);
+            (col.min(anchor), col.max(anchor))
+        } else { (0, result.columns.len().saturating_sub(1)) };
+        if last >= tab.rowids.len() || result.columns.is_empty() || last_col >= result.columns.len() {
+            return Err("Selected cells are not editable; refresh and retry".into());
+        }
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        let columns = &result.columns[first_col..=last_col];
+        let info = db::table_columns(conn, &table)?;
+        let values = columns.iter().map(|col| {
+            let column = info.iter().find(|info| info.name == *col).ok_or("Selected column is not editable")?;
+            Ok(if column.notnull { db::CellValue::Text(Vec::new()) } else { db::CellValue::Null })
+        }).collect::<Result<Vec<_>, String>>()?;
+        let updates = tab.rowids[first..=last].iter().map(|id| (*id, values.clone())).collect::<Vec<_>>();
+        db::update_cells(conn, &table, columns, &updates)?;
+        self.log_sql(format!("-- cut {}x{} from {table}", updates.len(), columns.len()));
+        self.mark_dirty();
+        self.refresh_browse()?;
+        self.status_msg = "Cut cells (unwritten)".into();
+        Ok(())
+    }
+
     /// Paste quoted TSV; one source cell fills the selected rectangle.
     pub fn paste_browse_tsv(&mut self, text: &str) -> Result<(), String> {
         let (_, rows) = db::import_csv_from_text(text, &CsvImportOptions {
@@ -3614,6 +3646,37 @@ mod chart_default_tests {
         state.close_browse_tab().unwrap();
         assert_eq!(state.browse_tabs.len(), 1);
         assert!(state.browse().table.is_none());
+    }
+
+    #[test]
+    fn cut_clears_nullable_and_required_cells_and_rolls_back_on_constraints() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("DROP TABLE t; CREATE TABLE t(a TEXT NOT NULL,b);
+            INSERT INTO t VALUES('a','b'),('c','d');
+            CREATE TABLE constrained(id,a, CHECK(id<>2 OR a IS NOT NULL));
+            INSERT INTO constrained VALUES(1,'keep first'),(2,'keep second');").unwrap();
+        state.refresh_schema().unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(1);
+        state.browse_mut().sel_row_start = Some(0);
+        let copy = state.copy_browse_cells(false, false).unwrap();
+        state.cut_browse_cells().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().values,
+            vec![vec![db::CellValue::Text(Vec::new()), db::CellValue::Null]; 2]);
+        assert!(state.dirty);
+        state.browse_mut().sel_row = Some(0);
+        state.paste_browse_cells(copy.internal_cells(&copy.html).unwrap()).unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows, vec![vec!["a", "b"], vec!["c", "d"]]);
+        state.browse_mut().table = Some("constrained".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(1);
+        state.browse_mut().sel_row_start = Some(0);
+        state.browse_mut().sel_col = Some(1);
+        assert!(state.cut_browse_cells().unwrap_err().contains("CHECK"));
+        assert_eq!(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT a FROM constrained ORDER BY id").unwrap().rows,
+            vec![vec!["keep first"], vec!["keep second"]]);
+        assert_eq!(state.browse().sel_row, Some(1));
     }
 
     #[test]

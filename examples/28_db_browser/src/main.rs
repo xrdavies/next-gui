@@ -2940,15 +2940,17 @@ impl AppCallbacks for Demo {
                         }
                         KeyCode::Char('c' | 'C' | 'x' | 'X') => {
                             if self.ui.focused() == Some(self.ids.browse_table) {
-                                let result = self.state.copy_browse_cells(modifiers.shift, modifiers.alt)
+                                let cut = matches!(key, KeyCode::Char('x' | 'X'));
+                                let result = self.state.copy_browse_cells(!cut && modifiers.shift, !cut && modifiers.alt)
                                     .and_then(|copy| {
                                         if copy.html.is_empty() { ctx.clipboard_set_text(&copy.text) }
                                         else { ctx.clipboard_set_html(&copy.html, &copy.text) }
                                             .map_err(|e| e.to_string())?;
                                         self.cell_clipboard = Some(copy);
-                                        Ok(())
+                                        if cut { self.state.cut_browse_cells() } else { Ok(()) }
                                     });
                                 if let Err(e) = result { self.set_error(e); }
+                                else if cut { self.rebuild = true; }
                                 self.after_ui(ctx);
                                 return;
                             }
