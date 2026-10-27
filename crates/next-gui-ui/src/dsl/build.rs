@@ -1114,7 +1114,10 @@ fn build_widget(
                 .map_err(|m| err_at(w.line, w.column, m))?
                 .unwrap_or_default();
             let placeholder = first_string_arg_or(w, "")?;
+            let line_numbers = prop_bool(&w.props, "line_numbers")
+                .map_err(|m| err_at(w.line, w.column, m))?.unwrap_or(false);
             let id = builder.text_area(value, placeholder, TextAreaStyle::from_theme(builder.theme()));
+            builder.ui.set_text_area_line_numbers(id, line_numbers);
             register(names, &w.name, id);
         }
         "InputNumber" => {

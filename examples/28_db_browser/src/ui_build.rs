@@ -1957,6 +1957,7 @@ pub fn build_ui(
     ui.set_button_enabled(btn_revert, can_write);
 
     ui.set_image_view(edit_image, state.edit_image_view);
+    ui.set_text_area_line_numbers(sql_area, true);
     ui.set_text_area_read_only(log_area, true);
     ui.sync(&mut scene);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);

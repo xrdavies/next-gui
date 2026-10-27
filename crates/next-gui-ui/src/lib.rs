@@ -1911,6 +1911,7 @@ enum Kind {
     TextArea {
         value: String,
         read_only: bool,
+        line_numbers: bool,
         placeholder: String,
         caret: usize,
         preedit: String,
@@ -4017,12 +4018,13 @@ impl Ui {
     pub fn ime_cursor_area(&self, scene: &Scene) -> Option<(f32, f32, f32, f32)> {
         let id = self.focus?;
         let w = self.widgets.get(&id)?;
-        if let Kind::TextArea { value, caret, preedit, preedit_cursor, scroll_y, style, edit, .. } = &w.kind {
+        if let Kind::TextArea { value, caret, preedit, preedit_cursor, scroll_y, style, edit, line_numbers, .. } = &w.kind {
             let bounds = w.node.and_then(|n| scene.get(n).map(|n| n.bounds))?;
             let (display, caret) = text_area::display_text(value, *caret, edit, preedit, *preedit_cursor);
-            let layout = self.font.layout(&display, style.size, Some((bounds.width - style.padding_x * 2.0).max(1.0)));
+            let gutter = self.text_area_gutter_width(&display, *style, *line_numbers, bounds.width);
+            let layout = self.font.layout(&display, style.size, Some((bounds.width - style.padding_x * 2.0 - gutter).max(1.0)));
             let (x, y) = layout.caret_top_left(&display, caret, self.font.metrics(style.size).ascent);
-            return Some(((bounds.x + style.padding_x + x).floor(), (bounds.y + style.padding_y - scroll_y + y).floor(), 2.0, self.font.metrics(style.size).ascent.ceil()));
+            return Some(((bounds.x + style.padding_x + gutter + x).floor(), (bounds.y + style.padding_y - scroll_y + y).floor(), 2.0, self.font.metrics(style.size).ascent.ceil()));
         }
         let Kind::TextInput {
             value,
@@ -18851,6 +18853,7 @@ impl FlexBuilder<'_> {
                 kind: Kind::TextArea {
                     value,
                     read_only: false,
+                    line_numbers: false,
                     placeholder: placeholder.into(),
                     caret,
                     preedit: String::new(),

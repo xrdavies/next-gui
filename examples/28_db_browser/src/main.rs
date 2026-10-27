@@ -4112,6 +4112,7 @@ mod interaction_tests {
         ui.column(next_gui_ui::ColumnStyle { x: 0.0, y: 0.0, width: 400.0, height: 200.0, padding: 0.0, gap: 0.0, background: None, ..next_gui_ui::ColumnStyle::default() }, |c| {
             area = c.text_area(text, "SQL", next_gui_ui::TextAreaStyle { width: 400.0, height: 200.0, ..next_gui_ui::TextAreaStyle::default() });
         });
+        ui.set_text_area_line_numbers(area, true);
         ui.select_text_area_range(area, 0..0);
         ui.find_in_text_area(area, "SELECT 40");
         let mut search = sql_search::Search::default();
@@ -4138,6 +4139,44 @@ mod interaction_tests {
         }).max().unwrap();
         assert!(max_delta <= 2, "Soft/GPU editor channel difference {max_delta}");
         eprintln!("Soft/GPU selected-text comparison passed, max channel delta {max_delta}");
+    }
+
+    #[test]
+    fn numbered_sql_editor_retains_search_selection_and_undo_through_find_overlay() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = (1..=80).map(|i| format!("SELECT {i}, '中文 {i}';\n")).collect();
+        demo.state.sql_result = None;
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        assert!(demo.ui.find_in_text_area(demo.ids.sql_area, "中文 40"));
+        demo.ui.sync(&mut demo.scene);
+        let selected = demo.ui.text_area_selection(demo.ids.sql_area).unwrap();
+        assert!(demo.ui.text_area_scroll(demo.ids.sql_area).unwrap() > 0.0);
+        assert_eq!(demo.ui.focused_text_for_copy().as_deref(), Some("中文 40"));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(selected.clone()));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+        demo.ui.replace_text_area_selection(demo.ids.sql_area, "東京");
+        demo.snapshot_inputs();
+        demo.state.overlay = Some(OverlayKind::FindReplace);
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        assert!(demo.ui.key_input(UiKey::Undo));
+        assert_eq!(demo.ui.text_area_selected_text(demo.ids.sql_area).as_deref(), Some("中文 40"));
+        assert!(demo.ui.text_area_value(demo.ids.sql_area).unwrap().contains("SELECT 40, '中文 40';"));
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(selected));
+        let (x, y, _, _) = demo.ui.ime_cursor_area(&demo.scene).unwrap();
+        assert!(x.is_finite() && y.is_finite());
+        assert!(!demo.state.dirty);
     }
 
     #[test]

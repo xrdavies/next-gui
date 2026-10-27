@@ -158,6 +158,18 @@ Column {
     }
 
     #[test]
+    fn text_area_line_numbers_property_uses_boolean_validation() {
+        for (flag, expected) in [("true", true), ("false", false)] {
+            let loaded = load_ngui(&format!("Column {{ TextArea @sql {{ line_numbers: {flag} }} }}")).unwrap();
+            let id = loaded.widget("sql").unwrap();
+            let crate::Kind::TextArea { line_numbers, .. } = loaded.ui.widgets[&id].kind else { panic!() };
+            assert_eq!(line_numbers, expected);
+        }
+        let error = load_ngui("Column { TextArea { line_numbers: \"yes\" } }").unwrap_err();
+        assert!(error.message.contains("line_numbers: expected bool"));
+    }
+
+    #[test]
     fn tabs_scrollable_property_uses_boolean_validation() {
         for (flag, expected) in [("true", true), ("false", false)] {
             let src = format!("Column {{ Tabs @tabs {{ scrollable: {flag} Tab(\"One\") {{ Text(\"p1\") }} }} }}");

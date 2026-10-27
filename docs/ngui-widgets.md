@@ -97,6 +97,10 @@ after editing or finding text. Both renderers use the same selection alpha mask.
   selects and reveals the next match without changing focus.
 - `text_area_scroll` / `set_text_area_scroll`: vertical pixel offset; invalid
   floats are rejected and the offset is clamped to the document.
+- `set_text_area_line_numbers(id, bool)`: optional physical line-number gutter;
+  DSL `TextArea { line_numbers: true }`. LF/CRLF, wrapped continuations, empty
+  lines and digit-width changes follow the same text layout as pointer/IME and
+  selection. Numbers are excluded from document copy and undo. Default is off.
 - `text_area_state` / `restore_text_area_state`: opaque in-memory editing session
   for rebuilding widgets. Restore rejects a different document. Keep one session
   per document; project files should save text separately.
