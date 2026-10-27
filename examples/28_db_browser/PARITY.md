@@ -549,3 +549,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Ordered index key and preview checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-0333104cbccf.md): available/ordered key lists now add generated/quoted columns and expressions, edit/remove/reorder through the same undoable SQL draft, and show execution-identical read-only SQL. Shared List offset/reveal APIs retain long-list sessions; preview selection/focus also restores. 410 tests/strict checks, fourteen Soft/Metal pairs and two native static forms inspected. Dedicated key-order selector/type presentation, exact original transfer behavior, full table migration and native acceptance remain unfinished.
+
+## Index key order and type checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-24b5a0495d77.md): selected-key ASC/DESC now uses SQLite expression preparation to preserve keyword-named operands, collations and comments. Order edits share Undo/Redo; row changes/reopen preserve raw SQL and selector focus. Available declaration types include generated columns and resist PRAGMA-table shadowing. 412 tests/strict checks, fourteen Soft/Metal pairs and two native static forms inspected. Exact upstream transfer filtering/interface, full table constraints/migrations and native acceptance remain unfinished.
