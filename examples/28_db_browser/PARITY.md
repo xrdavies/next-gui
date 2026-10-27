@@ -117,10 +117,10 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Multi browse tabs | partial | Add/switch/close guard cell drafts and restore the current tab on query failure; last-tab close clears the editor. Reorder, per-tab close affordances and selection restoration on switching remain. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
 | Edit cell → Edit Cell dock | partial | Explicit NULL/INTEGER/REAL/TEXT/BLOB and multiline editing; numeric types retained; Hex validation errors preserve the draft (F06 addressed). SQLite affinity still applies. |
-| Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
+| Frozen columns | partial | Freeze through the active column; per-table/tab overrides, JSON/extension and native XML counts restore. Legacy global counts retained. Original header context gesture remains. |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-tab/per-table filters, ordering and widths restore across switches and JSON/XML projects. Per-table freeze/hidden/formats and attached/temp schemas remain. |
+| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-tab/per-table filters, ordering, widths and frozen counts restore across switches and JSON/XML projects. Hidden/formats and attached/temp schemas remain. |
 | Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment and full form controls remain. Plain PageUp/PageDown and Ctrl/Cmd+Home/End reach the full result; Shift ranges remain cache-local. |
 
 ## Edit Pragmas tab
@@ -408,3 +408,11 @@ metadata preservation are covered. Workspace: 296 tests, clippy/build/platform
 features pass; Soft restored state and native Metal painting inspected. Per-table
 freeze restoration, hidden/display formats, native binary/input acceptance and
 full reproduction remain open. See [review](../../docs/reviews/R-20261027-db7f25222647.md).
+
+### Frozen-column checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-5bd5104966ae.md): toolbar freezes through the
+active column, table switches restore counts, native XML counts validate/clamp,
+and old global counts still load. Duplicate-table tabs keep separate extension
+state. 299 workspace tests and strict checks pass; Soft geometry and native Metal
+painting inspected. Header context actions and native input acceptance remain.

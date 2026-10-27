@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-5bd5104966ae-F01 | verified | P1 | grok | e28 / shared | existing branch | project_xml::decode | Same-table tabs retain independent extension state by index | [F01](R-20261027-5bd5104966ae.md#r-20261027-5bd5104966ae-f01) | 5bd5104966ae | 5bd5104966ae |
 | R-20261027-8ab0778f3a16-F01 | verified | P1 | codex | e28 / all | pre-existing selector | apply_browse_select / poll_selection_changes | 切表查询失败恢复旧表、结果、编辑器并显示错误 | [F01](R-20261027-8ab0778f3a16.md#r-20261027-8ab0778f3a16-f01) | 8ab0778f3a16 | 8ab0778f3a16 |
 | R-20261027-f434a694b24d-F01 | verified | P2 | codex | shared / all | pre-existing layout | UI flex/panel/grid layout | 无背景容器被重新显示导致黑色底角；七类容器像素与命中回归通过 | [F01](R-20261027-f434a694b24d.md#r-20261027-f434a694b24d-f01) | f434a694b24d | f434a694b24d |
 | R-20261027-5e23229548d4-F01 | verified | P1 | codex | shared / e28 | a54e792 + rebuild path | UI key_table / e28 selection polling | 固定选择锚点，重建保留方向/焦点，拖选松手后同步 | [F01](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f01) | 15d4a96 / 5590dfb | 5e23229548d4 |
@@ -56,6 +57,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `46ad9d6..5bd5104966ae` | Codex | issues — 299 tests/clippy/build/features pass; per-table frozen prefixes, legacy/native XML and same-table tab recovery verified; Soft/Metal inspected; header/full parity remain | [Report](R-20261027-5bd5104966ae.md) |
 | 2026-10-27 | `ec2ae64..db7f25222647` | Codex | issues — 296 tests/clippy/build/features pass; per-table filters/order/widths and inactive native XML, preflight and Soft/Metal inspected; full settings/native input remain | [Report](R-20261027-db7f25222647.md) |
 | 2026-10-27 | `5d9310e..8ab0778f3a16` | Codex | issues — 292 tests/clippy/build/features pass; failed-view baseline and restoration verified, cyclic table shortcuts and Soft/Metal inspected; per-table settings/full parity remain | [Report](R-20261027-8ab0778f3a16.md) |
 | 2026-10-27 | `fd2f019..3f3153b4c200` | Codex | issues — 289 tests/clippy/build/features pass; page keys and guarded global shortcuts, public enum migration, e28/14 Office renders inspected; native input/full parity remain | [Report](R-20261027-3f3153b4c200.md) |
