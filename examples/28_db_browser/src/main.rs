@@ -13,6 +13,7 @@ mod project;
 mod project_xml;
 mod sql_log;
 mod sql_search;
+mod sql_editor;
 mod state;
 mod ui_build;
 
@@ -2081,6 +2082,28 @@ impl Demo {
         true
     }
 
+    fn handle_sql_comment_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if key != KeyCode::Char('/') || !modifiers.commandish() || modifiers.alt || modifiers.shift
+            || self.ui.focused() != Some(self.ids.sql_area) || self.ui.has_open_popup()
+        { return false; }
+        self.toggle_sql_comments()
+    }
+
+    fn toggle_sql_comments(&mut self) -> bool {
+        if self.state.tab != MainTab::ExecuteSql || self.state.overlay.is_some() || self.state.confirm_open {
+            return false;
+        }
+        let area = self.ids.sql_area;
+        let Some(sql) = self.ui.text_area_value(area) else { return false; };
+        let (range, text) = sql_editor::toggle_line_comment(sql, self.ui.text_area_selection(area).unwrap_or(0..0));
+        if !self.ui.replace_text_area_range(area, range, &text) { return false; }
+        self.ui.set_focus(Some(area));
+        self.snapshot_inputs();
+        self.state.status_msg = "Toggled comments on selected SQL lines".into();
+        self.rebuild = true;
+        true
+    }
+
     fn search_sql(&mut self, action: sql_search::Action) {
         let area = self.ids.sql_area;
         let result = self.state.find_search.apply(action, self.ui.text_area_value(area).unwrap_or_default(),
@@ -2089,8 +2112,7 @@ impl Demo {
             Ok(outcome) => {
                 self.ui.set_text_area_highlights(area, outcome.highlights, self.theme.colors.warning);
                 if let Some(edit) = outcome.edit {
-                    self.ui.select_text_area_range(area, edit.range);
-                    self.ui.replace_text_area_selection(area, &edit.text);
+                    self.ui.replace_text_area_range(area, edit.range, &edit.text);
                 }
                 if let Some(selection) = outcome.selection { self.ui.select_text_area_range(area, selection); }
                 self.state.find_message = outcome.message.clone();
@@ -2425,9 +2447,7 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_sql_comment {
-            self.snapshot_inputs();
-            self.state.toggle_sql_line_comment();
-            self.rebuild = true;
+            self.toggle_sql_comments();
             return;
         }
         if id == self.ids.btn_sql_view {
@@ -3087,7 +3107,7 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
-                if self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) {
+                if self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) || self.handle_sql_comment_key(key, modifiers) {
                     self.after_ui(ctx);
                     return;
                 }
@@ -4050,6 +4070,94 @@ mod interaction_tests {
         }).max().unwrap();
         assert!(max_delta <= 2, "Soft/GPU editor channel difference {max_delta}");
         eprintln!("Soft/GPU selected-text comparison passed, max channel delta {max_delta}");
+    }
+
+    #[test]
+    fn sql_comment_changes_selected_lines_as_one_undoable_edit() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        let original = "SELECT '中文';\r\n  SELECT 2;\r\nSELECT 3;";
+        demo.state.sql_tabs[0] = original.into();
+        demo.do_rebuild();
+        let start = "SELECT '中文';\r\n".chars().count();
+        let end = start + "  SELECT 2;\r\n".chars().count();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.select_text_area_range(demo.ids.sql_area, start + 2..end);
+        demo.handle_button(demo.ids.btn_sql_comment);
+        let expected = "SELECT '中文';\r\n--   SELECT 2;\r\nSELECT 3;";
+        assert_eq!(demo.state.sql_editor(), expected);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.sql_area));
+        assert!(demo.ui.key_input(UiKey::Undo));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some(original));
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(start + 2..end));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert!(demo.ui.key_input(UiKey::Redo));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some(expected));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 1400, 860).unwrap();
+        }
+    }
+
+    #[test]
+    fn sql_comment_shortcut_keeps_file_drafts_and_tab_histories_separate() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("query.sql");
+        let original = "-- SELECT '中文';\nSELECT 2;";
+        std::fs::write(&path, original).unwrap();
+        demo.state.open_sql_file(&path).unwrap();
+        let file_tab = demo.state.sql_tab_idx;
+        demo.do_rebuild();
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        let command = Modifiers { meta: true, ..Modifiers::default() };
+        demo.ui.set_focus(Some(demo.ids.btn_sql_find));
+        assert!(!demo.handle_sql_comment_key(KeyCode::Char('/'), command));
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        for modifiers in [Modifiers::default(), Modifiers { alt: true, ..command }, Modifiers { shift: true, ..command }] {
+            assert!(!demo.handle_sql_comment_key(KeyCode::Char('/'), modifiers));
+        }
+        demo.state.overlay = Some(OverlayKind::FindReplace);
+        assert!(!demo.handle_sql_comment_key(KeyCode::Char('/'), command));
+        demo.state.overlay = None;
+        demo.state.confirm_open = true;
+        assert!(!demo.handle_sql_comment_key(KeyCode::Char('/'), command));
+        demo.state.confirm_open = false;
+        assert!(demo.handle_sql_comment_key(KeyCode::Char('/'), command));
+        assert_eq!(demo.state.sql_editor(), "SELECT '中文';\nSELECT 2;");
+        assert!(demo.state.sql_tab_dirty(file_tab));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        demo.do_rebuild();
+        demo.action_new_sql_tab();
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.sql_area, "SELECT 99;");
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        assert!(demo.handle_sql_comment_key(KeyCode::Char('/'), Modifiers { ctrl: true, ..Modifiers::default() }));
+        assert_eq!(demo.state.sql_editor(), "-- SELECT 99;");
+        demo.do_rebuild();
+        demo.snapshot_inputs();
+        demo.state.switch_sql_tab(file_tab);
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        assert!(demo.ui.key_input(UiKey::Undo));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some(original));
+        demo.snapshot_inputs();
+        assert!(!demo.state.sql_tab_dirty(file_tab));
+        demo.state.switch_sql_tab(file_tab + 1);
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        assert!(demo.ui.key_input(UiKey::Undo));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT 99;"));
+        assert!(!demo.state.dirty, "comment edits must not change the database");
     }
 
     #[test]

@@ -2372,32 +2372,6 @@ impl AppState {
         self.start_sql_text(sql[start..end].to_string())
     }
 
-    pub fn toggle_sql_line_comment(&mut self) {
-        let Some(sql) = self.sql_tabs.get_mut(self.sql_tab_idx) else {
-            return;
-        };
-        let mut out = String::new();
-        for line in sql.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("--") {
-                // uncomment
-                let rest = trimmed.trim_start_matches('-').trim_start_matches('-');
-                let rest = rest.strip_prefix(' ').unwrap_or(rest);
-                let indent_len = line.len() - trimmed.len();
-                out.push_str(&line[..indent_len]);
-                out.push_str(rest);
-            } else if !trimmed.is_empty() {
-                out.push_str("-- ");
-                out.push_str(line);
-            } else {
-                out.push_str(line);
-            }
-            out.push('\n');
-        }
-        *sql = out;
-        self.status_msg = "Toggled -- comments on SQL tab".into();
-    }
-
     pub fn apply_cell_draft(&mut self) -> Result<(), String> {
         self.guard_writable()?;
         let tab = self.browse();

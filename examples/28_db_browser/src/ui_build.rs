@@ -1552,7 +1552,9 @@ pub fn build_ui(
                                     btn_sql_line = tb.tool_button("Execute Line");
                                     btn_sql_stop = tb.tool_button("Stop");
                                     btn_sql_find = tb.tool_button("Find");
-                                    btn_sql_comment = tb.tool_button("Comment");
+                                    tb.tooltip("Toggle line comments (Ctrl/Cmd+/)", |tb| {
+                                        btn_sql_comment = tb.tool_button("Comment");
+                                    });
 
                                     tb.spacer(8.0, 1.0);
                                     tb.text_styled(
@@ -1928,6 +1930,9 @@ pub fn build_ui(
 
     let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
     ui.set_accessible_name(browse_header_menu, "Browse column actions");
+    if btn_sql_comment.0 != 0 {
+        ui.set_accessible_name(btn_sql_comment, "Toggle SQL line comments (Ctrl/Cmd+/)");
+    }
 
     let browse = state.browse();
     let loaded = browse.result.as_ref().map_or(0, |r| r.rows.len());

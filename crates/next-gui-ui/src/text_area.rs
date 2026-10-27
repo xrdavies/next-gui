@@ -219,6 +219,13 @@ impl Ui {
 
     /// Replace selection (or insert at caret) as one undoable edit. Read-only areas reject edits.
     pub fn replace_text_area_selection(&mut self, id: WidgetId, text: &str) -> bool {
+        let Some(range) = self.text_area_selection(id) else { return false; };
+        self.replace_text_area_range(id, range, text)
+    }
+
+    /// Replace Unicode scalar offsets as one edit, retaining the original selection for undo.
+    /// Invalid ranges and read-only areas reject edits without changing the session.
+    pub fn replace_text_area_range(&mut self, id: WidgetId, range: Range<usize>, text: &str) -> bool {
         let Some(Widget {
             kind:
                 Kind::TextArea {
@@ -235,7 +242,7 @@ impl Ui {
         else {
             return false;
         };
-        let range = selection(*caret, edit.anchor);
+        if range.start > range.end || range.end > value.chars().count() { return false; }
         let start = byte_offset(value, range.start);
         let end = byte_offset(value, range.end);
         if value[start..end] != *text {
@@ -710,6 +717,36 @@ mod tests {
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         (ui, scene, area)
+    }
+
+    #[test]
+    fn range_replacement_preserves_selection_direction_for_undo_and_rejects_invalid_edits() {
+        let original = "中文🙂\r\nSELECT 1;";
+        let (mut ui, _, area) = editor(original);
+        ui.select_text_area_range(area, Range { start: 3, end: 1 });
+        for range in [Range { start: 4, end: 2 }, 0..usize::MAX] {
+            assert!(!ui.replace_text_area_range(area, range, "bad"));
+            assert_eq!(ui.text_area_value(area), Some(original));
+            assert_eq!(ui.text_area_caret(area), Some(1));
+        }
+        assert!(ui.replace_text_area_range(area, 0..5, "-- 中文🙂\r\n"));
+        let changed = ui.text_area_value(area).unwrap().to_owned();
+        assert_eq!(changed, "-- 中文🙂\r\nSELECT 1;");
+        let session = ui.text_area_state(area).unwrap();
+        let (mut rebuilt, _, next_area) = editor(&changed);
+        assert!(rebuilt.restore_text_area_state(next_area, &session));
+        assert!(rebuilt.key_input(UiKey::Undo));
+        assert_eq!(rebuilt.text_area_value(next_area), Some(original));
+        assert_eq!(rebuilt.text_area_selection(next_area), Some(1..3));
+        assert_eq!(rebuilt.text_area_caret(next_area), Some(1));
+        rebuilt.key_input(UiKey::Undo);
+        assert_eq!(rebuilt.text_area_value(next_area), Some(original), "no second edit to undo");
+        assert!(rebuilt.key_input(UiKey::Redo));
+        assert_eq!(rebuilt.text_area_value(next_area), Some(changed.as_str()));
+        rebuilt.set_text_area_read_only(next_area, true);
+        assert!(!rebuilt.replace_text_area_range(next_area, 0..2, "bad"));
+        assert!(!rebuilt.replace_text_area_range(WidgetId(0), 0..0, "bad"));
+        assert_eq!(rebuilt.text_area_value(next_area), Some(changed.as_str()));
     }
 
     #[test]
