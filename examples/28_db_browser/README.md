@@ -51,6 +51,12 @@ undo/redo. SQL tabs retain their own caret, selection, viewport and undo history
 through UI rebuilds. These editing sessions are in memory; project files still
 save SQL text only.
 
+Function hints show connection-aware signatures, parameter names and descriptions.
+Use the hint's arrows to browse overloads. Cmd/Ctrl+Shift+Space opens a dismissed
+hint or cycles to the next overload. Long hint text scrolls with the wheel over
+the hint or Cmd/Ctrl+Shift+PageUp/PageDown. The SQL editor keeps focus, selection
+and undo history; ordinary PageUp/PageDown still navigates the document.
+
 Execute runs the selection when present, otherwise the entire script.
 Cmd/Ctrl+Enter executes, Cmd/Ctrl+F opens Find, Cmd/Ctrl+Z undoes, and
 Cmd/Ctrl+Shift+Z or Ctrl+Y redoes. Cmd/Ctrl+C/X/V copy, cut and paste the SQL

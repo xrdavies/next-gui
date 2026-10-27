@@ -3136,7 +3136,7 @@ impl Ui {
     /// Begin a pointer press with primary (`secondary = false`) or secondary
     /// / right button (`secondary = true`, opens [`Kind::ContextMenu`]).
     pub fn pointer_press(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool) -> bool {
-        self.pointer_text_area_hint(scene, x, y);
+        if self.pointer_text_area_hint(scene, x, y, secondary) { return true; }
         // Open popup hit first (overlay sits above everything).
         if let Some(pid) = self.open_popup {
             if self.popup_contains(scene, pid, x, y) {
@@ -3509,6 +3509,7 @@ impl Ui {
                 return true;
             }
         }
+        if self.wheel_text_area_hint(scene, x, y, dy) { return true; }
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
         };
@@ -16259,8 +16260,10 @@ impl Ui {
         let width = style.max_width.max(1.0).min(vw);
         let wrap = (width - padding * 2.0).max(1.0);
         let layout = self.font.layout(&text, style.size, Some(wrap));
-        let tip_w = (layout.width + padding * 2.0).min(width);
-        let tip_h = (layout.height + padding * 2.0).min(vh);
+        let (header, header_width) = self.text_area_hint_header_size(id, style.size);
+        let header = header.min((vh - padding * 2.0).max(0.0));
+        let tip_w = (layout.width.max(header_width) + padding * 2.0).min(width);
+        let tip_h = (layout.height + padding * 2.0 + header).min(vh);
         let x = host_bounds.x.clamp(0.0, (vw - tip_w).max(0.0));
         let below = host_bounds.y + host_bounds.height + style.gap;
         let y = if below + tip_h <= vh { below } else { host_bounds.y - style.gap - tip_h }
@@ -16274,12 +16277,15 @@ impl Ui {
         scene.set_mask(bg, None);
         scene.set_visible(bg, true);
         self.apply_corner_radius(scene, bg, false);
+        let body_height = (tip.height - padding * 2.0 - header).max(0.0);
+        let scroll = self.bound_text_area_hint_scroll(id, (layout.height - body_height).max(0.0));
         let (_, mask) = self.font.rasterize_text(&text, style.size, Some(wrap));
-        scene.set_bounds(label, Rect::new(tip.x + padding, tip.y + padding, mask.width as f32, mask.height as f32));
-        scene.set_clip(label, Some(Rect::new(tip.x + padding, tip.y + padding, (tip.width - padding * 2.0).max(0.0), (tip.height - padding * 2.0).max(0.0))));
+        scene.set_bounds(label, Rect::new(tip.x + padding, tip.y + padding + header - scroll, mask.width as f32, mask.height as f32));
+        scene.set_clip(label, Some(Rect::new(tip.x + padding, tip.y + padding + header, (tip.width - padding * 2.0).max(0.0), body_height)));
         scene.set_fill(label, style.fg);
         scene.set_mask(label, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
         scene.set_visible(label, true);
+        self.paint_text_area_hint_controls(scene, id, tip, padding, header, layout.height);
         if let Some(host) = self.overlay_host { scene.raise(host); }
     }
 

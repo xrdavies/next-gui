@@ -697,8 +697,8 @@ impl Demo {
             let caret = state.sql_editor().chars().count();
             built.ui.set_focus(Some(built.sql_area));
             built.ui.select_text_area_range(built.sql_area, caret..caret);
-            if let Some((anchor, text)) = state.sql_completion.calltip(state.sql_editor(), caret) {
-                built.ui.set_text_area_hint(built.sql_area, anchor, text);
+            if let Some(hint) = state.sql_completion.calltip(state.sql_editor(), caret) {
+                built.ui.set_text_area_hints(built.sql_area, hint.anchor, hint.items, hint.preferred);
             }
             built.ui.sync(&mut built.scene);
         }
@@ -2088,11 +2088,32 @@ impl Demo {
             self.ui.text_area_caret(area).and_then(|caret| self.state.sql_completion.calltip(
                 self.ui.text_area_value(area).unwrap_or_default(), caret))
         } else { None };
-        if let Some((anchor, text)) = hint { self.ui.set_text_area_hint(area, anchor, text); }
+        if let Some(hint) = hint { self.ui.set_text_area_hints(area, hint.anchor, hint.items, hint.preferred); }
         else { self.ui.set_text_area_hint(area, 0, ""); }
     }
 
     fn handle_sql_completion_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if modifiers.commandish() && modifiers.shift && !modifiers.alt
+            && self.state.tab == MainTab::ExecuteSql && !self.state.confirm_open
+            && matches!(self.state.overlay, None | Some(OverlayKind::FindReplace))
+            && self.ui.focused() == Some(self.ids.sql_area)
+        {
+            if matches!(key, KeyCode::Space | KeyCode::Char(' ')) {
+                if self.ui.text_area_hint(self.ids.sql_area).is_some() {
+                    self.ui.cycle_text_area_hint(self.ids.sql_area, true);
+                } else {
+                    self.ui.close_popup();
+                    self.ui.set_text_area_hint(self.ids.sql_area, 0, "");
+                    self.update_sql_hint();
+                }
+                return true;
+            }
+            if matches!(key, KeyCode::PageUp | KeyCode::PageDown) && self.ui.text_area_hint(self.ids.sql_area).is_some() {
+                self.ui.scroll_text_area_hint(self.ids.sql_area,
+                    self.win_h as f32 * if key == KeyCode::PageDown { 0.5 } else { -0.5 });
+                return true;
+            }
+        }
         if modifiers.commandish() && !modifiers.shift && !modifiers.alt
             && matches!(key, KeyCode::Space | KeyCode::Char(' '))
             && self.state.tab == MainTab::ExecuteSql && self.ui.focused() == Some(self.ids.sql_area)
@@ -4375,6 +4396,98 @@ mod interaction_tests {
         assert_eq!(demo.ui.focused(), Some(demo.ids.sql_area));
         assert!(demo.state.sql_result.is_none());
         assert_eq!((demo.state.conn.as_ref().unwrap().total_changes(), demo.state.conn.as_ref().unwrap().is_autocommit()), before);
+    }
+
+    #[test]
+    fn sql_calltip_many_overloads_are_individually_readable_without_editing() {
+        let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        let conn = demo.state.conn.as_ref().unwrap();
+        for arity in 1..=16 {
+            conn.create_scalar_function("many_overloads", arity,
+                rusqlite::functions::FunctionFlags::SQLITE_UTF8, |_| Ok(1)).unwrap();
+        }
+        demo.state.refresh_schema().unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = "SELECT many_overloads(".into();
+        demo.do_rebuild();
+        let area = demo.ids.sql_area;
+        demo.ui.set_focus(Some(area));
+        let end = demo.state.sql_editor().chars().count();
+        demo.ui.select_text_area_range(area, end..end);
+        demo.update_sql_hint();
+        let text = demo.ui.text_area_hint(area).unwrap();
+        assert!(text.lines().count() <= 3, "overloads must not form a clipped wall of text: {text}");
+        assert!(text.starts_with("many_overloads(arg1)\n"));
+        assert_eq!(demo.ui.text_area_hint_page(area), Some((0, 16)));
+        let shortcut = Modifiers { ctrl: true, shift: true, ..Modifiers::default() };
+        for expected in 1..16 {
+            assert!(demo.handle_sql_completion_key(KeyCode::Space, shortcut));
+            demo.update_sql_hint();
+            assert_eq!(demo.ui.text_area_hint_page(area), Some((expected, 16)));
+        }
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        let area = demo.ids.sql_area;
+        assert_eq!(demo.ui.text_area_hint_page(area), Some((15, 16)));
+        assert!(demo.ui.text_area_hint(area).unwrap().contains("arg16)"));
+        assert_eq!(demo.ui.focused(), Some(area));
+        assert_eq!(demo.ui.text_area_selection(area), Some(end..end));
+        assert_eq!(demo.ui.text_area_value(area), Some("SELECT many_overloads("));
+        assert!(demo.state.sql_result.is_none());
+        assert!(demo.handle_sql_completion_key(KeyCode::Escape, Modifiers::default()));
+        assert_eq!(demo.ui.text_area_hint_page(area), None);
+        assert!(demo.handle_sql_completion_key(KeyCode::Space, shortcut));
+        assert_eq!(demo.ui.text_area_hint_page(area), Some((0, 16)));
+        demo.input_key_with_sql_completions(UiKey::Char(','));
+        demo.update_sql_hint();
+        assert_eq!(demo.ui.text_area_hint_page(area), Some((1, 16)));
+        demo.ui.key_input(UiKey::Undo);
+        assert_eq!(demo.ui.text_area_value(area), Some("SELECT many_overloads("));
+    }
+
+    #[test]
+    fn sql_calltip_long_signature_scrolls_with_keyboard_without_editing() {
+        let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().create_scalar_function("long_signature", 127,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8, |_| Ok(1)).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.prefs.font_size = 28.0;
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = "SELECT long_signature(".into();
+        demo.do_rebuild();
+        let area = demo.ids.sql_area;
+        demo.ui.set_focus(Some(area));
+        let end = demo.state.sql_editor().chars().count();
+        demo.ui.select_text_area_range(area, end..end);
+        demo.update_sql_hint();
+        demo.ui.sync(&mut demo.scene);
+        let before = demo.ui.text_area_scroll(area);
+        for phase in ["top", "end"] {
+            if phase == "end" {
+                let shortcut = Modifiers { ctrl: true, shift: true, ..Modifiers::default() };
+                assert!(demo.handle_sql_completion_key(KeyCode::PageDown, shortcut));
+                assert!(demo.ui.scroll_text_area_hint(area, f32::MAX));
+                demo.update_sql_hint();
+                demo.ui.sync(&mut demo.scene);
+            }
+            let panel = demo.scene.iter_paint_order().into_iter().rev().find(|n|
+                n.visible && n.fill == demo.ui.tooltip_style().bg && n.bounds.width > 100.0 && n.bounds.height > 400.0
+            ).unwrap().bounds;
+            assert!(panel.x >= 0.0 && panel.y >= 0.0 && panel.x + panel.width <= 800.0 && panel.y + panel.height <= 600.0);
+            if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_CALLTIP_QA_OUT") {
+                demo.scene.mark_full_dirty(800.0, 600.0);
+                let dirty = demo.scene.take_dirty();
+                let mut renderer = SoftRenderer::new(800, 600, clear_color(&demo.theme));
+                renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+                write_ppm(&format!("{prefix}-long-{phase}.ppm"), renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
+            }
+        }
+        assert_eq!(demo.ui.text_area_scroll(area), before);
+        assert_eq!(demo.ui.text_area_selection(area), Some(end..end));
+        assert_eq!(demo.ui.text_area_value(area), Some("SELECT long_signature("));
+        assert!(demo.state.sql_result.is_none());
     }
 
     #[test]

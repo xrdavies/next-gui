@@ -10,7 +10,7 @@ pub(super) struct TextAreaEdit {
     pub(super) reveal: bool,
     highlights: Option<(Color, Vec<Range<usize>>)>,
     foregrounds: Vec<(Range<usize>, Color)>,
-    pub(super) hint_dismissed: Option<(usize, String)>,
+    pub(super) hint: Option<super::text_area_hint::HintState>,
 }
 
 #[derive(Debug, Clone)]

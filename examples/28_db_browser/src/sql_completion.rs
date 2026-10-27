@@ -46,6 +46,12 @@ struct RegisteredFunction {
     builtin: bool,
 }
 
+pub struct Calltip {
+    pub anchor: usize,
+    pub items: Vec<String>,
+    pub preferred: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct Catalog {
     entries: Vec<Entry>,
@@ -233,7 +239,7 @@ impl Catalog {
         Some((context.range, items))
     }
 
-    pub fn calltip(&self, sql: &str, caret: usize) -> Option<(usize, String)> {
+    pub fn calltip(&self, sql: &str, caret: usize) -> Option<Calltip> {
         let context =
             crate::sql_calltip::context(sql, caret, |name| self.functions.contains_key(name))?;
         let arities = self.functions.get(&context.name)?;
@@ -262,43 +268,50 @@ impl Catalog {
                 )
             })
             .collect::<Vec<_>>();
-        let active = forms
+        let preferred = forms
             .iter()
-            .find(|(arity, _, _)| {
+            .position(|(arity, _, _)| {
                 usize::try_from(*arity).is_ok_and(|arity| arity > context.argument)
             })
-            .or_else(|| forms.iter().find(|(arity, _, _)| *arity < 0))
-            .or_else(|| forms.last())?;
-        let signatures = forms
-            .iter()
-            .map(|(_, params, _)| format!("{}({params})", context.name))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let status = if active.0 == 0 {
-            "No arguments".to_owned()
-        } else {
-            let params = active.1.split(", ").collect::<Vec<_>>();
-            let parameter = params
-                .get(context.argument)
-                .or_else(|| params.last().filter(|p| p.contains('…')));
-            if let Some(parameter) = parameter.filter(|p| !active.2.is_empty() && **p != "…") {
+            .or_else(|| forms.iter().position(|(arity, _, _)| *arity < 0))
+            .unwrap_or(forms.len() - 1);
+        let items = forms
+            .into_iter()
+            .map(|(arity, params, description)| {
+                let status = if arity == 0 {
+                    "No arguments".to_owned()
+                } else {
+                    let parameters = params.split(", ").collect::<Vec<_>>();
+                    let parameter = parameters
+                        .get(context.argument)
+                        .or_else(|| parameters.last().filter(|p| p.contains('…')));
+                    if let Some(parameter) =
+                        parameter.filter(|p| !description.is_empty() && **p != "…")
+                    {
+                        format!(
+                            "Argument {} · {}",
+                            context.argument + 1,
+                            parameter.trim_end_matches('…')
+                        )
+                    } else if arity > 0 && context.argument >= arity as usize {
+                        format!("Argument {} · accepts {arity}", context.argument + 1)
+                    } else {
+                        format!("Argument {}", context.argument + 1)
+                    }
+                };
                 format!(
-                    "Argument {} · {}",
-                    context.argument + 1,
-                    parameter.trim_end_matches('…')
+                    "{}({params})\n{status}{}{}",
+                    context.name,
+                    if description.is_empty() { "" } else { "\n" },
+                    description
                 )
-            } else {
-                format!("Argument {}", context.argument + 1)
-            }
-        };
-        Some((
-            context.anchor,
-            format!(
-                "{signatures}\n{status}{}{}",
-                if active.2.is_empty() { "" } else { "\n" },
-                active.2
-            ),
-        ))
+            })
+            .collect();
+        Some(Calltip {
+            anchor: context.anchor,
+            items,
+            preferred,
+        })
     }
 }
 
@@ -451,6 +464,11 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn hint(catalog: &Catalog, sql: &str) -> String {
+        let h = catalog.calltip(sql, sql.chars().count()).unwrap();
+        h.items[h.preferred].clone()
+    }
+
     #[test]
     fn user_tables_cannot_shadow_function_metadata() {
         let conn = Connection::open_in_memory().unwrap();
@@ -465,7 +483,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         let builtin = Catalog::load(&conn);
         let sql = "substr('中文', 1,";
-        let text = builtin.calltip(sql, sql.chars().count()).unwrap().1;
+        let text = hint(&builtin, sql);
         assert!(text.contains("substr(string, start, length)"), "{text}");
         assert!(text.contains("Argument 3 · length"), "{text}");
         conn.create_scalar_function(
@@ -476,15 +494,11 @@ mod tests {
         )
         .unwrap();
         let custom = Catalog::load(&conn);
-        let text = custom.calltip(sql, sql.chars().count()).unwrap().1;
+        let text = hint(&custom, sql);
         assert!(text.contains("substr(arg1, arg2, arg3)"), "{text}");
         assert!(!text.contains("Argument 3 · length"), "{text}");
         assert!(!text.contains("Extract a substring"), "{text}");
-        assert!(Catalog::default()
-            .calltip(sql, sql.chars().count())
-            .unwrap()
-            .1
-            .contains("Argument 3 · length"));
+        assert!(hint(&Catalog::default(), sql).contains("Argument 3 · length"));
     }
 
     #[test]
@@ -499,10 +513,10 @@ mod tests {
             ("group_concat(value,", "separator"),
             ("max(1, 2, 3,", "values"),
         ] {
-            let text = c.calltip(sql, sql.chars().count()).unwrap().1;
+            let text = hint(&c, sql);
             assert!(text.contains(&format!(" · {parameter}\n")), "{text}");
         }
-        let zero = c.calltip("row_number(", 11).unwrap().1;
+        let zero = hint(&c, "row_number(");
         assert!(zero.contains("No arguments\nRow position"));
         assert!(!zero.contains("Argument 1"));
     }
@@ -514,7 +528,7 @@ mod tests {
         let c = Catalog::load(&conn);
         assert_eq!(c.calltip("atan2(1,", 8).is_some(), available);
         if available {
-            let text = c.calltip("atan2(1,", 8).unwrap().1;
+            let text = hint(&c, "atan2(1,");
             assert!(text.contains("atan2(y, x)\nArgument 2 · x"), "{text}");
             let angle: f64 = conn
                 .query_row("SELECT atan2(1, 0)", [], |r| r.get(0))
@@ -529,7 +543,7 @@ mod tests {
         )
         .unwrap();
         let c = Catalog::load(&conn);
-        let custom = c.calltip("coalesce(NULL,", 14).unwrap().1;
+        let custom = hint(&c, "coalesce(NULL,");
         assert_eq!(custom, "coalesce(arg1, …)\nArgument 2");
     }
 
@@ -547,21 +561,24 @@ mod tests {
         }
         let c = Catalog::load(&conn);
         drop(conn);
-        let hint = |sql: &str| c.calltip(sql, sql.chars().count()).unwrap().1;
+        let active_hint = |sql: &str| hint(&c, sql);
         assert_eq!(
-            hint("custom_hint("),
-            "custom_hint()\ncustom_hint(arg1, arg2)\nArgument 1"
+            active_hint("custom_hint("),
+            "custom_hint(arg1, arg2)\nArgument 1"
         );
         assert_eq!(
-            hint("random("),
+            active_hint("random("),
             "random()\nNo arguments\nPseudorandom signed integer."
         );
         assert_eq!(
-            hint("coalesce(1,"),
+            active_hint("coalesce(1,"),
             "coalesce(first, second, values…)\nArgument 2 · second\nFirst non-NULL value."
         );
-        let overloads = hint("substr('x', 1,");
-        assert!(overloads.contains("substr(string, start)\nsubstr(string, start, length)"));
+        let overloads = active_hint("substr('x', 1,");
+        assert!(overloads.starts_with("substr(string, start, length)\n"));
+        let pages = c.calltip("substr('x', 1,", 14).unwrap();
+        assert_eq!((pages.items.len(), pages.preferred), (2, 1));
+        assert!(pages.items[0].starts_with("substr(string, start)\nArgument 3 · accepts 2"));
         assert!(overloads.contains("Argument 3 · length"));
         assert!(Catalog::default().calltip("custom_hint(", 12).is_none());
         assert!(c.calltip("unknown(", 8).is_none());
