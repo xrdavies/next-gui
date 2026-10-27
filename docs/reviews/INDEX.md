@@ -88,6 +88,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-28 | `69ac54f..ce1ec4558b01` | Codex | issues — original three constraint grids, retained Table views and validated SQL fragments/shared multiline copy;515 tests/strict checks, eight Soft/Metal pairs, six native pages/14 Office static captures; locked native input/full parity pending | [Report](R-20261028-ce1ec4558b01.md) |
 | 2026-10-28 | `bf6bac9..0ff71c70e6fd` | Codex | issues — inline Fields text editing and shared input contrast/caret;512 tests/strict checks, four Soft/Metal pairs, both native themes/14 Office static captures; locked desktop prevents input acceptance; full parity continues | [Report](R-20261028-0ff71c70e6fd.md) |
 | 2026-10-28 | `18a40bf..672e462f70c8` | Codex | Direct NN/PK/AI/Unique cells, shared normal/virtual Table checks and qualified safe Save;508 tests/strict checks, Soft/Metal delta1 and native/Office static captures; native input unavailable/full parity remains | [Report](R-20261028-672e462f70c8.md) |
 | 2026-10-28 | `0f52234..0da0f3c214c0` | Codex | Global name/options/Advanced, small-window layout and retained name history;506 tests/strict checks, four Soft/Metal pairs/14 Office windows; native Undo/Redo/Save/Browse verified; full parity remains | [Report](R-20261028-0da0f3c214c0.md) |

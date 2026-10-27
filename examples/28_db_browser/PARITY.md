@@ -641,3 +641,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Inline Fields text editors (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-0ff71c70e6fd.md): Name/Type/Default/Collation now edit in place with F2, typing, selected click, Tab/BackTab, Enter/Esc and standard history/IME/suggestions. Shared input selection contrast, long caret and frozen-filter clipping pass.512 tests/strict checks, four Soft/Metal pairs (delta1), both native themes/14 Office static captures inspected. Desktop locked; actual native input, inline SQL cells, original constraint grids/selectors, resizable preview, full cross-field history and broader product/runtime parity remain unfinished.
+
+### Original constraint grids (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-ce1ec4558b01.md): Index/FK/CHECK pages now show the original columns in frozen/resizable/scrollable shared tables. Draft-safe selection/focus/view persistence, validated SQL fragments, quoted multiline copy and actual Save retain rowids/sequence/view/trigger/enforced constraints.515 tests/strict checks, eight Soft/Metal pairs (delta<=2), six native pages/14 Office static windows inspected. Direct constraint editors/selectors, inline SQL, resizable preview, full history/movement/details and broader product/runtime parity remain unfinished; native input unavailable on locked desktop.
