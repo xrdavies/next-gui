@@ -56,6 +56,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `ec2ae64..db7f25222647` | Codex | issues — 296 tests/clippy/build/features pass; per-table filters/order/widths and inactive native XML, preflight and Soft/Metal inspected; full settings/native input remain | [Report](R-20261027-db7f25222647.md) |
 | 2026-10-27 | `5d9310e..8ab0778f3a16` | Codex | issues — 292 tests/clippy/build/features pass; failed-view baseline and restoration verified, cyclic table shortcuts and Soft/Metal inspected; per-table settings/full parity remain | [Report](R-20261027-8ab0778f3a16.md) |
 | 2026-10-27 | `fd2f019..3f3153b4c200` | Codex | issues — 289 tests/clippy/build/features pass; page keys and guarded global shortcuts, public enum migration, e28/14 Office renders inspected; native input/full parity remain | [Report](R-20261027-3f3153b4c200.md) |
 | 2026-10-27 | `5123401..5c9c20d208ae` | Codex | issues — 287 tests/clippy/build/features pass; visible-row Previous/Next, resize and cross-cache checks, Soft/Metal inspected; exact top/row selection and full parity remain | [Report](R-20261027-5c9c20d208ae.md) |

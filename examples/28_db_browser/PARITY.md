@@ -120,7 +120,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-table settings restoration and attached/temp schemas remain. |
+| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-tab/per-table filters, ordering and widths restore across switches and JSON/XML projects. Per-table freeze/hidden/formats and attached/temp schemas remain. |
 | Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment and full form controls remain. Plain PageUp/PageDown and Ctrl/Cmd+Home/End reach the full result; Shift ranges remain cache-local. |
 
 ## Edit Pragmas tab
@@ -396,3 +396,15 @@ through tables/views, and source filters do not leak into unrelated schemas.
 Workspace: 292 tests, clippy/build/platform features pass; Soft failure recovery
 and native Metal painting inspected. Per-table option restoration is the next
 gap; full reproduction and native input remain open. See [review](../../docs/reviews/R-20261027-8ab0778f3a16.md).
+
+### Per-table option checkpoint (2026-10-27)
+
+`db7f25222647` restores independent per-table WHERE/global/column filters, ordered
+sort terms and column widths in each browse tab. JSON, the e28 XML extension and
+native DB4S supported fields retain inactive-table options. Project preflight
+checks inactive saved queries before adopting a database; failures retain the
+current connection and editor. Native-only XML roundtrip and inactive freeze
+metadata preservation are covered. Workspace: 296 tests, clippy/build/platform
+features pass; Soft restored state and native Metal painting inspected. Per-table
+freeze restoration, hidden/display formats, native binary/input acceptance and
+full reproduction remain open. See [review](../../docs/reviews/R-20261027-db7f25222647.md).
