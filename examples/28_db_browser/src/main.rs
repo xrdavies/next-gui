@@ -634,8 +634,8 @@ impl Demo {
                     if tab == "table-namespaces" { state.open_modify_table_wizard().unwrap(); }
                     if tab == "index-namespaces" {
                         state.open_create_index_wizard();
-                        state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC, revenue".into();
-                        state.wizard_index_where = "revenue >= 100 AND region IS NOT NULL".into();
+                        state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC,\nrevenue -- keep column comment".into();
+                        state.wizard_index_where = "revenue >= 100\nAND region IS NOT NULL".into();
                     }
                     if matches!(tab.as_str(), "schema-namespaces" | "table-namespaces" | "index-namespaces") { MainTab::Structure } else { MainTab::Browse }
                 }
@@ -1038,11 +1038,14 @@ impl Demo {
                 self.flush_wizard_col();
             }
             OverlayKind::EditIndex => {
-                if let Some(value) = self.ui.text_input_value(self.ids.ov_idx_where) {
+                for (index, area) in [self.ids.ov_idx_cols, self.ids.ov_idx_where].into_iter().enumerate() {
+                    self.state.wizard_index_edit_states[index] = self.ui.text_area_state(area);
+                }
+                if let Some(value) = self.ui.text_area_value(self.ids.ov_idx_where) {
                     self.state.wizard_index_where = value.to_string();
                 }
                 if self.ids.ov_idx_cols.0 != 0 {
-                    if let Some(v) = self.ui.text_input_value(self.ids.ov_idx_cols) {
+                    if let Some(v) = self.ui.text_area_value(self.ids.ov_idx_cols) {
                         self.state.wizard_index_cols = v.to_string();
                     }
                 }
@@ -1268,6 +1271,9 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let index_focused = (self.state.overlay == Some(OverlayKind::EditIndex)).then(||
+            [self.ids.ov_idx_cols, self.ids.ov_idx_where].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
+        ).flatten();
         let dock_tabs_view = self.ui.tabs_state(self.ids.dock_tabs);
         let log_revision = self.state.sql_log.revision();
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
@@ -1291,6 +1297,10 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(index) = index_focused {
+            self.ui.set_focus(Some([self.ids.ov_idx_cols, self.ids.ov_idx_where][index]));
+            self.ui.sync(&mut self.scene);
+        }
         self.last_schema_names = self.state.schema_names.clone();
         if self.ids.tree.0 != 0 {
             let reveal = std::mem::take(&mut self.reveal_schema_selection);
@@ -3213,6 +3223,9 @@ impl Demo {
             self.do_rebuild();
         } else {
             sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
+            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where] {
+                sql_syntax::apply(&mut self.ui, area, &self.theme);
+            }
             self.update_sql_hint();
             self.ui.sync(&mut self.scene);
             self.needs_paint = true;
@@ -5494,24 +5507,42 @@ mod interaction_tests {
         let table = demo.state.index_tables().iter().position(|pair| *pair == ("main", "customers")).unwrap();
         demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(table));
         demo.ui.set_text_input(demo.ids.ov_name, "created.\"index");
-        demo.ui.set_text_input(demo.ids.ov_idx_cols, "lower(name) COLLATE NOCASE DESC");
-        demo.ui.set_text_input(demo.ids.ov_idx_where, "id > 0");
+        let keys = "lower(name) COLLATE NOCASE DESC,\nlength(name) -- key comment";
+        assert_eq!(demo.ui.accessible_name(demo.ids.ov_idx_cols).as_deref(), Some("Index columns and expressions"));
+        assert_eq!(demo.ui.accessible_name(demo.ids.ov_idx_where).as_deref(), Some("Partial index WHERE condition"));
+        demo.ui.set_text_area_value(demo.ids.ov_idx_cols, keys);
+        demo.ui.set_text_area_value(demo.ids.ov_idx_where, "id > 0\nAND id < 100");
+        for (index, value) in [keys, "id > 0\nAND id < 100"].into_iter().enumerate() {
+            let area = [demo.ids.ov_idx_cols, demo.ids.ov_idx_where][index];
+            demo.ui.set_focus(Some(area));
+            demo.ui.select_text_area_range(area, value.chars().count()..value.chars().count());
+            demo.ui.paste_into_focused_text("\n");
+            demo.snapshot_inputs();
+            let selection = demo.ui.text_area_selection(area);
+            demo.do_rebuild();
+            let area = [demo.ids.ov_idx_cols, demo.ids.ov_idx_where][index];
+            assert_eq!(demo.ui.focused(), Some(area));
+            assert_eq!(demo.ui.text_area_selection(area), selection);
+            demo.ui.key_input(UiKey::Undo);
+            assert_eq!(demo.ui.text_area_value(area), Some(value));
+            demo.snapshot_inputs();
+        }
         demo.handle_button(demo.ids.ov_btn_ok);
         assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
         assert_eq!(demo.state.selected.as_ref().unwrap().schema, "main");
         demo.do_rebuild();
         demo.handle_button(demo.ids.btn_struct_modify);
         demo.do_rebuild();
-        assert_eq!(demo.ui.text_input_value(demo.ids.ov_idx_where), Some("id > 0"));
-        assert_eq!(demo.ui.text_input_value(demo.ids.ov_idx_cols), Some("lower(name) COLLATE NOCASE DESC"));
+        assert_eq!(demo.ui.text_area_value(demo.ids.ov_idx_where), Some("id > 0\nAND id < 100"));
+        assert_eq!(demo.ui.text_area_value(demo.ids.ov_idx_cols), Some(keys));
         let table = demo.state.index_tables().iter().position(|pair| *pair == ("analytics", "customers")).unwrap();
         demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(table));
-        demo.ui.set_text_input(demo.ids.ov_idx_cols, "missing_column");
+        demo.ui.set_text_area_value(demo.ids.ov_idx_cols, "missing_column");
         demo.handle_button(demo.ids.ov_btn_ok);
         assert!(demo.state.error_msg.is_some());
         assert!(dbmod::list_schema(demo.state.conn.as_ref().unwrap()).unwrap().iter().any(|o| o.name == "created.\"index"));
         demo.do_rebuild();
-        demo.ui.set_text_input(demo.ids.ov_idx_cols, "region COLLATE NOCASE DESC");
+        demo.ui.set_text_area_value(demo.ids.ov_idx_cols, "region COLLATE NOCASE DESC");
         demo.handle_button(demo.ids.ov_btn_ok);
         assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
         assert_eq!(demo.state.selected.as_ref().unwrap().schema, "analytics");
@@ -5550,13 +5581,13 @@ mod interaction_tests {
                         demo.state.open_create_index_wizard();
                         demo.state.wizard_index_table = "customers".into();
                         demo.state.wizard_index_name = "idx_customer_region".into();
-                        demo.state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC, revenue".into();
-                        demo.state.wizard_index_where = "revenue >= 100 AND region IS NOT NULL".into();
+                        demo.state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC,\nrevenue -- keep column comment".into();
+                        demo.state.wizard_index_where = "revenue >= 100\nAND region IS NOT NULL".into();
                     }
                     else { demo.state.open_create_table_wizard(); }
                     demo.state.wizard_schema = "analytics".into();
                     demo.do_rebuild();
-                    let phases: &[&str] = if !index && width == 800 { &["top", "bottom"] } else { &["top"] };
+                    let phases: &[&str] = if width == 800 { &["top", "bottom"] } else { &["top"] };
                     for phase in phases {
                         if *phase == "bottom" {
                             assert!(demo.ui.set_scroll_offset(demo.ids.ov_scroll, 0.0, 10000.0));
@@ -5572,7 +5603,7 @@ mod interaction_tests {
                         let save = bounds(demo.ids.ov_btn_ok);
                         assert!(viewport.y + viewport.height <= save.y && save.y + save.height <= height as f32);
                         if *phase == "bottom" {
-                            let field = bounds(demo.ids.ov_default);
+                            let field = bounds(if index { demo.ids.ov_idx_where } else { demo.ids.ov_default });
                             assert!(field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height);
                         }
                         if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_WIZARD_QA_OUT") {

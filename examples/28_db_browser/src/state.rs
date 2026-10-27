@@ -403,6 +403,7 @@ pub struct AppState {
     pub wizard_index_table: String,
     pub wizard_index_cols: String,
     pub wizard_index_where: String,
+    pub wizard_index_edit_states: [Option<next_gui_ui::TextAreaState>; 2],
     pub wizard_index_unique: bool,
     pub wizard_index_original: Option<SelectedObject>,
 
@@ -663,6 +664,7 @@ impl AppState {
             wizard_index_table: String::new(),
             wizard_index_cols: "name".into(),
             wizard_index_where: String::new(),
+            wizard_index_edit_states: [None, None],
             wizard_index_unique: false,
             wizard_index_original: None,
             csv_path: String::new(),
@@ -1557,6 +1559,7 @@ impl AppState {
         self.wizard_index_table = table;
         self.wizard_index_cols = String::new();
         self.wizard_index_where.clear();
+        self.wizard_index_edit_states = [None, None];
         self.wizard_index_unique = false;
         self.wizard_index_original = None;
         self.overlay = Some(OverlayKind::EditIndex);
@@ -1594,6 +1597,7 @@ impl AppState {
         self.wizard_index_unique = unique;
         self.wizard_index_cols = columns;
         self.wizard_index_where = predicate;
+        self.wizard_index_edit_states = [None, None];
         self.overlay = Some(OverlayKind::EditIndex);
         Ok(())
     }

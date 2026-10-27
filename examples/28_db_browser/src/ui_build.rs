@@ -907,18 +907,13 @@ pub fn build_ui(
                                         selector,
                                     );
                                 });
-                                c.row(row, |r| {
-                                    r.text("Columns");
-                                    ov_idx_cols = r.text_input_styled(
-                                        &state.wizard_index_cols,
-                                        "column or expression, …",
-                                        wide_s,
-                                    );
-                                });
-                                c.row(row, |r| {
-                                    r.text("Partial clause");
-                                    ov_idx_where = r.text_input_styled(&state.wizard_index_where, "condition after WHERE (optional)", wide_s);
-                                });
+                                c.text("Columns / expressions");
+                                let mut sql_area = area_s;
+                                sql_area.height = 84.0;
+                                ov_idx_cols = c.text_area(&state.wizard_index_cols, "column or expression, …", sql_area);
+                                c.text("Partial clause · condition after WHERE (optional)");
+                                sql_area.height = 64.0;
+                                ov_idx_where = c.text_area(&state.wizard_index_where, "e.g. revenue > 0", sql_area);
                                 ov_idx_unique = c.switch_styled("Unique", state.wizard_index_unique, sw);
                             });
                         }
@@ -1981,6 +1976,8 @@ pub fn build_ui(
 
     let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
     ui.set_accessible_name(browse_header_menu, "Browse column actions");
+    ui.set_accessible_name(ov_idx_cols, "Index columns and expressions");
+    ui.set_accessible_name(ov_idx_where, "Partial index WHERE condition");
     if btn_sql_comment.0 != 0 {
         ui.set_accessible_name(btn_sql_comment, "Toggle SQL line comments (Ctrl/Cmd+/)");
     }
@@ -2024,6 +2021,10 @@ pub fn build_ui(
     ui.set_scroll_offset(dock_scroll, dock_offset.0, dock_offset.1);
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
+    }
+    for (index, area) in [ov_idx_cols, ov_idx_where].into_iter().enumerate() {
+        if let Some(editor) = &state.wizard_index_edit_states[index] { ui.restore_text_area_state(area, editor); }
+        crate::sql_syntax::apply(&mut ui, area, &theme);
     }
     if !state.sql_log_view.as_ref().is_some_and(|view| ui.restore_text_area_state(log_area, view)) {
         let len = ui.text_area_value(log_area).map_or(0, |s| s.chars().count());

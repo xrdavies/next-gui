@@ -61,7 +61,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |--------|--------|-------|
 | Create Table… | partial | Main/temp/attached schema selection; basic column PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing. Original ordered-key list controls remain. |
-| Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; definition changes/reordering and expression/partial indexes require explicit SQL |
+| Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; table definition changes/reordering require explicit SQL; expression/partial index definitions edit in the qualified wizard |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
 
@@ -160,7 +160,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Dialog | Status | Notes |
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
-| EditIndexDialog | partial | Qualified raw expression keys/unique/partial WHERE with live definition retention and atomic replacement; original available/ordered-key lists, row controls, preview and multiline polish remain. |
+| EditIndexDialog | partial | Qualified raw expression keys/unique/partial WHERE with live definition retention and atomic replacement; syntax-colored multiline key/WHERE fields retain focus, selection and undo; original available/ordered-key lists, row controls and preview remain. |
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; malformed units/surrogates and unsupported UTF-32 BOMs are rejected before writing; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
