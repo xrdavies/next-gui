@@ -829,6 +829,9 @@ pub fn import_csv_parse_opts(
 }
 
 fn decode_csv_bytes(raw: &[u8]) -> Result<String, String> {
+    if raw.starts_with(&[0xff, 0xfe, 0, 0]) || raw.starts_with(&[0, 0, 0xfe, 0xff]) {
+        return Err("CSV UTF-32 is not supported; convert to UTF-8 or UTF-16".into());
+    }
     if raw.starts_with(&[0xff, 0xfe]) {
         let units = raw[2..]
             .chunks_exact(2)
@@ -1765,6 +1768,18 @@ mod tests {
         assert_eq!(n, 3);
         drop(conn);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn csv_decoder_rejects_incomplete_and_invalid_utf16_and_utf32_boms() {
+        for raw in [vec![0xff,0xfe,0], vec![0xfe,0xff,0], vec![0xff,0xfe,0,0xd8], vec![0xfe,0xff,0xd8,0]] {
+            assert!(decode_csv_bytes(&raw).is_err(), "{raw:?}");
+        }
+        for raw in [vec![0xff,0xfe,0,0,65,0,0,0], vec![0,0,0xfe,0xff,0,0,0,65]] {
+            assert!(decode_csv_bytes(&raw).unwrap_err().contains("UTF-32"));
+        }
+        assert_eq!(decode_csv_bytes(&[0xff,0xfe,0x3d,0xd8,0,0xde]).unwrap(), "😀");
+        assert_eq!(decode_csv_bytes(&[0xfe,0xff,0xd8,0x3d,0xde,0]).unwrap(), "😀");
     }
 
     #[test]
