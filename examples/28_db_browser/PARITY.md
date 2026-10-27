@@ -118,7 +118,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Record / form view | partial | Page-local navigation with a scrollable form; record navigation is still page-local even though the browse grid reports filtered totals. |
+| Record / form view | partial | Scrollable form navigation now crosses 500-row pages and reports the filtered global record number; advanced inline editing and full DB4S form controls remain. |
 
 ## Edit Pragmas tab
 

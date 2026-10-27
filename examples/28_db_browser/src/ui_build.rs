@@ -1409,10 +1409,12 @@ pub fn build_ui(
                                         btn_form_prev = row.tool_button("◀ Prev");
                                         btn_form_next = row.tool_button("Next ▶");
                                         let n = res.map(|r| r.rows.len()).unwrap_or(0);
+                                        let total = b.total_rows.unwrap_or(n);
+                                        let global_row = b.offset.saturating_add(row_i);
                                         row.text(format!(
                                             "Record {} / {}",
-                                            if n == 0 { 0 } else { row_i + 1 },
-                                            n
+                                            if n == 0 { 0 } else { global_row + 1 },
+                                            total
                                         ));
                                     });
                                     let mut form_scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);

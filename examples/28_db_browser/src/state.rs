@@ -2698,17 +2698,28 @@ impl AppState {
     }
 
     pub fn form_next_record(&mut self) {
-        let n = self
-            .browse()
-            .result
-            .as_ref()
-            .map(|r| r.rows.len())
-            .unwrap_or(0);
+        let (n, offset, total, cur) = {
+            let tab = self.browse();
+            (
+                tab.result.as_ref().map(|r| r.rows.len()).unwrap_or(0),
+                tab.offset,
+                tab.total_rows.unwrap_or(0),
+                tab.sel_row.unwrap_or(0),
+            )
+        };
         if n == 0 {
             return;
         }
-        let cur = self.browse().sel_row.unwrap_or(0);
-        self.browse_mut().sel_row = Some((cur + 1).min(n - 1));
+        if cur + 1 >= n && offset.saturating_add(n) < total {
+            self.browse_mut().offset = offset.saturating_add(db::DEFAULT_LIMIT);
+            if self.refresh_browse().is_err() {
+                self.browse_mut().offset = offset;
+                return;
+            }
+            self.browse_mut().sel_row = Some(0);
+        } else {
+            self.browse_mut().sel_row = Some((cur + 1).min(n - 1));
+        }
         if self.browse().sel_col.is_none() {
             self.browse_mut().sel_col = Some(0);
         }
@@ -2716,8 +2727,21 @@ impl AppState {
     }
 
     pub fn form_prev_record(&mut self) {
-        let cur = self.browse().sel_row.unwrap_or(0);
-        self.browse_mut().sel_row = Some(cur.saturating_sub(1));
+        let (offset, cur) = {
+            let tab = self.browse();
+            (tab.offset, tab.sel_row.unwrap_or(0))
+        };
+        if cur == 0 && offset >= db::DEFAULT_LIMIT {
+            self.browse_mut().offset = offset - db::DEFAULT_LIMIT;
+            if self.refresh_browse().is_err() {
+                self.browse_mut().offset = offset;
+                return;
+            }
+            let last = self.browse().result.as_ref().map(|r| r.rows.len()).unwrap_or(1).saturating_sub(1);
+            self.browse_mut().sel_row = Some(last);
+        } else {
+            self.browse_mut().sel_row = Some(cur.saturating_sub(1));
+        }
         if self.browse().sel_col.is_none() {
             self.browse_mut().sel_col = Some(0);
         }
@@ -3472,6 +3496,14 @@ mod chart_default_tests {
         assert_eq!(state.browse().offset, 500);
         state.browse_page(false).unwrap();
         assert_eq!(state.browse().offset, 0);
+        state.browse_view = BrowseViewMode::Form;
+        state.browse_mut().sel_row = Some(499);
+        state.form_next_record();
+        assert_eq!(state.browse().offset, 500);
+        assert_eq!(state.browse().sel_row, Some(0));
+        state.form_prev_record();
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_row, Some(499));
     }
 
     #[test]
