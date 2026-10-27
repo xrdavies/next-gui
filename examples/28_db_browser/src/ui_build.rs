@@ -186,6 +186,7 @@ pub struct BuiltUi {
     pub ov_generation: WidgetId,
     pub ov_table_preview: WidgetId,
     pub ov_table_tabs: WidgetId,
+    pub ov_table_advanced: WidgetId,
     pub ov_checks_scroll: WidgetId,
     pub ov_checks_list: WidgetId,
     pub ov_check_name: WidgetId,
@@ -510,6 +511,7 @@ pub fn build_ui(
     let mut ov_generation = z;
     let mut ov_table_preview = z;
     let mut ov_table_tabs = z;
+    let mut ov_table_advanced = z;
     let mut ov_checks_scroll = z;
     let mut ov_checks_list = z;
     let mut ov_check_name = z;
@@ -820,7 +822,7 @@ pub fn build_ui(
             // —— Overlay wizard panel ——
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
-            panel.height = content_h - if kind == OverlayKind::FindReplace { 0.0 } else { 50.0 };
+            panel.height = content_h - if matches!(kind, OverlayKind::FindReplace | OverlayKind::EditTable) { 0.0 } else { 50.0 };
             let title = match kind {
                 OverlayKind::InsertRow => "New Record",
                 OverlayKind::EditTable => {
@@ -907,10 +909,37 @@ pub fn build_ui(
                         OverlayKind::EditTable => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                             scroll.width = ov_col.width - 16.0;
-                            let preview_height = (ov_col.height * 0.22).clamp(72.0, 140.0);
-                            scroll.height = (ov_col.height - preview_height - 48.0).max(100.0);
+                            let preview_height = if state.wizard_table_advanced { (ov_col.height*0.18).clamp(48.0,120.0) }
+                                else { (ov_col.height*0.22).clamp(72.0,140.0) };
+                            let header_height = if state.wizard_table_advanced { 108.0 } else { 32.0 };
+                            scroll.height = (ov_col.height - preview_height - 48.0 - header_height).max(80.0);
                             scroll.padding = 0.0;
                             scroll.background = None;
+                            c.row(row, |r| {
+                                r.text("Table"); let mut table_name=name_s; table_name.width=(scroll.width-220.0).clamp(220.0,600.0); table_name.size=name_s.size.max(16.0);
+                                ov_name=r.text_input_styled(&state.wizard_table_name,"Table name",table_name);
+                                ov_table_advanced=r.tool_button(if state.wizard_table_advanced { "Hide advanced" } else { "Advanced" });
+                            });
+                            if state.wizard_table_advanced {
+                                c.row(row, |r| {
+                                    r.text("Database schema");
+                                    if state.wizard_table_original.is_none() {
+                                        let schemas=state.table_schemas(); let selected=schemas.iter().position(|s|*s==state.wizard_schema);
+                                        ov_schema=r.select(schemas,selected,"schema",type_sel);
+                                    } else { r.text(&state.wizard_schema); }
+                                    r.tooltip("Requires a primary key; removes the hidden rowid and forbids AUTOINCREMENT", |r| {
+                                        ov_without_rowid=r.checkbox("Without Rowid",state.wizard_table_options.without_rowid);
+                                    });
+                                    r.tooltip("Enforce SQLite STRICT column types and stored values", |r| {
+                                        ov_strict=r.checkbox("Strict",state.wizard_table_options.strict);
+                                    });
+                                });
+                                c.row(row, |r| {
+                                    r.text("Primary key on conflict"); let mut selector=type_sel; selector.width=180.0;
+                                    ov_pk_conflict=r.select(crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().map(|(label,_)|*label),
+                                        crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().position(|(_,action)|*action==state.wizard_table_options.primary_key_conflict),"Default",selector);
+                                });
+                            }
                             let mut table_tabs = TabsStyle::from_theme(&theme);
                             table_tabs.width = scroll.width;
                             table_tabs.height = scroll.height;
@@ -918,39 +947,10 @@ pub fn build_ui(
                             table_tabs.padding = 0.0;
                             table_tabs.gap = 0.0;
                             table_tabs.content_bg = theme.colors.content_bg;
-                            scroll.height = (table_tabs.height - table_tabs.strip_height).max(80.0);
+                            scroll.height = (table_tabs.height - table_tabs.strip_height).max(48.0);
                             ov_table_tabs = c.tabs(table_tabs, |tabs| {
                             tabs.page("Fields", |c| {
                             ov_scroll = c.scroll_area(scroll, |c| {
-                                c.row(row, |r| {
-                                    r.text("Database schema");
-                                    if state.wizard_table_original.is_none() {
-                                        let schemas = state.table_schemas();
-                                        let selected = schemas.iter().position(|s| *s == state.wizard_schema);
-                                        let mut selector = type_sel;
-                                        selector.width = (row.width - 180.0).clamp(140.0, 360.0);
-                                        ov_schema = r.select(schemas, selected, "schema", selector);
-                                    } else { r.text(&state.wizard_schema); }
-                                });
-                                c.row(row, |r| {
-                                    r.text("Table name");
-                                    ov_name = r.text_input_styled(&state.wizard_table_name, "name", name_s);
-                                });
-                                c.row(row, |r| {
-                                    r.tooltip("Requires a primary key; removes the hidden rowid and forbids AUTOINCREMENT", |r| {
-                                        ov_without_rowid = r.switch_styled("Without Rowid", state.wizard_table_options.without_rowid, sw);
-                                    });
-                                    r.tooltip("Enforce SQLite STRICT column types and stored values", |r| {
-                                        ov_strict = r.switch_styled("Strict", state.wizard_table_options.strict, sw);
-                                    });
-                                });
-                                c.row(row, |r| {
-                                    r.text("Primary key on conflict");
-                                    let mut selector = type_sel;
-                                    selector.width = 180.0;
-                                    ov_pk_conflict = r.select(crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().map(|(label,_)| *label),
-                                        crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().position(|(_,action)| *action == state.wizard_table_options.primary_key_conflict), "Default", selector);
-                                });
                                 c.text("Columns");
                                 c.row(row, |r| {
                                     ov_btn_add = r.tool_button("Add"); ov_btn_del = r.tool_button("Remove");
@@ -1006,7 +1006,7 @@ pub fn build_ui(
                                 });
                                 c.text("Check expression · SQL (optional)");
                                 let mut check_style = area_s;
-                                check_style.height = 80.0;
+                                check_style.height = scroll.height.min(80.0);
                                 ov_check = c.text_area(coldef.map(|column| column.check_expression.as_str()).unwrap_or(""),
                                     "e.g. length(name) > 0", check_style);
                                 c.text("Foreign key · SQL (optional)");
@@ -2257,6 +2257,8 @@ pub fn build_ui(
     ui.set_accessible_name(ov_table_preview, "Generated CREATE TABLE SQL preview");
     ui.set_text_area_read_only(ov_table_preview, true);
     ui.set_accessible_name(ov_table_tabs, "Table definition pages");
+    if state.overlay==Some(OverlayKind::EditTable) { ui.set_accessible_name(ov_name,"Table name"); }
+    ui.set_accessible_name(ov_table_advanced,if state.wizard_table_advanced { "Hide advanced table options" } else { "Show advanced table options" });
     ui.set_tabs_selected(ov_table_tabs, state.wizard_table_page);
     ui.set_accessible_name(ov_checks_list, "Table and column CHECK constraints");
     ui.set_list_selected(ov_checks_list, (!state.wizard_checks.is_empty()).then_some(state.wizard_check_sel));
@@ -2390,6 +2392,9 @@ pub fn build_ui(
         crate::sql_syntax::apply(&mut ui, area, &theme);
     }
     if let Some(editor) = &state.wizard_table_preview_state { ui.restore_text_area_state(ov_table_preview, editor); }
+    if state.overlay==Some(OverlayKind::EditTable) {
+        if let Some(editor)=&state.wizard_table_name_state { ui.restore_text_input_state(ov_name,editor); }
+    }
     crate::sql_syntax::apply(&mut ui, ov_table_preview, &theme);
     if let Some(Some(editor)) = state.wizard_check_states.get(state.wizard_check_sel) { ui.restore_text_area_state(ov_check_expr, editor); }
     crate::sql_syntax::apply(&mut ui, ov_check_expr, &theme);
@@ -2515,6 +2520,7 @@ pub fn build_ui(
         ov_generation,
         ov_table_preview,
         ov_table_tabs,
+        ov_table_advanced,
         ov_checks_scroll,
         ov_checks_list,
         ov_check_name,

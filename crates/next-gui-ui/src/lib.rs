@@ -11641,7 +11641,7 @@ impl Ui {
                 self.apply_corner_radius(scene, node, false);
                 if let Some(chrome) = self.widgets.get(&id).and_then(|w| w.chrome_node) {
                     if checked {
-                        let (_, cm) = self.font.rasterize_text("✓", style.box_size * 0.7, None);
+                        let cm = icon::rasterize_icon(IconName::Check, style.box_size * 0.7);
                         let cx =
                             box_rect.x + ((box_rect.width - cm.width as f32) * 0.5).max(0.0);
                         let cy =
@@ -11653,7 +11653,7 @@ impl Ui {
                         scene.set_fill(chrome, style.check_fg);
                         scene.set_mask(
                             chrome,
-                            Some(AlphaMask::new(cm.width, cm.height, cm.pixels)),
+                            Some(cm),
                         );
                         scene.set_visible(chrome, true);
                     } else {

@@ -416,7 +416,9 @@ pub struct AppState {
     pub wizard_original_cols: Vec<ColDef>,
     pub wizard_col_sources: Vec<Option<String>>,
     pub wizard_table_preview_state: Option<next_gui_ui::TextAreaState>,
+    pub wizard_table_name_state: Option<next_gui_ui::TextInputState>,
     pub wizard_table_page: usize,
+    pub wizard_table_advanced: bool,
     pub wizard_checks: Vec<crate::table_sql::NamedCheck>,
     pub wizard_index_constraints: Vec<crate::table_sql::NamedIndexConstraint>,
     pub wizard_key_sel: usize,
@@ -718,7 +720,9 @@ impl AppState {
             wizard_original_cols: Vec::new(),
             wizard_col_sources: Vec::new(),
             wizard_table_preview_state: None,
+            wizard_table_name_state: None,
             wizard_table_page: 0,
+            wizard_table_advanced: false,
             wizard_checks: Vec::new(),
             wizard_index_constraints: Vec::new(),
             wizard_key_sel: 0,
@@ -1603,7 +1607,9 @@ impl AppState {
         self.wizard_col_sources.clear();
         self.wizard_original_cols.clear();
         self.wizard_table_preview_state = None;
+        self.wizard_table_name_state = None;
         self.wizard_table_page = 0;
+        self.wizard_table_advanced = false;
         self.wizard_index_constraints = crate::table_sql::index_constraints_from_columns(&[], &self.wizard_cols, None).expect("default table key");
         self.wizard_key_sel = 0;
         self.wizard_key_states = vec![None; self.wizard_index_constraints.len()];
@@ -1666,9 +1672,11 @@ impl AppState {
         self.wizard_check_scroll = (0.0, 0.0);
         self.wizard_check_list_scroll = 0.0;
         self.wizard_table_page = 0;
+        self.wizard_table_advanced = false;
         self.wizard_table_original = Some(sel);
         self.wizard_original_cols = cols.clone();
         self.wizard_table_preview_state = None;
+        self.wizard_table_name_state = None;
         self.wizard_cols = cols;
         self.wizard_column_edit_states = vec![[None, None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
