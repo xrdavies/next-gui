@@ -14,6 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `24a0f79..0ad15812f354` | Codex | pass for browse sessions — 332 tests/strict checks; switch/close identity and worker guards verified; Soft dark/light and native painting inspected | [Report](R-20261027-0ad15812f354.md) |
+| R-20261027-0ad15812f354-F01 | verified | P2 | grok | e28 / all | existing branch | browse tab state | Browse tab switch/close restores valid directional selection and current editor | [F01](R-20261027-0ad15812f354.md#r-20261027-0ad15812f354-f01) | 0ad15812f354 | 0ad15812f354 |
+| R-20261027-0ad15812f354-F02 | verified | P1 | grok | e28 / all | existing branch | browse tab state | Worker-owned connection blocks browse tab mutations and disables buttons | [F02](R-20261027-0ad15812f354.md#r-20261027-0ad15812f354-f02) | 0ad15812f354 | 0ad15812f354 |
 | 2026-10-27 | `318105e..ef5bd92927fb` | Codex | pass for scrollable tab strips — 327 tests and strict checks; dark/light narrow/wide, native browse/14 Office render inspected; full/native parity remain | [Report](R-20261027-ef5bd92927fb.md) |
 | R-20261027-ef5bd92927fb-F01 | verified | P2 | grok | shared / e28 | existing branch | Tabs / dock rebuild | Content-width dock titles, overflow arrows and selected-title reveal | [F01](R-20261027-ef5bd92927fb.md#r-20261027-ef5bd92927fb-f01) | ef5bd92927fb | ef5bd92927fb |
 | R-20261027-4bb6e7d46905-F01 | verified | P2 | grok | shared / e28 | existing branch | text_area | TextArea handles page navigation, Shift selection and viewport movement | [F01](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f01) | 4bb6e7d46905 | 4bb6e7d46905 |
