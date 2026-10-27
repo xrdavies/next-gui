@@ -2936,7 +2936,15 @@ impl AppCallbacks for Demo {
                         KeyCode::Char('v' | 'V') => {
                             match ctx.clipboard_get_text() {
                                 Ok(Some(text)) => {
-                                    self.ui.paste_into_focused_text(&text);
+                                    if self.ui.focused() == Some(self.ids.browse_table) {
+                                        if let Err(e) = self.state.paste_browse_tsv(&text) {
+                                            self.set_error(e);
+                                        } else {
+                                            self.rebuild = true;
+                                        }
+                                    } else {
+                                        self.ui.paste_into_focused_text(&text);
+                                    }
                                 }
                                 Ok(None) => {}
                                 Err(e) => self.set_error(e.to_string()),

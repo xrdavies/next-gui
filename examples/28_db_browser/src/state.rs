@@ -2186,6 +2186,68 @@ impl AppState {
         Ok(())
     }
 
+    /// Paste a tab-separated matrix into the visible browse page.
+    pub fn paste_browse_tsv(&mut self, text: &str) -> Result<(), String> {
+        self.guard_writable()?;
+        if self.has_cell_draft() {
+            return Err("Apply or discard the cell draft first".into());
+        }
+        let text = text.trim_end_matches(['\r', '\n']);
+        if text.is_empty() {
+            return Err("Clipboard is empty".into());
+        }
+        let (table, start_row, start_col, rowids, columns, row_count) = {
+            let tab = self.browse();
+            let result = tab.result.as_ref().ok_or("No browse data")?;
+            (
+                tab.table.clone().ok_or("No browse table")?,
+                tab.sel_row_start.or(tab.sel_row).ok_or("Select a browse cell first")?,
+                tab.sel_col.unwrap_or(0),
+                tab.rowids.clone(),
+                result.columns.clone(),
+                result.rows.len(),
+            )
+        };
+        let rows = text
+            .split('\n')
+            .map(|line| line.trim_end_matches('\r').split('\t').collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let width = rows.first().map_or(0, Vec::len);
+        if width == 0 || rows.iter().any(|row| row.len() != width) {
+            return Err("Clipboard rows have inconsistent column counts".into());
+        }
+        if start_row.saturating_add(rows.len()) > row_count {
+            return Err("Clipboard does not fit in the visible browse page".into());
+        }
+        if start_col.saturating_add(width) > columns.len() {
+            return Err("Clipboard does not fit in the visible columns".into());
+        }
+        let mut updates = Vec::with_capacity(rows.len() * width);
+        for (ri, row) in rows.iter().enumerate() {
+            let rowid = *rowids.get(start_row + ri).ok_or("Selected rows are not editable")?;
+            for (ci, value) in row.iter().enumerate() {
+                let value = if *value == "NULL" {
+                    rusqlite::types::Value::Null
+                } else {
+                    rusqlite::types::Value::Text((*value).to_string())
+                };
+                updates.push((rowid, columns[start_col + ci].clone(), value));
+            }
+        }
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        db::with_savepoint(conn, || {
+            for (rowid, column, value) in &updates {
+                db::update_cell(conn, &table, *rowid, column, value)?;
+            }
+            Ok(())
+        })?;
+        self.log_sql(format!("-- paste {}x{} into {table}", rows.len(), width));
+        self.mark_dirty();
+        self.refresh_browse()?;
+        self.status_msg = format!("Pasted {}x{} cells (unwritten)", rows.len(), width);
+        Ok(())
+    }
+
     pub fn has_pragma_drafts(&self) -> bool {
         self.pragmas.iter().zip(&self.pragma_drafts).any(|((_, old), draft)| old != draft)
     }
@@ -3373,6 +3435,52 @@ mod chart_default_tests {
         assert_eq!(state.browse().offset, 500);
         state.browse_page(false).unwrap();
         assert_eq!(state.browse().offset, 0);
+    }
+
+    #[test]
+    fn browse_tsv_paste_updates_a_matrix_atomically() {
+        let mut state = test_state();
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch(
+                "DROP TABLE t; CREATE TABLE t(a INTEGER, b TEXT); INSERT INTO t VALUES (1, 'one'), (2, 'two');",
+            )
+            .unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.paste_browse_tsv("7\tseven\n8\teight").unwrap();
+        {
+            let conn = state.conn.as_ref().unwrap();
+            assert_eq!(
+                conn.query_row("SELECT a, b FROM t ORDER BY rowid", [], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })
+                .unwrap(),
+                (7, "seven".into())
+            );
+            assert_eq!(
+                conn.query_row("SELECT a, b FROM t WHERE rowid=2", [], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })
+                .unwrap(),
+                (8, "eight".into())
+            );
+        }
+        assert!(state.dirty);
+        assert!(state.paste_browse_tsv("too\tmany\tcolumns").is_err());
+        assert_eq!(
+            state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row("SELECT a FROM t WHERE rowid=1", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
     }
 
     #[test]
