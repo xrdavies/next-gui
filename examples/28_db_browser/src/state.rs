@@ -484,6 +484,7 @@ pub enum DocumentAction {
     OpenProject(PathBuf),
     CloseProject,
     CloseSqlTab(usize),
+    SelectSchemaNode(u64),
     Exit,
 }
 
@@ -1319,12 +1320,20 @@ impl AppState {
         Ok(())
     }
 
+    pub fn schema_selection_has_draft(&self, node_id: u64) -> bool {
+        let Some(obj) = node_id.checked_sub(10_000).and_then(|i| self.schema.get(i as usize)) else { return false; };
+        if self.selected.as_ref().is_some_and(|s| s.kind == obj.kind && s.name == obj.name) { return false; }
+        let source = self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.as_deref()).unwrap_or_default();
+        self.ddl_draft != source
+    }
+
     pub fn select_schema_node(&mut self, node_id: u64) {
         if node_id < 10_000 {
             return;
         }
         let idx = (node_id - 10_000) as usize;
         if let Some(obj) = self.schema.get(idx).cloned() {
+            if self.selected.as_ref().is_some_and(|s| s.kind == obj.kind && s.name == obj.name) { return; }
             self.selected = Some(SelectedObject {
                 kind: obj.kind,
                 name: obj.name.clone(),

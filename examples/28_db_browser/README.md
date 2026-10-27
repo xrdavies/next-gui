@@ -16,6 +16,8 @@ On first launch the example opens/creates `examples/28_db_browser/sample.db` wit
 
 **Chrome (DB4S-aligned):** File/Edit/View/Tools/Help menubar · New/Open/Write Changes/Revert toolbar · exactly **4** main tabs (Structure / Browse / Pragmas / Execute SQL) · right docks Edit Cell / Schema / Log / Plot (View menu) · Theme light/dark · Soft↔GPU (Space).
 
+Switching structure objects protects edited DDL: keep it in a new SQL tab, discard only that draft, or cancel the selection. Other SQL drafts and pending database changes stay in the session.
+
 **Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK).
 
 **Phase 2:** EditTable/EditIndex overlay wizards · CSV import wizard (+ clipboard) · per-column browse filters + multi browse tabs · Execute SQL multi-tabs / Find-Replace / Stop (interrupt) · Pragma labeled form · JSON export · Recent files · Attach Database.

@@ -570,6 +570,14 @@ impl Demo {
                     state.confirm_open = true;
                     MainTab::ExecuteSql
                 }
+                "ddl-prompt" => {
+                    state.select_schema_node(10_000);
+                    state.ddl_draft = "CREATE VIEW customer_summary AS SELECT * FROM customers;".into();
+                    state.pending_document = Some(DocumentAction::SelectSchemaNode(10_001));
+                    state.confirm_kind = ConfirmKind::Documents;
+                    state.confirm_open = true;
+                    MainTab::Structure
+                }
                 "image" => MainTab::Browse,
                 "full-width" => {
                     state.dock_edit = false; state.dock_schema = false;
@@ -1295,6 +1303,8 @@ impl Demo {
         self.snapshot_inputs();
         let needs_save = if let DocumentAction::CloseSqlTab(index) = &action {
             self.state.sql_tab_dirty(*index)
+        } else if let DocumentAction::SelectSchemaNode(node) = &action {
+            self.state.schema_selection_has_draft(*node)
         } else { self.state.dirty || self.state.has_unsaved_drafts() };
         if self.state.sql_busy {
             self.set_error("Stop or finish SQL first");
@@ -1319,6 +1329,7 @@ impl Demo {
             DocumentAction::OpenProject(path) => self.state.open_project(&path),
             DocumentAction::CloseProject => { self.state.close_project(); Ok(()) }
             DocumentAction::CloseSqlTab(index) => { self.state.close_sql_tab(index); Ok(()) }
+            DocumentAction::SelectSchemaNode(node) => { self.state.select_schema_node(node); Ok(()) }
             DocumentAction::Exit => { self.exit_requested = true; Ok(()) }
         };
         match result {
@@ -1350,6 +1361,20 @@ impl Demo {
         self.state.confirm_open = false;
         self.state.confirm_kind = ConfirmKind::None;
         let Some(action) = self.state.pending_document.take() else { return; };
+        if let DocumentAction::SelectSchemaNode(_) = action {
+            match decision {
+                ModalAction::Primary => {
+                    self.state.sql_tabs.push(self.state.ddl_draft.clone());
+                    self.state.switch_sql_tab(self.state.sql_tabs.len() - 1);
+                    self.perform_document_action(action);
+                    self.state.status_msg = "DDL draft kept in a new SQL tab".into();
+                }
+                ModalAction::Secondary => self.perform_document_action(action),
+                ModalAction::Tertiary | ModalAction::Dismiss => {}
+            }
+            self.rebuild = true;
+            return;
+        }
         if let DocumentAction::CloseSqlTab(index) = action {
             match decision {
                 ModalAction::Primary => {
@@ -2800,8 +2825,8 @@ impl Demo {
         if let Some(sel) = self.ui.tree_selected(self.ids.tree) {
             if self.last_tree_sel != Some(sel) {
                 self.last_tree_sel = Some(sel);
-                self.state.select_schema_node(sel);
-                dirty = true;
+                self.request_document_action(DocumentAction::SelectSchemaNode(sel));
+                return;
             }
         }
         if let Some(tab) = self.ui.tabs_selected(self.ids.tabs) {
@@ -3943,6 +3968,63 @@ mod interaction_tests {
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 3);
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "3");
         assert!(db::has_pending_changes(demo.state.conn.as_ref().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn schema_selection_keeps_edited_ddl_until_a_decision() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE a(v); CREATE TABLE b(v);").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.tab = MainTab::Structure;
+        demo.state.select_schema_node(10_000);
+        demo.do_rebuild();
+        let draft = "CREATE VIEW keep_this AS SELECT 42;";
+        demo.ui.set_text_area_value(demo.ids.ddl_area, draft);
+        demo.snapshot_inputs();
+        demo.ui.set_tree_selected(demo.ids.tree, Some(10_001));
+        demo.poll_selection_changes();
+        assert_eq!(demo.state.ddl_draft, draft);
+        assert_eq!(demo.state.selected.as_ref().unwrap().name, "a");
+        assert!(demo.state.confirm_open);
+        assert_eq!(demo.state.pending_document, Some(DocumentAction::SelectSchemaNode(10_001)));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.do_rebuild();
+            demo.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+        demo.resolve_document_action(ModalAction::Tertiary);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.tree_selected(demo.ids.tree), Some(10_000));
+        assert_eq!(demo.state.ddl_draft, draft);
+        demo.state.sql_tabs[0] = "SELECT 'other draft';".into();
+        demo.state.run_sql_text_sync("INSERT INTO a VALUES (99)").unwrap();
+        demo.request_document_action(DocumentAction::SelectSchemaNode(10_001));
+        demo.resolve_document_action(ModalAction::Primary);
+        assert_eq!(demo.state.selected.as_ref().unwrap().name, "b");
+        assert_eq!(demo.state.ddl_draft, "CREATE TABLE b(v)");
+        assert_eq!(demo.state.sql_tabs.last().unwrap(), draft);
+        assert_eq!(demo.state.sql_tabs[0], "SELECT 'other draft';");
+        assert!(demo.state.sql_tab_dirty(demo.state.sql_tabs.len() - 1));
+        assert!(demo.state.dirty);
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT v FROM a", [], |r| r.get::<_, i64>(0)).unwrap(), 99);
+        let project = crate::project::ProjectFile::from_state(&demo.state);
+        assert_eq!(project.sql_tabs.last().unwrap(), draft);
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.ddl_area, "another edited DDL");
+        demo.request_document_action(DocumentAction::SelectSchemaNode(10_000));
+        demo.resolve_document_action(ModalAction::Secondary);
+        assert_eq!(demo.state.selected.as_ref().unwrap().name, "a");
+        assert_eq!(demo.state.ddl_draft, "CREATE TABLE a(v)");
+        assert_eq!(demo.state.sql_tabs.len(), 2);
+        assert!(demo.state.dirty);
+        demo.do_rebuild();
+        demo.request_document_action(DocumentAction::SelectSchemaNode(10_001));
+        assert!(!demo.state.confirm_open);
+        assert_eq!(demo.state.selected.as_ref().unwrap().name, "b");
     }
 
     #[test]

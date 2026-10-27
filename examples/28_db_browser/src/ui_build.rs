@@ -1908,11 +1908,13 @@ pub fn build_ui(
             "Delete",
         ),
         ConfirmKind::Documents => (
-            "Save changes before continuing?",
+            if matches!(state.pending_document, Some(crate::state::DocumentAction::SelectSchemaNode(_))) { "Keep edited DDL?" } else { "Save changes before continuing?" },
             if let Some(crate::state::DocumentAction::CloseSqlTab(index)) = state.pending_document {
                 format!("Save changes to {} before closing this SQL tab? Discard closes this tab. Cancel keeps it open.", state.sql_tab_label(index))
+            } else if matches!(state.pending_document, Some(crate::state::DocumentAction::SelectSchemaNode(_))) {
+                "Keep the edited DDL in a new SQL tab before selecting another object. Discard replaces only this DDL draft. Cancel keeps the current object.".into()
             } else { "Save database edits, SQL drafts and project settings. Discard restores the saved state. Cancel keeps this session open.".into() },
-            "Save",
+            if matches!(state.pending_document, Some(crate::state::DocumentAction::SelectSchemaNode(_))) { "Keep in SQL tab" } else { "Save" },
         ),
         ConfirmKind::Revert => (
             "Revert Changes",
