@@ -2235,65 +2235,58 @@ impl AppState {
         Ok(())
     }
 
-    /// Paste a tab-separated matrix into the visible browse page.
+    /// Paste quoted TSV; one source cell fills the selected rectangle.
     pub fn paste_browse_tsv(&mut self, text: &str) -> Result<(), String> {
+        let (_, rows) = db::import_csv_from_text(text, &CsvImportOptions {
+            has_header: false, delimiter: '\t', quote: Some('"'),
+        })?;
+        self.paste_browse_cells(rows.into_iter().map(|row|
+            row.into_iter().map(rusqlite::types::Value::Text).collect()
+        ).collect())
+    }
+
+    pub fn paste_browse_cells(&mut self, mut rows: Vec<Vec<rusqlite::types::Value>>) -> Result<(), String> {
         self.guard_writable()?;
         if self.has_cell_draft() {
             return Err("Apply or discard the cell draft first".into());
         }
-        let text = text.trim_end_matches(['\r', '\n']);
-        if text.is_empty() {
-            return Err("Clipboard is empty".into());
-        }
-        let (table, start_row, start_col, rowids, columns, row_count) = {
-            let tab = self.browse();
-            let result = tab.result.as_ref().ok_or("No browse data")?;
-            (
-                tab.table.clone().ok_or("No browse table")?,
-                tab.sel_row_start.or(tab.sel_row).ok_or("Select a browse cell first")?,
-                tab.sel_col_start.or(tab.sel_col).unwrap_or(0),
-                tab.rowids.clone(),
-                result.columns.clone(),
-                result.rows.len(),
-            )
-        };
-        let rows = text
-            .split('\n')
-            .map(|line| line.trim_end_matches('\r').split('\t').collect::<Vec<_>>())
-            .collect::<Vec<_>>();
+        let tab = self.browse();
+        let result = tab.result.as_ref().ok_or("No browse data")?;
+        let table = tab.table.clone().ok_or("No browse table")?;
+        let row = tab.sel_row.ok_or("Select a browse cell first")?;
+        let col = tab.sel_col.unwrap_or(0);
+        let anchor_row = tab.sel_row_start.unwrap_or(row);
+        let anchor_col = tab.sel_col_start.unwrap_or(col);
+        let (start_row, end_row) = (row.min(anchor_row), row.max(anchor_row));
+        let (start_col, end_col) = (col.min(anchor_col), col.max(anchor_col));
         let width = rows.first().map_or(0, Vec::len);
         if width == 0 || rows.iter().any(|row| row.len() != width) {
             return Err("Clipboard rows have inconsistent column counts".into());
         }
-        if start_row.saturating_add(rows.len()) > row_count {
+        if rows.len() == 1 && width == 1 {
+            if end_row >= result.rows.len() || end_col >= result.columns.len() {
+                return Err("Selection no longer fits the browse page; refresh and retry".into());
+            }
+            rows = vec![vec![rows[0][0].clone(); end_col - start_col + 1]; end_row - start_row + 1];
+        }
+        let width = rows[0].len();
+        if start_row.saturating_add(rows.len()) > result.rows.len() {
             return Err("Clipboard does not fit in the visible browse page".into());
         }
-        if start_col.saturating_add(width) > columns.len() {
+        if start_col.saturating_add(width) > result.columns.len() {
             return Err("Clipboard does not fit in the visible columns".into());
         }
-        let mut updates = Vec::with_capacity(rows.len() * width);
-        for (ri, row) in rows.iter().enumerate() {
-            let rowid = *rowids.get(start_row + ri).ok_or("Selected rows are not editable")?;
-            for (ci, value) in row.iter().enumerate() {
-                let value = if *value == "NULL" {
-                    rusqlite::types::Value::Null
-                } else {
-                    rusqlite::types::Value::Text((*value).to_string())
-                };
-                updates.push((rowid, columns[start_col + ci].clone(), value));
-            }
-        }
-        let conn = self.conn.as_ref().ok_or("No database open")?;
-        db::with_savepoint(conn, || {
-            for (rowid, column, value) in &updates {
-                db::update_cell(conn, &table, *rowid, column, value)?;
-            }
-            Ok(())
-        })?;
-        self.log_sql(format!("-- paste {}x{} into {table}", rows.len(), width));
+        let height = rows.len();
+        let columns = result.columns[start_col..start_col + width].to_vec();
+        let updates = rows.into_iter().enumerate().map(|(i, values)| {
+            let rowid = *tab.rowids.get(start_row + i).ok_or("Selected rows are not editable")?;
+            Ok((rowid, values))
+        }).collect::<Result<Vec<_>, String>>()?;
+        db::update_cells(self.conn.as_ref().ok_or("No database open")?, &table, &columns, &updates)?;
+        self.log_sql(format!("-- paste {height}x{width} into {table}"));
         self.mark_dirty();
         self.refresh_browse()?;
-        self.status_msg = format!("Pasted {}x{} cells (unwritten)", rows.len(), width);
+        self.status_msg = format!("Pasted {height}x{width} cells (unwritten)");
         Ok(())
     }
 
@@ -3539,6 +3532,70 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn paste_updates_primary_key_and_constrained_columns_together_and_rolls_back_on_failure() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("DROP TABLE t;
+            CREATE TABLE t(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, CHECK(a=b));
+            INSERT INTO t VALUES(1,1,1),(2,2,2);
+            CREATE TABLE pending(v); COMMIT; BEGIN; INSERT INTO pending VALUES('keep');").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        let error = state.paste_browse_tsv("7\t10\t10\n8\t20\t21").unwrap_err();
+        assert!(error.contains("CHECK"), "{error}");
+        let conn = state.conn.as_ref().unwrap();
+        let rows = db::execute_sql(conn, "SELECT id,a,b FROM t ORDER BY id").unwrap().rows;
+        assert_eq!(rows, vec![vec!["1", "1", "1"], vec!["2", "2", "2"]]);
+        assert_eq!(conn.query_row("SELECT v FROM pending", [], |r| r.get::<_, String>(0)).unwrap(), "keep");
+        assert!(!conn.is_autocommit());
+        assert_eq!(state.browse().sel_row, Some(0));
+        state.paste_browse_tsv("7\t10\t10\n8\t20\t20").unwrap();
+        assert_eq!(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT id,a,b FROM t ORDER BY id").unwrap().rows,
+            vec![vec!["7", "10", "10"], vec!["8", "20", "20"]]);
+    }
+
+    #[test]
+    fn missing_paste_record_rolls_back_trigger_effects_and_other_rows() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("INSERT INTO t VALUES('second');
+            CREATE TRIGGER remove_next AFTER UPDATE ON t WHEN old.rowid=1 BEGIN DELETE FROM t WHERE rowid=2; END;").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        let original = state.browse().result.as_ref().unwrap().rows.clone();
+        assert!(state.paste_browse_tsv("changed\nsecond changed").unwrap_err().contains("no longer exists"));
+        assert_eq!(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT v FROM t ORDER BY rowid").unwrap().rows, original);
+    }
+
+    #[test]
+    fn quoted_tsv_and_single_cell_fill_preserve_text_and_empty_cells() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("DROP TABLE t; CREATE TABLE t(a,b); INSERT INTO t VALUES('a','b'),('c','d');").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.paste_browse_tsv("\"tab\tinside\"\t\"line1\nline2 \"\"quoted\"\"\"\r\nNULL\t\r\n").unwrap();
+        let rows = db::execute_sql(state.conn.as_ref().unwrap(), "SELECT a,b FROM t ORDER BY rowid").unwrap().rows;
+        assert_eq!(rows, vec![vec!["tab\tinside", "line1\nline2 \"quoted\""], vec!["NULL", ""]]);
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT typeof(a),typeof(b) FROM t WHERE rowid=2", [], |r|
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).unwrap(), ("text".into(), "text".into()));
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_row_start = Some(1);
+        state.browse_mut().sel_col = Some(0);
+        state.browse_mut().sel_col_start = Some(1);
+        state.paste_browse_tsv("\"\"").unwrap();
+        assert_eq!(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT typeof(a),length(a),typeof(b),length(b) FROM t").unwrap().rows,
+            vec![vec!["text", "0", "text", "0"]; 2]);
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.paste_browse_tsv("\n\n").unwrap();
+        assert_eq!(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT length(a) FROM t").unwrap().rows, vec![vec!["0"]; 2]);
+    }
+
+    #[test]
     fn browse_tsv_paste_updates_a_matrix_atomically() {
         let mut state = test_state();
         state
@@ -3572,6 +3629,8 @@ mod chart_default_tests {
             );
         }
         assert!(state.dirty);
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
         assert!(state.paste_browse_tsv("too\tmany\tcolumns").is_err());
         assert_eq!(
             state

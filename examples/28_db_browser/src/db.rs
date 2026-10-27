@@ -570,6 +570,36 @@ pub fn update_cell(
     Ok(conn.changes())
 }
 
+/// Update a rectangular set of existing records as one undoable operation.
+pub fn update_cells(
+    conn: &Connection,
+    table: &str,
+    columns: &[String],
+    updates: &[(i64, Vec<rusqlite::types::Value>)],
+) -> Result<(), String> {
+    if columns.is_empty() || updates.is_empty()
+        || updates.iter().any(|(_, row)| row.len() != columns.len())
+    {
+        return Err("Cell update dimensions do not match".into());
+    }
+    let assignments = columns.iter().enumerate()
+        .map(|(i, col)| format!("{} = ?{}", quote_ident(col), i + 1))
+        .collect::<Vec<_>>().join(", ");
+    let sql = format!("UPDATE {} SET {assignments} WHERE rowid = ?{}", quote_ident(table), columns.len() + 1);
+    with_savepoint(conn, || {
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        for (rowid, values) in updates {
+            let key = rusqlite::types::Value::Integer(*rowid);
+            let changed = stmt.execute(params_from_iter(values.iter().chain(std::iter::once(&key))))
+                .map_err(|e| e.to_string())?;
+            if changed != 1 {
+                return Err(format!("Record {rowid} changed or no longer exists; refresh and retry"));
+            }
+        }
+        Ok(())
+    })
+}
+
 pub fn browse_with_rowid(
     conn: &Connection,
     table: &str,
