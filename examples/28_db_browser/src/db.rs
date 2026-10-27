@@ -798,10 +798,22 @@ pub fn create_index(
     columns: &str,
     unique: bool,
 ) -> Result<(), String> {
+    create_index_in(conn, "main", name, table, columns, unique)
+}
+
+pub fn create_index_in(
+    conn: &Connection,
+    schema: &str,
+    name: &str,
+    table: &str,
+    columns: &str,
+    unique: bool,
+) -> Result<(), String> {
     let uniq = if unique { "UNIQUE " } else { "" };
+    // SQLite takes the database from the index name; ON must use an unqualified table.
     let sql = format!(
         "CREATE {uniq}INDEX {} ON {} ({})",
-        qualified_name("main", name),
+        qualified_name(schema, name),
         quote_ident(table),
         columns.trim()
     );
@@ -1248,6 +1260,10 @@ fn quote_literal(s: &str) -> String {
 
 /// Build CREATE TABLE DDL from column defs.
 pub fn create_table_ddl(name: &str, cols: &[ColDef]) -> String {
+    create_table_ddl_in("main", name, cols)
+}
+
+pub fn create_table_ddl_in(schema: &str, name: &str, cols: &[ColDef]) -> String {
     let mut parts = Vec::new();
     let mut pk_cols = Vec::new();
     for c in cols {
@@ -1282,7 +1298,7 @@ pub fn create_table_ddl(name: &str, cols: &[ColDef]) -> String {
     }
     format!(
         "CREATE TABLE {} (\n  {}\n)",
-        quote_ident(name),
+        qualified_name(schema, name),
         parts.join(",\n  ")
     )
 }
@@ -1294,7 +1310,20 @@ pub fn recreate_table(
     new_name: &str,
     cols: &[ColDef],
 ) -> Result<(), String> {
-    let existing = table_columns(conn, old_name)?;
+    recreate_table_in(conn, "main", old_name, new_name, cols)
+}
+
+pub fn recreate_table_in(
+    conn: &Connection,
+    schema: &str,
+    old_name: &str,
+    new_name: &str,
+    cols: &[ColDef],
+) -> Result<(), String> {
+    let existing = table_columns_in(conn, schema, old_name)?;
+    if existing.is_empty() {
+        return Err(format!("Table {} has no editable columns", qualified_name(schema, old_name)));
+    }
     for col in cols {
         if let Some(old) = existing.iter().find(|c| c.name == col.name) {
             if !old.type_name.eq_ignore_ascii_case(&col.type_name)
@@ -1321,6 +1350,23 @@ pub fn recreate_table(
     if !added.is_empty() && !removed.is_empty() {
         return Err("Use ALTER TABLE RENAME COLUMN in Execute SQL to rename a column".into());
     }
+    if !removed.is_empty() {
+        let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", quote_ident(schema), quote_literal(old_name))).map_err(|e| e.to_string())?;
+        let indexes = stmt.query_map([], |r| r.get::<_, String>(1)).map_err(|e| e.to_string())?;
+        for index in indexes {
+            let index = index.map_err(|e| e.to_string())?;
+            let mut keys = conn.prepare(&format!("PRAGMA {}.index_info({})", quote_ident(schema), quote_literal(&index))).map_err(|e| e.to_string())?;
+            let columns = keys.query_map([], |r| r.get::<_, Option<String>>(2)).map_err(|e| e.to_string())?;
+            for column in columns {
+                let column = column.map_err(|e| e.to_string())?;
+                // Quoted attached columns can become string expressions during SQLite DROP reparsing.
+                // shortcut: expression-index dependencies need an SQL migration until the wizard parses expressions.
+                if column.as_ref().is_none_or(|name| removed.iter().any(|c| c.name.eq_ignore_ascii_case(name))) {
+                    return Err(format!("Preserve index {}: remove its dependencies with an explicit SQL migration", qualified_name(schema, &index)));
+                }
+            }
+        }
+    }
     let retained: Vec<_> = existing
         .iter()
         .filter(|c| cols.iter().any(|o| o.name == c.name))
@@ -1340,14 +1386,14 @@ pub fn recreate_table(
             let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
             conn.execute_batch(&format!(
                 "ALTER TABLE {} ADD COLUMN {definition}",
-                qualified_name("main", old_name)
+                qualified_name(schema, old_name)
             ))
             .map_err(|e| e.to_string())?;
         }
         for col in removed {
             conn.execute_batch(&format!(
                 "ALTER TABLE {} DROP COLUMN {}",
-                qualified_name("main", old_name),
+                qualified_name(schema, old_name),
                 quote_ident(&col.name)
             ))
             .map_err(|e| e.to_string())?;
@@ -1355,7 +1401,7 @@ pub fn recreate_table(
         if old_name != new_name {
             conn.execute_batch(&format!(
                 "ALTER TABLE {} RENAME TO {}",
-                qualified_name("main", old_name),
+                qualified_name(schema, old_name),
                 quote_ident(new_name)
             ))
             .map_err(|e| e.to_string())?;
@@ -1560,6 +1606,61 @@ mod tests {
         assert_eq!(count_rows(&conn, "same.\"table").unwrap(), 2);
         assert_eq!(browse_table(&conn, "same.\"table", &[], None, 500, 0).unwrap().rows[0][1], "original");
         assert!(browse_table_in(&conn, "missing\"; DROP TABLE main.t", "same.\"table", &[], None, 500, 0).is_err());
+    }
+
+    #[test]
+    fn schema_wizard_helpers_preserve_quoted_namespace_and_atomic_alter() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";").unwrap();
+        let table = "same.\"table";
+        let cols = [ColDef { name: "id".into(), type_name: "INTEGER".into(), pk: true,
+            notnull: false, unique: false, default_value: String::new() }, ColDef::new("value.\"col", "TEXT")];
+        for schema in ["main", "temp", "aux.\"db"] {
+            conn.execute_batch(&create_table_ddl_in(schema, table, &cols)).unwrap();
+            conn.execute_batch(&format!("INSERT INTO {} VALUES(1,'original');
+                CREATE TABLE {}(p REFERENCES {}(id));
+                CREATE TRIGGER {} AFTER INSERT ON {} BEGIN INSERT INTO child VALUES(new.id); END;",
+                qualified_name(schema, table), qualified_name(schema, "child"), quote_ident(table),
+                qualified_name(schema, "tr"), qualified_name(schema, table))).unwrap();
+            create_index_in(&conn, schema, "same.\"idx", table, &quote_ident("value.\"col"), true).unwrap();
+        }
+        conn.execute_batch("BEGIN").unwrap();
+        for schema in ["main", "temp", "aux.\"db"] {
+            let mut modified = cols.to_vec();
+            modified.push(ColDef::new("added.\"col", "TEXT"));
+            recreate_table_in(&conn, schema, table, "renamed.\"table", &modified).unwrap();
+            let renamed = qualified_name(schema, "renamed.\"table");
+            conn.execute_batch(&format!("INSERT INTO {renamed}(id,{}) VALUES(2,'second')", quote_ident("value.\"col"))).unwrap();
+            assert_eq!(count_browse_rows_in(&conn, schema, "child", None).unwrap(), 1);
+            assert!(conn.execute_batch(&format!("INSERT INTO {renamed}(id,{}) VALUES(3,'original')", quote_ident("value.\"col"))).is_err());
+            modified.push(ColDef::new("rollback_col", "TEXT"));
+            // Adding succeeds, then renaming onto the existing child fails; both must roll back.
+            assert!(recreate_table_in(&conn, schema, "renamed.\"table", "child", &modified).is_err());
+            assert!(!table_column_names_in(&conn, schema, "renamed.\"table").unwrap().contains(&"rollback_col".into()));
+            let mut removed = modified[..3].to_vec();
+            removed.remove(1);
+            assert!(recreate_table_in(&conn, schema, "renamed.\"table", "renamed.\"table", &removed).is_err());
+            assert_eq!(table_column_names_in(&conn, schema, "renamed.\"table").unwrap().len(), 3);
+            // An unrelated plain column can still be dropped without weakening the index.
+            recreate_table_in(&conn, schema, "renamed.\"table", "renamed.\"table", &cols).unwrap();
+            assert_eq!(count_browse_rows_in(&conn, schema, "renamed.\"table", None).unwrap(), 2);
+        }
+        assert!(recreate_table_in(&conn, "missing", "renamed.\"table", "x", &cols).is_err());
+        assert!(recreate_table_in(&conn, "main", "missing", "x", &[]).is_err());
+        assert!(create_index_in(&conn, "missing\"; DROP TABLE main.child; --", "ix", "child", "p", false).is_err());
+        assert_eq!(count_rows(&conn, "child").unwrap(), 1);
+        conn.execute_batch("ROLLBACK").unwrap();
+        drop_object(&conn, ObjectKind::Index, "aux.\"db", "same.\"idx").unwrap();
+        create_index_in(&conn, "aux.\"db", "expression_idx", table, &format!("length({})", quote_ident("value.\"col")), false).unwrap();
+        let error = recreate_table_in(&conn, "aux.\"db", table, table, &cols[..1]).unwrap_err();
+        assert!(error.contains("expression_idx"));
+        assert_eq!(table_column_names_in(&conn, "aux.\"db", table).unwrap().len(), 2);
+        // The main wrappers remain explicit even when temp contains the same names.
+        create_index(&conn, "wrapper_idx", table, "id", false).unwrap();
+        assert!(list_schema(&conn).unwrap().iter().any(|o| o.schema == "main" && o.name == "wrapper_idx"));
+        assert!(!list_schema(&conn).unwrap().iter().any(|o| o.schema == "temp" && o.name == "wrapper_idx"));
+        conn.execute_batch(&create_table_ddl("wrapper_table", &cols)).unwrap();
+        assert_eq!(table_columns(&conn, "wrapper_table").unwrap().len(), 2);
     }
 
     #[test]
