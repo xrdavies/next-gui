@@ -154,9 +154,13 @@ impl Catalog {
                 self.add(vec![table.clone()], Category::Table);
                 self.add(vec![schema.clone(), table.clone()], Category::Table);
                 let columns = (|| {
-                    let mut stmt = conn.prepare("SELECT name FROM pragma_table_xinfo(?1, ?2)")?;
+                    let mut stmt = conn.prepare(&format!(
+                        "PRAGMA {}.table_xinfo({})",
+                        quote_ident(&schema),
+                        quote_ident(&table)
+                    ))?;
                     let columns = stmt
-                        .query_map([&table, &schema], |r| r.get::<_, String>(0))?
+                        .query_map([], |r| r.get::<_, String>("name"))?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     Ok::<_, rusqlite::Error>(columns)
                 })();
@@ -467,6 +471,31 @@ mod tests {
     fn hint(catalog: &Catalog, sql: &str) -> String {
         let h = catalog.calltip(sql, sql.chars().count()).unwrap();
         h.items[h.preferred].clone()
+    }
+
+    #[test]
+    fn user_tables_cannot_shadow_column_metadata_in_any_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE pragma_table_xinfo(fake_column);
+            CREATE TABLE people(real_column, computed_column GENERATED ALWAYS AS (real_column));
+            ATTACH ':memory:' AS "archive ""quoted";
+            CREATE TABLE "archive ""quoted"."odd ""table"("odd ""column");
+            CREATE TEMP TABLE transient(temp_column);
+        "#,
+        )
+        .unwrap();
+        let c = Catalog::load(&conn);
+        assert!(c.warning.is_none(), "{:?}", c.warning);
+        assert_eq!(suggestions(&c, "people.real_"), ["real_column"]);
+        assert_eq!(suggestions(&c, "people.computed_"), ["computed_column"]);
+        assert_eq!(suggestions(&c, "temp.transient.temp_"), ["temp_column"]);
+        assert_eq!(
+            suggestions(&c, "\"archive \"\"quoted\".\"odd \"\"table\".\"odd"),
+            ["\"odd \"\"column\""]
+        );
+        assert_eq!(suggestions(&c, "pragma_table_xinfo.fake_"), ["fake_column"]);
     }
 
     #[test]
