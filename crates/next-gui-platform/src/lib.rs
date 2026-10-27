@@ -451,6 +451,16 @@ impl WindowCtx<'_> {
         self.inner.clipboard_set_text(text)
     }
 
+    /// Read HTML from the OS clipboard, or `Ok(None)` when unavailable.
+    pub fn clipboard_get_html(&mut self) -> Result<Option<String>, PlatformError> {
+        self.inner.clipboard_get_html()
+    }
+
+    /// Write HTML and a plain-text alternative to the OS clipboard.
+    pub fn clipboard_set_html(&mut self, html: &str, text: &str) -> Result<(), PlatformError> {
+        self.inner.clipboard_set_html(html, text)
+    }
+
     /// Clone of the underlying winit window (for creating a `wgpu::Surface`).
     ///
     /// Available on Linux / macOS / Windows backends built with winit.
@@ -473,6 +483,8 @@ pub(crate) trait WindowHost {
     fn set_ime_cursor_area(&mut self, x: f64, y: f64, width: f64, height: f64);
     fn clipboard_get_text(&mut self) -> Result<Option<String>, PlatformError>;
     fn clipboard_set_text(&mut self, text: &str) -> Result<(), PlatformError>;
+    fn clipboard_get_html(&mut self) -> Result<Option<String>, PlatformError>;
+    fn clipboard_set_html(&mut self, html: &str, text: &str) -> Result<(), PlatformError>;
     #[cfg(any(feature = "linux", feature = "macos", feature = "windows", target_os = "macos", target_os = "windows"))]
     fn winit_window(&self) -> std::sync::Arc<winit::window::Window>;
 }

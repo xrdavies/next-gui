@@ -4,6 +4,7 @@
 //! `NEXT_GUI_DB_BROWSER_QA=1` dumps a PPM after first paint then exits.
 
 mod db;
+mod cell_clipboard;
 mod file_dlg;
 mod filters;
 mod prefs;
@@ -165,6 +166,7 @@ struct Demo {
     last_browse_row: Option<usize>,
     last_wizard_list: Option<usize>,
     last_log_revision: u64,
+    cell_clipboard: Option<cell_clipboard::CellClipboard>,
     exit_requested: bool,
 }
 
@@ -686,6 +688,7 @@ impl Demo {
             last_browse_row: None,
             last_wizard_list: None,
             last_log_revision,
+            cell_clipboard: None,
             exit_requested: false,
         }
     }
@@ -2932,9 +2935,16 @@ impl AppCallbacks for Demo {
                         }
                         KeyCode::Char('c' | 'C' | 'x' | 'X') => {
                             if self.ui.focused() == Some(self.ids.browse_table) {
-                                if let Some(text) = self.ui.table_selected_text(self.ids.browse_table) {
-                                    if let Err(e) = ctx.clipboard_set_text(&text) { self.set_error(e.to_string()); }
-                                }
+                                let result = self.state.copy_browse_cells(modifiers.shift, modifiers.alt)
+                                    .and_then(|copy| {
+                                        if copy.html.is_empty() { ctx.clipboard_set_text(&copy.text) }
+                                        else { ctx.clipboard_set_html(&copy.html, &copy.text) }
+                                            .map_err(|e| e.to_string())?;
+                                        self.cell_clipboard = Some(copy);
+                                        Ok(())
+                                    });
+                                if let Err(e) = result { self.set_error(e); }
+                                self.after_ui(ctx);
                                 return;
                             }
                             if let Some(text) = self.ui.focused_text_for_copy() {
@@ -2953,11 +2963,22 @@ impl AppCallbacks for Demo {
                             match ctx.clipboard_get_text() {
                                 Ok(Some(text)) => {
                                     if self.ui.focused() == Some(self.ids.browse_table) {
-                                        if let Err(e) = self.state.paste_browse_tsv(&text) {
-                                            self.set_error(e);
+                                        let cells = match ctx.clipboard_get_html() {
+                                            Ok(Some(html)) => self.cell_clipboard.as_ref().and_then(|copy| copy.internal_cells(&html)),
+                                            Ok(None) => None,
+                                            Err(e) => {
+                                                self.set_error(e.to_string());
+                                                self.after_ui(ctx);
+                                                return;
+                                            }
+                                        };
+                                        let result = if let Some(cells) = cells {
+                                            self.state.paste_browse_cells(cells)
                                         } else {
-                                            self.rebuild = true;
-                                        }
+                                            self.state.paste_browse_tsv(&text)
+                                        };
+                                        if let Err(e) = result { self.set_error(e); }
+                                        else { self.rebuild = true; }
                                     } else {
                                         self.ui.paste_into_focused_text(&text);
                                     }

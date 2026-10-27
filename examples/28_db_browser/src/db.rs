@@ -44,11 +44,54 @@ pub struct SchemaObject {
     pub tbl_name: Option<String>,
 }
 
+/// Owned SQLite cell, including TEXT bytes that are not valid UTF-8.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CellValue {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(Vec<u8>),
+    Blob(Vec<u8>),
+}
+
+impl CellValue {
+    pub fn as_ref(&self) -> rusqlite::types::ValueRef<'_> {
+        use rusqlite::types::ValueRef;
+        match self {
+            Self::Null => ValueRef::Null,
+            Self::Integer(n) => ValueRef::Integer(*n),
+            Self::Real(n) => ValueRef::Real(*n),
+            Self::Text(bytes) => ValueRef::Text(bytes),
+            Self::Blob(bytes) => ValueRef::Blob(bytes),
+        }
+    }
+}
+
+impl From<rusqlite::types::ValueRef<'_>> for CellValue {
+    fn from(value: rusqlite::types::ValueRef<'_>) -> Self {
+        use rusqlite::types::ValueRef;
+        match value {
+            ValueRef::Null => Self::Null,
+            ValueRef::Integer(n) => Self::Integer(n),
+            ValueRef::Real(n) => Self::Real(n),
+            ValueRef::Text(bytes) => Self::Text(bytes.to_vec()),
+            ValueRef::Blob(bytes) => Self::Blob(bytes.to_vec()),
+        }
+    }
+}
+
+impl rusqlite::ToSql for CellValue {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(self.as_ref()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub statement: Option<String>,
     pub rows: Vec<Vec<String>>,
+    pub values: Vec<Vec<CellValue>>,
     pub rows_affected: Option<u64>,
     pub truncated: bool,
     pub export_rows: Option<std::sync::Arc<tempfile::NamedTempFile>>,
@@ -400,23 +443,24 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
         .collect::<Vec<_>>();
     let mut query = stmt.query([]).map_err(|e| e.to_string())?;
     let mut rows = Vec::new();
+    let mut values = Vec::new();
     let mut truncated = false;
     while let Some(row) = query.next().map_err(|e| e.to_string())? {
         if rows.len() == limit {
             truncated = true;
             break;
         }
-        rows.push(
-            (0..columns.len())
-                .map(|i| row.get_ref(i).map(cell_to_string))
-                .collect::<rusqlite::Result<_>>()
-                .map_err(|e| e.to_string())?,
-        );
+        let cells: Vec<CellValue> = (0..columns.len())
+            .map(|i| row.get_ref(i).map(CellValue::from))
+            .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
+        rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
+        values.push(cells);
     }
     Ok(QueryResult {
         statement: None,
         columns,
         rows,
+        values,
         rows_affected: None,
         truncated,
         export_rows: None,
@@ -446,6 +490,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
         let mut export_rows = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
         let mut output = std::io::BufWriter::new(&mut export_rows);
         let mut rows = Vec::new();
+        let mut cell_values = Vec::new();
         let mut truncated = false;
         while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
             let values = (0..col_count)
@@ -457,11 +502,11 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
                 truncated = true;
                 continue;
             }
-            let mut cells = Vec::with_capacity(col_count);
-            for i in 0..col_count {
-                cells.push(cell_to_string(row.get_ref(i).map_err(|e| e.to_string())?));
-            }
-            rows.push(cells);
+            let cells: Vec<CellValue> = (0..col_count)
+                .map(|i| row.get_ref(i).map(CellValue::from))
+                .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
+            rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
+            cell_values.push(cells);
         }
         output.flush().map_err(|e| e.to_string())?;
         drop(output);
@@ -470,6 +515,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
             export_rows: Some(std::sync::Arc::new(export_rows)),
             columns,
             rows,
+            values: cell_values,
             rows_affected: (!readonly).then(|| conn.changes()),
             truncated,
         });
@@ -494,15 +540,18 @@ pub fn pragma_check(conn: &Connection, name: &str) -> Result<QueryResult, String
 pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
     let schema = list_schema(conn)?;
     let mut rows = Vec::new();
+    let mut values = Vec::new();
     for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
         let n = count_rows(conn, &obj.name).unwrap_or(-1);
         rows.push(vec![obj.name.clone(), n.to_string()]);
+        values.push(vec![CellValue::Text(obj.name.as_bytes().to_vec()), CellValue::Integer(n)]);
     }
     Ok(QueryResult {
         statement: None,
         export_rows: None,
         columns: vec!["table".into(), "rows".into()],
         rows,
+        values,
         rows_affected: None,
         truncated: false,
     })
@@ -575,7 +624,7 @@ pub fn update_cells(
     conn: &Connection,
     table: &str,
     columns: &[String],
-    updates: &[(i64, Vec<rusqlite::types::Value>)],
+    updates: &[(i64, Vec<CellValue>)],
 ) -> Result<(), String> {
     if columns.is_empty() || updates.is_empty()
         || updates.iter().any(|(_, row)| row.len() != columns.len())
@@ -589,7 +638,7 @@ pub fn update_cells(
     with_savepoint(conn, || {
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         for (rowid, values) in updates {
-            let key = rusqlite::types::Value::Integer(*rowid);
+            let key = CellValue::Integer(*rowid);
             let changed = stmt.execute(params_from_iter(values.iter().chain(std::iter::once(&key))))
                 .map_err(|e| e.to_string())?;
             if changed != 1 {

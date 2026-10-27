@@ -132,6 +132,20 @@ impl WindowHost for Host {
             .set_text(text)
     }
 
+    fn clipboard_get_html(&mut self) -> Result<Option<String>, PlatformError> {
+        if self.clipboard.is_none() {
+            self.clipboard = Some(Clipboard::open()?);
+        }
+        self.clipboard.as_mut().expect("clipboard just opened").get_html()
+    }
+
+    fn clipboard_set_html(&mut self, html: &str, text: &str) -> Result<(), PlatformError> {
+        if self.clipboard.is_none() {
+            self.clipboard = Some(Clipboard::open()?);
+        }
+        self.clipboard.as_mut().expect("clipboard just opened").set_html(html, text)
+    }
+
     fn winit_window(&self) -> Arc<WinitWindow> {
         self.window.clone()
     }

@@ -1031,6 +1031,7 @@ impl AppState {
                                     row.remove(idx);
                                 }
                             }
+                            for row in &mut q.values { row.remove(idx); }
                         }
                         (total_rows, q, rowids)
                     }
@@ -2235,17 +2236,35 @@ impl AppState {
         Ok(())
     }
 
+    pub fn copy_browse_cells(&self, headers: bool, sql: bool) -> Result<crate::cell_clipboard::CellClipboard, String> {
+        let tab = self.browse();
+        let result = tab.result.as_ref().ok_or("No browse data")?;
+        let row = tab.sel_row.ok_or("Select browse cells first")?;
+        let anchor = tab.sel_row_start.unwrap_or(row);
+        let (first, last) = (row.min(anchor), row.max(anchor));
+        let (first_col, last_col) = if let Some(col) = tab.sel_col {
+            let anchor = tab.sel_col_start.unwrap_or(col);
+            (col.min(anchor), col.max(anchor))
+        } else { (0, result.columns.len().saturating_sub(1)) };
+        if last >= result.values.len() || result.columns.is_empty() || last_col >= result.columns.len() {
+            return Err("Selection no longer fits the browse page; refresh and retry".into());
+        }
+        let cells = result.values[first..=last].iter().map(|row| row[first_col..=last_col].to_vec()).collect();
+        Ok(crate::cell_clipboard::CellClipboard::new(tab.table.as_deref().ok_or("No browse table")?,
+            &result.columns[first_col..=last_col], cells, headers, sql))
+    }
+
     /// Paste quoted TSV; one source cell fills the selected rectangle.
     pub fn paste_browse_tsv(&mut self, text: &str) -> Result<(), String> {
         let (_, rows) = db::import_csv_from_text(text, &CsvImportOptions {
             has_header: false, delimiter: '\t', quote: Some('"'),
         })?;
         self.paste_browse_cells(rows.into_iter().map(|row|
-            row.into_iter().map(rusqlite::types::Value::Text).collect()
+            row.into_iter().map(|s| db::CellValue::Text(s.into_bytes())).collect()
         ).collect())
     }
 
-    pub fn paste_browse_cells(&mut self, mut rows: Vec<Vec<rusqlite::types::Value>>) -> Result<(), String> {
+    pub fn paste_browse_cells(&mut self, mut rows: Vec<Vec<db::CellValue>>) -> Result<(), String> {
         self.guard_writable()?;
         if self.has_cell_draft() {
             return Err("Apply or discard the cell draft first".into());
@@ -2254,11 +2273,12 @@ impl AppState {
         let result = tab.result.as_ref().ok_or("No browse data")?;
         let table = tab.table.clone().ok_or("No browse table")?;
         let row = tab.sel_row.ok_or("Select a browse cell first")?;
-        let col = tab.sel_col.unwrap_or(0);
         let anchor_row = tab.sel_row_start.unwrap_or(row);
-        let anchor_col = tab.sel_col_start.unwrap_or(col);
         let (start_row, end_row) = (row.min(anchor_row), row.max(anchor_row));
-        let (start_col, end_col) = (col.min(anchor_col), col.max(anchor_col));
+        let (start_col, end_col) = if let Some(col) = tab.sel_col {
+            let anchor = tab.sel_col_start.unwrap_or(col);
+            (col.min(anchor), col.max(anchor))
+        } else { (0, result.columns.len().saturating_sub(1)) };
         let width = rows.first().map_or(0, Vec::len);
         if width == 0 || rows.iter().any(|row| row.len() != width) {
             return Err("Clipboard rows have inconsistent column counts".into());
@@ -2453,39 +2473,23 @@ impl AppState {
     pub fn sync_edit_cell_from_selection(&mut self) {
         if self.has_cell_draft() { self.error_msg = Some("Apply or discard the cell draft first".into()); return; }
         let b = self.browse();
-        let (Some(ri), Some(res), Some(table), Some(conn)) = (
-            b.sel_row,
-            b.result.as_ref(),
-            b.table.as_ref(),
-            self.conn.as_ref(),
-        ) else {
+        let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
             return;
         };
         let ci = b.sel_col.unwrap_or(0);
         let Some(col) = res.columns.get(ci).cloned() else {
             return;
         };
-        let value = if let Some(rowid) = b.rowids.get(ri) {
-            conn.query_row(
-                &format!(
-                    "SELECT {} FROM {} WHERE rowid=?1",
-                    db::quote_ident(&col),
-                    db::quote_ident(table)
-                ),
-                [rowid],
-                |r| r.get::<_, rusqlite::types::Value>(0),
-            )
-            .ok()
-        } else {
-            res.rows
-                .get(ri)
-                .and_then(|r| r.get(ci))
-                .cloned()
-                .map(rusqlite::types::Value::Text)
-        };
-        let Some(value) = value else {
-            return;
-        };
+        let Some(cell) = res.values.get(ri).and_then(|row| row.get(ci)) else { return; };
+        let raw = cell.as_ref();
+        if let rusqlite::types::ValueRef::Text(bytes) = raw {
+            if std::str::from_utf8(bytes).is_err() {
+                self.clear_browse_editor();
+                self.error_msg = Some("TEXT contains invalid UTF-8; typed copy and SQL export preserve its bytes".into());
+                return;
+            }
+        }
+        let value = rusqlite::types::Value::from(raw);
         let mode = if matches!(value, rusqlite::types::Value::Blob(_)) {
             EditCellMode::Hex
         } else {
@@ -3529,6 +3533,34 @@ mod chart_default_tests {
         state.close_browse_tab();
         assert_eq!(state.browse_tabs.len(), 1);
         assert!(state.browse().table.is_none());
+    }
+
+    #[test]
+    fn typed_clipboard_roundtrip_preserves_null_empty_blob_numbers_and_raw_text() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("DROP TABLE t; CREATE TABLE t(v);
+            INSERT INTO t VALUES(NULL),(''),('NULL'),(9223372036854775807),(1.25),(X'00FF'),(CAST(X'FF' AS TEXT));
+            CREATE TABLE dest(v); INSERT INTO dest SELECT NULL FROM t;").unwrap();
+        state.refresh_schema().unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        let original = state.browse().result.as_ref().unwrap().values.clone();
+        state.browse_mut().sel_row = Some(6);
+        state.browse_mut().sel_row_start = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        assert!(state.error_msg.as_deref().unwrap().contains("invalid UTF-8"));
+        let copy = state.copy_browse_cells(false, false).unwrap();
+        let cells = copy.internal_cells(&copy.html).unwrap();
+        state.browse_mut().table = Some("dest".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.paste_browse_cells(cells).unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().values, original);
+        let types: Vec<String> = state.conn.as_ref().unwrap().prepare("SELECT typeof(v)||':'||hex(v) FROM dest ORDER BY rowid").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(types, vec!["null:", "text:", "text:4E554C4C", "integer:39323233333732303336383534373735383037", "real:312E3235", "blob:00FF", "text:FF"]);
     }
 
     #[test]

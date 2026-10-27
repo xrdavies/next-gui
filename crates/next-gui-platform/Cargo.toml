@@ -16,5 +16,5 @@ windows = ["dep:winit", "dep:softbuffer", "dep:arboard"]
 [dependencies]
 winit = { workspace = true, optional = true }
 softbuffer = { workspace = true, optional = true }
-# Text-only clipboard (no image-data) — avoids heavy `image` / newer MSRV deps.
+# Text and HTML clipboard (no image-data) — avoids heavy `image` / newer MSRV deps.
 arboard = { workspace = true, optional = true, default-features = false }
