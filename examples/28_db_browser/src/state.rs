@@ -365,15 +365,17 @@ pub struct AppState {
     // Structure helpers / wizard drafts
     pub ddl_draft: String,
     pub overlay: Option<OverlayKind>,
+    pub wizard_schema: String,
+    pub wizard_scroll: (f32, f32),
     pub wizard_table_name: String,
-    pub wizard_table_original: Option<String>,
+    pub wizard_table_original: Option<SelectedObject>,
     pub wizard_cols: Vec<ColDef>,
     pub wizard_col_sel: usize,
     pub wizard_index_name: String,
     pub wizard_index_table: String,
     pub wizard_index_cols: String,
     pub wizard_index_unique: bool,
-    pub wizard_index_original: Option<String>,
+    pub wizard_index_original: Option<SelectedObject>,
 
     // CSV import wizard
     pub csv_path: String,
@@ -612,6 +614,8 @@ impl AppState {
             insert_modes: Vec::new(),
             ddl_draft: String::new(),
             overlay: None,
+            wizard_schema: "main".into(),
+            wizard_scroll: (0.0, 0.0),
             wizard_table_name: "new_table".into(),
             wizard_table_original: None,
             wizard_cols: vec![
@@ -1279,6 +1283,7 @@ impl AppState {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn switch_browse_table(&mut self, name: &str) -> Result<(), String> {
         self.switch_browse_table_in("main", name)
     }
@@ -1463,6 +1468,8 @@ impl AppState {
     }
 
     pub fn open_create_table_wizard(&mut self) {
+        self.wizard_schema = "main".into();
+        self.wizard_scroll = (0.0, 0.0);
         self.wizard_table_name = "new_table".into();
         self.wizard_table_original = None;
         self.wizard_cols = vec![
@@ -1488,43 +1495,39 @@ impl AppState {
         if sel.kind != ObjectKind::Table {
             return Err("Modify Table only works on tables".into());
         }
-        if sel.schema != "main" { return Err("Use Execute SQL with a qualified name to modify an attached/temp table".into()); }
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let cols = db::table_columns(conn, &sel.name)?;
+        let cols = db::table_columns_in(conn, &sel.schema, &sel.name)?;
+        if cols.is_empty() { return Err("Table has no editable columns".into()); }
+        self.wizard_schema = sel.schema.clone();
+        self.wizard_scroll = (0.0, 0.0);
         self.wizard_table_name = sel.name.clone();
-        self.wizard_table_original = Some(sel.name.clone());
+        self.wizard_table_original = Some(sel);
         self.wizard_cols = cols
             .into_iter()
             .map(|c| ColDef {
                 name: c.name,
-                type_name: if c.type_name.is_empty() {
-                    "TEXT".into()
-                } else {
-                    c.type_name
-                },
+                type_name: c.type_name,
                 pk: c.pk,
                 notnull: c.notnull,
                 unique: false,
                 default_value: c.default_value.unwrap_or_default(),
             })
             .collect();
-        if self.wizard_cols.is_empty() {
-            self.wizard_cols.push(ColDef::new("col1", "TEXT"));
-        }
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
         Ok(())
     }
 
     pub fn open_create_index_wizard(&mut self) {
-        let table = (self.browse().schema == "main").then(|| self.browse().table.clone()).flatten()
-            .or_else(|| {
-                self.schema
-                    .iter()
-                    .find(|o| o.schema == "main" && o.kind == ObjectKind::Table)
-                    .map(|o| o.name.clone())
-            })
-            .unwrap_or_default();
+        let tables = self.index_tables();
+        let target = self.selected.as_ref().filter(|s| s.kind == ObjectKind::Table)
+            .map(|s| (s.schema.as_str(), s.name.as_str()))
+            .or_else(|| self.browse().table.as_deref().map(|table| (self.browse().schema.as_str(), table)))
+            .filter(|target| tables.contains(target))
+            .or_else(|| tables.first().copied());
+        let (schema, table) = target.map(|(schema, table)| (schema.to_string(), table.to_string())).unwrap_or_else(|| ("main".into(), String::new()));
+        self.wizard_schema = schema;
+        self.wizard_scroll = (0.0, 0.0);
         self.wizard_index_name = format!("idx_{table}");
         self.wizard_index_table = table;
         self.wizard_index_cols = String::new();
@@ -1541,7 +1544,6 @@ impl AppState {
         if sel.kind != ObjectKind::Index {
             return Err("Select an index object".into());
         }
-        if sel.schema != "main" { return Err("Use Execute SQL with a qualified name to modify an attached/temp index".into()); }
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let table = self
             .schema
@@ -1549,45 +1551,31 @@ impl AppState {
             .find(|o| o.schema == sel.schema && o.name == sel.name && o.kind == ObjectKind::Index)
             .and_then(|o| o.tbl_name.clone())
             .ok_or("Index table missing")?;
-        let (unique, partial): (bool, bool) = conn
-            .query_row(
-                "SELECT \"unique\", partial FROM pragma_index_list(?1, 'main') WHERE name=?2",
-                rusqlite::params![table, sel.name],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map_err(|e| e.to_string())?;
-        if partial {
-            return Err(
-                "Use Execute SQL to modify a partial index without losing its WHERE clause".into(),
-            );
+        let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", db::quote_ident(&sel.schema), db::quote_ident(&table))).map_err(|e| e.to_string())?;
+        let indexes = stmt.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, bool>(2)?, r.get::<_, String>(3)?, r.get::<_, bool>(4)?))).map_err(|e| e.to_string())?;
+        let mut flags = None;
+        for index in indexes {
+            let (name, unique, origin, partial) = index.map_err(|e| e.to_string())?;
+            if name == sel.name { flags = Some((unique, origin, partial)); break; }
         }
-        let mut stmt = conn
-            .prepare(
-                "SELECT name, desc, coll FROM pragma_index_xinfo(?1, 'main') WHERE key=1 ORDER BY seqno",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([&sel.name], |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, bool>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
+        let (unique, origin, partial) = flags.ok_or("Index no longer exists")?;
+        if origin != "c" { return Err("Modify the table to change an automatic constraint index".into()); }
+        if partial {
+            return Err("Use Execute SQL to modify a partial index without losing its WHERE clause".into());
+        }
+        let mut stmt = conn.prepare(&format!("PRAGMA {}.index_xinfo({})", db::quote_ident(&sel.schema), db::quote_ident(&sel.name))).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, Option<String>>(2)?, r.get::<_, bool>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?))).map_err(|e| e.to_string())?;
         let mut columns = Vec::new();
         for row in rows {
-            let (name, desc, collation) = row.map_err(|e| e.to_string())?;
+            let (name, desc, collation, key) = row.map_err(|e| e.to_string())?;
+            if !key { continue; }
             let name = name.ok_or("Use Execute SQL to modify an expression index")?;
-            columns.push(format!(
-                "{} COLLATE {} {}",
-                db::quote_ident(&name),
-                db::quote_ident(&collation),
-                if desc { "DESC" } else { "ASC" }
-            ));
+            columns.push(format!("{} COLLATE {} {}", db::quote_ident(&name), db::quote_ident(&collation), if desc { "DESC" } else { "ASC" }));
         }
+        self.wizard_schema = sel.schema.clone();
+        self.wizard_scroll = (0.0, 0.0);
         self.wizard_index_name = sel.name.clone();
-        self.wizard_index_original = Some(sel.name);
+        self.wizard_index_original = Some(sel);
         self.wizard_index_table = table;
         self.wizard_index_unique = unique;
         self.wizard_index_cols = columns.join(", ");
@@ -1595,68 +1583,83 @@ impl AppState {
         Ok(())
     }
 
+    fn select_saved_object(&mut self, schema: &str, kind: ObjectKind, name: &str, clean_ddl: bool) {
+        self.selected = Some(SelectedObject { schema: schema.into(), kind, name: name.into() });
+        self.schema_group = None;
+        if clean_ddl {
+            self.ddl_draft = self.schema.iter().find(|o| o.schema == schema && o.kind == kind && o.name == name).and_then(|o| o.sql.clone()).unwrap_or_default();
+        }
+    }
+
     pub fn apply_table_wizard(&mut self) -> Result<(), String> {
         self.guard_writable()?;
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        let schema = self.wizard_schema.clone();
         let name = self.wizard_table_name.trim().to_string();
-        if name.is_empty() {
-            return Err("Table name required".into());
+        if name.is_empty() { return Err("Table name required".into()); }
+        if self.wizard_cols.is_empty() { return Err("Add at least one column".into()); }
+        if self.wizard_cols.iter().any(|c| c.name.trim().is_empty()) { return Err("Column name required".into()); }
+        let original = self.wizard_table_original.clone();
+        if original.as_ref().is_some_and(|o| o.schema != schema) {
+            return Err("Moving a table between databases requires an explicit SQL migration".into());
         }
-        if self.wizard_cols.is_empty() {
-            return Err("Add at least one column".into());
-        }
-        for c in &self.wizard_cols {
-            if c.name.trim().is_empty() {
-                return Err("Column name required".into());
-            }
-        }
+        let previous_source = self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.schema == s.schema && o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.clone());
+        let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
-        if let Some(orig) = self.wizard_table_original.clone() {
-            db::recreate_table(conn, &orig, &name, &self.wizard_cols)?;
-            self.log_sql(format!("-- modify table {orig} → {name}"));
+        if let Some(orig) = original.as_ref() {
+            db::recreate_table_in(conn, &schema, &orig.name, &name, &self.wizard_cols)?;
+            self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
-            let ddl = db::create_table_ddl(&name, &self.wizard_cols);
+            let ddl = db::create_table_ddl_in(&schema, &name, &self.wizard_cols);
             conn.execute_batch(&ddl).map_err(|e| e.to_string())?;
             self.log_sql(ddl);
         }
         self.mark_dirty();
         self.overlay = None;
-        self.refresh_schema()?;
-        if self.browse().schema == "main" && self.browse().table.as_deref() == Some(&name) {
-            self.refresh_browse()?;
-        } else {
-            self.switch_browse_table(&name)?;
+        if let Some(orig) = original.as_ref().filter(|o| o.name != name) {
+            for tab in &mut self.browse_tabs {
+                let saved = if schema == "main" { tab.table_options.remove(&orig.name) }
+                    else { tab.schema_table_options.get_mut(&schema).and_then(|tables| tables.remove(&orig.name)) };
+                if let Some(options) = saved { tab.store_options(&schema, &name, options); }
+                if tab.schema == schema && tab.table.as_deref() == Some(&orig.name) {
+                    tab.table = Some(name.clone());
+                    tab.title = if schema == "main" { name.clone() } else { db::qualified_name(&schema, &name) };
+                }
+            }
+            for rule in &mut self.cond_rules {
+                if rule.schema == schema && rule.table.as_deref() == Some(&orig.name) { rule.table = Some(name.clone()); }
+            }
+            if self.chart_schema == schema && self.chart_table.as_deref() == Some(&orig.name) { self.chart_table = Some(name.clone()); }
         }
-        self.status_msg = format!("Table `{name}` saved (unwritten)");
+        self.refresh_schema()?;
+        self.select_saved_object(&schema, ObjectKind::Table, &name, clean_ddl);
+        if self.browse().schema == schema && self.browse().table.as_deref() == Some(&name) { self.refresh_browse()?; }
+        else { self.switch_browse_table_in(&schema, &name)?; }
+        let plot_error = self.refresh_chart().err().map(|e| format!("; plot unavailable: {e}")).unwrap_or_default();
+        self.status_msg = format!("Table {} saved (unwritten){plot_error}", db::qualified_name(&schema, &name));
         Ok(())
     }
 
     pub fn apply_index_wizard(&mut self) -> Result<(), String> {
         self.guard_writable()?;
+        let schema = self.wizard_schema.clone();
         let name = self.wizard_index_name.trim().to_string();
-        let table = self.wizard_index_table.trim().to_string();
+        let table = self.wizard_index_table.clone();
         let cols = self.wizard_index_cols.trim().to_string();
-        if name.is_empty() || table.is_empty() || cols.is_empty() {
-            return Err("Index needs name, table, and columns".into());
-        }
+        if name.is_empty() || table.is_empty() || cols.is_empty() { return Err("Index needs name, table, and columns".into()); }
+        if !self.index_tables().contains(&(schema.as_str(), table.as_str())) { return Err("Select a valid table for the index".into()); }
+        let clean_ddl = self.ddl_draft == self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.schema == s.schema && o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.as_deref()).unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         db::with_savepoint(conn, || {
-            if let Some(orig) = self.wizard_index_original.as_ref() {
-                db::drop_object(conn, ObjectKind::Index, "main", orig)?;
-            }
-            db::create_index(conn, &name, &table, &cols, self.wizard_index_unique)
+            if let Some(orig) = self.wizard_index_original.as_ref() { db::drop_object(conn, ObjectKind::Index, &orig.schema, &orig.name)?; }
+            db::create_index_in(conn, &schema, &name, &table, &cols, self.wizard_index_unique)
         })?;
-        self.log_sql(format!(
-            "CREATE {}INDEX {name} ON {table}({cols})",
-            if self.wizard_index_unique {
-                "UNIQUE "
-            } else {
-                ""
-            }
-        ));
+        self.log_sql(format!("CREATE {}INDEX {} ON {}({cols})", if self.wizard_index_unique { "UNIQUE " } else { "" }, db::qualified_name(&schema, &name), db::quote_ident(&table)));
         self.mark_dirty();
         self.overlay = None;
         self.refresh_schema()?;
-        self.status_msg = format!("Index `{name}` saved (unwritten)");
+        self.select_saved_object(&schema, ObjectKind::Index, &name, clean_ddl);
+        self.status_msg = format!("Index {} saved (unwritten)", db::qualified_name(&schema, &name));
         Ok(())
     }
 
@@ -1729,13 +1732,12 @@ impl AppState {
             .map(String::from);
     }
 
-    pub fn table_names(&self) -> Vec<String> {
-        // shortcut: structured wizards address main; carry schema identity through their models before enabling other databases.
-        self.schema
-            .iter()
-            .filter(|o| o.schema == "main" && matches!(o.kind, ObjectKind::Table | ObjectKind::View))
-            .map(|o| o.name.clone())
-            .collect()
+    pub fn table_schemas(&self) -> Vec<&str> {
+        ["main", "temp"].into_iter().chain(self.schema_names.iter().map(String::as_str).filter(|s| !["main", "temp"].contains(s))).collect()
+    }
+
+    pub fn index_tables(&self) -> Vec<(&str, &str)> {
+        self.schema.iter().filter(|o| o.kind == ObjectKind::Table).map(|o| (o.schema.as_str(), o.name.as_str())).collect()
     }
 
     pub fn browse_tables(&self) -> Vec<(&str, &str)> {
@@ -1743,8 +1745,12 @@ impl AppState {
             .map(|o| (o.schema.as_str(), o.name.as_str())).collect()
     }
 
-    pub fn column_type_names() -> Vec<String> {
-        COLUMN_TYPES.iter().map(|s| (*s).to_string()).collect()
+    pub fn column_type_names(&self) -> Vec<String> {
+        let mut types: Vec<_> = COLUMN_TYPES.iter().map(|s| (*s).to_string()).collect();
+        if let Some(column) = self.wizard_cols.get(self.wizard_col_sel) {
+            if !types.contains(&column.type_name) { types.push(column.type_name.clone()); }
+        }
+        types
     }
 
     fn adopt_conn(
@@ -3232,6 +3238,106 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn namespace_table_wizards_keep_data_options_drafts_and_identity() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp');
+            ATTACH ':memory:' AS \"aux.\"\"db\";
+            CREATE TABLE \"aux.\"\"db\".t(v); INSERT INTO \"aux.\"\"db\".t VALUES(25);").unwrap();
+        state.refresh_schema().unwrap();
+        let index = state.schema.iter().position(|o| o.schema == "aux.\"db" && o.name == "t").unwrap();
+        state.select_schema_node(10_000 + index as u64);
+        state.browse_mut().filter = "v=25".into();
+        state.browse_mut().column_widths = vec![211.0];
+        let options = state.browse().options();
+        state.browse_mut().store_options("aux.\"db", "t", options);
+        state.add_browse_tab().unwrap();
+        state.chart_schema = "aux.\"db".into();
+        state.chart_table = Some("t".into());
+        state.chart_column = "v".into();
+        state.cond_col = "v".into();
+        state.cond_value = "25".into();
+        state.add_cond_format_rule();
+        state.open_modify_table_wizard().unwrap();
+        assert_eq!(state.wizard_schema, "aux.\"db");
+        assert_eq!(state.wizard_cols[0].type_name, "");
+        assert!(state.column_type_names().contains(&String::new()));
+        state.wizard_cols.push(ColDef::new("extra", "TEXT"));
+        state.wizard_table_name = "renamed.\"t".into();
+        state.apply_table_wizard().unwrap();
+        assert!(state.browse_tabs.iter().all(|t| t.schema == "aux.\"db" && t.table.as_deref() == Some("renamed.\"t")));
+        assert!(state.browse_tabs.iter().all(|t| t.stored_options("aux.\"db", "t").is_none()));
+        assert_eq!(state.browse_tabs[0].stored_options("aux.\"db", "renamed.\"t").unwrap().column_widths, [211.0]);
+        assert_eq!(state.selected.as_ref().unwrap().schema, "aux.\"db");
+        assert_eq!(state.selected.as_ref().unwrap().name, "renamed.\"t");
+        assert!(state.ddl_draft.contains("renamed."));
+        assert_eq!(state.chart_table.as_deref(), Some("renamed.\"t"));
+        assert_eq!(state.chart_points, [25.0]);
+        assert_eq!(state.cond_rules[0].table.as_deref(), Some("renamed.\"t"));
+        assert_eq!(db::browse_table(state.conn.as_ref().unwrap(), "t", &[], None, 5, 0).unwrap().rows[0][0], "saved");
+        assert_eq!(db::browse_table_in(state.conn.as_ref().unwrap(), "temp", "t", &[], None, 5, 0).unwrap().rows[0][0], "temp");
+        state.goto_browse_record(1).unwrap();
+        state.edit_type = 3;
+        state.edit_value = "keep draft".into();
+        state.open_create_table_wizard();
+        assert_eq!(state.wizard_schema, "main");
+        assert!(state.apply_table_wizard().unwrap_err().contains("cell draft"));
+        assert!(!db::list_schema(state.conn.as_ref().unwrap()).unwrap().iter().any(|o| o.name == "new_table"));
+        state.discard_cell_draft();
+        state.ddl_draft.push_str(" -- retained SQL draft");
+        state.wizard_schema = "temp".into();
+        state.wizard_table_name = "created".into();
+        state.apply_table_wizard().unwrap();
+        assert!(state.ddl_draft.ends_with("retained SQL draft"));
+        assert_eq!(state.browse().schema, "temp");
+        assert!(state.schema.iter().any(|o| o.schema == "temp" && o.name == "created"));
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_schema = "main".into();
+        assert!(state.apply_table_wizard().unwrap_err().contains("Moving"));
+        assert_eq!(db::table_columns_in(state.conn.as_ref().unwrap(), "temp", "created").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn namespace_index_wizards_read_real_pragmas_and_keep_original_on_failure() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(v TEXT); ATTACH ':memory:' AS \"aux.\"\"db\";
+            CREATE TABLE \"aux.\"\"db\".t(v TEXT);
+            CREATE TABLE pragma_index_list(fake); CREATE TABLE pragma_index_xinfo(fake);
+            CREATE TEMP TABLE pragma_index_list(fake); CREATE TEMP TABLE pragma_index_xinfo(fake);
+            CREATE VIEW main.not_a_table AS SELECT 1;").unwrap();
+        for schema in ["main", "temp", "aux.\"db"] {
+            db::create_index_in(state.conn.as_ref().unwrap(), schema, "same.\"index", "t", "v COLLATE NOCASE DESC", true).unwrap();
+        }
+        state.refresh_schema().unwrap();
+        assert!(!state.index_tables().contains(&("main", "not_a_table")));
+        state.selected = Some(SelectedObject { schema: "aux.\"db".into(), kind: ObjectKind::Index, name: "same.\"index".into() });
+        state.open_modify_index_wizard().unwrap();
+        assert_eq!(state.wizard_schema, "aux.\"db");
+        assert!(state.wizard_index_unique);
+        assert!(state.wizard_index_cols.contains("NOCASE"));
+        assert!(state.wizard_index_cols.contains("DESC"));
+        let original_columns = state.wizard_index_cols.clone();
+        state.wizard_schema = "temp".into();
+        state.wizard_index_name = "moved.\"index".into();
+        state.wizard_index_cols = "missing_column".into();
+        assert!(state.apply_index_wizard().is_err());
+        assert_eq!(state.overlay, Some(OverlayKind::EditIndex));
+        assert!(db::list_schema_in(state.conn.as_ref().unwrap(), "aux.\"db").unwrap().iter().any(|o| o.name == "same.\"index"));
+        state.wizard_index_cols = original_columns;
+        state.apply_index_wizard().unwrap();
+        assert!(!state.schema.iter().any(|o| o.schema == "aux.\"db" && o.name == "same.\"index"));
+        assert!(state.schema.iter().any(|o| o.schema == "temp" && o.name == "moved.\"index"));
+        for schema in ["main", "temp"] { assert!(state.schema.iter().any(|o| o.schema == schema && o.name == "same.\"index")); }
+        assert_eq!(state.selected.as_ref().unwrap().schema, "temp");
+        state.conn.as_ref().unwrap().execute_batch("CREATE INDEX \"aux.\"\"db\".partial_ix ON t(v) WHERE v IS NOT NULL;
+            CREATE INDEX \"aux.\"\"db\".expression_ix ON t(length(v));").unwrap();
+        state.refresh_schema().unwrap();
+        for name in ["partial_ix", "expression_ix"] {
+            state.selected = Some(SelectedObject { schema: "aux.\"db".into(), kind: ObjectKind::Index, name: name.into() });
+            assert!(state.open_modify_index_wizard().is_err());
+        }
+    }
+
+    #[test]
     fn browse_namespaces_isolate_data_options_formats_and_clipboard_sql() {
         let mut state = test_state();
         state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp');
@@ -3347,7 +3453,7 @@ mod chart_default_tests {
         assert!(state.schema.iter().any(|o| o.name == "attached_only"));
         assert!(state.schema.iter().any(|o| o.name == "temp_only"));
         assert_eq!(state.schema_names, ["main", "temp", "aux.\"db", "empty_db"]);
-        assert_eq!(state.table_names(), ["t"]);
+        assert_eq!(state.index_tables(), [("main", "t"), ("temp", "temp_only"), ("aux.\"db", "attached_only")]);
         let attached = state.schema.iter().position(|o| o.schema == "aux.\"db" && o.name == "attached_only").unwrap();
         state.select_schema_node(10_000 + attached as u64);
         assert_eq!(state.selected.as_ref().unwrap().schema, "aux.\"db");
@@ -3356,7 +3462,7 @@ mod chart_default_tests {
         project.apply_to(&mut restored);
         assert_eq!(restored.selected.as_ref().unwrap().schema, "aux.\"db");
         assert_eq!(restored.ddl_draft, state.ddl_draft);
-        assert!(state.open_modify_table_wizard().is_err());
+        assert!(state.open_modify_table_wizard().is_ok());
         assert_eq!(state.browse().schema, "aux.\"db");
         assert_eq!(state.browse().table.as_deref(), Some("attached_only"));
         assert!(!state.schema_selection_has_draft(1));

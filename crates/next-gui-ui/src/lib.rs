@@ -6481,6 +6481,14 @@ impl Ui {
         }
     }
 
+    /// Selected option text from the Select's current option list.
+    pub fn select_value(&self, id: WidgetId) -> Option<&str> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Select { options, selected, .. }) => selected.and_then(|i| options.get(i)).map(String::as_str),
+            _ => None,
+        }
+    }
+
     /// Set Select selection.
     pub fn set_select_selected(&mut self, id: WidgetId, index: Option<usize>) -> bool {
         let n = match self.widgets.get(&id).map(|w| &w.kind) {
@@ -21130,6 +21138,8 @@ mod tests {
         assert!(ui.is_slider(slider));
         assert_eq!(ui.tabs_selected(tabs), Some(0));
         assert_eq!(ui.select_selected(sel), Some(0));
+        assert_eq!(ui.select_value(sel), Some("Auto"));
+        assert_eq!(ui.select_value(slider), None);
         assert!((ui.slider_value(slider).unwrap() - 40.0).abs() < 0.01);
 
         // Open menu and activate Save
@@ -21159,6 +21169,11 @@ mod tests {
         let spb = scene.get(sp).unwrap().bounds;
         assert!(ui.pointer_press(&mut scene, spb.x + 8.0, spb.y + 26.0 + 4.0, false));
         assert_eq!(ui.select_selected(sel), Some(1));
+        assert_eq!(ui.select_value(sel), Some("Manual"));
+        assert!(ui.set_select_selected(sel, None));
+        assert_eq!(ui.select_value(sel), None);
+        assert!(!ui.set_select_selected(sel, Some(99)));
+        assert_eq!(ui.select_value(sel), None);
 
         // Context menu secondary
         let cnode = ui.widgets.get(&ctx).unwrap().node.unwrap();

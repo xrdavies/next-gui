@@ -285,6 +285,8 @@ struct BuiltUiIds {
     btn_chart: WidgetId,
     modal: WidgetId,
     ov_name: WidgetId,
+    ov_schema: WidgetId,
+    ov_scroll: WidgetId,
     insert_values: Vec<WidgetId>,
     insert_modes: Vec<WidgetId>,
     ov_list: WidgetId,
@@ -450,6 +452,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_chart: b.btn_chart,
             modal: b.modal,
             ov_name: b.ov_name,
+            ov_schema: b.ov_schema,
+            ov_scroll: b.ov_scroll,
             insert_values: b.insert_values.clone(),
             insert_modes: b.insert_modes.clone(),
             ov_list: b.ov_list,
@@ -600,7 +604,7 @@ impl Demo {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
                 }
-                "schema-namespaces" | "browse-namespaces" | "plot-namespaces" | "plot-caption" => {
+                "schema-namespaces" | "browse-namespaces" | "plot-namespaces" | "plot-caption" | "table-namespaces" | "index-namespaces" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
                     state.refresh_schema().unwrap();
@@ -624,7 +628,9 @@ impl Demo {
                         state.dock_plot = true;
                         state.dock_focus = DockKind::Plot;
                     }
-                    if tab == "schema-namespaces" { MainTab::Structure } else { MainTab::Browse }
+                    if tab == "table-namespaces" { state.open_modify_table_wizard().unwrap(); }
+                    if tab == "index-namespaces" { state.open_create_index_wizard(); state.wizard_index_cols = "region COLLATE NOCASE DESC".into(); }
+                    if matches!(tab.as_str(), "schema-namespaces" | "table-namespaces" | "index-namespaces") { MainTab::Structure } else { MainTab::Browse }
                 }
                 "schema-scroll" => {
                     state.new_memory_db().unwrap();
@@ -984,6 +990,9 @@ impl Demo {
         let Some(kind) = self.state.overlay else {
             return;
         };
+        if self.ids.ov_scroll.0 != 0 {
+            if let Some(offset) = self.ui.scroll_offset(self.ids.ov_scroll) { self.state.wizard_scroll = offset; }
+        }
         if self.ids.ov_name.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.ov_name) {
                 match kind {
@@ -1005,6 +1014,11 @@ impl Demo {
                 }
             }
             OverlayKind::EditTable => {
+                if self.ids.ov_schema.0 != 0 {
+                    if let Some(index) = self.ui.select_selected(self.ids.ov_schema) {
+                        if let Some(schema) = self.state.table_schemas().get(index) { self.state.wizard_schema = (*schema).into(); }
+                    }
+                }
                 if let Some(i) = self.ui.list_selected(self.ids.ov_list) {
                     if Some(i) != self.last_wizard_list {
                         self.flush_wizard_col();
@@ -1029,9 +1043,9 @@ impl Demo {
                 }
                 if self.ids.ov_idx_table.0 != 0 {
                     if let Some(i) = self.ui.select_selected(self.ids.ov_idx_table) {
-                        let names = self.state.table_names();
-                        if let Some(n) = names.get(i) {
-                            self.state.wizard_index_table = n.clone();
+                        if let Some((schema, table)) = self.state.index_tables().get(i).map(|(schema, table)| (schema.to_string(), table.to_string())) {
+                            self.state.wizard_schema = schema;
+                            self.state.wizard_index_table = table;
                         }
                     }
                 }
@@ -1217,11 +1231,8 @@ impl Demo {
             }
         }
         if self.ids.ov_col_type.0 != 0 {
-            if let Some(i) = self.ui.select_selected(self.ids.ov_col_type) {
-                let types = AppState::column_type_names();
-                if let Some(ty) = types.get(i) {
-                    self.state.wizard_cols[sel].type_name = ty.clone();
-                }
+            if let Some(value) = self.ui.select_value(self.ids.ov_col_type) {
+                self.state.wizard_cols[sel].type_name = value.into();
             }
         }
         if self.ids.ov_pk.0 != 0 {
@@ -4280,9 +4291,8 @@ mod interaction_tests {
         assert_eq!(restored.ddl_draft, demo.state.ddl_draft);
         assert_eq!(demo.state.browse().schema, "analytics");
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][1], "APAC");
-        assert!(demo.state.open_modify_table_wizard().is_err());
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_run_ddl), Some(false));
-        assert_eq!(demo.ui.button_enabled(demo.ids.btn_struct_modify), Some(false));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_struct_modify), Some(true));
         demo.ui.set_button_enabled(demo.ids.btn_run_ddl, true);
         demo.handle_button(demo.ids.btn_run_ddl);
         assert!(demo.state.error_msg.as_deref().unwrap().contains("qualified"));
@@ -5451,6 +5461,132 @@ mod interaction_tests {
         }
         assert_eq!(demo.state.sql_result.as_ref().unwrap().rows[0][0], "42");
         assert_eq!(demo.state.sql_editor(), "SELECT 42;\nINVALID SQL;");
+    }
+
+    #[test]
+    fn schema_wizard_selectors_keep_qualified_targets_types_and_scroll() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.handle_menu(mid::EDIT_CREATE_TABLE);
+        demo.do_rebuild();
+        let schema = demo.state.table_schemas().iter().position(|s| *s == "analytics").unwrap();
+        demo.ui.set_select_selected(demo.ids.ov_schema, Some(schema));
+        demo.ui.set_text_input(demo.ids.ov_name, "created.\"table");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        assert_eq!(demo.state.browse().schema, "analytics");
+        assert_eq!(demo.state.browse().table.as_deref(), Some("created.\"table"));
+        demo.do_rebuild();
+        demo.handle_menu(mid::EDIT_CREATE_INDEX);
+        demo.do_rebuild();
+        let table = demo.state.index_tables().iter().position(|pair| *pair == ("main", "customers")).unwrap();
+        demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(table));
+        demo.ui.set_text_input(demo.ids.ov_name, "created.\"index");
+        demo.ui.set_text_input(demo.ids.ov_idx_cols, "name COLLATE NOCASE DESC");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        assert_eq!(demo.state.selected.as_ref().unwrap().schema, "main");
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.btn_struct_modify);
+        demo.do_rebuild();
+        let table = demo.state.index_tables().iter().position(|pair| *pair == ("analytics", "customers")).unwrap();
+        demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(table));
+        demo.ui.set_text_input(demo.ids.ov_idx_cols, "missing_column");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_some());
+        assert!(dbmod::list_schema(demo.state.conn.as_ref().unwrap()).unwrap().iter().any(|o| o.name == "created.\"index"));
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_idx_cols, "region COLLATE NOCASE DESC");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        assert_eq!(demo.state.selected.as_ref().unwrap().schema, "analytics");
+        assert!(!demo.state.schema.iter().any(|o| o.schema == "main" && o.name == "created.\"index"));
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE analytics.custom_types(untyped, amount DECIMAL(10,2));").unwrap();
+        demo.state.refresh_schema().unwrap();
+        let table = demo.state.schema.iter().position(|o| o.schema == "analytics" && o.name == "custom_types").unwrap();
+        demo.state.select_schema_node(10_000 + table as u64);
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.btn_struct_modify);
+        demo.do_rebuild();
+        assert_eq!(demo.state.wizard_cols[0].type_name, "");
+        demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.wizard_cols[0].type_name, "");
+        assert_eq!(demo.state.wizard_cols[1].type_name, "DECIMAL(10,2)");
+        let custom = demo.ui.select_selected(demo.ids.ov_col_type).unwrap();
+        demo.ui.set_select_selected(demo.ids.ov_col_type, Some(0));
+        demo.snapshot_inputs();
+        assert_ne!(demo.state.wizard_cols[1].type_name, "DECIMAL(10,2)");
+        demo.ui.set_select_selected(demo.ids.ov_col_type, Some(custom));
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.wizard_cols[1].type_name, "DECIMAL(10,2)");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        for (kind, index) in [("table", false), ("index", true)] {
+            for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+                for (width, height) in [(1400, 1000), (800, 600)] {
+                    demo.win_w = width;
+                    demo.win_h = height;
+                    demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                    if index { demo.state.open_create_index_wizard(); demo.state.wizard_index_table = "customers".into(); }
+                    else { demo.state.open_create_table_wizard(); }
+                    demo.state.wizard_schema = "analytics".into();
+                    demo.do_rebuild();
+                    let phases: &[&str] = if !index && width == 800 { &["top", "bottom"] } else { &["top"] };
+                    for phase in phases {
+                        if *phase == "bottom" {
+                            assert!(demo.ui.set_scroll_offset(demo.ids.ov_scroll, 0.0, 10000.0));
+                            demo.ui.sync(&mut demo.scene);
+                            let offset = demo.ui.scroll_offset(demo.ids.ov_scroll).unwrap();
+                            assert!(offset.1 > 0.0);
+                            demo.snapshot_inputs();
+                            demo.do_rebuild();
+                            assert_eq!(demo.ui.scroll_offset(demo.ids.ov_scroll), Some(offset));
+                        }
+                        let bounds = |id| demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(id)).unwrap().bounds;
+                        let viewport = bounds(demo.ids.ov_scroll);
+                        let save = bounds(demo.ids.ov_btn_ok);
+                        let input_bounds: Vec<_> = [demo.ids.ov_name, demo.ids.ov_schema, demo.ids.ov_col_name, demo.ids.ov_col_type, demo.ids.ov_default, demo.ids.ov_idx_table, demo.ids.ov_idx_cols].into_iter().filter(|id| id.0 != 0).map(bounds).collect();
+                        assert!(viewport.y + viewport.height <= save.y && save.y + save.height <= height as f32);
+                        if *phase == "bottom" {
+                            let field = bounds(demo.ids.ov_default);
+                            assert!(field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height);
+                        }
+                        if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_WIZARD_QA_OUT") {
+                            demo.scene.mark_full_dirty(width as f32, height as f32);
+                            let dirty = demo.scene.take_dirty();
+                            let commands = encode_scene(&demo.scene, &dirty);
+                            let clear = clear_color(&demo.theme);
+                            let mut soft = SoftRenderer::new(width, height, clear);
+                            soft.render(&commands, &dirty);
+                            write_ppm(&format!("{prefix}-{kind}-{theme_name}-{width}-{phase}.ppm"), soft.frame_pixels().unwrap().0, width, height).unwrap();
+                            if let Ok(mut gpu) = GpuRenderer::try_new(width, height, clear) {
+                                gpu.render(&commands, &dirty);
+                                let a = soft.frame_pixels().unwrap().0;
+                                let b = gpu.frame_pixels().unwrap().0;
+                                write_ppm(&format!("{prefix}-{kind}-{theme_name}-{width}-{phase}-metal.ppm"), b, width, height).unwrap();
+                                let delta = ((viewport.y.ceil() as usize + 2)..(viewport.y + viewport.height).floor() as usize - 2).flat_map(|y|
+                                    ((viewport.x.ceil() as usize + 2)..(viewport.x + viewport.width).floor() as usize - 2).map(move |x| y * width as usize + x)
+                                ).flat_map(|i| [0, 8, 16].map(|shift| (((a[i] >> shift) & 255) as i32 - ((b[i] >> shift) & 255) as i32).abs())).max().unwrap();
+                                let interior = input_bounds.iter().flat_map(|r| {
+                                    let left = (r.x + 8.0).max(viewport.x + 2.0).ceil() as usize;
+                                    let right = (r.x + r.width - 8.0).min(viewport.x + viewport.width - 2.0).floor() as usize;
+                                    let top = (r.y + 8.0).max(viewport.y + 2.0).ceil() as usize;
+                                    let bottom = (r.y + r.height - 8.0).min(viewport.y + viewport.height - 2.0).floor().max(0.0) as usize;
+                                    (top..bottom).flat_map(move |y| (left..right).map(move |x| y * width as usize + x))
+                                }).flat_map(|i| [0, 8, 16].map(|shift| (((a[i] >> shift) & 255) as i32 - ((b[i] >> shift) & 255) as i32).abs())).max().unwrap();
+                                assert!(interior <= 2, "Wizard {kind}/{theme_name}/{width}/{phase} input interior channel delta {interior}");
+                                eprintln!("Wizard {kind}/{theme_name}/{width}/{phase} Soft/Metal actual readback: input interior {interior}; full viewport including primitive edges {delta}");
+                            } else { eprintln!("Wizard GPU comparison not_run: adapter unavailable"); }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

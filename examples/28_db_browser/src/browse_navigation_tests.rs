@@ -450,7 +450,7 @@ fn selecting_an_unqueryable_view_restores_the_previous_table_result_and_editor()
         .unwrap();
     demo.state.refresh_schema().unwrap();
     go(&mut demo, "501");
-    let names = demo.state.table_names();
+    let names: Vec<_> = demo.state.browse_tables().iter().map(|(_, name)| name.to_string()).collect();
     let index = names.iter().position(|name| name == "broken").unwrap();
     demo.ui
         .set_select_selected(demo.ids.browse_select, Some(index));
@@ -496,7 +496,7 @@ fn command_page_shortcuts_cycle_tables_and_views_in_both_directions() {
     demo.state.refresh_schema().unwrap();
     demo.do_rebuild();
     demo.ui.set_focus(Some(demo.ids.browse_table));
-    let names = demo.state.table_names();
+    let names: Vec<_> = demo.state.browse_tables().iter().map(|(_, name)| name.to_string()).collect();
     assert_eq!(names.len(), 3);
     let start = names.iter().position(|name| name == "t").unwrap();
     let command = Modifiers {
@@ -546,7 +546,7 @@ fn table_switch_apply_guards_drafts_and_busy_queries_without_mutating_the_tab() 
         .unwrap();
     demo.state.refresh_schema().unwrap();
     go(&mut demo, "501");
-    let names = demo.state.table_names();
+    let names: Vec<_> = demo.state.browse_tables().iter().map(|(_, name)| name.to_string()).collect();
     let target = names.iter().position(|name| name == "u").unwrap();
     demo.ui
         .set_text_area_value(demo.ids.edit_value, "keep table draft");

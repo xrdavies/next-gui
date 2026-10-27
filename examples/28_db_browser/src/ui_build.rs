@@ -167,6 +167,8 @@ pub struct BuiltUi {
     pub modal: WidgetId,
     // Overlay widgets
     pub ov_name: WidgetId,
+    pub ov_schema: WidgetId,
+    pub ov_scroll: WidgetId,
     pub insert_values: Vec<WidgetId>,
     pub insert_modes: Vec<WidgetId>,
     pub ov_list: WidgetId,
@@ -432,6 +434,8 @@ pub fn build_ui(
     let mut chart = z;
     let mut status = z;
     let mut ov_name = z;
+    let mut ov_schema = z;
+    let mut ov_scroll = z;
     let mut insert_values = Vec::new();
     let mut insert_modes = Vec::new();
     let mut ov_list = z;
@@ -796,94 +800,121 @@ pub fn build_ui(
                             });
                         }
                         OverlayKind::EditTable => {
-                            c.row(row, |r| {
-                                r.text("Table name");
-                                ov_name = r.text_input_styled(&state.wizard_table_name, "name", name_s);
-                            });
-                            let items: Vec<String> = state
-                                .wizard_cols
-                                .iter()
-                                .enumerate()
-                                .map(|(i, col)| {
-                                    format!(
-                                        "{}. {} {}{}",
-                                        i + 1,
-                                        col.name,
-                                        col.type_name,
-                                        if col.pk { " PK" } else { "" }
-                                    )
-                                })
-                                .collect();
-                            c.text("Columns");
-                            ov_list = c.list(items, list_s);
-                            c.row(row, |r| {
-                                ov_btn_add = r.tool_button("Add");
-                                ov_btn_del = r.tool_button("Remove");
-                                ov_btn_up = r.tool_button("Up");
-                                ov_btn_down = r.tool_button("Down");
-                            });
-                            let sel = state.wizard_col_sel.min(state.wizard_cols.len().saturating_sub(1));
-                            let coldef = state.wizard_cols.get(sel);
-                            c.text(format!("Selected column #{}", sel + 1));
-                            c.row(row, |r| {
-                                r.text("Name");
-                                ov_col_name = r.text_input_styled(
-                                    coldef.map(|c| c.name.as_str()).unwrap_or(""),
-                                    "col",
-                                    name_s,
-                                );
-                                r.text("Type");
-                                let types = AppState::column_type_names();
-                                let ti = coldef
-                                    .and_then(|c| {
-                                        types.iter().position(|t| t == &c.type_name)
+                            let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+                            scroll.width = ov_col.width - 16.0;
+                            scroll.height = ov_col.height - 16.0;
+                            scroll.padding = 0.0;
+                            scroll.background = None;
+                            ov_scroll = c.scroll_area(scroll, |c| {
+                                c.row(row, |r| {
+                                    r.text("Database schema");
+                                    if state.wizard_table_original.is_none() {
+                                        let schemas = state.table_schemas();
+                                        let selected = schemas.iter().position(|s| *s == state.wizard_schema);
+                                        let mut selector = type_sel;
+                                        selector.width = (row.width - 180.0).clamp(140.0, 360.0);
+                                        ov_schema = r.select(schemas, selected, "schema", selector);
+                                    } else { r.text(&state.wizard_schema); }
+                                });
+                                c.row(row, |r| {
+                                    r.text("Table name");
+                                    ov_name = r.text_input_styled(&state.wizard_table_name, "name", name_s);
+                                });
+                                let items: Vec<String> = state
+                                    .wizard_cols
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, col)| {
+                                        format!(
+                                            "{}. {} {}{}",
+                                            i + 1,
+                                            col.name,
+                                            col.type_name,
+                                            if col.pk { " PK" } else { "" }
+                                        )
                                     })
-                                    .unwrap_or(1);
-                                ov_col_type = r.select(types, Some(ti), "type", type_sel);
-                            });
-                            c.row(row, |r| {
-                                ov_pk = r.switch_styled("PK", coldef.map(|c| c.pk).unwrap_or(false), sw);
-                                ov_nn = r.switch_styled("Not Null", coldef.map(|c| c.notnull).unwrap_or(false), sw);
-                                ov_unique = r.switch_styled("Unique", coldef.map(|c| c.unique).unwrap_or(false), sw);
-                            });
-                            c.row(row, |r| {
-                                r.text("Default");
-                                ov_default = r.text_input_styled(
-                                    coldef.map(|c| c.default_value.as_str()).unwrap_or(""),
-                                    "default",
-                                    wide_s,
-                                );
+                                    .collect();
+                                c.text("Columns");
+                                ov_list = c.list(items, list_s);
+                                c.row(row, |r| {
+                                    ov_btn_add = r.tool_button("Add");
+                                    ov_btn_del = r.tool_button("Remove");
+                                    ov_btn_up = r.tool_button("Up");
+                                    ov_btn_down = r.tool_button("Down");
+                                });
+                                let sel = state.wizard_col_sel.min(state.wizard_cols.len().saturating_sub(1));
+                                let coldef = state.wizard_cols.get(sel);
+                                c.text(format!("Selected column #{}", sel + 1));
+                                c.row(row, |r| {
+                                    r.text("Name");
+                                    ov_col_name = r.text_input_styled(
+                                        coldef.map(|c| c.name.as_str()).unwrap_or(""),
+                                        "col",
+                                        name_s,
+                                    );
+                                    r.text("Type");
+                                    let types = state.column_type_names();
+                                    let ti = coldef
+                                        .and_then(|c| {
+                                            types.iter().position(|t| t == &c.type_name)
+                                        })
+                                        .unwrap_or(1);
+                                    ov_col_type = r.select(types, Some(ti), "type", type_sel);
+                                });
+                                c.row(row, |r| {
+                                    ov_pk = r.switch_styled("PK", coldef.map(|c| c.pk).unwrap_or(false), sw);
+                                    ov_nn = r.switch_styled("Not Null", coldef.map(|c| c.notnull).unwrap_or(false), sw);
+                                    ov_unique = r.switch_styled("Unique", coldef.map(|c| c.unique).unwrap_or(false), sw);
+                                });
+                                c.row(row, |r| {
+                                    r.text("Default");
+                                    ov_default = r.text_input_styled(
+                                        coldef.map(|c| c.default_value.as_str()).unwrap_or(""),
+                                        "default",
+                                        wide_s,
+                                    );
+                                });
                             });
                         }
                         OverlayKind::EditIndex => {
-                            c.row(row, |r| {
-                                r.text("Index name");
-                                ov_name = r.text_input_styled(&state.wizard_index_name, "name", name_s);
+                            let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+                            scroll.width = ov_col.width - 16.0;
+                            scroll.height = ov_col.height - 16.0;
+                            scroll.padding = 0.0;
+                            scroll.background = None;
+                            ov_scroll = c.scroll_area(scroll, |c| {
+                                c.row(row, |r| {
+                                    r.text("Index name");
+                                    ov_name = r.text_input_styled(&state.wizard_index_name, "name", name_s);
+                                });
+                                let tables = state.index_tables();
+                                let tsel = tables.iter().position(|(schema, table)| *schema == state.wizard_schema && *table == state.wizard_index_table);
+                                let labels: Vec<_> = tables.iter().map(|(schema, table)| db::qualified_name(schema, table)).collect();
+                                c.row(row, |r| {
+                                    r.text("Table");
+                                    let mut selector = type_sel;
+                                    selector.width = (row.width - 100.0).clamp(140.0, 440.0);
+                                    ov_idx_table = r.select(
+                                        if labels.is_empty() {
+                                            vec!["(none)".into()]
+                                        } else {
+                                            labels
+                                        },
+                                        tsel,
+                                        "table",
+                                        selector,
+                                    );
+                                });
+                                c.row(row, |r| {
+                                    r.text("Columns");
+                                    ov_idx_cols = r.text_input_styled(
+                                        &state.wizard_index_cols,
+                                        "col1, col2",
+                                        wide_s,
+                                    );
+                                });
+                                ov_idx_unique = c.switch_styled("Unique", state.wizard_index_unique, sw);
                             });
-                            let tables = state.table_names();
-                            let tsel = tables.iter().position(|t| t == &state.wizard_index_table);
-                            c.row(row, |r| {
-                                r.text("Table");
-                                ov_idx_table = r.select(
-                                    if tables.is_empty() {
-                                        vec!["(none)".into()]
-                                    } else {
-                                        tables
-                                    },
-                                    tsel,
-                                    "table",
-                                    type_sel,
-                                );
-                            });
-                            c.row(row, |r| {
-                                r.text("Columns");
-                                ov_idx_cols = r.text_input_styled(
-                                    &state.wizard_index_cols,
-                                    "col1, col2",
-                                    wide_s,
-                                );
-                            });
-                            ov_idx_unique = c.switch_styled("Unique", state.wizard_index_unique, sw);
                         }
                         OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
                             if kind == OverlayKind::ImportCsv {
@@ -1969,7 +2000,7 @@ pub fn build_ui(
     let main_selection = state.selected.as_ref().is_none_or(|s| s.schema == "main");
     ui.set_text_area_read_only(ddl_area, !main_selection);
     ui.set_button_enabled(btn_run_ddl, main_selection && state.conn.is_some() && !state.read_only && !state.sql_busy);
-    ui.set_button_enabled(btn_struct_modify, main_selection && state.selected.is_some() && !state.read_only && !state.sql_busy);
+    ui.set_button_enabled(btn_struct_modify, state.selected.as_ref().is_some_and(|s| matches!(s.kind, ObjectKind::Table | ObjectKind::Index)) && !state.read_only && !state.sql_busy);
     ui.set_button_enabled(btn_struct_delete, state.selected.is_some() && !state.read_only && !state.sql_busy);
     ui.set_button_enabled(btn_write, can_write);
     ui.set_button_enabled(btn_revert, can_write);
@@ -1979,6 +2010,7 @@ pub fn build_ui(
     ui.set_text_area_read_only(log_area, true);
     ui.sync(&mut scene);
     ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
+    ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
     ui.set_scroll_offset(page_scroll, page_offset.0, page_offset.1);
@@ -2082,6 +2114,8 @@ pub fn build_ui(
         status,
         modal,
         ov_name,
+        ov_schema,
+        ov_scroll,
         insert_values,
         insert_modes,
         ov_list,
