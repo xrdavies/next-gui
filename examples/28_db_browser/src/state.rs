@@ -4101,7 +4101,7 @@ mod chart_default_tests {
         std::fs::write(dir.path().join("query.sql"), "SELECT '中文' AS value;").unwrap();
         let path = dir.path().join("project.sqbpro");
         std::fs::write(&path, r#"<sqlb_project><db path="data.db" readonly="1" foreign_keys="1" temp_store="2" synchronous="1"/>
-<tab_browse><table title="records" table="4,7:mainrecords"/><browse_table_settings><table schema="main" name="records"><sort><column index="1" mode="1"/></sort><column_widths><column index="1" value="220"/></column_widths></table></browse_table_settings></tab_browse>
+<tab_browse><table title="records" table="4,7:mainrecords"/><browse_table_settings><table schema="main" name="records"><sort><column index="1" mode="1"/></sort><column_widths><column index="2" value="220"/></column_widths></table></browse_table_settings></tab_browse>
 <tab_sql><sql name="file" filename="query.sql">-- reference --</sql><sql name="draft">SELECT 42;</sql><current_tab id="1"/></tab_sql></sqlb_project>"#).unwrap();
         let mut state = test_state();
         state.open_project(&path).unwrap();
@@ -4136,7 +4136,7 @@ mod chart_default_tests {
             "<sqlb_project><db path='data.db'/><tab_sql><sql filename='missing.sql'/></tab_sql></sqlb_project>",
             "<sqlb_project><db path='data.db' foreign_keys='invalid'/></sqlb_project>",
             "<sqlb_project><db path='data.db'/><attached><db schema='extra' path='missing.db'/></attached></sqlb_project>",
-            "<sqlb_project><db path='data.db'/><tab_browse><table table='4,7:mainrecords'/><browse_table_settings><table schema='main' name='records'><column_widths><column index='0' value='NaN'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>",
+            "<sqlb_project><db path='data.db'/><tab_browse><table table='4,7:mainrecords'/><browse_table_settings><table schema='main' name='records'><column_widths><column index='1' value='NaN'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>",
             "<sqlb_project><db path='data.db'/><tab_browse><table table='4,7:mainrecords'/><browse_table_settings><table schema='main' name='records'><filter_values><column index='0' value='/[/'/></filter_values></table></browse_table_settings></tab_browse></sqlb_project>",
         ] {
             let path = dir.path().join("invalid.sqbpro");

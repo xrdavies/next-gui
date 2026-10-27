@@ -103,7 +103,18 @@ impl ProjectFile {
         if !value.get("db_path").is_some_and(|v| v.is_string()) {
             return Err("Project is missing db_path".into());
         }
-        serde_json::from_value(value).map_err(|e| e.to_string())
+        let mut project: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        project.restore_legacy_frozen_cols();
+        Ok(project)
+    }
+
+    pub fn restore_legacy_frozen_cols(&mut self) {
+        for tab in &mut self.browse_tabs {
+            tab.frozen_cols.get_or_insert(self.frozen_cols);
+            for options in tab.table_options.values_mut() {
+                options.frozen_cols.get_or_insert(self.frozen_cols);
+            }
+        }
     }
 
     pub fn apply_to(&self, state: &mut AppState) {

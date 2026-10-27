@@ -348,6 +348,7 @@ pub fn decode(text: &str) -> Result<ProjectFile, String> {
             project.browse_tabs = tabs;
         }
     }
+    if root.child("next_gui").is_some() { project.restore_legacy_frozen_cols(); }
     project.db4s_xml = Some(text.into());
     Ok(project)
 }
@@ -529,10 +530,15 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let Content::Element(table) = &mut settings.content[index] else {
             unreachable!()
         };
-        if let Some(count) = options.frozen_cols {
-            table.set("freeze_columns", count.min(columns.len()));
-        } else if project.browse_tabs.iter().any(|tab| tab.table.as_deref() == Some(name.as_str())) {
-            table.set("freeze_columns", project.frozen_cols.min(columns.len()));
+        // DB4S viewport settings include the leading row-id column; sort/filter fields do not.
+        let frozen = options.frozen_cols.or_else(|| project.browse_tabs.iter()
+            .any(|tab| tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
+        if let Some(count) = frozen {
+            let count = count.min(columns.len());
+            // Keep a row-id-only prefix while that column remains unapplied in e28.
+            if count > 0 || table.attr("freeze_columns") != Some("1") {
+                table.set("freeze_columns", if count == 0 { 0 } else { count + 1 });
+            }
         }
         let sort = table.ensure("sort");
         let old_ordering = sort.children().filter(|e| e.name == "column").filter_map(|column| {
@@ -552,10 +558,10 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
             }
         }
         let widths = table.ensure("column_widths");
-        widths.retain_elements(|e| e.name != "column");
+        widths.retain_elements(|e| e.name != "column" || e.attr("index").and_then(|index| index.parse::<usize>().ok()) == Some(0));
         for (index, width) in options.column_widths.iter().enumerate().take(columns.len()) {
             let mut column = Element::new("column");
-            column.set("index", index);
+            column.set("index", index + 1);
             column.set("value", width.round().max(32.0) as u32);
             widths.push(column);
         }
@@ -589,6 +595,7 @@ fn restore_table_options(
         tab.frozen_cols = Some(
             count.parse::<usize>()
                 .map_err(|_| "Invalid project frozen column count")?
+                .saturating_sub(1)
                 .min(columns.len()),
         );
     }
@@ -615,6 +622,7 @@ fn restore_table_options(
             if let Some(index) = column
                 .attr("index")
                 .and_then(|s| s.parse::<usize>().ok())
+                .and_then(|index| index.checked_sub(1))
                 .filter(|&i| i < columns.len())
             {
                 let width = column
@@ -682,17 +690,15 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             }
             // Per-tab overrides take precedence over DB4S's shared table setting.
             let frozen_override = stored.frozen_cols;
+            let widths_override = (!stored.column_widths.is_empty()).then(|| stored.column_widths.clone());
             restore_table_options(&mut stored, table, &columns)?;
             if frozen_override.is_some() {
                 stored.frozen_cols = frozen_override;
             }
+            if let Some(widths) = widths_override { stored.column_widths = widths; }
             if active {
                 tab.set_options(stored.options());
-                project.frozen_cols = table
-                    .attr("freeze_columns")
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(project.frozen_cols)
-                    .min(columns.len());
+                project.frozen_cols = tab.frozen_cols.unwrap_or(project.frozen_cols).min(columns.len());
             }
             tab.table_options.insert(name.into(), stored.options());
         }
@@ -722,6 +728,9 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
             notes.push("attached-schema browse tabs");
         }
         if let Some(settings) = browse.child("browse_table_settings") {
+            if settings.children().any(|table| table.name == "table" && table.attr("show_row_id").is_some_and(|value| !value.is_empty() && value != "0")) {
+                notes.push("row-id column visibility");
+            }
             for table in settings.children().filter(|e| e.name == "table") {
                 if [
                     "hidden_columns",
@@ -892,8 +901,8 @@ mod tests {
  <tab_structure><expanded_item id="2" parent="-1"/></tab_structure>
  <tab_browse><table title="表&#10;one" custom_title="1" dock_id="7" table="4,3:main表" unknown="kept"/>
  <dock_state state="00AABB"/>
- <browse_table_settings><table schema="main" name="表" freeze_columns="1">
- <sort><column index="1" mode="1"/></sort><column_widths><column index="0" value="175"/></column_widths>
+ <browse_table_settings><table schema="main" name="表" freeze_columns="2">
+ <sort><column index="1" mode="1"/></sort><column_widths><column index="1" value="175"/></column_widths>
  <filter_values><column index="0" value="&gt;=2"/></filter_values>
  <global_filter><filter value="東京"/><filter value="/row(?=x)/"/></global_filter>
  <hidden_columns><column index="1" value="1"/></hidden_columns>
@@ -902,6 +911,122 @@ mod tests {
 SELECT ']]&gt;';]]></sql><current_tab id="0"/></tab_sql>
  <unknown key="a&amp;b"><nested>keep &lt;this&gt;</nested></unknown>
 </sqlb_project>"#;
+
+    #[test]
+    fn native_viewport_indices_include_rowid_but_sort_and_filter_indices_do_not() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(n,label); CREATE VIEW v AS SELECT * FROM t; CREATE TABLE w(n INTEGER PRIMARY KEY,label) WITHOUT ROWID").unwrap();
+        for name in ["t", "v", "w"] {
+            let xml = format!("<sqlb_project><db path=':memory:'/><tab_browse><table table='4,1:main{name}'/><browse_table_settings>
+                <table name='{name}' schema='main' show_row_id='0' freeze_columns='2'>
+                <sort><column index='0' mode='1'/></sort>
+                <column_widths><column index='0' value='55' future='rowid'/><column index='1' value='177'/><column index='2' value='233'/></column_widths>
+                <filter_values><column index='0' value='&gt;=2'/></filter_values>
+                </table></browse_table_settings></tab_browse></sqlb_project>");
+            let mut project = decode(&xml).unwrap();
+            restore_browse(&mut project, &conn).unwrap();
+            let tab = &project.browse_tabs[0];
+            assert_eq!(
+                (tab.frozen_cols, tab.column_widths.as_slice()),
+                (Some(1), [177.0, 233.0].as_slice())
+            );
+            assert_eq!(tab.order_col.as_deref(), Some("n"));
+            assert_eq!(tab.col_filters, [">=2", ""]);
+            capture_connection(&mut project, &conn).unwrap();
+            let encoded = encode(&project, Path::new("native.sqbpro")).unwrap();
+            let mut root = parse(&encoded).unwrap();
+            let table = root
+                .child("tab_browse")
+                .unwrap()
+                .child("browse_table_settings")
+                .unwrap()
+                .child("table")
+                .unwrap();
+            assert_eq!(table.attr("freeze_columns"), Some("2"));
+            let widths: Vec<_> = table.child("column_widths").unwrap().children().collect();
+            assert_eq!(
+                widths
+                    .iter()
+                    .map(|column| (column.attr("index"), column.attr("value")))
+                    .collect::<Vec<_>>(),
+                [
+                    (Some("0"), Some("55")),
+                    (Some("1"), Some("177")),
+                    (Some("2"), Some("233"))
+                ]
+            );
+            assert_eq!(widths[0].attr("future"), Some("rowid"));
+            root.retain_elements(|element| element.name != "next_gui");
+            let mut native = decode(&render(&root).unwrap()).unwrap();
+            restore_browse(&mut native, &conn).unwrap();
+            assert_eq!(native.browse_tabs[0].frozen_cols, Some(1));
+            assert_eq!(native.browse_tabs[0].column_widths, [177.0, 233.0]);
+        }
+    }
+
+    #[test]
+    fn legacy_gui_viewports_override_the_old_native_index_encoding() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(n,label)").unwrap();
+        let old_native = "<sqlb_project><db path=':memory:'/><tab_browse><table table='4,1:maint'/><browse_table_settings><table name='t' schema='main' freeze_columns='2'><column_widths><column index='0' value='147'/><column index='1' value='231'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>";
+        let mut tab = BrowseTabState::new(Some("t".into()));
+        tab.column_widths = vec![147.0, 231.0];
+        let old = ProjectFile {
+            db_path: ":memory:".into(),
+            db4s_xml: Some(old_native.into()),
+            frozen_cols: 2,
+            browse_tabs: vec![tab],
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["old.json", "old.sqbpro"] {
+            let path = dir.path().join(name);
+            old.save(&path).unwrap();
+            let mut restored = ProjectFile::load(&path).unwrap();
+            restore_browse(&mut restored, &conn).unwrap();
+            assert_eq!(restored.browse_tabs[0].frozen_cols, Some(2));
+            assert_eq!(restored.browse_tabs[0].column_widths, [147.0, 231.0]);
+            assert_eq!(restored.frozen_cols, 2);
+            capture_connection(&mut restored, &conn).unwrap();
+            let mut root = parse(&encode(&restored, &path).unwrap()).unwrap();
+            root.retain_elements(|element| element.name != "next_gui");
+            let mut native = decode(&render(&root).unwrap()).unwrap();
+            restore_browse(&mut native, &conn).unwrap();
+            assert_eq!(native.browse_tabs[0].frozen_cols, Some(2));
+            assert_eq!(native.browse_tabs[0].column_widths, [147.0, 231.0]);
+        }
+    }
+
+    #[test]
+    fn native_rowid_only_freeze_and_width_metadata_survive_saving() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(n,label)").unwrap();
+        let xml = "<sqlb_project><db path=':memory:'/><tab_browse><table table='4,1:maint'/><browse_table_settings><table name='t' schema='main' freeze_columns='1' show_row_id='1'><column_widths><column index='0' value='55' future='rowid'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>";
+        let mut project = decode(xml).unwrap();
+        restore_browse(&mut project, &conn).unwrap();
+        assert_eq!(project.browse_tabs[0].frozen_cols, Some(0));
+        assert!(unapplied_settings(&project).unwrap().contains(&"row-id column visibility"));
+        assert_eq!(project.browse_tabs[0].column_widths, [140.0, 140.0]);
+        capture_connection(&mut project, &conn).unwrap();
+        let root = parse(&encode(&project, Path::new("rowid.sqbpro")).unwrap()).unwrap();
+        let table = root
+            .child("tab_browse")
+            .unwrap()
+            .child("browse_table_settings")
+            .unwrap()
+            .child("table")
+            .unwrap();
+        assert_eq!(table.attr("freeze_columns"), Some("1"));
+        assert_eq!(table.attr("show_row_id"), Some("1"));
+        let rowid = table
+            .child("column_widths")
+            .unwrap()
+            .children()
+            .find(|column| column.attr("index") == Some("0"))
+            .unwrap();
+        assert_eq!(rowid.attr("value"), Some("55"));
+        assert_eq!(rowid.attr("future"), Some("rowid"));
+    }
 
     #[test]
     fn xml_roundtrip_keeps_unicode_sql_unknown_settings_and_attribute_whitespace() {

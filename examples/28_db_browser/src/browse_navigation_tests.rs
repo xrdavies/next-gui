@@ -704,8 +704,8 @@ fn native_xml_restores_and_writes_options_for_tables_that_are_not_active() {
     demo.state.refresh_schema().unwrap();
     let source = "<sqlb_project><db path=':memory:'/>
         <tab_browse><table table='4,1:mainu'/><browse_table_settings>
-        <table name='t' schema='main' freeze_columns='1'><sort><column index='0' mode='1'/></sort>
-        <column_widths><column index='0' value='177'/><column index='1' value='233'/></column_widths>
+        <table name='t' schema='main' freeze_columns='2'><sort><column index='0' mode='1'/></sort>
+        <column_widths><column index='1' value='177'/><column index='2' value='233'/></column_widths>
         <filter_values><column index='0' value='&lt;=9'/></filter_values>
         <global_filter><filter value='row'/></global_filter></table>
         <table name='u' schema='main'/></browse_table_settings></tab_browse></sqlb_project>";
@@ -722,6 +722,22 @@ fn native_xml_restores_and_writes_options_for_tables_that_are_not_active() {
     assert_eq!(demo.state.browse().global_filters, ["row"]);
     assert_eq!(demo.state.browse().col_filters[0], "<=9");
     assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "9");
+    if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+        demo.state.tab = MainTab::Browse;
+        demo.do_rebuild();
+        demo.scene
+            .mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+        let dirty = demo.scene.take_dirty();
+        let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+        renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+        write_ppm(
+            &path,
+            renderer.frame_pixels().unwrap().0,
+            demo.win_w,
+            demo.win_h,
+        )
+        .unwrap();
+    }
     demo.state.browse_mut().col_filters[0] = "<7".into();
     demo.state.refresh_browse().unwrap();
     demo.state.switch_browse_table("u").unwrap();
@@ -876,11 +892,13 @@ fn frozen_overrides_roundtrip_per_tab_and_legacy_projects_keep_the_global_count(
     let mut demo = demo();
     demo.state.frozen_cols = 0;
     demo.state.browse_mut().frozen_cols = Some(2);
+    demo.state.browse_mut().column_widths = vec![147.0, 231.0];
     demo.state.add_browse_tab().unwrap();
     demo.state.switch_browse_table("t").unwrap();
     assert_eq!(demo.state.browse_frozen_cols(), 0);
     demo.state.browse_mut().filter = "n<10".into();
     demo.state.refresh_browse().unwrap();
+    demo.state.browse_mut().column_widths = vec![188.0, 288.0];
     demo.state.switch_browse_tab(0).unwrap();
     let mut project = project::ProjectFile::from_state(&demo.state);
     project_xml::capture_connection(&mut project, demo.state.conn.as_ref().unwrap()).unwrap();
@@ -894,8 +912,10 @@ fn frozen_overrides_roundtrip_per_tab_and_legacy_projects_keep_the_global_count(
         restored.apply_to(&mut demo.state);
         demo.state.refresh_browse().unwrap();
         assert_eq!(demo.state.browse_frozen_cols(), 2);
+        assert_eq!(demo.state.browse().column_widths, [147.0, 231.0]);
         demo.state.switch_browse_tab(1).unwrap();
         assert_eq!(demo.state.browse_frozen_cols(), 0);
+        assert_eq!(demo.state.browse().column_widths, [188.0, 288.0]);
         assert_eq!(demo.state.browse().filter, "n<10");
     }
     let mut legacy = serde_json::to_value(&project).unwrap();
@@ -918,6 +938,9 @@ fn native_frozen_counts_are_validated_and_clamped_to_the_table_columns() {
     let demo = demo();
     for (value, expected) in [
         ("0", Some(0)),
+        ("1", Some(0)),
+        ("2", Some(1)),
+        ("3", Some(2)),
         ("999", Some(2)),
         ("-1", None),
         ("invalid", None),
