@@ -118,6 +118,7 @@ pub struct ColDef {
     pub auto_increment: bool,
     pub collation: String,
     pub check_expression: String,
+    pub foreign_key_clause: String,
     pub notnull: bool,
     pub unique: bool,
     pub default_value: String,
@@ -131,7 +132,7 @@ impl ColDef {
             pk: false,
             auto_increment: false,
             collation: String::new(),
-            check_expression: String::new(),
+            check_expression: String::new(), foreign_key_clause: String::new(),
             notnull: false,
             unique: false,
             default_value: String::new(),
@@ -388,7 +389,7 @@ pub fn table_column_defs_in(conn: &Connection, schema: &str, table: &str) -> Res
     }
     let mut columns = table_columns_in(conn, schema, table)?.into_iter().map(|col| ColDef {
         auto_increment: auto_increment.as_ref().is_some_and(|name| name.eq(col.name.as_str())),
-        collation: String::new(), check_expression: String::new(),
+        collation: String::new(), check_expression: String::new(), foreign_key_clause: String::new(),
         unique: unique_columns.iter().any(|name| name.eq_ignore_ascii_case(&col.name)),
         name: col.name, type_name: col.type_name, pk: col.pk, notnull: col.notnull,
         default_value: col.default_value.unwrap_or_default(),
@@ -1362,6 +1363,11 @@ pub fn create_table_ddl_in(schema: &str, name: &str, cols: &[ColDef]) -> String 
             piece.push_str(c.check_expression.trim());
             piece.push_str("\n)");
         }
+        if !c.foreign_key_clause.trim().is_empty() {
+            piece.push(' ');
+            piece.push_str(c.foreign_key_clause.trim());
+            piece.push('\n');
+        }
         parts.push(piece);
     }
     match pk_cols.len() {
@@ -1408,13 +1414,15 @@ pub fn recreate_table_in(
             if !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.pk != col.pk || old.notnull != col.notnull
                 || old.default_value != col.default_value || col.unique || (col.auto_increment && !old.auto_increment)
                 || (!col.collation.is_empty() && !old.collation.eq_ignore_ascii_case(&col.collation))
-                || (!col.check_expression.is_empty() && old.check_expression != col.check_expression) {
+                || (!col.check_expression.is_empty() && old.check_expression != col.check_expression)
+                || (!col.foreign_key_clause.is_empty() && old.foreign_key_clause != col.foreign_key_clause) {
                 return Err("Changing existing column definitions requires an explicit SQL migration; the wizard preserves existing constraints".into());
             }
             col.unique = old.unique;
             col.auto_increment = old.auto_increment;
             col.collation = old.collation.clone();
             col.check_expression = old.check_expression.clone();
+            col.foreign_key_clause = old.foreign_key_clause.clone();
         }
     }
     recreate_table_columns_in(conn, schema, old_name, new_name, &draft, &sources, None)
@@ -1451,10 +1459,10 @@ pub fn recreate_table_columns_in(
             crate::table_sql::column_definition(col, Some(old))?;
             rebuild |= old.pk != col.pk || old.auto_increment != col.auto_increment || !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
                 || old.default_value != col.default_value || old.unique != col.unique || !old.collation.eq_ignore_ascii_case(&col.collation)
-                || old.check_expression != col.check_expression;
+                || old.check_expression != col.check_expression || old.foreign_key_clause != col.foreign_key_clause;
         } else {
             crate::table_sql::column_definition(col, None)?;
-            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty() || !col.collation.is_empty() || !col.check_expression.trim().is_empty();
+            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty() || !col.collation.is_empty() || !col.check_expression.trim().is_empty() || !col.foreign_key_clause.trim().is_empty();
         }
     }
     let added: Vec<_> = cols
@@ -1888,7 +1896,7 @@ mod tests {
         let table = "same.\"table";
         let cols = [ColDef { name: "id".into(), type_name: "INTEGER".into(), pk: true, auto_increment: false,
             collation: String::new(),
-            check_expression: String::new(),
+            check_expression: String::new(), foreign_key_clause: String::new(),
             notnull: false, unique: false, default_value: String::new() }, ColDef::new("value.\"col", "TEXT")];
         for schema in ["main", "temp", "aux.\"db"] {
             conn.execute_batch(&create_table_ddl_in(schema, table, &cols)).unwrap();
@@ -2082,7 +2090,7 @@ mod tests {
                 pk: c.pk,
                 auto_increment: false,
                 collation: String::new(),
-                check_expression: String::new(),
+                check_expression: String::new(), foreign_key_clause: String::new(),
                 notnull: c.notnull,
                 unique: false,
                 default_value: c.default_value.unwrap_or_default(),

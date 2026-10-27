@@ -802,6 +802,277 @@ mod tests {
     }
 
     #[test]
+    fn inline_foreign_key_edits_preserve_names_other_keys_and_qualified_dependencies() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            let p = db::qualified_name(schema, "parent");
+            let q = db::qualified_name(schema, "other_parent");
+            conn.execute_batch(&format!("CREATE TABLE {p}(id INTEGER PRIMARY KEY); INSERT INTO {p} VALUES(1); CREATE TABLE {q}(id INTEGER PRIMARY KEY); INSERT INTO {q} VALUES(1); CREATE TABLE {table}(v INTEGER CONSTRAINT chosen REFERENCES parent(id) ON DELETE RESTRICT,w INTEGER REFERENCES parent(id),n INTEGER,CONSTRAINT table_key FOREIGN KEY(n) REFERENCES parent(id)); INSERT INTO {table}(rowid,v,w,n) VALUES(7,1,1,1); CREATE INDEX {} ON t(n); CREATE TABLE {}(v); CREATE TRIGGER {} AFTER INSERT ON t BEGIN INSERT INTO audit VALUES(new.v); END; BEGIN; INSERT INTO {table}(rowid,v,w,n) VALUES(9,1,1,1);",db::qualified_name(schema,"ix"),db::qualified_name(schema,"audit"),db::qualified_name(schema,"tr"))).unwrap();
+            let mut draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            assert!(draft[0].foreign_key_clause.contains("REFERENCES parent"));
+            assert!(draft[2].foreign_key_clause.is_empty());
+            draft[0].foreign_key_clause="REFERENCES other_parent(id) ON UPDATE CASCADE ON DELETE SET NULL MATCH SIMPLE DEFERRABLE INITIALLY DEFERRED".into();
+            let sources = [Some("v".into()), Some("w".into()), Some("n".into())];
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            let actual = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            assert!(
+                actual[0].foreign_key_clause.contains("INITIALLY DEFERRED"),
+                "{}",
+                actual[0].foreign_key_clause
+            );
+            let sql: String = conn
+                .query_row(
+                    &format!(
+                        "SELECT sql FROM {}.sqlite_schema WHERE name='t'",
+                        db::quote_ident(schema)
+                    ),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(
+                sql.contains("CONSTRAINT chosen") && sql.contains("CONSTRAINT table_key"),
+                "{sql}"
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}",
+                        db::qualified_name(schema, "audit")
+                    )
+                ),
+                1,
+                "copy fired the trigger"
+            );
+            conn.execute(&format!("UPDATE {q} SET id=11 WHERE id=1"), [])
+                .unwrap();
+            assert_eq!(
+                count(&conn, &format!("SELECT count(*) FROM {table} WHERE v=11")),
+                2
+            );
+            conn.execute(&format!("INSERT INTO {table} VALUES(99,1,1)"), [])
+                .unwrap();
+            conn.execute(&format!("INSERT INTO {q} VALUES(99)"), [])
+                .unwrap();
+            conn.execute(&format!("DELETE FROM {q} WHERE id=11"), [])
+                .unwrap();
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE v IS NULL")
+                ),
+                2
+            );
+            draft[0].foreign_key_clause.clear();
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert!(db::table_column_defs_in(&conn, schema, "t").unwrap()[0]
+                .foreign_key_clause
+                .is_empty());
+            conn.execute(&format!("INSERT INTO {table} VALUES(999,1,1)"), [])
+                .unwrap();
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES(999,999,1)"), [])
+                .is_err());
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES(999,1,999)"), [])
+                .is_err());
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}.sqlite_schema WHERE name IN('ix','tr')",
+                        db::quote_ident(schema)
+                    )
+                ),
+                2
+            );
+            assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
+            assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(count(&conn, &format!("SELECT count(*) FROM {table}")), 1);
+            assert!(db::table_column_defs_in(&conn, schema, "t").unwrap()[0]
+                .foreign_key_clause
+                .contains("RESTRICT"));
+        }
+    }
+
+    #[test]
+    fn inline_foreign_key_deferral_survives_separated_constraints_and_keeps_other_references() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE other_parent(id PRIMARY KEY); INSERT INTO other_parent VALUES(1),(2); CREATE TABLE t(v CONSTRAINT chosen REFERENCES parent(id) CHECK(v>0) CONSTRAINT timing DEFERRABLE INITIALLY DEFERRED CONSTRAINT other REFERENCES other_parent(id) NOT DEFERRABLE INITIALLY IMMEDIATE); INSERT INTO t VALUES(1); BEGIN;").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        assert!(draft[0].foreign_key_clause.contains("INITIALLY DEFERRED"));
+        assert!(!draft[0].foreign_key_clause.contains("other_parent"));
+        draft[0].foreign_key_clause =
+            "REFERENCES parent(id) NOT DEFERRABLE INITIALLY IMMEDIATE".into();
+        apply(&conn, "main", "t", &draft, &[Some("v".into())]).unwrap();
+        assert!(conn.execute("INSERT INTO t VALUES(2)", []).is_err());
+        draft[0].foreign_key_clause.clear();
+        apply(&conn, "main", "t", &draft, &[Some("v".into())]).unwrap();
+        let actual = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        assert!(actual[0].foreign_key_clause.contains("other_parent"));
+        assert!(actual[0].foreign_key_clause.contains("INITIALLY IMMEDIATE"));
+        conn.execute("INSERT INTO t VALUES(2)", []).unwrap();
+        assert!(conn.execute("INSERT INTO t VALUES(3)", []).is_err());
+        assert!(conn.execute("INSERT INTO t VALUES(-1)", []).is_err());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert!(db::table_column_defs_in(&conn, "main", "t").unwrap()[0]
+            .foreign_key_clause
+            .contains("INITIALLY DEFERRED"));
+    }
+
+    #[test]
+    fn named_inline_foreign_key_deferrals_survive_other_edits_and_pending_violations() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE t(v REFERENCES parent(id) CHECK(v>0) CONSTRAINT \"时限\" /* keep name */ DEFERRABLE INITIALLY DEFERRED,note TEXT DEFAULT 'CONSTRAINT text DEFERRABLE __next_gui_named_deferral'); INSERT INTO t(v) VALUES(1); BEGIN; INSERT INTO t(v) VALUES(2);").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        assert!(draft[0].foreign_key_clause.contains("INITIALLY DEFERRED"));
+        draft[1].type_name = "VARCHAR(255)".into();
+        apply(
+            &conn,
+            "main",
+            "t",
+            &draft,
+            &[Some("v".into()), Some("note".into())],
+        )
+        .unwrap();
+        let sql: String = conn
+            .query_row("SELECT sql FROM sqlite_schema WHERE name='t'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            sql.contains("CONSTRAINT \"时限\" DEFERRABLE INITIALLY DEFERRED"),
+            "{sql}"
+        );
+        assert_eq!(
+            conn.query_row("SELECT note FROM t LIMIT 1", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "CONSTRAINT text DEFERRABLE __next_gui_named_deferral"
+        );
+        conn.execute("INSERT INTO t(v) VALUES(3)", []).unwrap();
+        assert!(conn.execute_batch("COMMIT").is_err());
+        assert!(!conn.is_autocommit());
+        conn.execute_batch("INSERT INTO parent VALUES(2),(3); COMMIT;")
+            .unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 3);
+    }
+
+    #[test]
+    fn invalid_inline_foreign_keys_cannot_mutate_data_or_other_constraints() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE non_unique(id); CREATE TABLE t(v INTEGER); INSERT INTO t(rowid,v) VALUES(7,1); BEGIN; INSERT INTO t(rowid,v) VALUES(9,2);").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        let sources = [Some("v".into())];
+        for clause in [
+            "REFERENCES parent(id)",
+            "REFERENCES absent(id)",
+            "REFERENCES non_unique(id)",
+            "REFERENCES parent(missing)",
+            "REFERENCES parent(id) UNIQUE",
+            "REFERENCES parent(id) REFERENCES parent(id)",
+            "REFERENCES parent(id)); DELETE FROM t; --",
+            "CHECK(v>0)",
+            "REFERENCES main.parent(id)",
+        ] {
+            draft[0].foreign_key_clause = clause.into();
+            assert!(
+                apply(&conn, "main", "t", &draft, &sources).is_err(),
+                "{clause}"
+            );
+            assert_eq!(
+                count(&conn, "SELECT count(*) FROM t WHERE rowid IN(7,9)"),
+                2
+            );
+            assert!(db::table_column_defs_in(&conn, "main", "t").unwrap()[0]
+                .foreign_key_clause
+                .is_empty());
+            assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
+            assert!(!conn.is_autocommit());
+        }
+        draft[0].foreign_key_clause.clear();
+        for field in [0, 1] {
+            let mut injected = ColDef::new("v", "INTEGER");
+            if field == 0 {
+                injected.type_name = "INTEGER REFERENCES parent(id)".into();
+            } else {
+                injected.default_value = "1) REFERENCES parent(id) DEFAULT(1".into();
+            }
+            assert!(table_sql::column_definition(&injected, None).is_err());
+        }
+        conn.execute_batch("INSERT INTO parent VALUES(2)").unwrap();
+        draft[0].foreign_key_clause = "REFERENCES parent(id)".into();
+        apply(&conn, "main", "t", &draft, &sources).unwrap();
+        assert!(conn.execute("INSERT INTO t VALUES(3)", []).is_err());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+    }
+
+    #[test]
+    fn create_and_add_inline_foreign_keys_keep_actions_and_enforce_references() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(0),(1); CREATE TABLE t(v); INSERT INTO t VALUES('kept'); BEGIN;").unwrap();
+        for (number, action) in [
+            "NO ACTION",
+            "RESTRICT",
+            "CASCADE",
+            "SET NULL",
+            "SET DEFAULT",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("created{number}");
+            let column = ColDef {
+                foreign_key_clause: format!(
+                    "REFERENCES parent ON UPDATE {action} ON DELETE {action} -- tail comment"
+                ),
+                default_value: "0".into(),
+                ..ColDef::new("v", "INTEGER")
+            };
+            table_sql::column_definition(&column, None).unwrap();
+            db::execute_single_statement(&conn, &db::create_table_ddl(&name, &[column])).unwrap();
+            let actual: (String, String) = conn
+                .query_row(
+                    &format!("PRAGMA foreign_key_list({})", db::quote_ident(&name)),
+                    [],
+                    |r| Ok((r.get(5)?, r.get(6)?)),
+                )
+                .unwrap();
+            assert_eq!(actual, (action.into(), action.into()));
+            assert!(conn
+                .execute(
+                    &format!("INSERT INTO {} VALUES(99)", db::quote_ident(&name)),
+                    []
+                )
+                .is_err());
+        }
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        draft.push(ColDef {
+            foreign_key_clause: "REFERENCES parent(id) ON DELETE CASCADE".into(),
+            default_value: "1".into(),
+            ..ColDef::new("p", "INTEGER")
+        });
+        apply(&conn, "main", "t", &draft, &[Some("v".into()), None]).unwrap();
+        assert_eq!(count(&conn, "SELECT p FROM t"), 1);
+        conn.execute("DELETE FROM parent WHERE id=1", []).unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 0);
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+    }
+
+    #[test]
     fn column_checks_edit_first_named_constraint_and_keep_other_constraints_and_dependencies() {
         for schema in ["main", "temp", "aux.\"db"] {
             let conn = Connection::open_in_memory().unwrap();

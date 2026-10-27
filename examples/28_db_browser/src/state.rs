@@ -411,7 +411,7 @@ pub struct AppState {
     pub wizard_table_original: Option<SelectedObject>,
     pub wizard_cols: Vec<ColDef>,
     pub wizard_col_sources: Vec<Option<String>>,
-    pub wizard_column_check_states: Vec<Option<next_gui_ui::TextAreaState>>,
+    pub wizard_column_edit_states: Vec<[Option<next_gui_ui::TextAreaState>; 2]>,
     pub wizard_col_sel: usize,
     pub wizard_index_name: String,
     pub wizard_index_table: String,
@@ -682,7 +682,7 @@ impl AppState {
                     pk: true,
                     auto_increment: false,
                     collation: String::new(),
-                    check_expression: String::new(),
+                    check_expression: String::new(), foreign_key_clause: String::new(),
                     notnull: false,
                     unique: false,
                     default_value: String::new(),
@@ -690,7 +690,7 @@ impl AppState {
                 ColDef::new("name", "TEXT"),
             ],
             wizard_col_sources: Vec::new(),
-            wizard_column_check_states: Vec::new(),
+            wizard_column_edit_states: Vec::new(),
             wizard_col_sel: 0,
             wizard_index_name: "idx_name".into(),
             wizard_index_table: String::new(),
@@ -1544,7 +1544,7 @@ impl AppState {
                 pk: true,
                 auto_increment: false,
                 collation: String::new(),
-                check_expression: String::new(),
+                check_expression: String::new(), foreign_key_clause: String::new(),
                 notnull: false,
                 unique: false,
                 default_value: String::new(),
@@ -1552,7 +1552,7 @@ impl AppState {
             ColDef::new("name", "TEXT"),
         ];
         self.wizard_col_sources.clear();
-        self.wizard_column_check_states = vec![None; self.wizard_cols.len()];
+        self.wizard_column_edit_states = vec![[None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
     }
@@ -1575,7 +1575,7 @@ impl AppState {
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         self.wizard_table_original = Some(sel);
         self.wizard_cols = cols;
-        self.wizard_column_check_states = vec![None; self.wizard_cols.len()];
+        self.wizard_column_edit_states = vec![[None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
         Ok(())
@@ -5474,7 +5474,7 @@ mod chart_default_tests {
                 pk: true,
                 auto_increment: false,
                 collation: String::new(),
-                check_expression: String::new(),
+                check_expression: String::new(), foreign_key_clause: String::new(),
                 notnull: false,
                 unique: false,
                 default_value: String::new(),

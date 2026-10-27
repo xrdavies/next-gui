@@ -3,14 +3,25 @@
 use fallible_iterator::FallibleIterator;
 use sqlite3_parser::{
     ast::{
-        Cmd, ColFlags, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr, Name,
-        NamedTableConstraint, QualifiedName, ResolveType, SortedColumn, Stmt, TabFlags,
-        TableConstraint,
+        fmt::ToTokens, Cmd, ColFlags, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr,
+        Name, NamedColumnConstraint, NamedTableConstraint, QualifiedName, ResolveType,
+        SortedColumn, Stmt, TabFlags, TableConstraint,
     },
-    lexer::sql::Parser,
+    lexer::{
+        sql::{Parser, TokenType, Tokenizer},
+        Scanner,
+    },
 };
 
 use crate::db::{self, ColDef};
+
+struct SqlFragment<T>(T);
+
+impl<T: ToTokens> std::fmt::Display for SqlFragment<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.to_fmt(formatter)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TableOptions {
@@ -130,13 +141,74 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
 }
 
 fn parse(sql: &str) -> Result<Cmd, String> {
-    let mut parser = Parser::new(sql.as_bytes());
-    let command = parser
+    let mut scanner = Scanner::new(Tokenizer::new());
+    let mut tokens = Vec::new();
+    loop {
+        let (start, token, _) = scanner
+            .scan(sql.as_bytes())
+            .map_err(|error| error.to_string())?;
+        let Some((_, kind)) = token else {
+            break;
+        };
+        tokens.push((start, kind));
+    }
+    let positions = tokens
+        .windows(3)
+        .enumerate()
+        .filter_map(|(index, window)| {
+            (window[0].1 == TokenType::TK_CONSTRAINT
+                && (window[2].1 == TokenType::TK_DEFERRABLE
+                    || (window[2].1 == TokenType::TK_NOT
+                        && tokens
+                            .get(index + 3)
+                            .is_some_and(|token| token.1 == TokenType::TK_DEFERRABLE))))
+            .then_some(window[2].0)
+        })
+        .collect::<Vec<_>>();
+    let mut marker = "__next_gui_named_deferral".to_string();
+    while sql.contains(&marker) {
+        marker.push('_');
+    }
+    let mut protected = sql.to_string();
+    // Parser 0.15 drops named DEFERRABLE; consume its name through a temporary AST-only CHECK.
+    for position in positions.iter().rev() {
+        protected.insert_str(*position, &format!("CHECK('{marker}') "));
+    }
+    let mut parser = Parser::new(protected.as_bytes());
+    let mut command = parser
         .next()
         .map_err(|error| error.to_string())?
         .ok_or("Empty schema definition")?;
     if parser.next().map_err(|error| error.to_string())?.is_some() {
         return Err("Expected one schema statement".into());
+    }
+    let mut restored = 0;
+    if let Cmd::Stmt(Stmt::CreateTable {
+        body: CreateTableBody::ColumnsAndConstraints { columns, .. },
+        ..
+    }) = &mut command
+    {
+        for column in columns.values_mut() {
+            let mut index = 0;
+            while index + 1 < column.constraints.len() {
+                if matches!(&column.constraints[index].constraint, ColumnConstraint::Check(value) if value.to_string() == format!("'{marker}'"))
+                {
+                    if !matches!(
+                        column.constraints[index + 1].constraint,
+                        ColumnConstraint::Defer(..)
+                    ) {
+                        return Err("Cannot preserve a named DEFERRABLE constraint".into());
+                    }
+                    let name = column.constraints.remove(index).name;
+                    column.constraints[index].name = name;
+                    restored += 1;
+                }
+                index += 1;
+            }
+        }
+    }
+    if restored != positions.len() {
+        return Err("Cannot preserve all named DEFERRABLE constraints".into());
     }
     Ok(command)
 }
@@ -206,9 +278,18 @@ pub fn column_definition(
     {
         return Err("A column field cannot add columns or table constraints".into());
     }
-    let mut actual = [0; 7];
+    let mut actual = [0; 8];
     let definition = columns.into_values().next().unwrap();
-    for value in &definition.constraints {
+    for (index, value) in definition.constraints.iter().enumerate() {
+        if matches!(value.constraint, ColumnConstraint::Defer(..)) {
+            if !definition.constraints[..index]
+                .iter()
+                .any(|item| matches!(item.constraint, ColumnConstraint::ForeignKey { .. }))
+            {
+                return Err("DEFERRABLE must follow the column's REFERENCES clause".into());
+            }
+            continue;
+        }
         if let ColumnConstraint::PrimaryKey { auto_increment, .. } = value.constraint {
             actual[4] += auto_increment as usize;
         }
@@ -219,6 +300,7 @@ pub fn column_definition(
             ColumnConstraint::Default(..) => 3,
             ColumnConstraint::Collate { .. } => 5,
             ColumnConstraint::Check(..) => 6,
+            ColumnConstraint::ForeignKey { .. } => 7,
             _ => return Err("Use the constraint controls rather than adding constraints to a type/default field".into()),
         }] += 1;
     }
@@ -230,6 +312,7 @@ pub fn column_definition(
         column.auto_increment as usize,
         (!column.collation.is_empty()) as usize,
         (!column.check_expression.trim().is_empty()) as usize,
+        (!column.foreign_key_clause.trim().is_empty()) as usize,
     ];
     if actual != expected {
         return Err("A type/default field cannot change other column constraints".into());
@@ -359,6 +442,22 @@ pub fn rebuild_definition(
                     (None, Some(value)) => item.constraints.push(value),
                     (None, None) => {}
                 }
+            }
+            if old.foreign_key_clause != col.foreign_key_clause {
+                // shortcut: the field edits the first inline FK; the advanced tab must expose every FK.
+                let positions = foreign_key_indices(&item.constraints);
+                let mut replacement = foreign_key_indices(&replacement.constraints)
+                    .into_iter()
+                    .map(|index| replacement.constraints[index].clone())
+                    .collect::<Vec<_>>();
+                for (new, old) in replacement.iter_mut().zip(&positions) {
+                    new.name = item.constraints[*old].name.clone();
+                }
+                let start = positions.first().copied().unwrap_or(item.constraints.len());
+                for index in positions.into_iter().rev() {
+                    item.constraints.remove(index);
+                }
+                item.constraints.splice(start..start, replacement);
             }
             for category in 0..4 {
                 let changed = match category {
@@ -559,6 +658,25 @@ pub fn autoincrement_column(sql: &str) -> Result<Option<Name>, String> {
     Ok(None)
 }
 
+fn foreign_key_indices(constraints: &[NamedColumnConstraint]) -> Vec<usize> {
+    let Some(start) = constraints
+        .iter()
+        .position(|item| matches!(item.constraint, ColumnConstraint::ForeignKey { .. }))
+    else {
+        return Vec::new();
+    };
+    let mut indices = vec![start];
+    // SQLite associates DEFERRABLE with the last FK, even across CHECK/NOT NULL constraints.
+    for (index, item) in constraints.iter().enumerate().skip(start + 1) {
+        match item.constraint {
+            ColumnConstraint::ForeignKey { .. } => break,
+            ColumnConstraint::Defer(..) => indices.push(index),
+            _ => {}
+        }
+    }
+    indices
+}
+
 pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<(), String> {
     let Cmd::Stmt(Stmt::CreateTable {
         body: CreateTableBody::ColumnsAndConstraints { columns, .. },
@@ -604,6 +722,11 @@ pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<
                 }
             })
             .unwrap_or_default();
+        definition.foreign_key_clause = foreign_key_indices(&column.constraints)
+            .into_iter()
+            .map(|index| SqlFragment(&column.constraints[index].constraint).to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
     }
     Ok(())
 }
@@ -649,6 +772,8 @@ mod tests {
             "CREATE TABLE t(a TEXT PRIMARY KEY, b INTEGER) STRICT, WITHOUT ROWID",
             "CREATE TABLE t(\"constraint\" TEXT, \"primary\" BLOB, [列,名] TEXT CHECK([列,名] != ';,)'))",
             "CREATE TABLE t(asc TEXT, desc INTEGER, \"DEFERRABLE\" INT, [v] VARCHAR(5))",
+            "CREATE TABLE t(v REFERENCES parent(id) CHECK(v>0) CONSTRAINT [时限] /* comment */ DEFERRABLE INITIALLY DEFERRED)",
+            "CREATE TABLE t(v REFERENCES parent(id) CONSTRAINT first DEFERRABLE CONSTRAINT last NOT DEFERRABLE INITIALLY IMMEDIATE,note DEFAULT 'CONSTRAINT text DEFERRABLE __next_gui_named_deferral')",
         ] {
             let connection = Connection::open_in_memory().unwrap();
             connection.execute_batch("CREATE TABLE parent(id TEXT PRIMARY KEY)").unwrap();

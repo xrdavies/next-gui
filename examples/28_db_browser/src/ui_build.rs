@@ -178,6 +178,7 @@ pub struct BuiltUi {
     pub ov_ai: WidgetId,
     pub ov_collation: WidgetId,
     pub ov_check: WidgetId,
+    pub ov_foreign_key: WidgetId,
     pub ov_without_rowid: WidgetId,
     pub ov_strict: WidgetId,
     pub ov_pk_conflict: WidgetId,
@@ -457,6 +458,7 @@ pub fn build_ui(
     let mut ov_ai = z;
     let mut ov_collation = z;
     let mut ov_check = z;
+    let mut ov_foreign_key = z;
     let mut ov_without_rowid = z;
     let mut ov_strict = z;
     let mut ov_pk_conflict = z;
@@ -927,6 +929,9 @@ pub fn build_ui(
                                 check_style.height = 80.0;
                                 ov_check = c.text_area(coldef.map(|column| column.check_expression.as_str()).unwrap_or(""),
                                     "e.g. length(name) > 0", check_style);
+                                c.text("Foreign key · SQL (optional)");
+                                ov_foreign_key = c.text_area(coldef.map(|column| column.foreign_key_clause.as_str()).unwrap_or(""),
+                                    "REFERENCES parent(id) ON DELETE CASCADE", check_style);
                             });
                         }
                         OverlayKind::EditIndex => {
@@ -2074,6 +2079,7 @@ pub fn build_ui(
     ui.set_accessible_name(ov_ai, "Column autoincrement");
     ui.set_accessible_name(ov_collation, "Column collation (editable)");
     ui.set_accessible_name(ov_check, "Column CHECK expression");
+    ui.set_accessible_name(ov_foreign_key, "Column foreign key clause");
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
     ui.set_accessible_name(ov_pk_conflict, "Primary key conflict action");
@@ -2145,10 +2151,12 @@ pub fn build_ui(
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
-    if let Some(Some(editor)) = state.wizard_column_check_states.get(state.wizard_col_sel) {
-        ui.restore_text_area_state(ov_check, editor);
+    for (index, area) in [ov_check, ov_foreign_key].into_iter().enumerate() {
+        if let Some(Some(editor)) = state.wizard_column_edit_states.get(state.wizard_col_sel).map(|states| &states[index]) {
+            ui.restore_text_area_state(area, editor);
+        }
+        crate::sql_syntax::apply(&mut ui, area, &theme);
     }
-    crate::sql_syntax::apply(&mut ui, ov_check, &theme);
     for (index, area) in [ov_idx_cols, ov_idx_where, ov_idx_preview].into_iter().enumerate() {
         if let Some(editor) = &state.wizard_index_edit_states[index] { ui.restore_text_area_state(area, editor); }
         crate::sql_syntax::apply(&mut ui, area, &theme);
@@ -2259,6 +2267,7 @@ pub fn build_ui(
         ov_ai,
         ov_collation,
         ov_check,
+        ov_foreign_key,
         ov_without_rowid,
         ov_strict,
         ov_pk_conflict,
