@@ -102,7 +102,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | wizards + Modify wired |
 | Schema tree Tables/Views/Indexes/Triggers | partial | Main schema only; no attached/temp schema navigation, column/detail tree or object context actions. |
 | Object SQL preview | done | |
-| Run DDL | partial | Synchronous execution on UI thread; long DDL can block interaction. |
+| Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
 | Print schema | partial | Text export only; no OS print dialog or preview. |
 
 ## Browse Data tab

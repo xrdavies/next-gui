@@ -14,6 +14,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `a336bf8..9b2aa4774163` | Codex | pass for DDL selection — 377 tests/strict checks, Keep/Discard/Cancel and Soft/native static modal inspected; full/native parity remain | [Report](R-20261027-9b2aa4774163.md) |
+| R-20261027-9b2aa4774163-F01 | verified | P1 | grok | e28 / all | existing branch | Structure selection | Keep/discard/cancel protects edited DDL without touching other SQL/project or pending database edits | [F01](R-20261027-9b2aa4774163.md#r-20261027-9b2aa4774163-f01) | 9b2aa4774163 | 9b2aa4774163 |
 | R-20261027-f4d258fe1169-F01 | verified | P2 | grok | shared / e28 | incomplete parity | Word editing | Platform word shortcuts, Unicode identifier boundaries, selection/Undo/session and read-only/IME guards verified | [F01](R-20261027-f4d258fe1169.md#r-20261027-f4d258fe1169-f01) | f4d258fe1169 | f4d258fe1169 |
 | R-20261027-4511f2bc5257-F01 | verified | P2 | grok | e28 / all | 605b048 | Catalog columns | Schema-qualified PRAGMA keeps real/generated/attached/temp/quoted columns available despite same-named user tables | [F01](R-20261027-4511f2bc5257.md#r-20261027-4511f2bc5257-f01) | 4511f2bc5257 | 4511f2bc5257 |
 | R-20261027-76baeacfe7e5-F03 | verified | P2 | grok | e28 / all | incomplete parity | SQL calltips | Original function roles/help and override guards; browsable overloads, long-text scrolling and retained editor sessions verified | [F03](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f03) | 6ee1edbad2a0 | 6ee1edbad2a0 |
