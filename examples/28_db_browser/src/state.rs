@@ -141,6 +141,8 @@ pub struct BrowseTabState {
     pub sel_row_end: Option<usize>,
     #[serde(skip)]
     pub sel_col: Option<usize>,
+    #[serde(skip)]
+    pub total_rows: Option<usize>,
 }
 
 impl BrowseTabState {
@@ -163,6 +165,7 @@ impl BrowseTabState {
             sel_row_start: None,
             sel_row_end: None,
             sel_col: None,
+            total_rows: None,
         }
     }
 }
@@ -934,6 +937,7 @@ impl AppState {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
                 t.result = None;
                 t.rowids.clear();
+                t.total_rows = None;
             }
             return Ok(());
         }
@@ -954,6 +958,7 @@ impl AppState {
             let t = self.browse_mut();
             t.result = None;
             t.rowids.clear();
+            t.total_rows = None;
             return Ok(());
         };
         if prev_cols.is_empty() {
@@ -967,10 +972,12 @@ impl AppState {
         let where_sql = Self::composed_where(self.browse(), &prev_cols)?;
 
         let offset = self.browse().offset;
-        let (result, rowids) = {
+        let (total_rows, result, rowids) = {
             let conn = self.conn.as_ref().unwrap();
+            let total_rows = db::count_browse_rows(conn, &table, where_sql.as_deref())?;
             if is_view {
                 (
+                    total_rows,
                     db::browse_table(
                         conn,
                         &table,
@@ -1006,9 +1013,10 @@ impl AppState {
                                 }
                             }
                         }
-                        (q, rowids)
+                        (total_rows, q, rowids)
                     }
                     Err(_) => (
+                        total_rows,
                         db::browse_table(
                             conn,
                             &table,
@@ -1044,6 +1052,7 @@ impl AppState {
             t.col_filters = col_filters;
             t.title = table.clone();
             t.rowids = rowids;
+            t.total_rows = Some(total_rows);
             t.result = Some(result);
             t.sel_row = None;
             t.sel_col = None;
@@ -1055,10 +1064,12 @@ impl AppState {
         self.edit_saved = rusqlite::types::Value::Null;
         self.edit_image_rgba = None;
         self.status_msg = format!(
-            "Browse {} — {} rows from {}{}{}",
+            "Browse {} — {} rows {}–{} of {}{}{}",
             table,
             nrows,
-            offset.saturating_add(1),
+            if nrows == 0 { 0 } else { offset.saturating_add(1) },
+            offset.saturating_add(nrows),
+            total_rows,
             if truncated { " (more pages)" } else { "" },
             order_note
         );
@@ -1067,7 +1078,11 @@ impl AppState {
 
     pub fn browse_page(&mut self, next: bool) -> Result<(), String> {
         let tab = self.browse_mut();
-        if next && !tab.result.as_ref().is_some_and(|r| r.truncated) {
+        if next
+            && tab
+                .total_rows
+                .is_some_and(|total| tab.offset.saturating_add(db::DEFAULT_LIMIT) >= total)
+        {
             return Ok(());
         }
         let old = tab.offset;
@@ -3422,6 +3437,7 @@ mod chart_default_tests {
         state.browse_mut().order_col = Some("v".into());
         state.refresh_browse().unwrap();
         assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 500);
+        assert_eq!(state.browse().total_rows, Some(601));
         state.browse_mut().sel_row = Some(0);
         state.sync_edit_cell_from_selection();
         state.browse_page(true).unwrap();
@@ -3429,8 +3445,11 @@ mod chart_default_tests {
         assert_eq!(tab.result.as_ref().unwrap().rows.len(), 101);
         assert_eq!(tab.result.as_ref().unwrap().rows[0][0], "501");
         assert_eq!(tab.rowids[0], 501);
+        assert_eq!(tab.total_rows, Some(601));
         assert!(tab.sel_row.is_none());
         assert!(state.edit_col.is_empty());
+        state.browse_page(true).unwrap();
+        assert_eq!(state.browse().offset, 500);
         state.browse_page(true).unwrap();
         assert_eq!(state.browse().offset, 500);
         state.browse_page(false).unwrap();

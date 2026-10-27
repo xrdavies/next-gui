@@ -1358,7 +1358,17 @@ pub fn build_ui(
                                 btn_cond_fmt = row.tool_button("Cond Format…");
                                 btn_fk_nav = row.tool_button("FK →");
                                 btn_page_prev = row.tool_button("◀ Page");
-                                row.text(format!("{}", state.browse().offset / crate::db::DEFAULT_LIMIT + 1));
+                                let offset = state.browse().offset;
+                                let total = state.browse().total_rows.unwrap_or(0);
+                                let pages = total.max(1).div_ceil(crate::db::DEFAULT_LIMIT);
+                                row.text(format!(
+                                    "Page {} / {} · {}–{} of {}",
+                                    offset / crate::db::DEFAULT_LIMIT + 1,
+                                    pages,
+                                    if total == 0 { 0 } else { offset + 1 },
+                                    (offset + browse_rows.len()).min(total),
+                                    total
+                                ));
                                 btn_page_next = row.tool_button("Page ▶");
                             });
                             // Per-column filters

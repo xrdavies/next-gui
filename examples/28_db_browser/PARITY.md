@@ -109,7 +109,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | Table selector | done | |
 | Filter / WHERE | partial | Raw WHERE and original any-column term search share export conditions; Clear Filters, Enter and Cmd/Ctrl+Alt+F. Automatic debounce and escape preferences remain. |
-| Data grid | partial | 500-row pages; shared column resize/clip/scroll fix added. Shared visible scrollbars and focus reveal are available. Shift+Up/Down selects a contiguous row range and Cmd/Ctrl+C copies it as TSV. Cell-range selection, bulk paste/edit, inline editor, hiding/reorder and total-count navigation remain. |
+| Data grid | partial | 500-row pages with filtered total counts and page ranges; shared column resize/clip/scroll fix added. Shared visible scrollbars and focus reveal are available. Shift+Up/Down selects a contiguous row range, Cmd/Ctrl+C copies it as TSV, and Cmd/Ctrl+V pastes a bounded TSV matrix into rowid-backed pages. Cell-range selection, inline editor, hiding/reorder and full bulk-edit semantics remain. |
 | Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort only, no clear/multi-sort UI. |
 | Filter-per-column | partial | Shared inputs align with resized/scrolled/frozen columns. DB4S comparisons, numeric ranges, NULL/empty text, wildcards and Unicode PCRE2 REGEXP are supported. Escape preference and automatic debounce remain. |
 | Multi browse tabs | partial | Add/switch with scrollable tab strip; no close/reorder. |
@@ -118,7 +118,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Record / form view | partial | Page-local navigation with a scrollable form; no total-count navigation. |
+| Record / form view | partial | Page-local navigation with a scrollable form; record navigation is still page-local even though the browse grid reports filtered totals. |
 
 ## Edit Pragmas tab
 

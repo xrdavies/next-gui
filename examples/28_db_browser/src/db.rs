@@ -363,6 +363,24 @@ pub fn browse_table(
     query_preview(conn, &sql, limit)
 }
 
+/// Count the rows matching the same filter used by the browse preview.
+pub fn count_browse_rows(
+    conn: &Connection,
+    table: &str,
+    filter: Option<&str>,
+) -> Result<usize, String> {
+    let mut sql = format!("SELECT COUNT(*) FROM {}", quote_ident(table));
+    if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
+        sql.push_str(" WHERE ");
+        sql.push_str(f);
+    }
+    let mut stmt = prepare_browse(conn, &sql)?;
+    let count: i64 = stmt
+        .query_row([], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    usize::try_from(count).map_err(|_| "Browse row count is negative".into())
+}
+
 fn prepare_browse<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
     // Browse filters must never execute a second statement or write to the database.
     let stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
@@ -1531,6 +1549,8 @@ mod tests {
         let filter = Some("1; DELETE FROM t; --");
         assert!(browse_table(&conn, "t", None, false, filter, 500, 0).is_err());
         assert!(browse_with_rowid(&conn, "t", None, false, filter, 500, 0).is_err());
+        assert!(count_browse_rows(&conn, "t", filter).is_err());
+        assert_eq!(count_browse_rows(&conn, "t", Some("v = 1")).unwrap(), 1);
         assert_eq!(count_rows(&conn, "t").unwrap(), 1);
     }
 
