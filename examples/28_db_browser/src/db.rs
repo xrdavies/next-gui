@@ -389,6 +389,18 @@ fn cell_to_string(value: rusqlite::types::ValueRef<'_>) -> String {
 
 pub const DEFAULT_LIMIT: usize = 500;
 
+pub fn index_table_columns(conn: &Connection, schema: &str, table: &str) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn.prepare(&format!("PRAGMA {}.table_xinfo({})", quote_ident(schema), quote_ident(table))).map_err(|e| e.to_string())?;
+    let columns = stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(6)?))).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for column in columns {
+        let (name, type_name, hidden) = column.map_err(|e| e.to_string())?;
+        if hidden != 1 { out.push((name, type_name)); }
+    }
+    if out.is_empty() { return Err(format!("No indexable columns in {}", qualified_name(schema, table))); }
+    Ok(out)
+}
+
 /// Browse a table/view with optional ORDER BY, WHERE filter, and limit.
 pub fn table_column_names(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
     table_column_names_in(conn, "main", table)
@@ -481,7 +493,7 @@ pub fn count_browse_rows_in(
     usize::try_from(count).map_err(|_| "Browse row count is negative".into())
 }
 
-fn prepare_single_statement<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
+pub(super) fn prepare_single_statement<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
     let stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     // Expanded SQL contains only the first statement; never prepare a PRAGMA in the tail.
     if stmt.expanded_sql().as_deref() != Some(sql) {

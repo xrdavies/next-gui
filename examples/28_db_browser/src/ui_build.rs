@@ -188,6 +188,7 @@ pub struct BuiltUi {
     pub ov_idx_expression: WidgetId,
     pub ov_idx_edit_key: WidgetId,
     pub ov_idx_preview: WidgetId,
+    pub ov_idx_order: WidgetId,
     pub ov_idx_table: WidgetId,
     pub ov_idx_cols: WidgetId,
     pub ov_idx_where: WidgetId,
@@ -460,6 +461,7 @@ pub fn build_ui(
     let mut ov_idx_expression = z;
     let mut ov_idx_edit_key = z;
     let mut ov_idx_preview = z;
+    let mut ov_idx_order = z;
     let mut ov_idx_table = z;
     let mut ov_idx_cols = z;
     let mut ov_idx_where = z;
@@ -930,8 +932,8 @@ pub fn build_ui(
                                 c.row(key_row, |r| {
                                     r.column(key_col, |c| {
                                         c.text("Available table columns");
-                                        match state.index_wizard_columns() {
-                                            Ok(columns) => ov_idx_available = c.list(columns, key_list),
+                                        match state.index_wizard_column_details() {
+                                            Ok(columns) => ov_idx_available = c.list(columns.iter().map(|(name, ty)| if ty.is_empty() { name.clone() } else { format!("{name}    {ty}") }), key_list),
                                             Err(error) => { c.text(format!("Columns unavailable: {error}")); }
                                         }
                                     });
@@ -948,6 +950,12 @@ pub fn build_ui(
                                     ov_btn_up = r.tool_button("Up");
                                     ov_btn_down = r.tool_button("Down");
                                     ov_idx_edit_key = r.tool_button("Edit key");
+                                });
+                                c.row(row, |r| {
+                                    r.text("Selected key order");
+                                    let mut order_style = type_sel;
+                                    order_style.width = 120.0;
+                                    ov_idx_order = r.select(["ASC", "DESC"], state.index_wizard_key_order().ok().map(usize::from), "select key", order_style);
                                 });
                                 c.text("Columns / expressions · SQL");
                                 let mut sql_area = area_s;
@@ -2025,6 +2033,7 @@ pub fn build_ui(
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");
         ui.set_accessible_name(ov_idx_preview, "Generated CREATE INDEX SQL preview");
+        ui.set_accessible_name(ov_idx_order, "Selected index key sort order");
         ui.set_text_area_read_only(ov_idx_preview, true);
         ui.set_list_selected(ov_idx_available, Some(state.wizard_index_available_sel));
         ui.set_list_selected(ov_list, Some(state.wizard_index_key_sel));
@@ -2208,6 +2217,7 @@ pub fn build_ui(
         ov_idx_expression,
         ov_idx_edit_key,
         ov_idx_preview,
+        ov_idx_order,
         ov_idx_table,
         ov_idx_cols,
         ov_idx_where,

@@ -1671,8 +1671,19 @@ impl AppState {
         Ok(())
     }
 
+    pub fn index_wizard_column_details(&self) -> Result<Vec<(String, String)>, String> {
+        db::index_table_columns(self.conn.as_ref().ok_or("No database open")?, &self.wizard_schema, &self.wizard_index_table)
+    }
+
     pub fn index_wizard_columns(&self) -> Result<Vec<String>, String> {
-        db::table_column_names_in(self.conn.as_ref().ok_or("No database open")?, &self.wizard_schema, &self.wizard_index_table)
+        Ok(self.index_wizard_column_details()?.into_iter().map(|(name, _)| name).collect())
+    }
+
+    pub fn index_wizard_key_order(&self) -> Result<bool, String> {
+        let keys = crate::index_sql::keys(&self.wizard_index_cols)?;
+        let key = keys.get(self.wizard_index_key_sel).ok_or("Select an index key")?;
+        crate::index_sql::key_order(self.conn.as_ref().ok_or("No database open")?, &self.wizard_schema, &self.wizard_index_table, key)
+            .map(|(_, descending)| descending.unwrap_or(false))
     }
 
     pub fn index_wizard_sql(&self) -> String {

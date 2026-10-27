@@ -1,4 +1,4 @@
-//! Extract editable fragments from SQLite's stored CREATE INDEX, not arbitrary SQL validation.
+//! SQL fragments for the index editor; SQLite validates expressions and generated statements.
 
 use crate::sql_syntax::{self, Kind};
 use std::ops::Range;
@@ -56,6 +56,50 @@ pub fn keys(sql: &str) -> Result<Vec<String>, String> {
         .into_iter()
         .map(|range| chars[range].iter().collect())
         .collect())
+}
+
+pub fn key_order(
+    conn: &rusqlite::Connection,
+    schema: &str,
+    table: &str,
+    key: &str,
+) -> Result<(String, Option<bool>), String> {
+    let validate = |expression: &str| {
+        let sql = format!(
+            "SELECT (\n{expression}\n) FROM {} LIMIT 0",
+            crate::db::qualified_name(schema, table)
+        );
+        crate::db::prepare_single_statement(conn, &sql).map(|_| ())
+    };
+    let chars: Vec<_> = key.chars().collect();
+    let mut code = chars.clone();
+    for (range, kind) in sql_syntax::tokens(key) {
+        if kind == Kind::Comment {
+            code[range].fill(' ');
+        }
+    }
+    if let Some(last) = code.iter().rposition(|ch| !ch.is_whitespace()) {
+        let end = last + 1;
+        let start = end
+            - code[..end]
+                .iter()
+                .rev()
+                .take_while(|ch| sql_syntax::identifier(**ch))
+                .count();
+        let word: String = code[start..end].iter().collect();
+        if word.eq_ignore_ascii_case("ASC") || word.eq_ignore_ascii_case("DESC") {
+            let expression: String = chars[..start].iter().chain(chars[end..].iter()).collect();
+            // SQLite distinguishes a sort keyword from an operand/column named ASC or DESC.
+            if validate(&expression).is_ok() {
+                return Ok((
+                    expression.trim().into(),
+                    Some(word.eq_ignore_ascii_case("DESC")),
+                ));
+            }
+        }
+    }
+    validate(key)?;
+    Ok((key.trim().into(), None))
 }
 
 pub fn definition(sql: &str) -> Result<(String, String), String> {
@@ -125,6 +169,80 @@ pub fn definition(sql: &str) -> Result<(String, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_sort_suffix_uses_sqlite_operand_rules_without_executing_sql() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(v TEXT, desc TEXT, asc INTEGER); INSERT INTO t VALUES('x','y',1); ATTACH ':memory:' AS aux; CREATE TABLE aux.t(only_aux TEXT)").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        conn.create_scalar_function(
+            "probe",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            move |ctx| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                ctx.get::<String>(0)
+            },
+        )
+        .unwrap();
+        for (key, base, order) in [
+            ("desc", "desc", None),
+            ("asc", "asc", None),
+            ("v IS desc", "v IS desc", None),
+            ("asc + desc", "asc + desc", None),
+            ("v COLLATE NOCASE", "v COLLATE NOCASE", None),
+            ("v COLLATE DESC", "v COLLATE DESC", None),
+            ("v COLLATE DESC DESC", "v COLLATE DESC", Some(true)),
+            ("desc DESC", "desc", Some(true)),
+            (
+                "coalesce(v, '; DESC') COLLATE NOCASE dEsC -- DESC;)",
+                "coalesce(v, '; DESC') COLLATE NOCASE  -- DESC;)",
+                Some(true),
+            ),
+            (
+                "v /* DESC */ ASC /* ASC */",
+                "v /* DESC */  /* ASC */",
+                Some(false),
+            ),
+            ("probe(v) DESC", "probe(v)", Some(true)),
+        ] {
+            assert_eq!(
+                key_order(&conn, "main", "t", key).unwrap(),
+                (base.into(), order),
+                "{key}"
+            );
+        }
+        assert_eq!(
+            key_order(&conn, "aux", "t", "only_aux DESC").unwrap(),
+            ("only_aux".into(), Some(true))
+        );
+        for key in [
+            "only_aux DESC",
+            "v +",
+            "?1 DESC",
+            "1); PRAGMA foreign_keys=OFF; --",
+            "1); DELETE FROM main.t; --",
+        ] {
+            assert!(key_order(&conn, "main", "t", key).is_err(), "{key}");
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM main.t", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
 
     #[test]
     fn key_rows_preserve_nested_quoted_and_commented_sql() {

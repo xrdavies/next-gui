@@ -60,7 +60,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Action | Status | Notes |
 |--------|--------|-------|
 | Create Table… | partial | Main/temp/attached schema selection; basic column PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
-| Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview. An explicit key-order selector remains. |
+| Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; table definition changes/reordering require explicit SQL; expression/partial index definitions edit in the qualified wizard |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
@@ -99,7 +99,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | partial | Basic qualified table/index wizards and Delete cover all namespaces; definition previews outside main stay read-only. Expression/partial definitions now edit; full table migration and original structured key controls remain. |
+| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | partial | Basic qualified table/index wizards and Delete cover all namespaces; definition previews outside main stay read-only. Expression/partial definitions, ordered key actions/types/ASC-DESC and preview now edit across namespaces; full table migration and exact original/native acceptance remain. |
 | Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Expansion, scroll, group selection and keyboard focus persist for the database session; active selection reveals ancestors. Column/detail tree, object context actions and project view persistence remain. |
 | Object SQL preview | partial | Schema identity retained in projects; attached/temp stored definitions are read-only, since SQLite removes their database/TEMP qualifiers. Structured qualified editing remains. |
 | Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
@@ -160,7 +160,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Dialog | Status | Notes |
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
-| EditIndexDialog | partial | Qualified expression keys/unique/partial WHERE, live definition retention and atomic replacement; available/ordered lists, add/remove/move/expression/edit controls and read-only SQL preview. Multiline SQL, focus/selection/undo and list viewports survive rebuilding; dedicated key-order selector, available type presentation and native acceptance remain. |
+| EditIndexDialog | partial | Qualified expression keys/unique/partial WHERE, live definition retention and atomic replacement; available/ordered lists, add/remove/move/expression/edit controls and read-only SQL preview. Multiline SQL, focus/selection/undo and list viewports survive rebuilding; ASC/DESC changes preserve operands/comments/collation and share Undo; declaration types include generated columns. Exact original transfer filtering/interface and native acceptance remain. |
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; malformed units/surrogates and unsupported UTF-32 BOMs are rejected before writing; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
