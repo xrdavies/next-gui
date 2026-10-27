@@ -302,6 +302,7 @@ struct BuiltUiIds {
     ov_foreign_key: WidgetId,
     ov_generated: WidgetId,
     ov_generation: WidgetId,
+    ov_table_preview: WidgetId,
     ov_without_rowid: WidgetId,
     ov_strict: WidgetId,
     ov_pk_conflict: WidgetId,
@@ -484,6 +485,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_foreign_key: b.ov_foreign_key,
             ov_generated: b.ov_generated,
             ov_generation: b.ov_generation,
+            ov_table_preview: b.ov_table_preview,
             ov_without_rowid: b.ov_without_rowid,
             ov_strict: b.ov_strict,
             ov_pk_conflict: b.ov_pk_conflict,
@@ -671,6 +673,18 @@ impl Demo {
                     state.open_modify_table_wizard().unwrap();
                     state.wizard_table_options.primary_key_conflict = Some(sqlite3_parser::ast::ResolveType::Replace);
                     if tab == "table-conflicted" { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
+                }
+                "table-preview" | "table-preview-bottom" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(qty INTEGER DEFAULT 2,total INTEGER CONSTRAINT generation AS(qty*4) STORED,note TEXT CONSTRAINT note_check CHECK(length(note)>0)); INSERT INTO records(qty,note) VALUES(3,'kept');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records" && object.kind==ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[0].name="amount".into(); state.wizard_cols[0].notnull=true;
+                    state.wizard_cols[0].default_value="4".into(); state.wizard_table_name="prepared".into();
+                    state.wizard_table_options.strict=true;
+                    if tab=="table-preview-bottom" { state.wizard_scroll=(0.0,10000.0); }
                     MainTab::Structure
                 }
                 "table-generated" | "table-computed" => {
@@ -1187,6 +1201,7 @@ impl Demo {
                 }
             }
             OverlayKind::EditTable => {
+                self.state.wizard_table_preview_state = self.ui.text_area_state(self.ids.ov_table_preview);
                 if let Some(on) = self.ui.is_checked(self.ids.ov_without_rowid) { self.state.wizard_table_options.without_rowid = on; }
                 if let Some(on) = self.ui.is_checked(self.ids.ov_strict) { self.state.wizard_table_options.strict = on; }
                 if let Some(index) = self.ui.select_selected(self.ids.ov_pk_conflict) {
@@ -1207,6 +1222,11 @@ impl Demo {
                     }
                 }
                 self.flush_wizard_col();
+                let sql = self.state.table_wizard_sql().unwrap_or_else(|error| format!("-- {error}"));
+                if self.ui.text_area_value(self.ids.ov_table_preview) != Some(sql.as_str()) {
+                    self.ui.set_text_area_value(self.ids.ov_table_preview, sql);
+                    sql_syntax::apply(&mut self.ui, self.ids.ov_table_preview, &self.theme);
+                }
             }
             OverlayKind::EditIndex => {
                 for (index, area) in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview].into_iter().enumerate() {
@@ -1588,6 +1608,8 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let table_preview_focused = self.state.overlay == Some(OverlayKind::EditTable)
+            && self.ui.focused() == Some(self.ids.ov_table_preview);
         let generation_focused = self.state.overlay == Some(OverlayKind::EditTable)
             && self.ui.focused() == Some(self.ids.ov_generation)
             && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|column| column.name.as_str());
@@ -1641,6 +1663,7 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if table_preview_focused { self.ui.set_focus(Some(self.ids.ov_table_preview)); self.ui.sync(&mut self.scene); }
         if generation_focused { self.ui.set_focus(Some(self.ids.ov_generation)); self.ui.sync(&mut self.scene); }
         if key_conflict_focused {
             self.ui.set_focus(Some(self.ids.ov_pk_conflict));
@@ -3630,7 +3653,7 @@ impl Demo {
             self.do_rebuild();
         } else {
             sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
-            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated] {
+            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated, self.ids.ov_table_preview] {
                 sql_syntax::apply(&mut self.ui, area, &self.theme);
             }
             self.update_sql_hint();
@@ -6209,7 +6232,7 @@ mod interaction_tests {
                         let save = bounds(demo.ids.ov_btn_ok);
                         assert!(viewport.y + viewport.height <= save.y && save.y + save.height <= height as f32);
                         if *phase == "bottom" {
-                            let field = bounds(if index { demo.ids.ov_idx_preview } else { demo.ids.ov_foreign_key });
+                            let field = bounds(if index { demo.ids.ov_idx_preview } else { demo.ids.ov_generated });
                             assert!(field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height);
                         }
                         if *phase == "middle" {
@@ -6432,6 +6455,65 @@ mod interaction_tests {
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
         }
+    }
+
+    #[test]
+    fn table_sql_preview_updates_live_keeps_read_only_sessions_and_fits_bounded_windows() {
+        let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(qty INTEGER DEFAULT 2,total INTEGER CONSTRAINT generation AS(qty*4) STORED,note TEXT CONSTRAINT note_check CHECK(length(note)>0)); INSERT INTO records(qty,note) VALUES(3,'kept');").unwrap();
+        demo.state.refresh_schema().unwrap();
+        let row=demo.state.schema.iter().position(|object|object.name=="records" && object.kind==ObjectKind::Table).unwrap();
+        demo.state.select_schema_node(10_000+row as u64); demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+        let area=demo.ids.ov_table_preview;
+        assert_eq!(demo.ui.accessible_name(area).as_deref(),Some("Generated CREATE TABLE SQL preview"));
+        demo.ui.set_text_input(demo.ids.ov_col_name,"amount"); demo.ui.set_text_input(demo.ids.ov_default,"4");
+        demo.ui.set_text_input(demo.ids.ov_name,"prepared"); demo.ui.set_checked(demo.ids.ov_nn,true); demo.ui.set_checked(demo.ids.ov_strict,true);
+        demo.snapshot_inputs();
+        let preview=demo.ui.text_area_value(area).unwrap().to_string();
+        assert!(preview.contains("\"prepared\"") && preview.contains("\"amount\"") && preview.contains("note_check") && preview.contains("NOT NULL") && preview.contains("STRICT"),"{preview}");
+        demo.ui.set_focus(Some(area)); demo.ui.select_text_area_range(area,0..26);
+        let selected=demo.ui.focused_text_for_copy().unwrap();
+        demo.ui.key_input(UiKey::Char('x')); assert!(!demo.ui.ime_commit("changed"));
+        assert_eq!(demo.ui.text_area_value(area),Some(preview.as_str()));
+        demo.snapshot_inputs(); demo.do_rebuild();
+        assert_eq!(demo.ui.focused(),Some(demo.ids.ov_table_preview)); assert_eq!(demo.ui.focused_text_for_copy(),Some(selected.clone()));
+        demo.ui.set_text_input(demo.ids.ov_col_name,"total"); demo.snapshot_inputs();
+        assert!(demo.ui.text_area_value(demo.ids.ov_table_preview).unwrap().contains("Duplicate column name"));
+        demo.ui.set_text_input(demo.ids.ov_col_name,"amount"); demo.snapshot_inputs();
+        assert_eq!(demo.ui.text_area_value(demo.ids.ov_table_preview),Some(preview.as_str()));
+        demo.ui.set_focus(Some(demo.ids.ov_table_preview)); demo.ui.select_text_area_range(demo.ids.ov_table_preview,0..26); demo.snapshot_inputs();
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            for (width,height) in [(1400,1000),(800,600)] {
+                demo.win_w=width; demo.win_h=height; demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size); demo.do_rebuild();
+                assert_eq!(demo.ui.focused_text_for_copy(),Some(selected.clone()));
+                let bounds=|demo:&Demo,id| demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(id)).unwrap().bounds;
+                let field=bounds(&demo,demo.ids.ov_table_preview); let save=bounds(&demo,demo.ids.ov_btn_ok); let viewport=bounds(&demo,demo.ids.ov_scroll);
+                assert!(viewport.y+viewport.height<=field.y && field.y+field.height<=save.y && save.y+save.height<=height as f32,"{width}: {viewport:?}, {field:?}, {save:?}");
+                demo.ui.set_scroll_offset(demo.ids.ov_scroll,0.0,10000.0); demo.ui.sync(&mut demo.scene);
+                let last=bounds(&demo,demo.ids.ov_generated);
+                assert!(last.y>=viewport.y && last.y+last.height<=viewport.y+viewport.height,"{width}: {last:?}, {viewport:?}");
+                assert_eq!(bounds(&demo,demo.ids.ov_table_preview),field);
+                if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_TABLE_PREVIEW_QA_OUT") {
+                    demo.scene.mark_full_dirty(width as f32,height as f32); let dirty=demo.scene.take_dirty(); let commands=encode_scene(&demo.scene,&dirty); let clear=clear_color(&demo.theme);
+                    let mut soft=SoftRenderer::new(width,height,clear); soft.render(&commands,&dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{width}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
+                    if let Ok(mut gpu)=GpuRenderer::try_new(width,height,clear) {
+                        gpu.render(&commands,&dirty); let a=soft.frame_pixels().unwrap().0; let b=gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{width}-metal.ppm"),b,width,height).unwrap();
+                        let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|s|(((a>>s)&255)as i32-((b>>s)&255)as i32).abs())).max().unwrap();
+                        assert!(delta<=2,"{theme_name}/{width}: {delta}"); eprintln!("Table preview {theme_name}/{width}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Table preview GPU comparison not_run: adapter unavailable"); }
+                }
+                demo.snapshot_inputs();
+            }
+        }
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT qty FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),3);
+        demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT total FROM prepared WHERE amount=3",[],|row|row.get::<_,i64>(0)).unwrap(),12);
+        demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_value(demo.ids.ov_table_preview),Some(preview.as_str()));
+        demo.handle_button(demo.ids.ov_btn_cancel);
     }
 
     #[test]

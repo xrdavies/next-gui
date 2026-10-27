@@ -181,6 +181,7 @@ pub struct BuiltUi {
     pub ov_foreign_key: WidgetId,
     pub ov_generated: WidgetId,
     pub ov_generation: WidgetId,
+    pub ov_table_preview: WidgetId,
     pub ov_without_rowid: WidgetId,
     pub ov_strict: WidgetId,
     pub ov_pk_conflict: WidgetId,
@@ -464,6 +465,7 @@ pub fn build_ui(
     let mut ov_foreign_key = z;
     let mut ov_generated = z;
     let mut ov_generation = z;
+    let mut ov_table_preview = z;
     let mut ov_without_rowid = z;
     let mut ov_strict = z;
     let mut ov_pk_conflict = z;
@@ -833,7 +835,8 @@ pub fn build_ui(
                         OverlayKind::EditTable => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                             scroll.width = ov_col.width - 16.0;
-                            scroll.height = ov_col.height - 16.0;
+                            let preview_height = (ov_col.height * 0.22).clamp(72.0, 140.0);
+                            scroll.height = (ov_col.height - preview_height - 48.0).max(100.0);
                             scroll.padding = 0.0;
                             scroll.background = None;
                             ov_scroll = c.scroll_area(scroll, |c| {
@@ -946,6 +949,10 @@ pub fn build_ui(
                                 ov_generated = c.text_area(coldef.and_then(|column| column.generated.as_ref()).map_or("", |generated| generated.expression.as_str()),
                                     "Generated expression, e.g. price * quantity", check_style);
                             });
+                            c.text("SQL preview");
+                            let mut preview_style = area_s;
+                            preview_style.height = preview_height;
+                            ov_table_preview = c.text_area(state.table_wizard_sql().unwrap_or_else(|error| format!("-- {error}")), "", preview_style);
                         }
                         OverlayKind::EditIndex => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
@@ -2096,6 +2103,8 @@ pub fn build_ui(
     ui.set_accessible_name(ov_foreign_key, "Column foreign key clause");
     ui.set_accessible_name(ov_generation, "Column generation mode");
     ui.set_accessible_name(ov_generated, "Generated column expression");
+    ui.set_accessible_name(ov_table_preview, "Generated CREATE TABLE SQL preview");
+    ui.set_text_area_read_only(ov_table_preview, true);
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_area_read_only(edit_value, generated_cell);
     ui.set_button_enabled(btn_edit_cell, !generated_cell);
@@ -2180,6 +2189,8 @@ pub fn build_ui(
         if let Some(editor) = &state.wizard_index_edit_states[index] { ui.restore_text_area_state(area, editor); }
         crate::sql_syntax::apply(&mut ui, area, &theme);
     }
+    if let Some(editor) = &state.wizard_table_preview_state { ui.restore_text_area_state(ov_table_preview, editor); }
+    crate::sql_syntax::apply(&mut ui, ov_table_preview, &theme);
     if !state.sql_log_view.as_ref().is_some_and(|view| ui.restore_text_area_state(log_area, view)) {
         let len = ui.text_area_value(log_area).map_or(0, |s| s.chars().count());
         ui.select_text_area_range(log_area, len..len);
@@ -2289,6 +2300,7 @@ pub fn build_ui(
         ov_foreign_key,
         ov_generated,
         ov_generation,
+        ov_table_preview,
         ov_without_rowid,
         ov_strict,
         ov_pk_conflict,

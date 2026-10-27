@@ -410,7 +410,9 @@ pub struct AppState {
     pub wizard_table_options: crate::table_sql::TableOptions,
     pub wizard_table_original: Option<SelectedObject>,
     pub wizard_cols: Vec<ColDef>,
+    pub wizard_original_cols: Vec<ColDef>,
     pub wizard_col_sources: Vec<Option<String>>,
+    pub wizard_table_preview_state: Option<next_gui_ui::TextAreaState>,
     pub wizard_column_edit_states: Vec<[Option<next_gui_ui::TextAreaState>; 3]>,
     pub wizard_col_sel: usize,
     pub wizard_index_name: String,
@@ -689,7 +691,9 @@ impl AppState {
                 },
                 ColDef::new("name", "TEXT"),
             ],
+            wizard_original_cols: Vec::new(),
             wizard_col_sources: Vec::new(),
+            wizard_table_preview_state: None,
             wizard_column_edit_states: Vec::new(),
             wizard_col_sel: 0,
             wizard_index_name: "idx_name".into(),
@@ -1552,6 +1556,8 @@ impl AppState {
             ColDef::new("name", "TEXT"),
         ];
         self.wizard_col_sources.clear();
+        self.wizard_original_cols.clear();
+        self.wizard_table_preview_state = None;
         self.wizard_column_edit_states = vec![[None, None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
@@ -1574,6 +1580,8 @@ impl AppState {
         self.wizard_table_name = sel.name.clone();
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         self.wizard_table_original = Some(sel);
+        self.wizard_original_cols = cols.clone();
+        self.wizard_table_preview_state = None;
         self.wizard_cols = cols;
         self.wizard_column_edit_states = vec![[None, None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
@@ -1650,6 +1658,34 @@ impl AppState {
         if clean_ddl {
             self.ddl_draft = self.schema.iter().find(|o| o.schema == schema && o.kind == kind && o.name == name).and_then(|o| o.sql.clone()).unwrap_or_default();
         }
+    }
+
+    pub fn table_wizard_sql(&self) -> Result<String, String> {
+        let name = self.wizard_table_name.trim();
+        if name.is_empty() { return Err("Table name required".into()); }
+        if self.wizard_cols.is_empty() { return Err("Add at least one column".into()); }
+        for (index, column) in self.wizard_cols.iter().enumerate() {
+            if column.name.trim().is_empty() { return Err("Column name required".into()); }
+            if self.wizard_cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&column.name)) {
+                return Err(format!("Duplicate column name: {}", column.name));
+            }
+        }
+        crate::table_sql::validate_primary_key(&self.wizard_cols)?;
+        let Some(original) = &self.wizard_table_original else {
+            for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
+            return crate::table_sql::apply_table_options(&db::create_table_ddl_in(&self.wizard_schema, name, &self.wizard_cols), self.wizard_table_options)
+                .and_then(|sql| crate::table_sql::format_table_preview(&sql));
+        };
+        if original.schema != self.wizard_schema { return Err("Moving a table between databases requires an explicit SQL migration".into()); }
+        if self.wizard_col_sources.len() != self.wizard_cols.len() { return Err("Column identities do not match the table draft".into()); }
+        let sql = self.schema.iter().find(|object| object.schema == original.schema && object.name == original.name && object.kind == ObjectKind::Table)
+            .and_then(|object| object.sql.as_deref()).ok_or("Original table definition no longer exists")?;
+        let renames: Vec<_> = self.wizard_cols.iter().zip(&self.wizard_col_sources).filter_map(|(column, source)|
+            source.as_ref().filter(|source| **source != column.name).map(|source| (source.as_str(), column.name.as_str()))).collect();
+        let sql = crate::table_sql::preview_renames(sql, name, &renames)?;
+        crate::table_sql::rebuild_definition(&sql, &self.wizard_schema, name, &self.wizard_original_cols,
+            &self.wizard_cols, &self.wizard_col_sources, Some(self.wizard_table_options))
+            .and_then(|sql| crate::table_sql::format_table_preview(&sql))
     }
 
     pub fn apply_table_wizard(&mut self) -> Result<(), String> {
@@ -3472,6 +3508,31 @@ mod chart_default_tests {
             let rows:serde_json::Value=serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
             assert_eq!(rows[0]["total"],16);
         }
+    }
+
+    #[test]
+    fn table_preview_retains_constraints_without_database_queries_or_mutating_pending_edits() {
+        let mut state=test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY,v TEXT CONSTRAINT named_check CHECK(length(v)>0),g AS(length(v))); INSERT INTO records VALUES(7,'kept');").unwrap();
+        state.refresh_schema().unwrap();
+        state.selected=Some(SelectedObject { schema:"main".into(),kind:ObjectKind::Table,name:"records".into() });
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_cols[1].name="renamed".into(); state.wizard_cols[1].notnull=true;
+        state.wizard_table_name="changed".into();
+        let before=state.sql_log.text(None); let dirty=state.dirty;
+        let preview=state.table_wizard_sql().unwrap();
+        assert!(preview.contains("named_check") && preview.contains("length (\"renamed\")") && preview.contains("NOT NULL"),"{preview}");
+        for _ in 0..3 { assert_eq!(state.table_wizard_sql().unwrap(),preview); }
+        assert_eq!(state.sql_log.text(None),before); assert_eq!(state.dirty,dirty);
+        assert!(!state.conn.as_ref().unwrap().is_autocommit());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM records",[],|row|row.get::<_,String>(0)).unwrap(),"kept");
+        state.wizard_cols[1].name="id".into(); assert!(state.table_wizard_sql().unwrap_err().contains("Duplicate"));
+        state.wizard_cols[1].name="renamed".into(); state.wizard_cols[1].type_name="TEXT, injected INTEGER".into();
+        assert!(state.table_wizard_sql().is_err());
+        state.open_create_table_wizard(); assert!(state.wizard_original_cols.is_empty() && state.wizard_table_preview_state.is_none());
+        let preview=state.table_wizard_sql().unwrap();
+        state.conn.as_ref().unwrap().execute_batch(&preview).unwrap();
+        assert_eq!(db::table_column_names(state.conn.as_ref().unwrap(),"new_table").unwrap(),["id","name"]);
     }
 
     #[test]

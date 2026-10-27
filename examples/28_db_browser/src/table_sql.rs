@@ -251,6 +251,110 @@ fn column_expression(expr: &Expr, name: &Name) -> bool {
     }
 }
 
+fn rename_identifier(name: &mut Name, renames: &[(&str, &str)]) {
+    if let Some((_, target)) = renames.iter().find(|(source, _)| (*name).eq(*source)) {
+        *name = identifier(target);
+    }
+}
+
+fn rename_table_expression(expr: &mut Expr, table: &Name, target: &str, renames: &[(&str, &str)]) -> Result<(), String> {
+    match expr {
+        Expr::Name(name) => rename_identifier(name, renames),
+        Expr::Id(name) => {
+            if let Some((_, target)) = renames.iter().find(|(source, _)| Name(name.0.clone()).eq(*source)) {
+                *expr = Expr::Name(identifier(target));
+            }
+        }
+        Expr::Qualified(owner, name) | Expr::DoublyQualified(_, owner, name) => {
+            if (*owner).eq(table) { rename_identifier(name, renames); *owner = identifier(target); }
+        }
+        Expr::Between { lhs, start, end, .. } => {
+            for value in [lhs, start, end] { rename_table_expression(value, table, target, renames)?; }
+        }
+        Expr::Binary(lhs, _, rhs) => {
+            rename_table_expression(lhs, table, target, renames)?;
+            rename_table_expression(rhs, table, target, renames)?;
+        }
+        Expr::Case { base, when_then_pairs, else_expr } => {
+            for value in base.iter_mut().chain(else_expr.iter_mut()) { rename_table_expression(value, table, target, renames)?; }
+            for (when, then) in when_then_pairs {
+                rename_table_expression(when, table, target, renames)?;
+                rename_table_expression(then, table, target, renames)?;
+            }
+        }
+        Expr::Cast { expr, .. } | Expr::Collate(expr, _) | Expr::IsNull(expr) | Expr::NotNull(expr) | Expr::Unary(_, expr) => rename_table_expression(expr, table, target, renames)?,
+        Expr::FunctionCall { args, order_by: None, filter_over: None, .. } => {
+            for value in args.iter_mut().flatten() { rename_table_expression(value, table, target, renames)?; }
+        }
+        Expr::InList { lhs, rhs, .. } => {
+            rename_table_expression(lhs, table, target, renames)?;
+            for value in rhs.iter_mut().flatten() { rename_table_expression(value, table, target, renames)?; }
+        }
+        Expr::Like { lhs, rhs, escape, .. } => {
+            for value in [Some(lhs), Some(rhs), escape.as_mut()].into_iter().flatten() { rename_table_expression(value, table, target, renames)?; }
+        }
+        Expr::Parenthesized(values) => {
+            for value in values { rename_table_expression(value, table, target, renames)?; }
+        }
+        Expr::Raise(_, value) => {
+            if let Some(value) = value { rename_table_expression(value, table, target, renames)?; }
+        }
+        Expr::Literal(_) => {}
+        _ => return Err("Cannot preview this table expression during a rename".into()),
+    }
+    Ok(())
+}
+
+/// Pure schema transformation for the preview; SQLite still performs actual dependency renames.
+pub fn preview_renames(sql: &str, target: &str, renames: &[(&str, &str)]) -> Result<String, String> {
+    let mut command = parse(sql)?;
+    let Cmd::Stmt(Stmt::CreateTable { tbl_name, body: CreateTableBody::ColumnsAndConstraints { columns, constraints, .. }, .. }) = &mut command else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    let original_table = tbl_name.name.clone();
+    let rename_foreign_key = |clause: &mut sqlite3_parser::ast::ForeignKeyClause| {
+        if clause.tbl_name.eq(&original_table) {
+            clause.tbl_name = identifier(target);
+            for column in clause.columns.iter_mut().flatten() { rename_identifier(&mut column.col_name, renames); }
+        }
+    };
+    for column in columns.values_mut() {
+        rename_identifier(&mut column.col_name, renames);
+        for item in &mut column.constraints {
+            match &mut item.constraint {
+                ColumnConstraint::Check(expr) | ColumnConstraint::Generated { expr, .. } => rename_table_expression(expr, &original_table, target, renames)?,
+                ColumnConstraint::ForeignKey { clause, .. } => rename_foreign_key(clause),
+                _ => {}
+            }
+        }
+    }
+    for item in constraints.iter_mut().flatten() {
+        match &mut item.constraint {
+            TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => {
+                for column in columns { rename_table_expression(&mut column.expr, &original_table, target, renames)?; }
+            }
+            TableConstraint::Check(expr) => rename_table_expression(expr, &original_table, target, renames)?,
+            TableConstraint::ForeignKey { columns, clause, .. } => {
+                for column in columns { rename_identifier(&mut column.col_name, renames); }
+                rename_foreign_key(clause);
+            }
+        }
+    }
+    tbl_name.name = identifier(target);
+    Ok(emit(command))
+}
+
+pub fn format_table_preview(sql: &str) -> Result<String, String> {
+    let Cmd::Stmt(Stmt::CreateTable { tbl_name, body: CreateTableBody::ColumnsAndConstraints { columns, constraints, flags }, .. }) = parse(sql)? else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    let fields = columns.values().map(|column| SqlFragment(column).to_string())
+        .chain(constraints.iter().flatten().map(|constraint| SqlFragment(constraint).to_string())).collect::<Vec<_>>();
+    let options = [flags.contains(TabFlags::WithoutRowid).then_some("WITHOUT ROWID"), flags.contains(TabFlags::Strict).then_some("STRICT")]
+        .into_iter().flatten().collect::<Vec<_>>().join(", ");
+    Ok(format!("CREATE TABLE {} (\n    {}\n){}{};", SqlFragment(&tbl_name), fields.join(",\n    "), if options.is_empty() { "" } else { " " }, options))
+}
+
 pub fn column_definition(
     column: &ColDef,
     original: Option<&ColDef>,
@@ -776,6 +880,57 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn table_preview_matches_saved_renames_without_rewriting_literals_functions_or_other_tables() {
+        for schema in ["main","temp","aux.\"db"] {
+            for options in [""," WITHOUT ROWID, STRICT"] {
+                let conn=Connection::open_in_memory().unwrap();
+                let table=db::qualified_name(schema,"t");
+                conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                    CREATE TABLE {}(b INTEGER PRIMARY KEY); INSERT INTO {} VALUES(1),(2),(3);
+                    CREATE TABLE {table}(a TEXT CONSTRAINT a PRIMARY KEY ON CONFLICT FAIL,b INTEGER,abs INTEGER,
+                        g INTEGER CONSTRAINT generated_value AS(CASE WHEN b BETWEEN 1 AND 4 THEN abs(-b)+CAST((b) AS INTEGER)+abs ELSE 1 END) STORED,
+                        p TEXT CONSTRAINT own_key REFERENCES t(a) DEFERRABLE INITIALLY DEFERRED,
+                        literal TEXT DEFAULT ('a b t abs'),
+                        CONSTRAINT rules CHECK(t.b IN (1,2,3) AND b IS NOT NULL AND a LIKE '%' ESCAPE '!' AND length(a COLLATE NOCASE)>0),
+                        CONSTRAINT pair UNIQUE(b,g), CONSTRAINT external_key FOREIGN KEY(b) REFERENCES outside(b)){options};
+                    INSERT INTO {table}(a,b,abs,p) VALUES('parent',1,3,'parent'); BEGIN;",db::qualified_name(schema,"outside"),db::qualified_name(schema,"outside"))).unwrap();
+                let original=db::table_column_defs_in(&conn,schema,"t").unwrap();
+                let sources:Vec<_>=original.iter().map(|column|Some(column.name.clone())).collect();
+                let mut draft=original.clone();
+                for (column,name) in draft.iter_mut().zip(["b","a","magnitude","calculated","p","literal"]) { column.name=name.into(); }
+                let sql:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='t'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+                let target="renamed.\"表";
+                let renamed=preview_renames(&sql,target,&[("a","b"),("b","a"),("abs","magnitude"),("g","calculated")]).unwrap();
+                let options=table_options(&sql).unwrap();
+                let preview=format_table_preview(&rebuild_definition(&renamed,schema,target,&original,&draft,&sources,Some(options)).unwrap()).unwrap();
+                assert!(preview.contains("\n    ") && preview.contains("\n)"));
+                db::recreate_table_columns_in(&conn,schema,"t",target,&draft,&sources,Some(options)).unwrap_or_else(|error|panic!("{schema}: {error}"));
+                let saved:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name=?1",db::quote_ident(schema)),[target],|row|row.get(0)).unwrap();
+                let mut saved=parse(&saved).unwrap();
+                let Cmd::Stmt(Stmt::CreateTable { tbl_name,.. })=&mut saved else { unreachable!() };
+                *tbl_name=qualified(schema,target);
+                assert_eq!(parse(&preview).unwrap(),saved,"{schema}: {preview}");
+                let target=db::qualified_name(schema,target);
+                assert_eq!(conn.query_row(&format!("SELECT calculated FROM {target} WHERE b='parent' AND a=1 AND magnitude=3 AND literal='a b t abs' AND p='parent'"),[],|row|row.get::<_,i64>(0)).unwrap(),5);
+                conn.execute(&format!("UPDATE {target} SET a=2"),[]).unwrap();
+                assert_eq!(conn.query_row(&format!("SELECT calculated FROM {target}"),[],|row|row.get::<_,i64>(0)).unwrap(),7);
+                assert!(!conn.is_autocommit());
+            }
+        }
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(a TEXT,b \"a\" DEFAULT \"a\",g AS(coalesce(a,'a'))); INSERT INTO t(a) VALUES('kept'); BEGIN;").unwrap();
+        let original=db::table_column_defs_in(&conn,"main","t").unwrap();
+        let mut draft=original.clone(); draft[0].name="changed".into();
+        let sources=original.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+        let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
+        let renamed=preview_renames(&sql,"t",&[("a","changed")]).unwrap();
+        let preview=rebuild_definition(&renamed,"main","copy",&original,&draft,&sources,None).unwrap();
+        conn.execute_batch(&preview).unwrap(); conn.execute("INSERT INTO copy(changed) VALUES('next')",[]).unwrap();
+        assert_eq!(conn.query_row("SELECT b FROM copy",[],|row|row.get::<_,String>(0)).unwrap(),"a");
+        assert_eq!(db::table_columns(&conn,"copy").unwrap()[1].type_name,"a");
+    }
 
     #[test]
     fn sqlite_schema_roundtrips_preserve_advanced_constraints_and_table_options() {
