@@ -1,0 +1,11 @@
+# Capture provenance
+
+Implementation `fe17276209d79ca42bd253e6de09c4d5c5c3ac6a`, macOS27.0.1 arm64, 2026-10-28.
+
+- `soft-metal-contact.png` / `small-light-error.png`: final `NEXT_GUI_DB_BROWSER_COLUMN_PICKER_QA_OUT=/tmp/next-gui-column-picker-accepted cargo test -p e28_db_browser column_picker::tests::column_dialog -- --nocapture`, writer40659 exit0 awaited. Eight Soft/Metal pairs: both themes, Index800/1400 and FK/error800, max channel delta2 each. PNG conversion/contact generation exit0 after writer completion; all frames/contact inspected, including the visible error area and absence of horizontal overflow.
+- `native-dialogs.png` / `native-light-foreign.png`: final accepted workspace build5290 exit0 before launch. Four owned GPU windows `table-key-columns` / `table-fk-columns`, both themes, readiness and own layer0/onscreen/size checked. Helper72865 exit0; each owned app SIGINT-2 exit awaited. Final contact and earlier full light FK capture inspected; same final layout retained. Raw captures/logs/window metadata: `/tmp/next-gui-column-picker-accepted-{table-key-columns,table-fk-columns}-{dark,light}`.
+- `office-contact.png`: final same build and helper72865,14 owned GPU windows e10–15/e20–27, all skimmed. Every owned SIGINT-2 exit awaited. Raw source captures in `/tmp/next-gui-column-picker-office-accepted`; final contact generation exit0.
+
+The desktop capture showed wallpaper and the targets remained inactive. Native keyboard/pointer/IME/Save was not accepted; simulated event paths and static native windows do not establish native interaction. No original-binary pixel match or Windows/Linux runtime is inferred.
+
+Final532 tests/43 groups (e28306/UI161), zero failures/ignored: `/tmp/next-gui-column-picker-workspace-accepted.log`, session5083 exit0 awaited. Final strict Clippy/workspace build/macOS and Windows feature checks: `/tmp/next-gui-column-picker-{clippy,build,macos,windows}-accepted.log`, orchestrator5290 exit0 and each child0. Focused shared10511 exit0; final local-column/pointer tests1326 exit0; visual40659 exit0. Previous full suites58280/66030/24896/15395 and visual71349/91774/26248 were awaited; initial draft failures and Clippy style warnings were corrected before final acceptance.
