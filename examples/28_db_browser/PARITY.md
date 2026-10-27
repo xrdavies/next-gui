@@ -501,3 +501,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Namespace Browse checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-901390905c25.md): main/temp/attached identity now reaches selectors/tabs, record navigation, counts/filter/order, typed edit/insert/delete, cut/paste, same-database FK navigation, conditional formats, SQL copies and full filtered export. Per-database/table settings and file-backed attachments round-trip/preflight through native XML plus the local extension. Legacy JSON defaults to main; missing temporary targets reopen empty with a notice, and Save As clears disconnected views. 391 tests/strict checks and both-theme wide/narrow/conditional/native static captures pass. Exact original fallback behavior, namespace Plot/structured wizards, advanced settings and native input acceptance remain unfinished; F02 stays in_progress.
+
+
+## Namespace Plot checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-1ca20533cf37.md): explicit main/temp/attached table/view selection, generated/quoted columns, local project schema restoration and stale-sample clearing now pass 393 tests and strict checks. Source and Plot controls fit in two rows at narrow widths; both-theme Soft/native Metal static captures inspected. Sampling remains at most 64 source rows. F01 tracks clipped narrow captions; original current-model binding, full axes/series/interaction/export, structured namespace wizards and native input acceptance remain unfinished.

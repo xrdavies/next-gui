@@ -14,9 +14,10 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-1ca20533cf37-F01 | open | P2 | grok | shared / e28 | existing Chart title | Ui::paint_chart | Qualified Plot captions clip at narrow width; bounded readable presentation remains | [F01](R-20261027-1ca20533cf37.md#r-20261027-1ca20533cf37-f01) | — | — |
 | R-20261027-9ce12cc31802-F01 | verified | P2 | grok | shared / e28 | existing branch | Tree navigation sessions | Focus, schema-keyed expansion, group selection, viewport and ancestor reveal survive browser rebuilds | [F01](R-20261027-9ce12cc31802.md#r-20261027-9ce12cc31802-f01) | 9ce12cc31802 | 9ce12cc31802 |
 | R-20261027-443ef848a739-F01 | verified | P1 | grok | e28 / all | existing branch | Main-only data helpers | Explicit main identity prevents temp shadowing in browse/edit/insert/delete/ALTER/export | [F01](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f01) | 443ef848a739 | 443ef848a739 |
-| R-20261027-443ef848a739-F02 | in_progress | P2 | grok | e28 / all | incomplete parity | Schema workflows | Tree/selection/project context/qualified DROP verified; Tree sessions verified at 9ce12cc; attached Browse/data/projects verified at 9013909; plot/wizards and details/context remain | [F02](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f02) | — | — |
+| R-20261027-443ef848a739-F02 | in_progress | P2 | grok | e28 / all | incomplete parity | Schema workflows | Tree/selection/project context/qualified DROP verified; Tree sessions verified at 9ce12cc; attached Browse/data/projects verified at 9013909; Plot identity verified at 1ca2053; wizards and details/context remain | [F02](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f02) | — | — |
 | R-20261027-9b2aa4774163-F01 | verified | P1 | grok | e28 / all | existing branch | Structure selection | Keep/discard/cancel protects edited DDL without touching other SQL/project or pending database edits | [F01](R-20261027-9b2aa4774163.md#r-20261027-9b2aa4774163-f01) | 9b2aa4774163 | 9b2aa4774163 |
 | R-20261027-f4d258fe1169-F01 | verified | P2 | grok | shared / e28 | incomplete parity | Word editing | Platform word shortcuts, Unicode identifier boundaries, selection/Undo/session and read-only/IME guards verified | [F01](R-20261027-f4d258fe1169.md#r-20261027-f4d258fe1169-f01) | f4d258fe1169 | f4d258fe1169 |
 | R-20261027-4511f2bc5257-F01 | verified | P2 | grok | e28 / all | 605b048 | Catalog columns | Schema-qualified PRAGMA keeps real/generated/attached/temp/quoted columns available despite same-named user tables | [F01](R-20261027-4511f2bc5257.md#r-20261027-4511f2bc5257-f01) | 4511f2bc5257 | 4511f2bc5257 |
@@ -80,6 +81,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `dc03314..1ca20533cf37` | Codex | issues — 393 tests/strict checks, qualified Plot/project identity and both-theme/native static frames verified; narrow caption/full/native parity remain | [Report](R-20261027-1ca20533cf37.md) |
 | 2026-10-27 | `60b0c30..901390905c25` | Codex | pass for namespace Browse — 391 tests/strict checks, typed operations/projects/FK/isolation and both-theme wide/narrow/native static inspection; full/native parity remain | [Report](R-20261027-901390905c25.md) |
 | 2026-10-27 | `c4b1035..41db9f2e6d78` | Codex | pass for qualified helpers — 385 tests/strict checks, namespace data isolation/atomicity/export/FK; attached UI/full/native parity remain | [Report](R-20261027-41db9f2e6d78.md) |
 | 2026-10-27 | `a1a75f7..9ce12cc31802` | Codex | pass for Tree sessions — 383 tests/strict checks, focus/scroll/expand/identity regressions, e28 and 14 Office native static inspection; full/native parity remain | [Report](R-20261027-9ce12cc31802.md) |
