@@ -4,6 +4,7 @@ use std::ops::Range;
 #[derive(Debug, Clone, Default)]
 pub(super) struct TextAreaEdit {
     anchor: Option<usize>,
+    goal_x: Option<f32>,
     undo: Vec<EditSnapshot>,
     redo: Vec<EditSnapshot>,
     pub(super) reveal: bool,
@@ -24,6 +25,7 @@ pub struct TextAreaState {
     snapshot: EditSnapshot,
     scroll_y: f32,
     viewport: (f32, f32),
+    font_size: f32,
     edit: TextAreaEdit,
 }
 
@@ -106,6 +108,7 @@ impl Ui {
             },
             scroll_y: *scroll_y,
             viewport: (style.width, style.height),
+            font_size: style.size,
             edit: edit.clone(),
         })
     }
@@ -133,7 +136,10 @@ impl Ui {
         *caret = state.snapshot.caret;
         *scroll_y = state.scroll_y;
         *edit = state.edit.clone();
-        edit.reveal |= state.viewport != (style.width, style.height);
+        edit.reveal |= state.viewport != (style.width, style.height) || state.font_size != style.size;
+        if state.viewport.0 != style.width || state.font_size != style.size {
+            edit.goal_x = None;
+        }
         true
     }
 
@@ -164,6 +170,7 @@ impl Ui {
         };
         let len = value.chars().count();
         edit.anchor = Some(range.start.min(len));
+        edit.goal_x = None;
         *caret = range.end.min(len);
         edit.reveal = true;
         preedit.clear();
@@ -263,6 +270,7 @@ impl Ui {
         }
         *caret = range.start + text.chars().count();
         edit.anchor = None;
+        edit.goal_x = None;
         edit.reveal = true;
         preedit.clear();
         *preedit_cursor = None;
@@ -374,6 +382,7 @@ impl Ui {
             edit.anchor = Some(target);
         }
         *caret = target;
+        edit.goal_x = None;
         edit.reveal = true;
         preedit.clear();
         *preedit_cursor = None;
@@ -416,8 +425,10 @@ impl Ui {
             Some((style.width - style.padding_x * 2.0).max(1.0)),
         );
         let points = layout.caret_positions(value, self.font.metrics(style.size).ascent);
-        // shortcut: vertical moves use current x; preserve a desired column when crossing short lines.
         let (x, y) = points[old.min(len)];
+        let vertical = matches!(key, UiKey::Up | UiKey::Down | UiKey::SelectUp | UiKey::SelectDown
+            | UiKey::PageUp | UiKey::PageDown | UiKey::SelectPageUp | UiKey::SelectPageDown);
+        let target_x = edit.goal_x.unwrap_or(x);
         let page_height = (((style.height - 2.0 * style.padding_y) / layout.line_height).floor() - 1.0)
             .max(1.0) * layout.line_height;
         let page_delta = match key {
@@ -483,6 +494,7 @@ impl Ui {
                     edit.highlights = None;
                     *caret = snapshot.caret;
                     edit.anchor = snapshot.anchor;
+                    edit.goal_x = None;
                     edit.reveal = true;
                     preedit.clear();
                     *preedit_cursor = None;
@@ -494,13 +506,13 @@ impl Ui {
             UiKey::Left | UiKey::SelectLeft => old.saturating_sub(1),
             UiKey::Right | UiKey::SelectRight => (old + 1).min(len),
             UiKey::Up | UiKey::SelectUp => {
-                nearest_on_row(&points, x, (y - layout.line_height).max(0.0))
+                nearest_on_row(&points, target_x, (y - layout.line_height).max(0.0))
             }
             UiKey::Down | UiKey::SelectDown => {
-                nearest_on_row(&points, x, y + layout.line_height)
+                nearest_on_row(&points, target_x, y + layout.line_height)
             }
             UiKey::PageUp | UiKey::SelectPageUp | UiKey::PageDown | UiKey::SelectPageDown => {
-                nearest_on_row(&points, x, (y + page_delta.unwrap()).max(0.0))
+                nearest_on_row(&points, target_x, (y + page_delta.unwrap()).max(0.0))
             }
             UiKey::Home | UiKey::SelectHome => nearest_on_row(&points, 0.0, y),
             UiKey::End | UiKey::SelectEnd => {
@@ -525,6 +537,7 @@ impl Ui {
             edit.anchor = None;
         }
         *caret = target;
+        edit.goal_x = vertical.then_some(target_x);
         if let Some(offset) = page_scroll {
             *scroll_y = offset;
         }
@@ -739,6 +752,70 @@ mod tests {
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         (ui, scene, area)
+    }
+
+    #[test]
+    fn vertical_keys_keep_the_desired_column_across_shorter_lines() {
+        for key in [UiKey::Down, UiKey::PageDown] {
+            let (mut ui, mut scene, area) = editor("abcdefghij\nx\nabcdefghij");
+            let Kind::TextArea { style, .. } = &mut ui.widgets.get_mut(&area).unwrap().kind else { unreachable!() };
+            style.height = 2.0 * ui.font.metrics(style.size).line_height + 2.0 * style.padding_y;
+            ui.sync(&mut scene);
+            ui.select_text_area_range(area, 8..8);
+            assert!(ui.key_input(key));
+            assert!(ui.key_input(key));
+            assert_eq!(ui.text_area_caret(area), Some(21), "restore column 8 after the short middle line");
+        }
+    }
+
+    #[test]
+    fn desired_column_survives_rebuild_and_resets_after_explicit_placement_or_font_changes() {
+        let original = "iiiiiiiiii\ni\niiiiiiiiii";
+        let (mut ui, mut scene, area) = editor(original);
+        ui.select_text_area_range(area, 8..8);
+        ui.key_input(UiKey::Down);
+        let session = ui.text_area_state(area).unwrap();
+        let (mut rebuilt, _, next_area) = editor(original);
+        assert!(rebuilt.restore_text_area_state(next_area, &session));
+        rebuilt.key_input(UiKey::Down);
+        assert_eq!(rebuilt.text_area_caret(next_area), Some(21));
+        rebuilt.key_input(UiKey::SelectUp);
+        assert_eq!(rebuilt.text_area_selection(next_area), Some(12..21));
+        rebuilt.key_input(UiKey::SelectDown);
+        assert_eq!(rebuilt.text_area_selection(next_area), Some(21..21));
+        ui.key_input(UiKey::Left);
+        ui.key_input(UiKey::Down);
+        assert_eq!(ui.text_area_caret(area), Some(13), "horizontal key chooses a new column");
+        for use_range_edit in [false, true] {
+            ui.select_text_area_range(area, 8..8);
+            ui.key_input(UiKey::Down);
+            if use_range_edit { ui.replace_text_area_range(area, 12..12, ""); }
+            else { ui.select_text_area_range(area, 12..12); }
+            ui.key_input(UiKey::Down);
+            assert_eq!(ui.text_area_caret(area), Some(14), "explicit placement resets the goal");
+        }
+        ui.select_text_area_range(area, 8..8);
+        ui.key_input(UiKey::Down);
+        ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&area].node.unwrap()).unwrap().bounds;
+        let Kind::TextArea { style, .. } = &ui.widgets[&area].kind else { unreachable!() };
+        let (px, py) = (style.padding_x, style.padding_y);
+        let line_height = ui.font.metrics(style.size).line_height;
+        ui.pointer_text_area(area, bounds, bounds.x + px, bounds.y + py + 1.5 * line_height, false);
+        ui.key_input(UiKey::Down);
+        assert_eq!(ui.text_area_caret(area), Some(13), "pointer placement resets the goal");
+        let Kind::TextArea { style, .. } = &mut rebuilt.widgets.get_mut(&next_area).unwrap().kind else { unreachable!() };
+        style.size *= 2.0;
+        assert!(rebuilt.restore_text_area_state(next_area, &session));
+        rebuilt.key_input(UiKey::Down);
+        assert_eq!(rebuilt.text_area_caret(next_area), Some(14), "font changes discard pixel goals");
+        let Kind::TextArea { style, .. } = &mut rebuilt.widgets.get_mut(&next_area).unwrap().kind else { unreachable!() };
+        style.size /= 2.0;
+        style.width -= 10.0;
+        assert!(rebuilt.restore_text_area_state(next_area, &session));
+        rebuilt.key_input(UiKey::Down);
+        assert_eq!(rebuilt.text_area_caret(next_area), Some(14), "width changes discard pixel goals");
+        assert_eq!(rebuilt.text_area_value(next_area), Some(original));
     }
 
     #[test]
