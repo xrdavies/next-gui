@@ -166,6 +166,17 @@ cargo test -p next-gui-ui --lib key_input_tab
 
 完整读屏遍历、平台 a11y 树同步 → 另开阶段。Button 进焦序与键盘激活已在本基线上完成（见上 §1.1）。
 
+## Resizable pages
+
+`set_splitter_min_sizes` keeps each pane above its pixel minimum during layout and
+dragging. If the viewport cannot fit both, their available sizes are proportional
+to those minima. Zero minima retain the existing ratio limits.
+
+`TabsBuilder::scroll_page` mounts a ScrollArea that fills the page viewport during
+resizing. Its content can exceed the viewport, and its own padding applies. Focus
+navigation visits only the selected tab page; switching away from a focused page
+returns focus to the tab strip and closes its suggestion popup.
+
 ## Table page navigation
 
 `UiKey::PageUp` / `PageDown` moves a focused Table by its currently visible row

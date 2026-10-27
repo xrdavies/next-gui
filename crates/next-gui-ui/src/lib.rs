@@ -334,6 +334,14 @@ impl Default for SplitterStyle {
     }
 }
 
+fn constrained_splitter_ratio(ratio:f32,span:f32,minimums:(f32,f32))->f32 {
+    let ratio=ratio.clamp(0.05,0.95);
+    if span<=0.0 {return ratio;}
+    let total=minimums.0+minimums.1;
+    if total>span {minimums.0/total}
+    else {ratio.clamp(minimums.0/span,1.0-minimums.1/span)}
+}
+
 
 /// Retained image magnification and pan, independent of pixel resources.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -1706,6 +1714,7 @@ enum Kind {
     },
     Splitter {
         style: SplitterStyle,
+        minimums: (f32,f32),
         children: Vec<WidgetId>,
     },
     Text {
@@ -3005,6 +3014,7 @@ impl Ui {
     {
         let id = self.alloc_container(Kind::Splitter {
             style,
+            minimums: (0.0,0.0),
             children: Vec::new(),
         });
         self.roots.push(id);
@@ -3115,6 +3125,15 @@ impl Ui {
             Some(Kind::Splitter { style, .. }) => Some(style.ratio),
             _ => None,
         }
+    }
+
+    /// Set minimum pane sizes along the split axis; call sync afterwards.
+    /// If the viewport cannot fit both, they share it in proportion to their minima.
+    /// Zero minima keep the default ratio limits. Invalid input leaves the splitter unchanged.
+    pub fn set_splitter_min_sizes(&mut self,id:WidgetId,first:f32,second:f32)->bool {
+        if !first.is_finite() || !second.is_finite() || !(first+second).is_finite() || first<0.0 || second<0.0 {return false;}
+        let Some(Widget {kind:Kind::Splitter {minimums,..},..})=self.widgets.get_mut(&id) else {return false;};
+        *minimums=(first,second);true
     }
 
     /// Read text content if the widget is a Text.
@@ -3230,7 +3249,7 @@ impl Ui {
                 start_ratio: style.ratio,
                 axis: style.axis,
                 bounds,
-                sash_size: style.sash_size,
+                sash_size: style.sash_size.max(2.0),
             });
             return true;
         }
@@ -3494,9 +3513,11 @@ impl Ui {
                     Axis::Horizontal => y,
                 };
                 let delta = cur - start_pos;
-                let new_ratio = (start_ratio + delta / span).clamp(0.1, 0.9);
+                let new_ratio = start_ratio + delta / span;
                 if let Some(w) = self.widgets.get_mut(&splitter) {
-                    if let Kind::Splitter { style, .. } = &mut w.kind {
+                    if let Kind::Splitter { style, minimums, .. } = &mut w.kind {
+                        let new_ratio=if *minimums==(0.0,0.0) {new_ratio.clamp(0.1,0.9)} else {new_ratio};
+                        let new_ratio=constrained_splitter_ratio(new_ratio,span,*minimums);
                         if (style.ratio - new_ratio).abs() < 0.0005 {
                             return false;
                         }
@@ -3928,6 +3949,10 @@ impl Ui {
         };
         if Self::kind_is_focusable(&w.kind) {
             out.push(id);
+        }
+        if let Kind::Tabs {selected,children,..}=&w.kind {
+            if let Some(&page)=children.get(*selected) {self.collect_focusable_dfs(page,out);}
+            return;
         }
         if matches!(&w.kind,Kind::Table {editor:Some(editor),rows,columns,..} if editor.row>=rows.len() || editor.column>=columns.len()) {return;}
         let kids: Vec<WidgetId> = Self::widget_children_ids(&w.kind).to_vec();
@@ -6606,16 +6631,21 @@ impl Ui {
             return false;
         }
         let index = index.min(n - 1);
+        let active_focus=self.focus.is_some_and(|focus|self.focusable_widgets().contains(&focus));
+        let mut changed=false;
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::Tabs { selected, style, strip, .. } = &mut w.kind {
                 if *selected != index || style.scrollable {
                     *selected = index;
                     strip.selected = None;
-                    return true;
+                    changed=true;
                 }
             }
         }
-        false
+        if changed && active_focus && self.focus.is_some_and(|focus|!self.focusable_widgets().contains(&focus)) {
+            self.focus=Some(id);self.close_popup_internal();
+        }
+        changed
     }
 
     /// Selected option index for a Select.
@@ -10712,7 +10742,7 @@ impl Ui {
 
     fn layout_splitter(&mut self, scene: &mut Scene, id: WidgetId) {
         let Some(Widget {
-            kind: Kind::Splitter { style, children },
+            kind: Kind::Splitter { style, minimums, children },
             node,
             chrome_node,
             ..
@@ -10721,6 +10751,7 @@ impl Ui {
             return;
         };
         let style = *style;
+        let minimums = *minimums;
         let children = children.clone();
         let col_node = *node;
         let sash = *chrome_node;
@@ -10772,8 +10803,10 @@ impl Ui {
             }
         }
 
-        let ratio = style.ratio.clamp(0.05, 0.95);
         let sash_size = style.sash_size.max(2.0);
+        let span=(if style.axis==Axis::Vertical {w} else {h})-sash_size;
+        let ratio = constrained_splitter_ratio(style.ratio,span,minimums);
+        if let Some(Widget {kind:Kind::Splitter {style,..},..})=self.widgets.get_mut(&id) {style.ratio=ratio;}
 
         let (first_rect, sash_rect, second_rect) = match style.axis {
             Axis::Vertical => {
@@ -17973,6 +18006,7 @@ impl FlexBuilder<'_> {
     {
         let id = self.ui.alloc_container(Kind::Splitter {
             style,
+            minimums: (0.0,0.0),
             children: Vec::new(),
         });
         self.push_child(id);
@@ -19973,6 +20007,15 @@ pub struct TabsBuilder<'a> {
 }
 
 impl TabsBuilder<'_> {
+    /// Add a ScrollArea that fills the page viewport, including during parent resizing.
+    /// Its own padding and scroll offset apply; content can exceed the visible page.
+    pub fn scroll_page<F>(&mut self,title:impl Into<String>,style:ScrollAreaStyle,build:F)->WidgetId
+    where F:FnOnce(&mut FlexBuilder<'_>) {
+        let Some(Widget {kind:Kind::Tabs {titles,..},..})=self.ui.widgets.get_mut(&self.parent) else {return WidgetId(0);};
+        titles.push(title.into());
+        FlexBuilder {ui:self.ui,parent:self.parent}.scroll_area(style,build)
+    }
+
     /// Add a tab page with `title` and content built into a nested column.
     pub fn page<F>(&mut self, title: impl Into<String>, build: F) -> WidgetId
     where
@@ -21018,6 +21061,58 @@ mod tests {
             (f32::NAN, bounds.y),
         ] {
             assert_eq!(ui.table_header_column_at(&scene, table, x, y), None);
+        }
+    }
+
+    #[test]
+    fn scroll_pages_fill_a_resized_splitter_and_keep_sash_hits_and_hidden_pages_separate() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut tabs=WidgetId(0);let mut first=WidgetId(0);let mut second=WidgetId(0);let mut last=WidgetId(0);let mut input=WidgetId(0);
+        let splitter=ui.splitter(SplitterStyle {width:400.0,height:240.0,axis:Axis::Horizontal,ratio:0.6,sash_size:6.0,..Default::default()},|c| {
+            tabs=c.tabs(TabsStyle {width:400.0,height:130.0,strip_height:28.0,..Default::default()},|pages| {
+                let scroll=ScrollAreaStyle {width:400.0,height:1000.0,padding:0.0,..Default::default()};
+                first=pages.scroll_page("First",scroll,|c| {input=c.text_input_styled("draft","",TextInputStyle::default());for index in 0..20 {last=c.button(format!("Button {index}"));}});
+                second=pages.scroll_page("Second",scroll,|c| {c.text("Second page");});
+            });
+        },|c|{c.text_area("SQL preview","",TextAreaStyle::default());});
+        ui.set_splitter_min_sizes(splitter,76.0,48.0);ui.sync(&mut scene);
+        let rect=|ui:&Ui,scene:&Scene,id|scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+        let tabs_rect=rect(&ui,&scene,tabs);let scroll_rect=rect(&ui,&scene,first);assert_eq!(scroll_rect.height,tabs_rect.height-28.0);assert_eq!(scroll_rect.y,tabs_rect.y+28.0);
+        assert_eq!(scene.get(ui.widgets[&first].node.unwrap()).unwrap().parent,ui.widgets[&tabs].node);
+        let sash=scene.get(ui.widgets[&splitter].chrome_node.unwrap()).unwrap().bounds;let (x,y)=(sash.x+100.0,sash.y+3.0);assert_eq!(ui.hit_widget(&scene,x,y),Some(splitter));
+        assert!(ui.pointer_pressed(&mut scene,x,y));assert!(ui.pointer_moved(x,y-10000.0));ui.sync(&mut scene);ui.pointer_released();
+        let tabs_rect=rect(&ui,&scene,tabs);let scroll_rect=rect(&ui,&scene,first);assert_eq!(tabs_rect.height,76.0);assert_eq!(scroll_rect.height,48.0);
+        assert_eq!(scene.get(ui.widgets[&first].node.unwrap()).unwrap().clip,Some(scroll_rect));
+        assert_eq!(ui.hit_widget(&scene,x,tabs_rect.y+tabs_rect.height+3.0),Some(splitter));
+        ui.set_scroll_offset(first,0.0,10000.0);ui.sync(&mut scene);assert!(ui.scroll_offset(first).unwrap().1>0.0);
+        let button=rect(&ui,&scene,last);assert!(scroll_rect.contains(button.x+10.0,button.y+button.height*0.5));assert_eq!(ui.hit_widget(&scene,button.x+10.0,button.y+button.height*0.5),Some(last));
+        ui.set_focus(Some(input));ui.set_tabs_selected(tabs,1);ui.sync(&mut scene);assert_eq!(ui.focused(),Some(tabs));assert!(!ui.key_input(UiKey::Char('x')));assert_eq!(ui.text_input_value(input),Some("draft"));assert!(!scene.get(ui.widgets[&first].node.unwrap()).unwrap().visible);assert!(!ui.focusable_widgets().contains(&input));assert_eq!(rect(&ui,&scene,second),scroll_rect);
+        ui.set_splitter_ratio(splitter,0.8);ui.sync(&mut scene);ui.set_tabs_selected(tabs,0);ui.sync(&mut scene);assert!(ui.focusable_widgets().contains(&input));assert!(rect(&ui,&scene,first).height>48.0);assert!(ui.scroll_offset(first).unwrap().1>0.0);
+    }
+
+    #[test]
+    fn splitter_minimums_constrain_both_axes_during_drag_resize_and_programmatic_layout() {
+        for axis in [Axis::Vertical,Axis::Horizontal] {
+            let mut ui=Ui::new();let mut scene=Scene::new();let mut panes=Vec::new();
+            let splitter=ui.splitter(SplitterStyle {width:400.0,height:220.0,axis,sash_size:6.0,..Default::default()},
+                |c|{panes.push(c.text_area("First","",TextAreaStyle::default()));},|c|{c.text_area("Second","",TextAreaStyle::default());});
+            let Kind::Splitter {children,..}=&ui.widgets[&splitter].kind else {panic!()};panes=children.clone();
+            assert!(ui.set_splitter_min_sizes(splitter,80.0,60.0));
+            for (first,second) in [(f32::NAN,0.0),(0.0,f32::INFINITY),(-1.0,0.0),(f32::MAX,f32::MAX)] {assert!(!ui.set_splitter_min_sizes(splitter,first,second));}
+            assert!(!ui.set_splitter_min_sizes(WidgetId(0),1.0,1.0));
+            let lengths=|ui:&Ui,scene:&Scene|panes.iter().map(|id| {let b=scene.get(ui.widgets[id].node.unwrap()).unwrap().bounds;if axis==Axis::Vertical {b.width} else {b.height}}).collect::<Vec<_>>();
+            ui.set_splitter_ratio(splitter,0.0);ui.sync(&mut scene);let sizes=lengths(&ui,&scene);assert_eq!(sizes[0],80.0);assert!(sizes[1]>=60.0);
+            for delta in [10000.0,-10000.0] {
+                let sash=scene.get(ui.widgets[&splitter].chrome_node.unwrap()).unwrap().bounds;let (x,y)=(sash.x+sash.width*0.5,sash.y+sash.height*0.5);
+                assert!(ui.pointer_pressed(&mut scene,x,y));assert!(ui.pointer_moved(x+if axis==Axis::Vertical {delta} else {0.0},y+if axis==Axis::Horizontal {delta} else {0.0}));ui.sync(&mut scene);ui.pointer_released();
+                let sizes=lengths(&ui,&scene);assert!(sizes[0]>=80.0 && sizes[1]>=60.0);
+                let sum=if axis==Axis::Vertical {394.0} else {214.0};assert_eq!(sizes.iter().sum::<f32>(),sum);assert!((ui.splitter_ratio(splitter).unwrap()-sizes[0]/sum).abs()<0.005);
+            }
+            let span=if axis==Axis::Vertical {394.0} else {214.0};ui.set_splitter_min_sizes(splitter,span*0.92,span*0.03);ui.set_splitter_ratio(splitter,0.94);ui.sync(&mut scene);
+            let sash=scene.get(ui.widgets[&splitter].chrome_node.unwrap()).unwrap().bounds;let (x,y)=(sash.x+sash.width*0.5,sash.y+sash.height*0.5);
+            assert!(ui.pointer_pressed(&mut scene,x,y));assert!(ui.pointer_moved(x-if axis==Axis::Vertical {span*0.01} else {0.0},y-if axis==Axis::Horizontal {span*0.01} else {0.0}));ui.pointer_released();ui.sync(&mut scene);assert!((ui.splitter_ratio(splitter).unwrap()-0.93).abs()<0.0001);ui.set_splitter_min_sizes(splitter,80.0,60.0);
+            if let Kind::Splitter {style,..}=&mut ui.widgets.get_mut(&splitter).unwrap().kind {if axis==Axis::Vertical {style.width=96.0;} else {style.height=96.0;}}
+            ui.sync(&mut scene);let sizes=lengths(&ui,&scene);assert_eq!(sizes.iter().sum::<f32>(),90.0);assert!((sizes[0]/sizes[1]-80.0/60.0).abs()<0.03);
+            assert!(ui.set_splitter_min_sizes(splitter,0.0,0.0));ui.set_splitter_ratio(splitter,0.3);ui.sync(&mut scene);assert_eq!(ui.splitter_ratio(splitter),Some(0.3));
         }
     }
 

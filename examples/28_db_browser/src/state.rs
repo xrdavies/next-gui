@@ -434,6 +434,7 @@ pub struct AppState {
     pub wizard_table_preview_state: Option<next_gui_ui::TextAreaState>,
     pub wizard_table_name_state: Option<next_gui_ui::TextInputState>,
     pub wizard_table_page: usize,
+    pub wizard_table_ratio: f32,
     pub wizard_table_advanced: bool,
     pub wizard_checks: Vec<crate::table_sql::NamedCheck>,
     pub wizard_index_constraints: Vec<crate::table_sql::NamedIndexConstraint>,
@@ -737,6 +738,7 @@ impl AppState {
             wizard_table_preview_state: None,
             wizard_table_name_state: None,
             wizard_table_page: 0,
+            wizard_table_ratio: 0.72,
             wizard_table_advanced: false,
             wizard_checks: Vec::new(),
             wizard_index_constraints: Vec::new(),
@@ -1623,6 +1625,7 @@ impl AppState {
         self.wizard_table_preview_state = None;
         self.wizard_table_name_state = None;
         self.wizard_table_page = 0;
+        self.wizard_table_ratio = 0.72;
         self.wizard_table_advanced = false;
         self.wizard_index_constraints = crate::table_sql::index_constraints_from_columns(&[], &self.wizard_cols, None).expect("default table key");
         self.wizard_key_sel = 0;
@@ -1683,6 +1686,7 @@ impl AppState {
         self.wizard_check_states = vec![None; self.wizard_checks.len()];
         self.wizard_check_scroll = (0.0, 0.0);
         self.wizard_table_page = 0;
+        self.wizard_table_ratio = 0.72;
         self.wizard_table_advanced = false;
         self.wizard_table_original = Some(sel);
         self.wizard_original_cols = cols.clone();

@@ -13,6 +13,8 @@ use next_gui_ui::{
 use crate::db::{self, ObjectKind};
 use crate::state::{AppState, ConfirmKind, DockKind, MainTab, OverlayKind};
 
+const TABLE_PANE_MINIMUMS:(f32,f32)=(76.0,48.0);
+
 pub mod mid {
     pub const FILE_NEW: u64 = 1;
     pub const FILE_NEW_MEM: u64 = 2;
@@ -186,6 +188,7 @@ pub struct BuiltUi {
     pub ov_generated: WidgetId,
     pub ov_generation: WidgetId,
     pub ov_table_preview: WidgetId,
+    pub ov_table_splitter: WidgetId,
     pub ov_table_tabs: WidgetId,
     pub ov_table_advanced: WidgetId,
     pub ov_checks_scroll: WidgetId,
@@ -535,6 +538,7 @@ pub fn build_ui(
     let mut ov_generated = z;
     let mut ov_generation = z;
     let mut ov_table_preview = z;
+    let mut ov_table_splitter = z;
     let mut ov_table_tabs = z;
     let mut ov_table_advanced = z;
     let mut ov_checks_scroll = z;
@@ -934,10 +938,15 @@ pub fn build_ui(
                         OverlayKind::EditTable => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                             scroll.width = ov_col.width - 16.0;
-                            let preview_height = if state.wizard_table_advanced { (ov_col.height*0.18).clamp(48.0,120.0) }
-                                else { (ov_col.height*0.22).clamp(72.0,140.0) };
                             let header_height = if state.wizard_table_advanced { 108.0 } else { 32.0 };
-                            scroll.height = (ov_col.height - preview_height - 48.0 - header_height).max(80.0);
+                            let mut split=SplitterStyle::from_theme(&theme);
+                            split.width=scroll.width;split.height=(ov_col.height-header_height-22.0).max(100.0);
+                            split.axis=Axis::Horizontal;split.ratio=state.wizard_table_ratio;split.sash_size=6.0;
+                            // SQL editor sizes must use the constrained pane before its first layout.
+                            let span=split.height-split.sash_size;
+                            let scale=(span/(TABLE_PANE_MINIMUMS.0+TABLE_PANE_MINIMUMS.1)).min(1.0);
+                            split.ratio=split.ratio.clamp(TABLE_PANE_MINIMUMS.0*scale/span,1.0-TABLE_PANE_MINIMUMS.1*scale/span);
+                            scroll.height=((split.height-split.sash_size)*split.ratio).round();
                             scroll.padding = 0.0;
                             scroll.background = None;
                             c.row(row, |r| {
@@ -973,9 +982,9 @@ pub fn build_ui(
                             table_tabs.gap = 0.0;
                             table_tabs.content_bg = theme.colors.content_bg;
                             scroll.height = (table_tabs.height - table_tabs.strip_height).max(48.0);
+                            ov_table_splitter=c.splitter(split,|c| {
                             ov_table_tabs = c.tabs(table_tabs, |tabs| {
-                            tabs.page("Fields", |c| {
-                            ov_scroll = c.scroll_area(scroll, |c| {
+                            ov_scroll=tabs.scroll_page("Fields",scroll, |c| {
                                 c.text("Columns");
                                 c.row(row, |r| {
                                     ov_btn_add = r.tool_button("Add"); ov_btn_del = r.tool_button("Remove");
@@ -1057,9 +1066,8 @@ pub fn build_ui(
                                 ov_generated = c.text_area(coldef.and_then(|column| column.generated.as_ref()).map_or("", |generated| generated.expression.as_str()),
                                     "Generated expression, e.g. price * quantity", check_style);
                             });
-                            });
-                            tabs.page("Index Constraints", |c| {
-                                ov_keys_scroll = c.scroll_area(scroll, |c| {
+
+                            ov_keys_scroll=tabs.scroll_page("Index Constraints",scroll, |c| {
                                     c.text(format!("Primary key and UNIQUE constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
                                     c.row(row, |r| {
                                         ov_key_add_pk = r.tool_button("Add primary key"); ov_key_add_unique = r.tool_button("Add UNIQUE");
@@ -1080,9 +1088,8 @@ pub fn build_ui(
                                     let mut columns = area_s; columns.height = scroll.height.min(100.0);
                                     ov_key_columns = c.text_area(key.map_or("", |key| key.columns.as_str()), "e.g. customer_id ASC, region COLLATE NOCASE DESC", columns);
                                 });
-                            });
-                            tabs.page("Foreign Keys", |c| {
-                                ov_fks_scroll = c.scroll_area(scroll, |c| {
+
+                            ov_fks_scroll=tabs.scroll_page("Foreign Keys",scroll, |c| {
                                     c.text(format!("Foreign keys · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
                                     c.row(row, |r| {
                                         ov_fk_add = r.tool_button("Add"); ov_fk_del = r.tool_button("Remove");
@@ -1101,9 +1108,8 @@ pub fn build_ui(
                                     let mut clause = area_s; clause.height = scroll.height.min(100.0);
                                     ov_fk_clause = c.text_area(key.map_or("", |key| key.clause.as_str()), "REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL", clause);
                                 });
-                            });
-                            tabs.page("Check Constraints", |c| {
-                                ov_checks_scroll = c.scroll_area(scroll, |c| {
+
+                            ov_checks_scroll=tabs.scroll_page("Check Constraints",scroll, |c| {
                                     c.text(format!("CHECK constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
                                     c.text(format!("Selected field: {}", state.wizard_cols.get(state.wizard_col_sel).map(|column|db::quote_ident(&column.name)).unwrap_or_else(||"(none)".into())));
                                     c.row(row, |r| {
@@ -1125,12 +1131,13 @@ pub fn build_ui(
                                     expression.height = scroll.height.min(100.0);
                                     ov_check_expr = c.text_area(check.map_or("", |check| check.expression.as_str()), "e.g. amount > 0 AND amount < 100", expression);
                                 });
+
                             });
+                            },|c| {
+                                let mut preview_style = area_s;
+                                preview_style.height=(split.height-split.sash_size)*(1.0-split.ratio);
+                                ov_table_preview = c.text_area(state.table_wizard_sql().unwrap_or_else(|error| format!("-- {error}")), "SQL preview", preview_style);
                             });
-                            c.text("SQL preview");
-                            let mut preview_style = area_s;
-                            preview_style.height = preview_height;
-                            ov_table_preview = c.text_area(state.table_wizard_sql().unwrap_or_else(|error| format!("-- {error}")), "", preview_style);
                         }
                         OverlayKind::EditIndex => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
@@ -2297,6 +2304,8 @@ pub fn build_ui(
     ui.set_accessible_name(ov_generation, "Column generation mode");
     ui.set_accessible_name(ov_generated, "Generated column expression");
     ui.set_accessible_name(ov_table_preview, "Generated CREATE TABLE SQL preview");
+    ui.set_accessible_name(ov_table_splitter,"Resize table definition and SQL preview");
+    ui.set_splitter_min_sizes(ov_table_splitter,TABLE_PANE_MINIMUMS.0,TABLE_PANE_MINIMUMS.1);
     ui.set_text_area_read_only(ov_table_preview, true);
     ui.set_accessible_name(ov_table_tabs, "Table definition pages");
     if state.overlay==Some(OverlayKind::EditTable) { ui.set_accessible_name(ov_name,"Table name"); }
@@ -2567,6 +2576,7 @@ pub fn build_ui(
         ov_generated,
         ov_generation,
         ov_table_preview,
+        ov_table_splitter,
         ov_table_tabs,
         ov_table_advanced,
         ov_checks_scroll,

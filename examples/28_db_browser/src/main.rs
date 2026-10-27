@@ -307,6 +307,7 @@ struct BuiltUiIds {
     ov_generated: WidgetId,
     ov_generation: WidgetId,
     ov_table_preview: WidgetId,
+    ov_table_splitter: WidgetId,
     ov_table_tabs: WidgetId,
     ov_table_advanced: WidgetId,
     ov_checks_scroll: WidgetId,
@@ -524,6 +525,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_generated: b.ov_generated,
             ov_generation: b.ov_generation,
             ov_table_preview: b.ov_table_preview,
+            ov_table_splitter: b.ov_table_splitter,
             ov_table_tabs: b.ov_table_tabs,
             ov_table_advanced: b.ov_table_advanced,
             ov_checks_scroll: b.ov_checks_scroll,
@@ -1351,6 +1353,7 @@ impl Demo {
                     if let Some(widths)=self.ui.table_column_widths(table) {view.widths=widths;}
                     view.column=self.ui.table_selected_col(table);
                 }
+                if let Some(ratio)=self.ui.splitter_ratio(self.ids.ov_table_splitter) {self.state.wizard_table_ratio=ratio;}
                 self.state.wizard_table_preview_state = self.ui.text_area_state(self.ids.ov_table_preview);
                 self.state.wizard_table_name_state = self.ui.text_input_state(self.ids.ov_name);
                 if let Some(page) = self.ui.tabs_selected(self.ids.ov_table_tabs) { self.state.wizard_table_page = page; }
@@ -7597,6 +7600,50 @@ mod interaction_tests {
             assert_eq!(demo.ui.text_area_value(demo.ids.edit_value),Some("8"));
             demo.state.browse_mut().sel_col=Some(0); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
             assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(true));
+        }
+    }
+
+    #[test]
+    fn table_preview_splitter_drags_live_preserves_sessions_and_fits_small_windows() {
+        let bounds=|demo:&Demo,id|demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(id)).unwrap().bounds;
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            for (width,height) in [(1400,1000),(800,600)] {
+                let mut demo=Demo::new(width,height,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+                let extras=(0..20).map(|index|format!("c{index} TEXT")).collect::<Vec<_>>().join(",");
+                demo.state.conn.as_ref().unwrap().execute_batch(&format!("CREATE TABLE records(id INTEGER PRIMARY KEY,b TEXT CHECK(length(b)>0),{extras}); INSERT INTO records(id,b) VALUES(7,'kept'); CREATE VIEW visible AS SELECT b FROM records;")).unwrap();demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.state.wizard_col_sel=1;demo.do_rebuild();
+                demo.ui.set_text_input(demo.ids.ov_col_name,"label");demo.snapshot_inputs();demo.do_rebuild();assert_eq!(demo.state.wizard_cols[1].name,"label");
+                for advanced in [false,true] {
+                    demo.state.wizard_table_ratio=0.72;demo.state.wizard_table_advanced=advanced;demo.do_rebuild();assert!(demo.ui.is_splitter(demo.ids.ov_table_splitter));
+                    demo.ui.select_text_area_range(demo.ids.ov_table_preview,0..6);demo.ui.set_focus(Some(demo.ids.ov_table_preview));demo.snapshot_inputs();demo.ui.sync(&mut demo.scene);
+                    let tabs=bounds(&demo,demo.ids.ov_table_tabs);let preview=bounds(&demo,demo.ids.ov_table_preview);let save=bounds(&demo,demo.ids.ov_btn_ok);
+                    assert!(tabs.height>50.0 && preview.height>24.0);assert!(tabs.y+tabs.height<=preview.y && preview.y+preview.height<=save.y && save.y+save.height<=height as f32);
+                    let (x,y)=(tabs.x+tabs.width*0.5,tabs.y+tabs.height+3.0);assert_eq!(demo.ui.hit_widget(&demo.scene,x,y),Some(demo.ids.ov_table_splitter),"{theme_name}/{width}/advanced={advanced}: tabs={tabs:?},preview={preview:?},hit={:?}",demo.ui.hit_widget(&demo.scene,x,y).and_then(|id|demo.ui.accessible_name(id)));
+                    let ratio=demo.ui.splitter_ratio(demo.ids.ov_table_splitter).unwrap();assert!(demo.ui.pointer_pressed(&mut demo.scene,x,y));demo.snapshot_inputs();assert!(!demo.rebuild);
+                    let delta=(tabs.height*0.08).clamp(5.0,24.0);
+                    for step in [1.0,2.0] {assert!(demo.ui.pointer_moved(x,y-delta*step));demo.ui.sync(&mut demo.scene);assert!(demo.ui.is_dragging());}
+                    let smaller=bounds(&demo,demo.ids.ov_table_tabs);let larger=bounds(&demo,demo.ids.ov_table_preview);assert!(smaller.height<tabs.height && larger.height>preview.height);
+                    assert!(demo.ui.splitter_ratio(demo.ids.ov_table_splitter).unwrap()<ratio);demo.ui.pointer_released();demo.snapshot_inputs();let ratio=demo.state.wizard_table_ratio;demo.do_rebuild();
+                    assert_eq!(demo.ui.splitter_ratio(demo.ids.ov_table_splitter),Some(ratio));assert_eq!(demo.ui.text_area_selected_text(demo.ids.ov_table_preview).as_deref(),Some("CREATE"));assert!(!demo.ui.paste_into_focused_text("DELETE FROM records"));
+                    for page in [1,2,3,0] {demo.ui.set_tabs_selected(demo.ids.ov_table_tabs,page);demo.snapshot_inputs();demo.do_rebuild();assert_eq!(demo.ui.splitter_ratio(demo.ids.ov_table_splitter),Some(ratio));}
+                    demo.win_w=if width==800 {1400} else {800};demo.win_h=if width==800 {1000} else {600};demo.do_rebuild();assert_eq!(demo.ui.splitter_ratio(demo.ids.ov_table_splitter),Some(ratio));
+                    demo.win_w=width;demo.win_h=height;demo.do_rebuild();demo.ui.sync(&mut demo.scene);
+                    let tabs=bounds(&demo,demo.ids.ov_table_tabs);let preview=bounds(&demo,demo.ids.ov_table_preview);let save=bounds(&demo,demo.ids.ov_btn_ok);assert!(tabs.y+tabs.height<=preview.y && preview.y+preview.height<=save.y && save.y+save.height<=height as f32);
+                    if advanced {if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_TABLE_SPLITTER_QA_OUT") {
+                        demo.scene.mark_full_dirty(width as f32,height as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(width,height,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-{width}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
+                        if let Ok(mut gpu)=GpuRenderer::try_new(width,height,clear) {gpu.render(&commands,&dirty);let delta=soft.frame_pixels().unwrap().0.iter().zip(gpu.frame_pixels().unwrap().0).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}/{width}: {delta}");eprintln!("Table splitter {theme_name}/{width}: Soft/Metal delta {delta}");}
+                        else {eprintln!("Table splitter GPU comparison not_run: adapter unavailable");}
+                    }}
+                    for delta in [-10000.0,10000.0] {
+                        let tabs=bounds(&demo,demo.ids.ov_table_tabs);let (x,y)=(tabs.x+tabs.width*0.5,tabs.y+tabs.height+3.0);
+                        assert!(demo.ui.pointer_pressed(&mut demo.scene,x,y));assert!(demo.ui.pointer_moved(x,y+delta));demo.ui.sync(&mut demo.scene);
+                        let tabs=bounds(&demo,demo.ids.ov_table_tabs);let preview=bounds(&demo,demo.ids.ov_table_preview);let span=tabs.height+preview.height;let scale=(span/124.0).min(1.0);
+                        assert!(tabs.height+0.5>=76.0*scale && preview.height+0.5>=48.0*scale);assert!(tabs.y+tabs.height<=preview.y);
+                        demo.ui.pointer_released();demo.snapshot_inputs();demo.do_rebuild();assert!(bounds(&demo,demo.ids.ov_table_preview).y>=bounds(&demo,demo.ids.ov_table_tabs).y+bounds(&demo,demo.ids.ov_table_tabs).height);
+                    }
+                }
+                demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT rowid+id FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),14);assert_eq!(conn.query_row("SELECT label FROM visible",[],|row|row.get::<_,String>(0)).unwrap(),"kept");assert!(conn.execute("UPDATE records SET label=''",[]).is_err());
+                demo.state.open_create_table_wizard();assert_eq!(demo.state.wizard_table_ratio,0.72);
+            }
         }
     }
 
