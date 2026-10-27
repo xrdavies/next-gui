@@ -1,5 +1,7 @@
 # 无障碍基线（P6d）
 
+Tree exposes `tree_expanded` (including hidden descendants), finite/clamped `tree_scroll_offset` / `set_tree_scroll_offset`, and `reveal_tree_selection`. Reveal expands only the selected node's ancestors and scrolls it into view without changing focus or selection. Hosts that rebuild the UI retain their own stable node identity, expansion and viewport state; e28 keys expansion by schema name to survive attachment reordering.
+
 > **状态：已落地。** 对应 [p6-design.md](p6-design.md) §3.4。  
 > **非目标：** 不做 AT-SPI / UI Automation / VoiceOver（或其它 OS 读屏总线）桥接；不做高对比主题整库重绘。
 

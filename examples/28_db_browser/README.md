@@ -20,6 +20,8 @@ Switching structure objects protects edited DDL: keep it in a new SQL tab, disca
 
 The structure tree groups objects under main, temp and attached databases, including empty attachments. Selection, definition previews and confirmed deletion preserve the database identity, including quoted names. Projects retain the selected object's identity with the DDL text. Browse/plot selectors and structured modify wizards currently address main; attached/temp definitions use a read-only preview and qualified SQL in Execute SQL.
 
+Structure navigation retains focus, expanded groups and scroll position across page/UI rebuilds. Keyboard selection reveals the active object; expansion state follows database names when an attachment is detached. These view settings last for the current database session.
+
 **Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK).
 
 **Phase 2:** EditTable/EditIndex overlay wizards · CSV import wizard (+ clipboard) · per-column browse filters + multi browse tabs · Execute SQL multi-tabs / Find-Replace / Stop (interrupt) · Pragma labeled form · JSON export · Recent files · Attach Database.

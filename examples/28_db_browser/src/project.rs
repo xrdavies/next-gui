@@ -128,6 +128,7 @@ impl ProjectFile {
         state.chart_column = self.chart_column.clone();
         state.ddl_draft = self.ddl_draft.clone();
         state.selected = self.selected_object.clone();
+        state.schema_group = None;
         state.sql_files = self.sql_files.clone();
         state.sql_outputs.clear();
         state.sql_result = None;

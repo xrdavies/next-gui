@@ -4460,6 +4460,33 @@ impl Ui {
         }
     }
 
+    /// Expansion state of a tree node, including nodes under collapsed ancestors.
+    pub fn tree_expanded(&self, id: WidgetId, node_id: u64) -> Option<bool> {
+        fn find(nodes: &[TreeNode], id: u64) -> Option<bool> {
+            for node in nodes {
+                if node.id == id { return Some(node.expanded); }
+                if let Some(value) = find(&node.children, id) { return Some(value); }
+            }
+            None
+        }
+        let Kind::Tree { roots, .. } = &self.widgets.get(&id)?.kind else { return None; };
+        find(roots, node_id)
+    }
+
+    /// Vertical viewport offset of a tree.
+    pub fn tree_scroll_offset(&self, id: WidgetId) -> Option<f32> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Tree { scroll_y, .. }) => Some(*scroll_y),
+            _ => None,
+        }
+    }
+
+    /// Restore a tree viewport, clamped to visible rows. Rejects non-finite offsets.
+    pub fn set_tree_scroll_offset(&mut self, id: WidgetId, y: f32) -> bool {
+        if !y.is_finite() || !self.is_tree(id) { return false; }
+        self.set_any_scroll(id, 0.0, y)
+    }
+
     /// Number of rows at least half visible in the current table body viewport.
     pub fn table_visible_rows(&self, id: WidgetId) -> Option<usize> {
         let Kind::Table { rows, style, scroll_y, .. } = &self.widgets.get(&id)?.kind else { return None; };
@@ -5848,7 +5875,22 @@ impl Ui {
         self.set_any_scroll(id, 0.0, ny);
     }
 
-    fn ensure_selected_visible_tree(&mut self, id: WidgetId) {
+    /// Expand ancestors and scroll just enough to reveal the selected tree node.
+    /// Keeps focus and selection; call [`Ui::sync`] to repaint.
+    pub fn reveal_tree_selection(&mut self, id: WidgetId) {
+        fn expand_ancestors(nodes: &mut [TreeNode], selected: u64) -> bool {
+            for node in nodes {
+                if node.id == selected { return true; }
+                if expand_ancestors(&mut node.children, selected) {
+                    node.expanded = true;
+                    return true;
+                }
+            }
+            false
+        }
+        if let Some(Widget { kind: Kind::Tree { roots, selected: Some(selected), .. }, .. }) = self.widgets.get_mut(&id) {
+            expand_ancestors(roots, *selected);
+        }
         let (sel, style, scroll_y, flats) = match self.widgets.get(&id) {
             Some(Widget {
                 kind: Kind::Tree {
@@ -5955,13 +5997,13 @@ impl Ui {
             UiKey::Down => {
                 let next = idx.map(|i| (i + 1).min(flats.len() - 1)).unwrap_or(0);
                 self.set_tree_selected(id, Some(flats[next].id));
-                self.ensure_selected_visible_tree(id);
+                self.reveal_tree_selection(id);
                 true
             }
             UiKey::Up => {
                 let next = idx.map(|i| i.saturating_sub(1)).unwrap_or(0);
                 self.set_tree_selected(id, Some(flats[next].id));
-                self.ensure_selected_visible_tree(id);
+                self.reveal_tree_selection(id);
                 true
             }
             UiKey::Right => {
@@ -5973,7 +6015,7 @@ impl Ui {
                     }
                     if i + 1 < flats.len() {
                         self.set_tree_selected(id, Some(flats[i + 1].id));
-                        self.ensure_selected_visible_tree(id);
+                        self.reveal_tree_selection(id);
                         return true;
                     }
                 }
@@ -5989,7 +6031,7 @@ impl Ui {
                     // move to parent: previous row with smaller depth
                     if let Some(p) = (0..i).rev().find(|&j| flats[j].depth < row.depth) {
                         self.set_tree_selected(id, Some(flats[p].id));
-                        self.ensure_selected_visible_tree(id);
+                        self.reveal_tree_selection(id);
                         return true;
                     }
                 }
@@ -5997,12 +6039,12 @@ impl Ui {
             }
             UiKey::Home => {
                 self.set_tree_selected(id, Some(flats[0].id));
-                self.ensure_selected_visible_tree(id);
+                self.reveal_tree_selection(id);
                 true
             }
             UiKey::End => {
                 self.set_tree_selected(id, Some(flats[flats.len() - 1].id));
-                self.ensure_selected_visible_tree(id);
+                self.reveal_tree_selection(id);
                 true
             }
             _ => false,
@@ -20412,6 +20454,45 @@ mod tests {
         assert!(ui.ime_clear_preedit());
         ui.sync(&mut scene);
         assert!(!scene.get(ul).unwrap().visible);
+    }
+
+    #[test]
+    fn tree_reveal_expands_only_ancestors_and_keeps_focus() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let mut tree = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            tree = c.tree(vec![TreeNode::new(1, "root", vec![TreeNode::new(2, "branch",
+                (100..150).map(|i| TreeNode::leaf(i, format!("Item {i}"))).collect())])],
+                TreeStyle { height: 100.0, ..TreeStyle::default() });
+        });
+        ui.set_tree_expanded(tree, 1, false);
+        ui.set_tree_expanded(tree, 2, false);
+        assert_eq!(ui.tree_expanded(tree, 2), Some(false));
+        assert_eq!(ui.tree_expanded(tree, 999), None);
+        assert_eq!(ui.tree_expanded(WidgetId(0), 1), None);
+        ui.set_tree_selected(tree, Some(149));
+        ui.set_focus(Some(tree));
+        ui.reveal_tree_selection(tree);
+        ui.sync(&mut scene);
+        assert_eq!(ui.tree_expanded(tree, 1), Some(true));
+        assert_eq!(ui.tree_expanded(tree, 2), Some(true));
+        assert_eq!(ui.tree_selected(tree), Some(149));
+        assert_eq!(ui.focused(), Some(tree));
+        assert!(ui.tree_scroll_offset(tree).unwrap() > 0.0);
+        let first = ui.tree_scroll_offset(tree);
+        assert!(!ui.set_tree_scroll_offset(tree, f32::NAN));
+        assert!(!ui.set_tree_scroll_offset(tree, f32::INFINITY));
+        assert!(!ui.set_tree_scroll_offset(WidgetId(0), 1.0));
+        assert_eq!(ui.tree_scroll_offset(tree), first);
+        ui.reveal_tree_selection(tree);
+        assert_eq!(ui.tree_scroll_offset(tree), first);
+        ui.set_tree_expanded(tree, 1, false);
+        ui.set_tree_selected(tree, Some(1));
+        ui.reveal_tree_selection(tree);
+        assert_eq!(ui.tree_expanded(tree, 1), Some(false));
+        assert_eq!(ui.tree_scroll_offset(tree).unwrap(), 0.0);
+        ui.reveal_tree_selection(WidgetId(0));
     }
 
     #[test]

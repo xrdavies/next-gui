@@ -304,6 +304,9 @@ pub struct AppState {
     pub dirty: bool,
     pub schema: Vec<SchemaObject>,
     pub schema_names: Vec<String>,
+    pub schema_tree_expanded: BTreeMap<String, [bool; 5]>,
+    pub schema_tree_scroll: f32,
+    pub schema_group: Option<(String, u64)>,
     pub sql_completion: crate::sql_completion::Catalog,
     pub database_encoding: String,
     pub selected: Option<SelectedObject>,
@@ -552,6 +555,9 @@ impl AppState {
             dirty: false,
             schema: Vec::new(),
             schema_names: Vec::new(),
+            schema_tree_expanded: BTreeMap::new(),
+            schema_tree_scroll: 0.0,
+            schema_group: None,
             sql_completion: crate::sql_completion::Catalog::default(),
             database_encoding: String::new(),
             selected: None,
@@ -1339,6 +1345,9 @@ impl AppState {
     pub fn select_schema_node(&mut self, node_id: u64) {
         if node_id < 10_000 {
             if node_id > 0 && node_id <= self.schema_names.len() as u64 * 5 {
+                let group = (self.schema_names[((node_id - 1) / 5) as usize].clone(), (node_id - 1) % 5);
+                if self.selected.is_none() && self.schema_group.as_ref() == Some(&group) { return; }
+                self.schema_group = Some(group);
                 self.selected = None;
                 self.ddl_draft.clear();
             }
@@ -1352,6 +1361,7 @@ impl AppState {
                 kind: obj.kind,
                 name: obj.name.clone(),
             });
+            self.schema_group = None;
             self.ddl_draft = obj.sql.clone().unwrap_or_default();
             if obj.schema == "main" && matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
                 let t = self.browse_mut();
@@ -1711,6 +1721,9 @@ impl AppState {
         self.cipher_open_path = None;
         self.selected = None;
         self.ddl_draft.clear();
+        self.schema_group = None;
+        self.schema_tree_expanded.clear();
+        self.schema_tree_scroll = 0.0;
         self.sql_result = None;
         self.sql_outputs.clear();
         self.path = path;
@@ -1864,6 +1877,9 @@ impl AppState {
         self.database_encoding.clear();
         self.selected = None;
         self.ddl_draft.clear();
+        self.schema_group = None;
+        self.schema_tree_expanded.clear();
+        self.schema_tree_scroll = 0.0;
         self.browse_tabs = vec![BrowseTabState::new(None)];
         self.browse_tab_idx = 0;
         self.sql_result = None;

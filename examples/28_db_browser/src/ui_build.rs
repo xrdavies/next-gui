@@ -1835,21 +1835,21 @@ pub fn build_ui(
         if tree.0 != 0 {
             for database in 0..state.schema_names.len() {
                 let root = database as u64 * 5 + 1;
-                ui.set_tree_expanded(tree, root, true);
-                ui.set_tree_expanded(tree, root + 1, true);
-                ui.set_tree_expanded(tree, root + 2, true);
+                if let Some(expanded) = state.schema_tree_expanded.get(&state.schema_names[database]) {
+                    for (group, value) in expanded.iter().enumerate() { ui.set_tree_expanded(tree, root + group as u64, *value); }
+                }
             }
             if let Some(sel) = &state.selected {
-                if let Some(database) = state.schema_names.iter().position(|name| *name == sel.schema) {
-                    let group = match sel.kind { ObjectKind::Table => 1, ObjectKind::View => 2, ObjectKind::Index => 3, ObjectKind::Trigger => 4 };
-                    ui.set_tree_expanded(tree, database as u64 * 5 + 1 + group, true);
-                }
                 if let Some(idx) = state
                     .schema
                     .iter()
                     .position(|o| o.schema == sel.schema && o.name == sel.name && o.kind == sel.kind)
                 {
                     ui.set_tree_selected(tree, Some(10_000 + idx as u64));
+                }
+            } else if let Some((schema, group)) = &state.schema_group {
+                if let Some(database) = state.schema_names.iter().position(|name| name == schema) {
+                    ui.set_tree_selected(tree, Some(database as u64 * 5 + 1 + group));
                 }
             }
         }
@@ -1975,6 +1975,7 @@ pub fn build_ui(
     ui.set_text_area_line_numbers(sql_area, true);
     ui.set_text_area_read_only(log_area, true);
     ui.sync(&mut scene);
+    ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
     ui.set_scroll_offset(page_scroll, page_offset.0, page_offset.1);

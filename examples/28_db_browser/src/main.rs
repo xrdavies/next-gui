@@ -194,6 +194,8 @@ struct Demo {
     last_body_ratio: Option<f32>,
     last_structure_ratio: Option<f32>,
     last_tree_sel: Option<u64>,
+    last_schema_names: Vec<String>,
+    reveal_schema_selection: bool,
     last_tab: usize,
     last_browse_sel: Option<usize>,
     last_browse_row: Option<usize>,
@@ -606,6 +608,15 @@ impl Demo {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
                 }
+                "schema-scroll" => {
+                    state.new_memory_db().unwrap();
+                    for i in 0..100 {
+                        state.conn.as_ref().unwrap().execute_batch(&format!("CREATE TABLE t{i:03}(v);")).unwrap();
+                    }
+                    state.refresh_schema().unwrap();
+                    state.select_schema_node(10_080);
+                    MainTab::Structure
+                }
                 "frozen" => {
                     state.frozen_cols = 1;
                     state.browse_mut().column_widths = vec![240.0; 20];
@@ -738,6 +749,11 @@ impl Demo {
             built.ui.set_focus(Some(built.sql_area));
             built.ui.sync(&mut built.scene);
         }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab == "schema-scroll") {
+            built.ui.reveal_tree_selection(built.tree);
+            built.ui.set_focus(Some(built.tree));
+            built.ui.sync(&mut built.scene);
+        }
         if qa_word {
             let caret = state.sql_editor().chars().count();
             built.ui.set_focus(Some(built.sql_area));
@@ -758,6 +774,7 @@ impl Demo {
         let clear = clear_color(&theme);
         let qa_exit = std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some();
         let last_log_revision = state.sql_log.revision();
+        let last_schema_names = state.schema_names.clone();
         Self {
             font,
             theme,
@@ -780,6 +797,8 @@ impl Demo {
             qa_exit,
             qa_done: false,
             last_tree_sel: None,
+            last_schema_names,
+            reveal_schema_selection: false,
             last_tab: 0,
             last_browse_sel: None,
             last_browse_row: None,
@@ -793,6 +812,14 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        if self.ids.tree.0 != 0 {
+            for (database, name) in self.last_schema_names.iter().enumerate() {
+                let root = database as u64 * 5 + 1;
+                let expanded = [0, 1, 2, 3, 4].map(|group| self.ui.tree_expanded(self.ids.tree, root + group).unwrap_or(false));
+                self.state.schema_tree_expanded.insert(name.clone(), expanded);
+            }
+            if let Some(y) = self.ui.tree_scroll_offset(self.ids.tree) { self.state.schema_tree_scroll = y; }
+        }
         if let Some(view) = self.ui.text_area_state(self.ids.log_area) { self.state.sql_log_view = Some(view); }
         if let Some(ratio) = self.ui.splitter_ratio(self.ids.body_splitter) {
             if self.state.any_dock_visible() && Some(ratio) != self.last_body_ratio { self.state.body_ratio = ratio; }
@@ -1209,6 +1236,8 @@ impl Demo {
             && self.state.dock_log && self.state.dock_focus == DockKind::Log && self.state.overlay.is_none();
         let browse_focused = self.state.tab == MainTab::Browse && self.ids.browse_table.0 != 0
             && self.ui.focused() == Some(self.ids.browse_table);
+        let tree_focused = self.state.tab == MainTab::Structure && self.ids.tree.0 != 0
+            && self.ui.focused() == Some(self.ids.tree) && self.state.overlay.is_none() && !self.state.confirm_open;
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
         let built = build_ui(
             self.font.clone(),
@@ -1223,6 +1252,14 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        self.last_schema_names = self.state.schema_names.clone();
+        if self.ids.tree.0 != 0 {
+            let reveal = std::mem::take(&mut self.reveal_schema_selection);
+            if reveal { self.ui.reveal_tree_selection(self.ids.tree); }
+            if tree_focused || reveal { self.ui.set_focus(Some(self.ids.tree)); }
+            self.state.schema_tree_scroll = self.ui.tree_scroll_offset(self.ids.tree).unwrap();
+            self.ui.sync(&mut self.scene);
+        }
         if let Some(view) = dock_tabs_view {
             if self.ui.restore_tabs_state(self.ids.dock_tabs, &view) {
                 self.ui.sync(&mut self.scene);
@@ -1347,7 +1384,11 @@ impl Demo {
             DocumentAction::OpenProject(path) => self.state.open_project(&path),
             DocumentAction::CloseProject => { self.state.close_project(); Ok(()) }
             DocumentAction::CloseSqlTab(index) => { self.state.close_sql_tab(index); Ok(()) }
-            DocumentAction::SelectSchemaNode(node) => { self.state.select_schema_node(node); Ok(()) }
+            DocumentAction::SelectSchemaNode(node) => {
+                self.state.select_schema_node(node);
+                self.reveal_schema_selection = true;
+                Ok(())
+            }
             DocumentAction::Exit => { self.exit_requested = true; Ok(()) }
         };
         match result {
@@ -1388,7 +1429,7 @@ impl Demo {
                     self.state.status_msg = "DDL draft kept in a new SQL tab".into();
                 }
                 ModalAction::Secondary => self.perform_document_action(action),
-                ModalAction::Tertiary | ModalAction::Dismiss => {}
+                ModalAction::Tertiary | ModalAction::Dismiss => { self.reveal_schema_selection = true; }
             }
             self.rebuild = true;
             return;
@@ -3994,6 +4035,74 @@ mod interaction_tests {
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 3);
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "3");
         assert!(db::has_pending_changes(demo.state.conn.as_ref().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn schema_tree_navigation_retains_focus_and_viewport_after_rebuild() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        for i in 0..100 {
+            demo.state.conn.as_ref().unwrap().execute_batch(&format!("CREATE TABLE t{i:03}(v);")).unwrap();
+        }
+        demo.state.refresh_schema().unwrap();
+        demo.state.tab = MainTab::Structure;
+        demo.do_rebuild();
+        demo.ui.set_tree_selected(demo.ids.tree, Some(10_080));
+        demo.ui.set_focus(Some(demo.ids.tree));
+        demo.ui.set_tree_scroll_offset(demo.ids.tree, 1800.0);
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.tree));
+        assert!(demo.ui.tree_scroll_offset(demo.ids.tree).unwrap() > 0.0);
+        assert_eq!(demo.ui.tree_selected(demo.ids.tree), Some(10_080));
+        assert!(demo.ui.key_input(UiKey::Down));
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.state.selected.as_ref().unwrap().name, "t081");
+        assert_eq!(demo.ui.focused(), Some(demo.ids.tree));
+        let scroll = demo.ui.tree_scroll_offset(demo.ids.tree).unwrap();
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.tree_scroll_offset(demo.ids.tree), Some(scroll));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_TREE_QA_OUT") {
+            demo.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+        demo.ui.set_tree_expanded(demo.ids.tree, 2, false);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.tree_expanded(demo.ids.tree, 2), Some(false));
+        assert_eq!(demo.ui.tree_scroll_offset(demo.ids.tree), Some(0.0));
+        assert!(demo.ui.key_input(UiKey::Home));
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.tree_selected(demo.ids.tree), Some(1));
+        assert!(demo.state.selected.is_none());
+        demo.state.tab = MainTab::Browse;
+        demo.do_rebuild();
+        demo.state.tab = MainTab::Structure;
+        demo.do_rebuild();
+        assert_eq!(demo.ui.tree_selected(demo.ids.tree), Some(1));
+        assert_eq!(demo.ui.tree_expanded(demo.ids.tree, 2), Some(false));
+        demo.state.conn.as_ref().unwrap().execute_batch("COMMIT; ATTACH ':memory:' AS scratch;
+            ATTACH ':memory:' AS kept; CREATE TABLE kept.kept_table(v);").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.do_rebuild();
+        let old_root = demo.state.schema_names.iter().position(|name| name == "kept").unwrap() as u64 * 5 + 1;
+        demo.ui.set_tree_expanded(demo.ids.tree, old_root, false);
+        demo.snapshot_inputs();
+        demo.state.conn.as_ref().unwrap().execute_batch("DETACH scratch;").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.do_rebuild();
+        let new_root = demo.state.schema_names.iter().position(|name| name == "kept").unwrap() as u64 * 5 + 1;
+        assert_ne!(old_root, new_root);
+        assert_eq!(demo.ui.tree_expanded(demo.ids.tree, new_root), Some(false));
     }
 
     #[test]
