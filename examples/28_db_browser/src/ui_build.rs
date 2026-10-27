@@ -179,6 +179,8 @@ pub struct BuiltUi {
     pub ov_collation: WidgetId,
     pub ov_check: WidgetId,
     pub ov_foreign_key: WidgetId,
+    pub ov_generated: WidgetId,
+    pub ov_generation: WidgetId,
     pub ov_without_rowid: WidgetId,
     pub ov_strict: WidgetId,
     pub ov_pk_conflict: WidgetId,
@@ -361,6 +363,7 @@ pub fn build_ui(
     height: u32,
     state: &AppState,
 ) -> BuiltUi {
+    let generated_cell = state.edit_cell_generated();
     theme = browser_theme(theme, state.prefs.font_size);
     let mut scene = Scene::new();
     let mut ui = Ui::with_font(font);
@@ -459,6 +462,8 @@ pub fn build_ui(
     let mut ov_collation = z;
     let mut ov_check = z;
     let mut ov_foreign_key = z;
+    let mut ov_generated = z;
+    let mut ov_generation = z;
     let mut ov_without_rowid = z;
     let mut ov_strict = z;
     let mut ov_pk_conflict = z;
@@ -867,12 +872,13 @@ pub fn build_ui(
                                     .enumerate()
                                     .map(|(i, col)| {
                                         format!(
-                                            "{}. {} {}{}{}",
+                                            "{}. {} {}{}{}{}",
                                             i + 1,
                                             col.name,
                                             col.type_name,
                                             if col.pk { " PK" } else { "" },
-                                            if col.auto_increment { " AI" } else { "" }
+                                            if col.auto_increment { " AI" } else { "" },
+                                            col.generated.as_ref().map_or("", |generated| if generated.stored { " STORED" } else { " VIRTUAL" })
                                         )
                                     })
                                     .collect();
@@ -932,6 +938,13 @@ pub fn build_ui(
                                 c.text("Foreign key · SQL (optional)");
                                 ov_foreign_key = c.text_area(coldef.map(|column| column.foreign_key_clause.as_str()).unwrap_or(""),
                                     "REFERENCES parent(id) ON DELETE CASCADE", check_style);
+                                c.row(row, |r| {
+                                    r.text("Generation");
+                                    ov_generation = r.select(["Ordinary", "VIRTUAL", "STORED"],
+                                        Some(coldef.and_then(|column| column.generated.as_ref()).map_or(0, |generated| if generated.stored { 2 } else { 1 })), "Ordinary", type_sel);
+                                });
+                                ov_generated = c.text_area(coldef.and_then(|column| column.generated.as_ref()).map_or("", |generated| generated.expression.as_str()),
+                                    "Generated expression, e.g. price * quantity", check_style);
                             });
                         }
                         OverlayKind::EditIndex => {
@@ -1753,10 +1766,11 @@ pub fn build_ui(
                                                 btn_edit_json = r.tool_button("JSON");
                                                 btn_edit_image = r.tool_button("Image");
                                             });
-                                            edit_type = c.select(
+                                            if generated_cell { c.text("Generated · read-only"); }
+                                            else { edit_type = c.select(
                                                 ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"].map(String::from).to_vec(),
                                                 Some(state.edit_type), "Storage type", sel_style,
-                                            );
+                                            ); }
                                             c.text("Value");
                                             let mut cell_style = TextAreaStyle::from_theme(&theme);
                                             cell_style.width = edit_val_style.width;
@@ -2080,6 +2094,11 @@ pub fn build_ui(
     ui.set_accessible_name(ov_collation, "Column collation (editable)");
     ui.set_accessible_name(ov_check, "Column CHECK expression");
     ui.set_accessible_name(ov_foreign_key, "Column foreign key clause");
+    ui.set_accessible_name(ov_generation, "Column generation mode");
+    ui.set_accessible_name(ov_generated, "Generated column expression");
+    ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
+    ui.set_text_area_read_only(edit_value, generated_cell);
+    ui.set_button_enabled(btn_edit_cell, !generated_cell);
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
     ui.set_accessible_name(ov_pk_conflict, "Primary key conflict action");
@@ -2151,7 +2170,7 @@ pub fn build_ui(
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
-    for (index, area) in [ov_check, ov_foreign_key].into_iter().enumerate() {
+    for (index, area) in [ov_check, ov_foreign_key, ov_generated].into_iter().enumerate() {
         if let Some(Some(editor)) = state.wizard_column_edit_states.get(state.wizard_col_sel).map(|states| &states[index]) {
             ui.restore_text_area_state(area, editor);
         }
@@ -2268,6 +2287,8 @@ pub fn build_ui(
         ov_collation,
         ov_check,
         ov_foreign_key,
+        ov_generated,
+        ov_generation,
         ov_without_rowid,
         ov_strict,
         ov_pk_conflict,

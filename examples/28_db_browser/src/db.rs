@@ -107,6 +107,13 @@ pub struct ColumnInfo {
     pub notnull: bool,
     pub default_value: Option<String>,
     pub pk: bool,
+    pub generated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedColumn {
+    pub expression: String,
+    pub stored: bool,
 }
 
 /// Editable column definition for Create/Modify Table wizard.
@@ -119,6 +126,7 @@ pub struct ColDef {
     pub collation: String,
     pub check_expression: String,
     pub foreign_key_clause: String,
+    pub generated: Option<GeneratedColumn>,
     pub notnull: bool,
     pub unique: bool,
     pub default_value: String,
@@ -132,7 +140,7 @@ impl ColDef {
             pk: false,
             auto_increment: false,
             collation: String::new(),
-            check_expression: String::new(), foreign_key_clause: String::new(),
+            check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
             notnull: false,
             unique: false,
             default_value: String::new(),
@@ -352,24 +360,32 @@ pub fn table_columns(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, 
     table_columns_in(conn, "main", table)
 }
 
+/// Writable columns for INSERT/cut/dump; browse and structure include generated columns separately.
 pub fn table_columns_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let q = format!("PRAGMA {}.table_info({})", quote_ident(schema), quote_ident(table));
+    Ok(table_visible_columns_in(conn, schema, table)?.into_iter().filter(|column| !column.generated).collect())
+}
+
+pub fn table_visible_columns_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+    let q = format!("PRAGMA {}.table_xinfo({})", quote_ident(schema), quote_ident(table));
     let mut stmt = conn.prepare(&q).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(ColumnInfo {
+            Ok((ColumnInfo {
                 cid: row.get(0)?,
                 name: row.get(1)?,
                 type_name: row.get::<_, String>(2).unwrap_or_default(),
                 notnull: row.get::<_, i64>(3).unwrap_or(0) != 0,
                 default_value: row.get(4)?,
                 pk: row.get::<_, i64>(5).unwrap_or(0) != 0,
-            })
+                generated: matches!(row.get::<_, i64>(6)?, 2 | 3),
+            }, row.get::<_, i64>(6)?))
         })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows {
-        out.push(r.map_err(|e| e.to_string())?);
+        let (column, hidden) = r.map_err(|e| e.to_string())?;
+        // Hidden module columns do not appear in SELECT *; generated columns do.
+        if hidden != 1 { out.push(column); }
     }
     Ok(out)
 }
@@ -387,9 +403,9 @@ pub fn table_column_defs_in(conn: &Connection, schema: &str, table: &str) -> Res
         let columns = stmt.query_map([], |row| row.get::<_, Option<String>>(2)).map_err(|e| e.to_string())?.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())?;
         if let [Some(column)] = columns.as_slice() { unique_columns.push(column.clone()); }
     }
-    let mut columns = table_columns_in(conn, schema, table)?.into_iter().map(|col| ColDef {
+    let mut columns = table_visible_columns_in(conn, schema, table)?.into_iter().map(|col| ColDef {
         auto_increment: auto_increment.as_ref().is_some_and(|name| name.eq(col.name.as_str())),
-        collation: String::new(), check_expression: String::new(), foreign_key_clause: String::new(),
+        collation: String::new(), check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
         unique: unique_columns.iter().any(|name| name.eq_ignore_ascii_case(&col.name)),
         name: col.name, type_name: col.type_name, pk: col.pk, notnull: col.notnull,
         default_value: col.default_value.unwrap_or_default(),
@@ -1368,6 +1384,11 @@ pub fn create_table_ddl_in(schema: &str, name: &str, cols: &[ColDef]) -> String 
             piece.push_str(c.foreign_key_clause.trim());
             piece.push('\n');
         }
+        if let Some(generated) = &c.generated {
+            piece.push_str(" GENERATED ALWAYS AS (");
+            piece.push_str(generated.expression.trim());
+            piece.push_str(if generated.stored { "\n) STORED" } else { "\n) VIRTUAL" });
+        }
         parts.push(piece);
     }
     match pk_cols.len() {
@@ -1404,8 +1425,8 @@ pub fn recreate_table_in(
     cols: &[ColDef],
 ) -> Result<(), String> {
     let existing = table_column_defs_in(conn, schema, old_name)?;
-    let sources: Vec<_> = cols.iter().map(|col| existing.iter().find(|old| old.name == col.name).map(|old| old.name.clone())).collect();
-    if sources.iter().any(Option::is_none) && existing.iter().any(|old| !sources.iter().any(|source| source.as_ref() == Some(&old.name))) {
+    let mut sources: Vec<_> = cols.iter().map(|col| existing.iter().find(|old| old.name == col.name).map(|old| old.name.clone())).collect();
+    if sources.iter().any(Option::is_none) && existing.iter().any(|old| old.generated.is_none() && !sources.iter().any(|source| source.as_ref() == Some(&old.name))) {
         return Err("Use ALTER TABLE RENAME COLUMN in Execute SQL to rename a column".into());
     }
     let mut draft = cols.to_vec();
@@ -1415,7 +1436,8 @@ pub fn recreate_table_in(
                 || old.default_value != col.default_value || col.unique || (col.auto_increment && !old.auto_increment)
                 || (!col.collation.is_empty() && !old.collation.eq_ignore_ascii_case(&col.collation))
                 || (!col.check_expression.is_empty() && old.check_expression != col.check_expression)
-                || (!col.foreign_key_clause.is_empty() && old.foreign_key_clause != col.foreign_key_clause) {
+                || (!col.foreign_key_clause.is_empty() && old.foreign_key_clause != col.foreign_key_clause)
+                || (col.generated.is_some() && col.generated != old.generated) {
                 return Err("Changing existing column definitions requires an explicit SQL migration; the wizard preserves existing constraints".into());
             }
             col.unique = old.unique;
@@ -1423,6 +1445,14 @@ pub fn recreate_table_in(
             col.collation = old.collation.clone();
             col.check_expression = old.check_expression.clone();
             col.foreign_key_clause = old.foreign_key_clause.clone();
+            col.generated = old.generated.clone();
+        }
+    }
+    for (position, column) in existing.iter().enumerate().filter(|(_, column)| column.generated.is_some()) {
+        if !sources.iter().any(|source| source.as_deref() == Some(column.name.as_str())) {
+            let position = position.min(draft.len());
+            draft.insert(position, column.clone());
+            sources.insert(position, Some(column.name.clone()));
         }
     }
     recreate_table_columns_in(conn, schema, old_name, new_name, &draft, &sources, None)
@@ -1459,10 +1489,10 @@ pub fn recreate_table_columns_in(
             crate::table_sql::column_definition(col, Some(old))?;
             rebuild |= old.pk != col.pk || old.auto_increment != col.auto_increment || !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
                 || old.default_value != col.default_value || old.unique != col.unique || !old.collation.eq_ignore_ascii_case(&col.collation)
-                || old.check_expression != col.check_expression || old.foreign_key_clause != col.foreign_key_clause;
+                || old.check_expression != col.check_expression || old.foreign_key_clause != col.foreign_key_clause || old.generated != col.generated;
         } else {
             crate::table_sql::column_definition(col, None)?;
-            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty() || !col.collation.is_empty() || !col.check_expression.trim().is_empty() || !col.foreign_key_clause.trim().is_empty();
+            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty() || !col.collation.is_empty() || !col.check_expression.trim().is_empty() || !col.foreign_key_clause.trim().is_empty() || col.generated.is_some();
         }
     }
     let added: Vec<_> = cols
@@ -1726,6 +1756,56 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn generated_column_creation_metadata_and_legacy_alter_keep_visible_and_writable_columns() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\"; BEGIN;").unwrap();
+        for schema in ["main","temp","aux.\"db"] {
+            let table=qualified_name(schema,"computed");
+            let cols=[ColDef::new("qty","INTEGER"),ColDef { generated:Some(GeneratedColumn { expression:"qty * 4 -- expression comment".into(),stored:true }),..ColDef::new("total.\"值","INTEGER") },ColDef::new("note","TEXT")];
+            let sql=create_table_ddl_in(schema,"computed",&cols);
+            for col in &cols { crate::table_sql::column_definition(col,None).unwrap(); }
+            execute_single_statement(&conn,&sql).unwrap();
+            conn.execute_batch(&format!("INSERT INTO {table}(rowid,qty,note) VALUES(9,3,'kept')")).unwrap();
+            let visible=table_visible_columns_in(&conn,schema,"computed").unwrap();
+            assert_eq!(visible.iter().map(|column|(column.name.as_str(),column.generated)).collect::<Vec<_>>(),[("qty",false),("total.\"值",true),("note",false)]);
+            assert_eq!(table_columns_in(&conn,schema,"computed").unwrap().iter().map(|column|column.name.as_str()).collect::<Vec<_>>(),["qty","note"]);
+            assert!(table_column_defs_in(&conn,schema,"computed").unwrap()[1].generated.as_ref().unwrap().stored);
+            let legacy=[ColDef::new("qty","INTEGER"),ColDef::new("note","TEXT"),ColDef::new("added","TEXT")];
+            recreate_table_in(&conn,schema,"computed","computed",&legacy).unwrap();
+            assert_eq!(table_column_names_in(&conn,schema,"computed").unwrap(),["qty","total.\"值","note","added"]);
+            assert_eq!(conn.query_row(&format!("SELECT \"total.\"\"值\" FROM {table} WHERE rowid=9"),[],|row|row.get::<_,i64>(0)).unwrap(),12);
+            for (type_name,default_value) in [("INTEGER AS (qty)",""),("INTEGER","0 GENERATED ALWAYS AS (qty)")] {
+                assert!(crate::table_sql::column_definition(&ColDef { default_value:default_value.into(),..ColDef::new("bad",type_name) },None).is_err());
+            }
+        }
+        conn.execute_batch("CREATE VIRTUAL TABLE search USING fts5(body)").unwrap();
+        assert_eq!(table_visible_columns_in(&conn,"main","search").unwrap().iter().map(|column|column.name.as_str()).collect::<Vec<_>>(),["body"]);
+    }
+
+    #[test]
+    fn generated_columns_are_exported_as_values_and_restored_by_sql_dump() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE computed(qty INTEGER,stored INTEGER AS(qty*4) STORED,virtual TEXT AS('value:'||qty)); INSERT INTO computed(rowid,qty) VALUES(9,3),(17,5)").unwrap();
+        let dir=tempfile::tempdir().unwrap();
+        for json in [false,true] {
+            let path=dir.path().join(if json { "data.json" } else { "data.csv" });
+            export_table(&conn,"computed",&[],None,&path,json).unwrap();
+            let text=fs::read_to_string(path).unwrap();
+            if json {
+                let rows:serde_json::Value=serde_json::from_str(&text).unwrap();
+                assert_eq!(rows[0]["stored"],12); assert_eq!(rows[1]["virtual"],"value:5");
+            } else { assert!(text.starts_with("qty,stored,virtual\n") && text.contains("3,12,value:3")); }
+        }
+        let path=dir.path().join("dump.sql"); export_sql_dump(&conn,&path).unwrap();
+        let sql=fs::read_to_string(path).unwrap();
+        assert!(sql.lines().filter(|line|line.starts_with("INSERT INTO")).all(|line|!line.contains("\"stored\"") && !line.contains("\"virtual\"")));
+        let restored=Connection::open_in_memory().unwrap(); restored.execute_batch(&sql).unwrap();
+        assert_eq!(restored.query_row("SELECT count(*) FROM computed WHERE (rowid=9 AND stored=12 AND virtual='value:3') OR (rowid=17 AND stored=20 AND virtual='value:5')",[],|row|row.get::<_,i64>(0)).unwrap(),2);
+        restored.execute("UPDATE computed SET qty=6 WHERE rowid=9",[]).unwrap();
+        assert_eq!(restored.query_row("SELECT stored FROM computed WHERE rowid=9",[],|row|row.get::<_,i64>(0)).unwrap(),24);
+    }
+
+    #[test]
     fn generated_schema_statements_keep_literal_semicolons_and_reject_tails() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
@@ -1896,7 +1976,7 @@ mod tests {
         let table = "same.\"table";
         let cols = [ColDef { name: "id".into(), type_name: "INTEGER".into(), pk: true, auto_increment: false,
             collation: String::new(),
-            check_expression: String::new(), foreign_key_clause: String::new(),
+            check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
             notnull: false, unique: false, default_value: String::new() }, ColDef::new("value.\"col", "TEXT")];
         for schema in ["main", "temp", "aux.\"db"] {
             conn.execute_batch(&create_table_ddl_in(schema, table, &cols)).unwrap();
@@ -2090,7 +2170,7 @@ mod tests {
                 pk: c.pk,
                 auto_increment: false,
                 collation: String::new(),
-                check_expression: String::new(), foreign_key_clause: String::new(),
+                check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
                 notnull: c.notnull,
                 unique: false,
                 default_value: c.default_value.unwrap_or_default(),
@@ -2552,7 +2632,7 @@ pub fn export_sql_dump_opts(
     }
     if opts.data {
         for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
-            // table_info excludes generated columns, which cannot be inserted into.
+            // Generated columns are recomputed and cannot be inserted into.
             let mut cols: Vec<String> = table_columns(conn, &obj.name)?
                 .iter()
                 .map(|c| quote_ident(&c.name))

@@ -300,6 +300,8 @@ struct BuiltUiIds {
     ov_collation: WidgetId,
     ov_check: WidgetId,
     ov_foreign_key: WidgetId,
+    ov_generated: WidgetId,
+    ov_generation: WidgetId,
     ov_without_rowid: WidgetId,
     ov_strict: WidgetId,
     ov_pk_conflict: WidgetId,
@@ -480,6 +482,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_collation: b.ov_collation,
             ov_check: b.ov_check,
             ov_foreign_key: b.ov_foreign_key,
+            ov_generated: b.ov_generated,
+            ov_generation: b.ov_generation,
             ov_without_rowid: b.ov_without_rowid,
             ov_strict: b.ov_strict,
             ov_pk_conflict: b.ov_pk_conflict,
@@ -668,6 +672,21 @@ impl Demo {
                     state.wizard_table_options.primary_key_conflict = Some(sqlite3_parser::ast::ResolveType::Replace);
                     if tab == "table-conflicted" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
+                }
+                "table-generated" | "table-computed" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(qty INTEGER,total INTEGER CONSTRAINT generation AS(qty*4) STORED,note TEXT); INSERT INTO records(qty,note) VALUES(3,'first calculation'),(5,'second calculation');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records" && object.kind==ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap();
+                    state.wizard_col_sel=1;
+                    state.wizard_cols[1].generated=Some(dbmod::GeneratedColumn { expression:"qty * 5\n+ 1".into(),stored:false });
+                    state.wizard_scroll=(0.0,10000.0);
+                    if tab=="table-computed" {
+                        state.apply_table_wizard().unwrap(); state.goto_browse_record(1).unwrap();
+                        state.browse_mut().sel_col=Some(1); state.sync_edit_cell_from_selection();
+                        MainTab::Browse
+                    } else { MainTab::Structure }
                 }
                 "table-foreign-key" | "table-referenced" => {
                     state.new_memory_db().unwrap();
@@ -1410,11 +1429,21 @@ impl Demo {
         if sel >= self.state.wizard_cols.len() {
             return;
         }
-        self.state.wizard_column_edit_states.resize_with(self.state.wizard_cols.len(), || [None, None]);
-        for (index, area) in [self.ids.ov_check, self.ids.ov_foreign_key].into_iter().enumerate() {
+        if let Some(mode) = self.ui.select_selected(self.ids.ov_generation) {
+            let previous = self.state.wizard_cols[sel].generated.as_ref().map_or(0, |generated| if generated.stored { 2 } else { 1 });
+            if previous != mode {
+                self.state.wizard_cols[sel].generated = if mode == 0 { None } else {
+                    Some(dbmod::GeneratedColumn { expression: self.ui.text_area_value(self.ids.ov_generated).unwrap_or("").into(), stored: mode == 2 })
+                };
+                self.rebuild = true;
+            }
+        }
+        self.state.wizard_column_edit_states.resize_with(self.state.wizard_cols.len(), || [None, None, None]);
+        for (index, area) in [self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated].into_iter().enumerate() {
             if let Some(value) = self.ui.text_area_value(area) {
                 if index == 0 { self.state.wizard_cols[sel].check_expression = value.to_string(); }
-                else { self.state.wizard_cols[sel].foreign_key_clause = value.to_string(); }
+                else if index == 1 { self.state.wizard_cols[sel].foreign_key_clause = value.to_string(); }
+                else if let Some(generated) = &mut self.state.wizard_cols[sel].generated { generated.expression = value.to_string(); }
                 self.state.wizard_column_edit_states[sel][index] = self.ui.text_area_state(area);
             }
         }
@@ -1559,18 +1588,21 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let generation_focused = self.state.overlay == Some(OverlayKind::EditTable)
+            && self.ui.focused() == Some(self.ids.ov_generation)
+            && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|column| column.name.as_str());
         let key_conflict_focused = self.state.overlay == Some(OverlayKind::EditTable)
             && self.ui.focused() == Some(self.ids.ov_pk_conflict)
             && self.ui.text_input_value(self.ids.ov_name) == Some(self.state.wizard_table_name.as_str());
         let column_sql_focused = self.state.wizard_cols.get(self.state.wizard_col_sel).and_then(|column| {
             if self.state.overlay != Some(OverlayKind::EditTable)
                 || self.ui.text_input_value(self.ids.ov_col_name) != Some(column.name.as_str()) { return None; }
-            [(self.ids.ov_check, column.check_expression.as_str()), (self.ids.ov_foreign_key, column.foreign_key_clause.as_str())]
+            [(self.ids.ov_check, column.check_expression.as_str()), (self.ids.ov_foreign_key, column.foreign_key_clause.as_str()), (self.ids.ov_generated, column.generated.as_ref().map_or("", |generated| generated.expression.as_str()))]
                 .into_iter().position(|(area, value)| self.ui.focused() == Some(area) && self.ui.text_area_value(area) == Some(value))
         });
         if let Some(index) = column_sql_focused {
-            self.state.wizard_column_edit_states.resize_with(self.state.wizard_cols.len(), || [None, None]);
-            let area = [self.ids.ov_check, self.ids.ov_foreign_key][index];
+            self.state.wizard_column_edit_states.resize_with(self.state.wizard_cols.len(), || [None, None, None]);
+            let area = [self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated][index];
             self.state.wizard_column_edit_states[self.state.wizard_col_sel][index] = self.ui.text_area_state(area);
         }
         let collation_session = (self.state.overlay == Some(OverlayKind::EditTable)
@@ -1609,12 +1641,13 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if generation_focused { self.ui.set_focus(Some(self.ids.ov_generation)); self.ui.sync(&mut self.scene); }
         if key_conflict_focused {
             self.ui.set_focus(Some(self.ids.ov_pk_conflict));
             self.ui.sync(&mut self.scene);
         }
         if let Some(index) = column_sql_focused {
-            let area = [self.ids.ov_check, self.ids.ov_foreign_key][index];
+            let area = [self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated][index];
             self.ui.set_focus(Some(area));
             if let Some(Some(editor)) = self.state.wizard_column_edit_states.get(self.state.wizard_col_sel).map(|states| &states[index]) {
                 self.ui.restore_text_area_state(area, editor);
@@ -2546,7 +2579,7 @@ impl Demo {
             self.state
                 .wizard_cols
                 .push(dbmod::ColDef::new("col", "TEXT"));
-            self.state.wizard_column_edit_states.push([None, None]);
+            self.state.wizard_column_edit_states.push([None, None, None]);
             if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.push(None); }
             self.state.wizard_col_sel = self.state.wizard_cols.len() - 1;
             self.rebuild = true;
@@ -3597,7 +3630,7 @@ impl Demo {
             self.do_rebuild();
         } else {
             sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
-            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_check, self.ids.ov_foreign_key] {
+            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated] {
                 sql_syntax::apply(&mut self.ui, area, &self.theme);
             }
             self.update_sql_hint();
@@ -6398,6 +6431,100 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn generated_column_controls_preserve_sessions_validate_save_and_disable_cell_writes() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
+            demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(qty INTEGER,total INTEGER CONSTRAINT generation AS(qty*4) STORED,note TEXT); INSERT INTO records(qty,note) VALUES(3,'kept');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row=demo.state.schema.iter().position(|object|object.name=="records" && object.kind==ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000+row as u64); demo.state.open_modify_table_wizard().unwrap();
+            demo.state.wizard_col_sel=1; demo.do_rebuild();
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_generation).as_deref(),Some("Column generation mode"));
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_generated).as_deref(),Some("Generated column expression"));
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_generation),Some(2));
+            let original=demo.ui.text_area_value(demo.ids.ov_generated).unwrap().to_string();
+            demo.ui.set_focus(Some(demo.ids.ov_generation)); demo.ui.set_select_selected(demo.ids.ov_generation,Some(1));
+            demo.snapshot_inputs(); assert!(demo.rebuild); demo.do_rebuild();
+            assert_eq!(demo.ui.focused(),Some(demo.ids.ov_generation));
+            let expression="qty * 5\n+ 1";
+            demo.ui.set_scroll_offset(demo.ids.ov_scroll,0.0,10000.0); demo.ui.sync(&mut demo.scene);
+            let area=demo.ids.ov_generated;
+            demo.ui.set_focus(Some(area)); demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text(expression); demo.snapshot_inputs();
+            demo.ui.select_text_area_range(area,0..0); demo.ui.ime_preedit("中文",Some((3,6))); demo.ui.sync(&mut demo.scene);
+            let candidate=demo.ui.ime_cursor_area(&demo.scene).expect("generated expression is visible");
+            demo.do_rebuild(); assert_eq!(demo.ui.focused(),Some(demo.ids.ov_generated));
+            assert_eq!(demo.ui.ime_cursor_area(&demo.scene),Some(candidate));
+            assert!(demo.ui.ime_commit("-- 中文\n")); demo.ui.key_input(UiKey::Undo); demo.snapshot_inputs();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_generated),Some(expression));
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(2)); demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_generation),Some(0));
+            demo.ui.set_focus(Some(demo.ids.ov_generated)); demo.ui.key_input(UiKey::Char('x'));
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_generated),Some(""));
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(1)); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_generated)); demo.ui.key_input(UiKey::Undo);
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_generated),Some(original.as_str()));
+            demo.ui.key_input(UiKey::Redo); demo.snapshot_inputs();
+            demo.handle_button(demo.ids.ov_btn_up); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_generated),Some(expression));
+            demo.handle_button(demo.ids.ov_btn_down); demo.do_rebuild();
+            demo.handle_button(demo.ids.ov_btn_add); demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_generation),Some(0));
+            demo.handle_button(demo.ids.ov_btn_del); demo.do_rebuild();
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(1)); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_generated,"random()"); demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_some() && demo.state.overlay.is_some());
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT total FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),12);
+            demo.do_rebuild(); assert_eq!(demo.ui.text_area_value(demo.ids.ov_generated),Some("random()"));
+            demo.ui.set_text_area_value(demo.ids.ov_generated,expression); demo.snapshot_inputs();
+            for phase in ["draft","saved"] {
+                if phase=="saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+                    demo.state.tab=MainTab::Browse; demo.state.goto_browse_record(1).unwrap();
+                    demo.state.browse_mut().sel_col=Some(1); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
+                } else { demo.ui.set_scroll_offset(demo.ids.ov_scroll,0.0,10000.0); }
+                if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_GENERATED_QA_OUT") {
+                    for area in [demo.ids.ov_check,demo.ids.ov_foreign_key,demo.ids.ov_generated] { sql_syntax::apply(&mut demo.ui,area,&demo.theme); }
+                    demo.ui.sync(&mut demo.scene); demo.scene.mark_full_dirty(1400.0,1000.0); let dirty=demo.scene.take_dirty();
+                    let commands=encode_scene(&demo.scene,&dirty); let clear=clear_color(&demo.theme);
+                    let mut soft=SoftRenderer::new(1400,1000,clear); soft.render(&commands,&dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
+                    if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear) {
+                        gpu.render(&commands,&dirty); let a=soft.frame_pixels().unwrap().0; let b=gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"),b,1400,1000).unwrap();
+                        let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|s|(((a>>s)&255)as i32-((b>>s)&255)as i32).abs())).max().unwrap();
+                        assert!(delta<=2,"{theme_name}/{phase}: {delta}"); eprintln!("Generated {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Generated GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT total FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),16);
+            demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_col_sel=1; demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_generation),Some(1));
+            demo.ui.set_select_selected(demo.ids.ov_generation,Some(0)); demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_generated),Some(""));
+            demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            demo.state.conn.as_ref().unwrap().execute("UPDATE records SET qty=4",[]).unwrap();
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT total FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),16);
+            demo.state.open_create_table_wizard(); demo.state.wizard_col_sel=1; demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_generation),Some(0));
+            demo.ui.set_select_selected(demo.ids.ov_generation,Some(2)); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_generated,"id * 2"); demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            demo.state.conn.as_ref().unwrap().execute("INSERT INTO new_table(id) VALUES(4)",[]).unwrap();
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT name FROM new_table",[],|row|row.get::<_,String>(0)).unwrap(),"8");
+            demo.state.switch_browse_table("new_table").unwrap(); demo.state.tab=MainTab::Browse;
+            demo.state.dock_edit=true; demo.state.dock_focus=DockKind::EditCell;
+            demo.state.goto_browse_record(1).unwrap(); demo.state.browse_mut().sel_col=Some(1); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
+            assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));
+            demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.key_input(UiKey::Char('x')); assert!(!demo.ui.ime_commit("changed"));
+            assert_eq!(demo.ui.text_area_value(demo.ids.edit_value),Some("8"));
+            demo.state.browse_mut().sel_col=Some(0); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
+            assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(true));
         }
     }
 

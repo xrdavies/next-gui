@@ -3,7 +3,7 @@
 use fallible_iterator::FallibleIterator;
 use sqlite3_parser::{
     ast::{
-        fmt::ToTokens, Cmd, ColFlags, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr,
+        fmt::ToTokens, Cmd, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr,
         Name, NamedColumnConstraint, NamedTableConstraint, QualifiedName, ResolveType,
         SortedColumn, Stmt, TabFlags, TableConstraint,
     },
@@ -255,6 +255,9 @@ pub fn column_definition(
     column: &ColDef,
     original: Option<&ColDef>,
 ) -> Result<ColumnDefinition, String> {
+    if column.generated.as_ref().is_some_and(|generated| generated.expression.trim().is_empty()) {
+        return Err("A generated column requires an expression".into());
+    }
     let mut draft = column.clone();
     // PRAGMA strips quoting from names such as "TEXT UNIQUE"; keep their original AST.
     if original.is_some_and(|old| old.type_name.eq_ignore_ascii_case(&column.type_name)) {
@@ -278,7 +281,7 @@ pub fn column_definition(
     {
         return Err("A column field cannot add columns or table constraints".into());
     }
-    let mut actual = [0; 8];
+    let mut actual = [0; 9];
     let definition = columns.into_values().next().unwrap();
     for (index, value) in definition.constraints.iter().enumerate() {
         if matches!(value.constraint, ColumnConstraint::Defer(..)) {
@@ -301,6 +304,7 @@ pub fn column_definition(
             ColumnConstraint::Collate { .. } => 5,
             ColumnConstraint::Check(..) => 6,
             ColumnConstraint::ForeignKey { .. } => 7,
+            ColumnConstraint::Generated { .. } => 8,
             _ => return Err("Use the constraint controls rather than adding constraints to a type/default field".into()),
         }] += 1;
     }
@@ -313,6 +317,7 @@ pub fn column_definition(
         (!column.collation.is_empty()) as usize,
         (!column.check_expression.trim().is_empty()) as usize,
         (!column.foreign_key_clause.trim().is_empty()) as usize,
+        column.generated.is_some() as usize,
     ];
     if actual != expected {
         return Err("A type/default field cannot change other column constraints".into());
@@ -459,6 +464,19 @@ pub fn rebuild_definition(
                 }
                 item.constraints.splice(start..start, replacement);
             }
+            if old.generated != col.generated {
+                let position = item.constraints.iter().position(|value| matches!(value.constraint, ColumnConstraint::Generated { .. }));
+                let replacement = replacement.constraints.iter().find(|value| matches!(value.constraint, ColumnConstraint::Generated { .. })).cloned();
+                match (position, replacement) {
+                    (Some(position), Some(mut value)) => {
+                        value.name = item.constraints[position].name.clone();
+                        item.constraints[position] = value;
+                    }
+                    (Some(position), None) => { item.constraints.remove(position); }
+                    (None, Some(value)) => item.constraints.push(value),
+                    (None, None) => {}
+                }
+            }
             for category in 0..4 {
                 let changed = match category {
                     0 => {
@@ -529,15 +547,7 @@ pub fn rebuild_definition(
         result.col_name = identifier(&col.name);
         edited.push(result);
     }
-    let mut edited = edited.into_iter();
-    let previous = std::mem::take(columns);
-    for column in previous.into_values() {
-        if column.flags.intersects(ColFlags::GENERATED) {
-            columns.insert(column.col_name.clone(), column);
-        } else if let Some(column) = edited.next() {
-            columns.insert(column.col_name.clone(), column);
-        }
-    }
+    columns.clear();
     for column in edited {
         columns.insert(column.col_name.clone(), column);
     }
@@ -727,6 +737,11 @@ pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<
             .map(|index| SqlFragment(&column.constraints[index].constraint).to_string())
             .collect::<Vec<_>>()
             .join(" ");
+        definition.generated = column.constraints.iter().find_map(|item| {
+            if let ColumnConstraint::Generated { expr, typ } = &item.constraint {
+                Some(db::GeneratedColumn { expression: expr.to_string(), stored: typ.as_ref().is_some_and(|storage| storage.0.eq_ignore_ascii_case("STORED")) })
+            } else { None }
+        });
     }
     Ok(())
 }

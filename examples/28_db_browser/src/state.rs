@@ -411,7 +411,7 @@ pub struct AppState {
     pub wizard_table_original: Option<SelectedObject>,
     pub wizard_cols: Vec<ColDef>,
     pub wizard_col_sources: Vec<Option<String>>,
-    pub wizard_column_edit_states: Vec<[Option<next_gui_ui::TextAreaState>; 2]>,
+    pub wizard_column_edit_states: Vec<[Option<next_gui_ui::TextAreaState>; 3]>,
     pub wizard_col_sel: usize,
     pub wizard_index_name: String,
     pub wizard_index_table: String,
@@ -682,7 +682,7 @@ impl AppState {
                     pk: true,
                     auto_increment: false,
                     collation: String::new(),
-                    check_expression: String::new(), foreign_key_clause: String::new(),
+                    check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
                     notnull: false,
                     unique: false,
                     default_value: String::new(),
@@ -1544,7 +1544,7 @@ impl AppState {
                 pk: true,
                 auto_increment: false,
                 collation: String::new(),
-                check_expression: String::new(), foreign_key_clause: String::new(),
+                check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
                 notnull: false,
                 unique: false,
                 default_value: String::new(),
@@ -1552,7 +1552,7 @@ impl AppState {
             ColDef::new("name", "TEXT"),
         ];
         self.wizard_col_sources.clear();
-        self.wizard_column_edit_states = vec![[None, None]; self.wizard_cols.len()];
+        self.wizard_column_edit_states = vec![[None, None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
     }
@@ -1575,7 +1575,7 @@ impl AppState {
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         self.wizard_table_original = Some(sel);
         self.wizard_cols = cols;
-        self.wizard_column_edit_states = vec![[None, None]; self.wizard_cols.len()];
+        self.wizard_column_edit_states = vec![[None, None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
         Ok(())
@@ -2743,6 +2743,7 @@ impl AppState {
         let rowid = *tab.rowids.get(row).ok_or("No usable rowid for selection")?;
         let column = self.edit_col.trim().to_string();
         if column.is_empty() { return Err("Select a column first".into()); }
+        if self.edit_cell_generated() { return Err("Generated columns are read-only; edit their source columns".into()); }
         let value = self.edited_cell_value()?;
         db::update_cell_in(self.conn.as_ref().unwrap(), &schema, &table, rowid, &column, &value)?;
         self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
@@ -2751,6 +2752,16 @@ impl AppState {
         self.refresh_browse()?;
         self.status_msg = "Cell updated (unwritten)".into();
         Ok(())
+    }
+
+    pub fn edit_cell_generated(&self) -> bool {
+        // Painting must not execute metadata queries and continuously append SQL log entries.
+        let tab = self.browse();
+        let Some(table) = tab.table.as_deref() else { return false; };
+        let Some(sql) = self.schema.iter().find(|object| object.schema == tab.schema && object.name == table
+            && object.kind == ObjectKind::Table).and_then(|object| object.sql.as_deref()) else { return false; };
+        let mut column = ColDef::new(self.edit_col.trim(), "");
+        crate::table_sql::read_column_constraints(sql, std::slice::from_mut(&mut column)).is_ok() && column.generated.is_some()
     }
 
     pub fn copy_browse_cells(&self, headers: bool, sql: bool) -> Result<crate::cell_clipboard::CellClipboard, String> {
@@ -2766,9 +2777,18 @@ impl AppState {
         if last >= result.values.len() || result.columns.is_empty() || last_col >= result.columns.len() {
             return Err("Selection no longer fits the browse page; refresh and retry".into());
         }
-        let cells = result.values.rectangle(first..=last, first_col..=last_col)?;
+        let mut cells = result.values.rectangle(first..=last, first_col..=last_col)?;
+        let mut columns = result.columns[first_col..=last_col].to_vec();
+        if sql {
+            let conn = self.conn.as_ref().ok_or("Wait for SQL to finish before copying INSERT statements")?;
+            let writable = db::table_columns_in(conn, &tab.schema, tab.table.as_deref().ok_or("No browse table")?)?;
+            let indices = columns.iter().enumerate().filter_map(|(index, name)| writable.iter().any(|column| column.name == *name).then_some(index)).collect::<Vec<_>>();
+            if indices.is_empty() { return Err("Selected columns are computed; select a writable column to copy INSERT statements".into()); }
+            columns = indices.iter().map(|index| columns[*index].clone()).collect();
+            cells = cells.into_iter().map(|row| indices.iter().map(|index| row[*index].clone()).collect()).collect();
+        }
         Ok(crate::cell_clipboard::CellClipboard::new(&tab.schema, tab.table.as_deref().ok_or("No browse table")?,
-            &result.columns[first_col..=last_col], cells, headers, sql))
+            &columns, cells, headers, sql))
     }
 
     pub fn cut_browse_cells(&mut self) -> Result<(), String> {
@@ -3410,6 +3430,48 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn generated_browse_cells_are_read_only_but_copy_export_and_insert_remain_usable() {
+        let mut state=test_state();
+        state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\"").unwrap();
+        for schema in ["main","temp","aux.\"db"] {
+            let table=db::qualified_name(schema,"computed");
+            state.conn.as_ref().unwrap().execute_batch(&format!("CREATE TABLE {table}(qty INTEGER,total INTEGER AS(qty*4) STORED,note TEXT); INSERT INTO {table}(rowid,qty,note) VALUES(9,3,'kept')")).unwrap();
+            state.refresh_schema().unwrap(); state.switch_browse_table_in(schema,"computed").unwrap();
+            state.goto_browse_record(1).unwrap(); state.browse_mut().sel_col=Some(1); state.sync_edit_cell_from_selection();
+            assert!(state.edit_cell_generated());
+            state.edit_col=" TOTAL ".into(); assert!(state.edit_cell_generated());
+            state.edit_col="total".into(); state.edit_type=1; state.edit_value="99".into();
+            assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));
+            state.discard_cell_draft();
+            assert!(state.cut_browse_cells().is_err());
+            assert!(state.paste_browse_cells(vec![vec![db::CellValue::Integer(99)]]).is_err());
+            assert!(state.copy_browse_cells(false,true).is_err());
+            assert_eq!(state.copy_browse_cells(false,false).unwrap().text,"12");
+            state.browse_mut().sel_col=None;
+            let copy=state.copy_browse_cells(true,false).unwrap();
+            assert!(copy.text.starts_with("qty\ttotal\tnote\n3\t12\tkept"));
+            let sql=state.copy_browse_cells(false,true).unwrap().text;
+            assert!(sql.contains("(\"qty\", \"note\")") && !sql.contains("\"total\""));
+            state.conn.as_ref().unwrap().execute_batch(&sql).unwrap();
+            state.refresh_browse().unwrap();
+            assert_eq!(state.browse().total_rows,Some(2));
+            state.open_insert_row().unwrap();
+            assert_eq!(state.insert_columns.iter().map(|column|column.name.as_str()).collect::<Vec<_>>(),["qty","note"]);
+            state.insert_modes=vec![2,2]; state.insert_values=vec!["5".into(),"inserted".into()];
+            state.apply_insert_row().unwrap();
+            assert_eq!(state.conn.as_ref().unwrap().query_row(&format!("SELECT total FROM {table} WHERE note='inserted'"),[],|row|row.get::<_,i64>(0)).unwrap(),20);
+            state.goto_browse_record(1).unwrap(); state.browse_mut().sel_col=Some(0); state.sync_edit_cell_from_selection();
+            assert!(!state.edit_cell_generated());
+            state.edit_type=1; state.edit_value="4".into(); state.apply_cell_draft().unwrap();
+            assert_eq!(state.conn.as_ref().unwrap().query_row(&format!("SELECT total FROM {table} WHERE rowid=9"),[],|row|row.get::<_,i64>(0)).unwrap(),16);
+            state.browse_mut().sel_col=Some(1); state.sync_edit_cell_from_selection();
+            let dir=tempfile::tempdir().unwrap(); let path=dir.path().join("computed.json"); state.export_browse(&path,true).unwrap();
+            let rows:serde_json::Value=serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(rows[0]["total"],16);
+        }
     }
 
     #[test]
@@ -5474,7 +5536,7 @@ mod chart_default_tests {
                 pk: true,
                 auto_increment: false,
                 collation: String::new(),
-                check_expression: String::new(), foreign_key_clause: String::new(),
+                check_expression: String::new(), foreign_key_clause: String::new(), generated: None,
                 notnull: false,
                 unique: false,
                 default_value: String::new(),

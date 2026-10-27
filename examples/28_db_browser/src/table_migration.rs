@@ -232,7 +232,7 @@ pub fn rebuild(
             let mut columns: Vec<_> = draft
                 .iter()
                 .zip(sources)
-                .filter(|(_, source)| source.is_some())
+                .filter(|(column, source)| source.is_some() && column.generated.is_none())
                 .map(|(column, _)| db::quote_ident(&column.name))
                 .collect();
             let mut from = columns.clone();
@@ -1779,6 +1779,96 @@ mod tests {
         conn.query_row(sql, [], |row| row.get(0)).unwrap()
     }
 
+    #[test]
+    fn generated_columns_recompute_and_freeze_with_qualified_dependencies_and_rowids() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            let table = db::qualified_name(schema, "computed");
+            let audit = db::qualified_name(schema, "audit");
+            let child = db::qualified_name(schema, "child");
+            let view = db::qualified_name(schema, "viewed");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {table}(id INTEGER PRIMARY KEY AUTOINCREMENT,v INTEGER,
+                    g INTEGER CONSTRAINT generation AS(v*2) STORED CONSTRAINT nn NOT NULL CHECK(g>0) UNIQUE,frozen INTEGER);
+                CREATE TABLE {audit}(v); CREATE TABLE {child}(p REFERENCES computed(g));
+                CREATE VIEW {view} AS SELECT id,v,g FROM computed;
+                CREATE INDEX {} ON computed(g) WHERE g>0;
+                CREATE TRIGGER {} AFTER UPDATE OF v ON {table} BEGIN INSERT INTO audit VALUES(new.g); END;
+                INSERT INTO {table}(id,v,frozen) VALUES(7,3,99),(100,5,99); DELETE FROM {table} WHERE id=100;
+                BEGIN; INSERT INTO {audit} VALUES('pending');", db::qualified_name(schema,"ix"),db::qualified_name(schema,"tr"))).unwrap();
+            let original = db::table_column_defs_in(&conn,schema,"computed").unwrap();
+            assert_eq!(original[2].generated.as_ref().unwrap(),&db::GeneratedColumn { expression:"v * 2".into(),stored:true });
+            let mut draft = vec![original[2].clone(),original[0].clone(),original[1].clone(),original[3].clone()];
+            draft[0].generated = Some(db::GeneratedColumn { expression:"amount * 3".into(),stored:false });
+            draft[2].name = "amount".into();
+            draft[3].generated = Some(db::GeneratedColumn { expression:"id + amount".into(),stored:true });
+            apply(&conn,schema,"computed",&draft,&[Some("g".into()),Some("id".into()),Some("v".into()),Some("frozen".into())]).unwrap_or_else(|error|panic!("{schema}: {error}"));
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE rowid=7 AND g=9 AND frozen=10 AND amount=3")),1);
+            assert_eq!(count(&conn,&format!("SELECT g FROM {view}")),9);
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),1,"copy must not fire the update trigger");
+            assert_eq!(sequence(&conn,schema,"computed").unwrap(),Some(100));
+            let sql:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='computed'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            assert!(sql.contains("CONSTRAINT generation") && sql.contains("CONSTRAINT nn"));
+            conn.execute_batch(&format!("INSERT INTO {child} VALUES(9)")).unwrap();
+            let original=db::table_column_defs_in(&conn,schema,"computed").unwrap();
+            let sources:Vec<_>=original.iter().map(|column|Some(column.name.clone())).collect();
+            let mut invalid=original.clone(); invalid[0].generated.as_mut().unwrap().expression="amount * 4".into();
+            assert!(apply(&conn,schema,"computed",&invalid,&sources).is_err(),"orphaning a generated parent key must roll back");
+            assert_eq!(count(&conn,&format!("SELECT g FROM {table}")),9);
+            let mut draft=original;
+            draft[0].generated=None; draft[3].generated=None;
+            draft.push(ColDef { generated:Some(db::GeneratedColumn { expression:"amount + 1".into(),stored:true }),..ColDef::new("added","INTEGER") });
+            let mut sources=sources; sources.push(None);
+            apply(&conn,schema,"computed",&draft,&sources).unwrap();
+            conn.execute_batch(&format!("UPDATE {table} SET amount=4; INSERT INTO {table}(amount) VALUES(5)")).unwrap_err();
+            // The later NOT NULL failure leaves the earlier UPDATE pending and the frozen values unchanged.
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE rowid=7 AND g=9 AND frozen=10 AND added=5")),1);
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),2);
+            assert!(foreign_key_violations(&conn,schema).unwrap().is_empty());
+            assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap());
+            assert!(!conn.is_autocommit());
+            let draft=db::table_column_defs_in(&conn,schema,"computed").unwrap();
+            let sources:Vec<_>=draft.iter().take(4).map(|column|Some(column.name.clone())).collect();
+            apply(&conn,schema,"computed",&draft[..4],&sources).unwrap();
+            assert_eq!(db::table_column_names_in(&conn,schema,"computed").unwrap(),["g","id","amount","frozen"]);
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(db::table_column_names_in(&conn,schema,"computed").unwrap(),["id","v","g","frozen"]);
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE id=7 AND g=6 AND frozen=99")),1);
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),0);
+        }
+    }
+
+    #[test]
+    fn invalid_generated_definitions_preserve_schema_rows_and_pending_transaction() {
+        for schema in ["main","temp","aux.\"db"] {
+            let conn=Connection::open_in_memory().unwrap();
+            let table=db::qualified_name(schema,"computed");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {table}(v INTEGER,g INTEGER AS(v*2) STORED NOT NULL UNIQUE CHECK(g>0));
+                INSERT INTO {table}(rowid,v) VALUES(7,3),(11,4); BEGIN;
+                CREATE TABLE {}(v); INSERT INTO {} VALUES('pending');",db::qualified_name(schema,"pending"),db::qualified_name(schema,"pending"))).unwrap();
+            let original=db::table_column_defs_in(&conn,schema,"computed").unwrap();
+            let sources=[Some("v".into()),Some("g".into())];
+            let before:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='computed'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            for expression in ["","-- empty","random()","g + 1","(SELECT v)","?1","v / 0","1","v) STORED, injected TEXT --","v); PRAGMA foreign_keys=OFF; --"] {
+                let mut draft=original.clone();
+                draft[1].generated=Some(db::GeneratedColumn { expression:expression.into(),stored:false });
+                assert!(apply(&conn,schema,"computed",&draft,&sources).is_err(),"{schema}/{expression}");
+                let after:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='computed'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+                assert_eq!(after,before);
+                assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE (rowid=7 AND v=3 AND g=6) OR (rowid=11 AND v=4 AND g=8)")),2);
+                assert_eq!(count(&conn,&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"pending"))),1);
+                assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap());
+                assert!(!conn.is_autocommit());
+            }
+            for category in 0..3 {
+                let mut draft=original.clone();
+                match category { 0=>draft[1].default_value="7".into(),1=>draft[1].pk=true,_=>draft[0].generated=Some(db::GeneratedColumn { expression:"7".into(),stored:false }) }
+                assert!(apply(&conn,schema,"computed",&draft,&sources).is_err());
+            }
+        }
+    }
+
     fn apply(
         conn: &Connection,
         schema: &str,
@@ -1821,11 +1911,12 @@ mod tests {
                 },
                 original[1].clone(),
                 original[0].clone(),
+                original[2].clone(),
             ];
             draft[1].type_name = "BLOB".into();
             draft[1].notnull = true;
             draft[1].default_value = "'new default'".into();
-            let sources = [None, Some("v".into()), Some("id".into())];
+            let sources = [None, Some("v".into()), Some("id".into()), Some("g".into())];
             apply(&conn, schema, "parent", &draft, &sources)
                 .unwrap_or_else(|error| panic!("{schema}: {error}"));
             assert_eq!(
