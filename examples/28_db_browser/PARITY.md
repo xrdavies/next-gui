@@ -60,7 +60,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Action | Status | Notes |
 |--------|--------|-------|
 | Create Table… | partial | Main/temp/attached schema selection; basic column PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
-| Create Index… | partial | Qualified table selection across all databases; atomic original-identity replacement, collation/order preservation for basic existing indexes; no structured expression/partial-index editor. |
+| Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing. Original ordered-key list controls remain. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; definition changes/reordering and expression/partial indexes require explicit SQL |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
@@ -99,7 +99,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | partial | Basic qualified table/index wizards and Delete cover all namespaces; definition previews outside main stay read-only. Full table migration and expression/partial-index editors remain. |
+| Structure toolbar: New Table, New Index, Modify, Delete, Refresh | partial | Basic qualified table/index wizards and Delete cover all namespaces; definition previews outside main stay read-only. Expression/partial definitions now edit; full table migration and original structured key controls remain. |
 | Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Expansion, scroll, group selection and keyboard focus persist for the database session; active selection reveals ancestors. Column/detail tree, object context actions and project view persistence remain. |
 | Object SQL preview | partial | Schema identity retained in projects; attached/temp stored definitions are read-only, since SQLite removes their database/TEMP qualifiers. Structured qualified editing remains. |
 | Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
@@ -160,7 +160,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Dialog | Status | Notes |
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
-| EditIndexDialog | partial | Basic raw columns entry/unique; no partial clause or structured column order UI. |
+| EditIndexDialog | partial | Qualified raw expression keys/unique/partial WHERE with live definition retention and atomic replacement; original available/ordered-key lists, row controls, preview and multiline polish remain. |
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; malformed units/surrogates and unsupported UTF-32 BOMs are rejected before writing; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
@@ -536,3 +536,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Structured schema statement boundary checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-b9a0f821765e.md): generated-DDL F01 verified after reproducing a Columns field executing an extra DELETE. CREATE/ALTER/index replacement now reject tails before stepping or preparing PRAGMAs, preserving data and pending transactions. Quoted semicolons, custom types, expression creation, CSV imports and intentional scripts still work. 405 tests/strict checks pass. No layout change or new native acceptance; full expression/partial-index controls and schema/interface parity remain unfinished.
+
+
+## Expression and partial index checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-68b65c9c64b6.md): live main/temp/attached definitions now retain nested expression keys, collation/order, comments and partial WHERE through editing and atomic replacement. Actual unique/partial behavior and invalid-condition/tail rollback pass; WHERE is available in both themes at narrow widths. 407 tests/strict checks, ten Soft/Metal pairs and two native static forms pass. Full ordered-key controls, multiline editing polish, table constraints/migration and original interface/native acceptance remain unfinished.
