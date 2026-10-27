@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `69e0dac..b8afc40b7b78` | Codex | issues — 341 tests/strict checks, token colors/foreground sessions and Soft/Metal delta 2 verified; dark/light inspected; native capture failed while display asleep | [Report](R-20261027-b8afc40b7b78.md) |
 | 2026-10-27 | `c5ce8bc..4c3ca63f83ac` | Codex | pass for physical line numbers — 336 tests/strict checks, Soft/Metal delta 2, dark/light/14 Office/native static inspection; full editor/native acceptance remain | [Report](R-20261027-4c3ca63f83ac.md) |
 | 2026-10-27 | `24a0f79..0ad15812f354` | Codex | pass for browse sessions — 332 tests/strict checks; switch/close identity and worker guards verified; Soft dark/light and native painting inspected | [Report](R-20261027-0ad15812f354.md) |
 | R-20261027-0ad15812f354-F01 | verified | P2 | grok | e28 / all | existing branch | browse tab state | Browse tab switch/close restores valid directional selection and current editor | [F01](R-20261027-0ad15812f354.md#r-20261027-0ad15812f354-f01) | 0ad15812f354 | 0ad15812f354 |

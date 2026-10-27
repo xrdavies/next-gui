@@ -135,7 +135,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). PageUp/PageDown with Shift selection now moves the caret/viewport by visual lines. Vertical keys retain the desired column through short lines and same-layout sessions. Optional shared physical line numbers are enabled in SQL/Find, with wrap/scroll/pointer/IME alignment. Syntax, completion and grapheme-aware navigation remain. |
+| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). PageUp/PageDown with Shift selection now moves the caret/viewport by visual lines. Vertical keys retain the desired column through short lines and same-layout sessions. Optional shared physical line numbers are enabled in SQL/Find, with wrap/scroll/pointer/IME alignment. Lexical token colors cover runtime keywords, literals, quoted names, parameters, functions and comments. Semantic completion, syntax-style preferences and grapheme-aware navigation remain. |
 | Execute / message / results table | partial | Final statement preview, at most 500 displayed rows; results/messages/export snapshots belong to each SQL tab (F09 addressed). |
 | Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Selection/whole-script execution, source-bound Save/Save As and shortcuts; external file changes reject overwrite; opening preserves existing drafts. |
 | Multi SQL tabs | partial | Independent drafts/sessions/results, file names and dirty markers; Close Tab, move arrows and Cmd/Ctrl+T/W/S/Shift+S. Pointer tab dragging, close affordances and rename remain. |
@@ -458,3 +458,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### SQL line-number checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-4c3ca63f83ac.md): shared optional gutter numbers physical LF/CRLF lines, including blanks, without numbering wrap continuations or entering copied text. SQL/Find enable it; sessions and pointer/key/scroll/IME geometry account for its width. 336 tests/strict checks and numbered Soft/Metal readback (delta 2) pass; dark/light, native SQL and all Office static renders inspected. CR-only lines, margin gestures/folding, syntax/completion and native/original acceptance remain open.
+
+### SQL token-color checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-b8afc40b7b78.md): shared validated foreground spans support app lexical colors without changing copied SQL, selection/history or IME composition. Main/Find colors refresh after edits and theme/session restoration. 341 tests/strict checks and colored Soft/Metal readback (delta 2) pass; dark/light Soft inspected. Auxiliary reuse layering regression was caught and fixed. Native/Office capture failed while the display slept, so current native visual acceptance remains incomplete. Synchronous lexing, semantic completion, full style preferences/folding and original/native acceptance remain open.

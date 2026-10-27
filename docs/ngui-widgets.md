@@ -118,8 +118,9 @@ after editing or finding text. Both renderers use the same selection alpha mask.
 History stores up to 100 snapshots / 8 MiB per undo or redo stack, retaining one
 oversized edit. Snapshots share immutable text across rebuilds. Glyph layout still
 processes the complete document; masks and selection nodes cover the viewport.
-This is plain-text editing: syntax/completion, grapheme-cluster navigation, word
-selection, horizontal scrolling and draggable scrollbar thumbs are not provided.
+Apps may supply token foreground colors; TextArea has no built-in language lexer
+or completion. Grapheme-cluster navigation, word selection, horizontal scrolling
+and text-specific draggable scrollbar thumbs are not provided.
 
 The e21 QA mode `NEXT_GUI_P1_REST_QA=textarea` captures the entry fields with the
 Drawer closed and exits. e28 exercises the same widget for SQL, Find, DDL and CSV.
