@@ -526,3 +526,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Browse column identity checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-80c8803f4766.md): F02 verified. Surviving column names now map filters, sorting, widths and the frozen prefix after schema changes, including export before refresh and active/inactive JSON/native XML projects. Invalid raw WHERE drafts remain intact. Re-saved XML indices match the new columns. 401 tests/strict checks and scoped Soft/native Browse static captures pass. Legacy unnamed settings retain first-load positions; external column renames, renderer F01, full schema/Plot/interface and native input acceptance remain unfinished.
+
+
+## Fractional primitive coverage checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-977efec45f5f.md): renderer F01 verified. Shared pixel-center bounds, signed-distance rounded edges, sharp small-radius fallback and straight-alpha rectangles align Soft/GPU. Actual primitive readback max 1; all ten wizard whole frames max 2; fresh e28 plus fourteen Office native static windows inspected. 403 tests/strict checks pass. A new P1 finding tracks generated schema fields reaching execute_batch; full editors/Plot/original interface and native input acceptance remain unfinished.
