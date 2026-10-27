@@ -209,7 +209,11 @@ pub fn rebuild(
                 .into(),
         );
     }
-    let old_sequence = sequence(conn, schema, table)?;
+    let old_sequence = if table_sql::autoincrement_column(&definition)?.is_some() {
+        sequence(conn, schema, table)?
+    } else {
+        None
+    };
     let foreign_keys = conn
         .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY)
         .map_err(|error| error.to_string())?;
@@ -234,7 +238,7 @@ pub fn rebuild(
             let new_primary = integer_primary_key(conn, schema, &temporary)?;
             let old_primary = integer_primary_key(conn, schema, table)?;
             if new_primary.is_some()
-                && old_primary.is_none()
+                && new_primary != old_primary
                 && prior_violations
                     .iter()
                     .any(|violation| violation.0.eq_ignore_ascii_case(table))
@@ -255,7 +259,19 @@ pub fn rebuild(
                 from.insert(0, db::quote_ident(&source));
             }
             if let Some(primary) = new_primary {
-                if old_primary.is_none() {
+                let retained = draft
+                    .iter()
+                    .zip(sources)
+                    .any(|(column, source)| column.name == primary && source.is_some());
+                if !retained && !old_without_rowid {
+                    let source = rowid_alias(conn, schema, table)?
+                        .or(old_primary.clone())
+                        .ok_or(
+                        "All original rowid aliases are shadowed; provide an explicit migration",
+                    )?;
+                    columns.insert(0, db::quote_ident(&primary));
+                    from.insert(0, db::quote_ident(&source));
+                } else if retained && old_primary.as_ref() != Some(&primary) {
                     let has_null: bool = conn
                         .query_row(
                             &format!(
@@ -369,6 +385,193 @@ pub fn rebuild(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn primary_key_membership_changes_preserve_rows_and_other_constraints() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            conn.execute_batch(&format!("CREATE TABLE {table}(a TEXT,b INTEGER,c TEXT UNIQUE CHECK(c!='bad')); INSERT INTO {table}(rowid,a,b,c) VALUES(7,'one',1,'first'),(9,'two',2,'second'); BEGIN;")).unwrap();
+            let mut draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            let sources = [Some("a".into()), Some("b".into()), Some("c".into())];
+            draft[0].pk = true;
+            draft[1].pk = true;
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+            assert!(conn
+                .execute(
+                    &format!("INSERT OR ABORT INTO {table} VALUES('one',1,'third')"),
+                    []
+                )
+                .is_err());
+            draft[0].pk = false;
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(1,2)")
+                ),
+                2
+            );
+            draft[1].pk = false;
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            conn.execute(&format!("INSERT INTO {table} VALUES('one',1,'third')"), [])
+                .unwrap();
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES('other',3,'bad')"), [])
+                .is_err());
+            assert!(conn
+                .execute(
+                    &format!("INSERT INTO {table} VALUES('other',3,'first')"),
+                    []
+                )
+                .is_err());
+            assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert!(!db::table_columns_in(&conn, schema, "t")
+                .unwrap()
+                .iter()
+                .any(|column| column.pk));
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn composite_primary_key_edits_keep_names_order_conflicts_and_implicit_not_null() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(a TEXT,b INTEGER,c TEXT,CONSTRAINT named_pk PRIMARY KEY(b DESC,a COLLATE NOCASE) ON CONFLICT FAIL) WITHOUT ROWID, STRICT;
+            INSERT INTO t VALUES('kept',1,'new key'); BEGIN;").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        let sources = [Some("a".into()), Some("b".into()), Some("c".into())];
+        draft[0].pk = false;
+        draft[2].pk = true;
+        apply(&conn, "main", "t", &draft, &sources).unwrap();
+        let sql: String = conn
+            .query_row("SELECT sql FROM sqlite_schema WHERE name='t'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(sql.contains("CONSTRAINT named_pk"), "{sql}");
+        assert!(sql.contains("ON CONFLICT FAIL"), "{sql}");
+        assert!(sql.contains("b DESC"), "{sql}");
+        let order: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('t') WHERE pk>0 ORDER BY pk")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(order, ["b", "c"]);
+        assert!(db::table_columns(&conn, "t").unwrap()[0].notnull);
+        assert!(conn
+            .execute("INSERT INTO t VALUES(NULL,2,'another')", [])
+            .is_err());
+        draft[1].pk = false;
+        draft[2].pk = false;
+        assert!(apply(&conn, "main", "t", &draft, &sources).is_err());
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+        conn.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[test]
+    fn primary_key_edits_preserve_new_column_rowids_and_remove_obsolete_sequences() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT,v TEXT UNIQUE); INSERT INTO t VALUES(1,'kept'),(100,'removed'); DELETE FROM t WHERE id=100; BEGIN;").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        draft[0].pk = false;
+        draft.push(ColDef {
+            pk: true,
+            ..ColDef::new("new_id", "INTEGER")
+        });
+        apply(
+            &conn,
+            "main",
+            "t",
+            &draft,
+            &[Some("id".into()), Some("v".into()), None],
+        )
+        .unwrap();
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM t WHERE rowid=1 AND id=1 AND new_id=1 AND v='kept'"
+            ),
+            1
+        );
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM sqlite_sequence WHERE name='t'"),
+            0
+        );
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(
+            count(&conn, "SELECT seq FROM sqlite_sequence WHERE name='t'"),
+            100
+        );
+        conn.execute_batch("CREATE TABLE q(\"quoted id\" INTEGER,PRIMARY KEY(\"quoted id\" AUTOINCREMENT)); INSERT INTO q VALUES(1),(100); DELETE FROM q WHERE \"quoted id\"=100; BEGIN;").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "q").unwrap();
+        draft[0].default_value = "1".into();
+        apply(&conn, "main", "q", &draft, &[Some("quoted id".into())]).unwrap();
+        conn.execute("INSERT INTO q DEFAULT VALUES", []).unwrap();
+        assert_eq!(count(&conn, "SELECT max(\"quoted id\") FROM q"), 101);
+        conn.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[test]
+    fn invalid_primary_key_changes_leave_data_and_pending_edits_intact() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(id INTEGER PRIMARY KEY,a INTEGER,b TEXT); INSERT INTO t VALUES(7,NULL,'duplicate'),(9,2,'duplicate'); BEGIN; INSERT INTO t VALUES(11,3,'pending');").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        let sources = [Some("id".into()), Some("a".into()), Some("b".into())];
+        draft[0].pk = false;
+        draft[1].pk = true;
+        assert!(apply(&conn, "main", "t", &draft, &sources)
+            .unwrap_err()
+            .contains("NULL primary keys"));
+        draft[1].pk = false;
+        draft[2].pk = true;
+        assert!(apply(&conn, "main", "t", &draft, &sources).is_err());
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM t WHERE rowid IN(7,9,11)"),
+            3
+        );
+        assert!(db::table_columns(&conn, "t").unwrap()[0].pk);
+        assert!(!conn.is_autocommit());
+        assert!(conn
+            .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY)
+            .unwrap());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 2);
+        conn.execute_batch("CREATE TABLE parent(k PRIMARY KEY); CREATE TABLE child(id INTEGER PRIMARY KEY,new_id INTEGER,p REFERENCES parent(k) DEFERRABLE INITIALLY DEFERRED); BEGIN; INSERT INTO child VALUES(7,9,999);").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "child").unwrap();
+        draft[0].pk = false;
+        draft[1].pk = true;
+        assert!(apply(
+            &conn,
+            "main",
+            "child",
+            &draft,
+            &[Some("id".into()), Some("new_id".into()), Some("p".into())]
+        )
+        .unwrap_err()
+        .contains("rowid key"));
+        assert_eq!(count(&conn, "SELECT count(*) FROM child WHERE rowid=7"), 1);
+        assert!(conn.execute_batch("COMMIT").is_err());
+        conn.execute_batch("ROLLBACK").unwrap();
+    }
 
     #[test]
     fn table_rename_updates_dependencies_even_when_the_session_uses_legacy_alter() {

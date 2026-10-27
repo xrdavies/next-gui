@@ -1415,14 +1415,11 @@ pub fn recreate_table_columns_in(
             }
             let old = existing.iter().find(|c| c.name == *source).ok_or_else(|| format!("Original column no longer exists: {source}"))?;
             crate::table_sql::column_definition(col, Some(old))?;
-            // shortcut: retain primary-key definitions until all of their constraint options are editable.
-            if old.pk != col.pk { return Err("Changing the primary key requires an explicit SQL migration".into()); }
-            rebuild |= !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
+            rebuild |= old.pk != col.pk || !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
                 || old.default_value != col.default_value || old.unique != col.unique;
         } else {
             crate::table_sql::column_definition(col, None)?;
-            if col.pk { return Err("Adding a primary key requires an explicit SQL migration".into()); }
-            rebuild |= col.unique || !col.default_value.trim().is_empty();
+            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty();
         }
     }
     let added: Vec<_> = cols
@@ -1480,6 +1477,7 @@ pub fn recreate_table_columns_in(
                 qualified_name(schema, old_name), quote_ident(source), quote_ident(temporary)))
                 .map_err(|error| format!("Cannot rename column {source}: {error}"))?;
         }
+        // shortcut: clear/save PK membership before removing its column; native DROP validates other dependencies.
         for col in removed {
             execute_single_statement(conn, &format!(
                 "ALTER TABLE {} DROP COLUMN {}",

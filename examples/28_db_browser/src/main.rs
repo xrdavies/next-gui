@@ -615,6 +615,19 @@ impl Demo {
                         MainTab::Browse
                     } else { MainTab::Structure }
                 }
+                "table-key" | "table-keyed" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(label TEXT,revision INTEGER,note TEXT); INSERT INTO records(rowid,label,revision,note) VALUES(7,'first',1,'kept'),(9,'second',2,'kept');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[0].pk = true;
+                    state.wizard_cols[1].pk = true;
+                    state.wizard_col_sel = 1;
+                    if tab == "table-keyed" { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
+                }
                 "index" => {
                     state.open_create_index_wizard();
                     MainTab::Structure
@@ -6191,6 +6204,73 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn table_wizard_primary_key_controls_save_and_remove_composite_keys() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(label TEXT,revision INTEGER,note TEXT); INSERT INTO records(rowid,label,revision,note) VALUES(7,'first',1,'kept'),(9,'second',2,'kept');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000 + row as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            demo.ui.set_checked(demo.ids.ov_pk, true);
+            demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            assert!(demo.state.wizard_cols[0].pk);
+            demo.ui.set_checked(demo.ids.ov_pk, true);
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            assert!(demo.state.wizard_cols[1].pk);
+            for phase in ["draft", "saved"] {
+                if phase == "saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                    assert!(demo.state.overlay.is_none());
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_PRIMARY_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Primary key {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Primary key GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(conn.query_row("SELECT count(*) FROM records WHERE rowid IN(7,9)", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
+            assert!(conn.execute("INSERT OR ABORT INTO records VALUES('first',1,'duplicate')", []).is_err());
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_pk), Some(true));
+            demo.ui.set_checked(demo.ids.ov_pk, false);
+            demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_pk), Some(true));
+            demo.ui.set_checked(demo.ids.ov_pk, false);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+            assert!(!dbmod::table_columns(demo.state.conn.as_ref().unwrap(), "records").unwrap().iter().any(|column| column.pk));
+            demo.state.conn.as_ref().unwrap().execute("INSERT INTO records VALUES('first',1,'duplicate')", []).unwrap();
         }
     }
 

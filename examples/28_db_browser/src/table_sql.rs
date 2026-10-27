@@ -4,7 +4,7 @@ use fallible_iterator::FallibleIterator;
 use sqlite3_parser::{
     ast::{
         Cmd, ColFlags, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr, Name,
-        QualifiedName, Stmt, TabFlags, TableConstraint,
+        NamedTableConstraint, QualifiedName, SortedColumn, Stmt, TabFlags, TableConstraint,
     },
     lexer::sql::Parser,
 };
@@ -52,7 +52,7 @@ fn emit(mut command: Cmd) -> String {
     }
 }
 
-fn column_expression(expr: &Expr, name: &str) -> bool {
+fn column_expression(expr: &Expr, name: &Name) -> bool {
     match expr {
         Expr::Name(value) => value.eq(name),
         Expr::Id(value) => Name(value.0.clone()).eq(name),
@@ -134,6 +134,51 @@ pub fn rebuild_definition(
     else {
         return Err("Modify Table requires an ordinary CREATE TABLE definition".into());
     };
+    let key_changed = original.iter().any(|old| {
+        old.pk
+            != draft
+                .iter()
+                .zip(sources)
+                .any(|(col, source)| source.as_ref() == Some(&old.name) && col.pk)
+    }) || draft
+        .iter()
+        .zip(sources)
+        .any(|(col, source)| source.is_none() && col.pk);
+    let previous_key = constraints
+        .as_ref()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| matches!(item.constraint, TableConstraint::PrimaryKey { .. }))
+        })
+        .cloned()
+        .or_else(|| {
+            columns.values().find_map(|col| {
+                col.constraints.iter().find_map(|item| {
+                    if let ColumnConstraint::PrimaryKey {
+                        order,
+                        conflict_clause,
+                        auto_increment,
+                    } = &item.constraint
+                    {
+                        Some(NamedTableConstraint {
+                            name: item.name.clone(),
+                            constraint: TableConstraint::PrimaryKey {
+                                columns: vec![SortedColumn {
+                                    expr: Expr::Name(col.col_name.clone()),
+                                    order: *order,
+                                    nulls: None,
+                                }],
+                                auto_increment: *auto_increment,
+                                conflict_clause: *conflict_clause,
+                            },
+                        })
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
     let mut edited = Vec::new();
     for (col, source) in draft.iter().zip(sources) {
         let old = source
@@ -152,7 +197,21 @@ pub fn rebuild_definition(
             }
             for category in 0..3 {
                 let changed = match category {
-                    0 => old.notnull != col.notnull,
+                    0 => {
+                        old.notnull != col.notnull
+                            || (old.pk
+                                && !col.pk
+                                && col.notnull
+                                && !item.constraints.iter().any(|value| {
+                                    matches!(
+                                        value.constraint,
+                                        ColumnConstraint::NotNull {
+                                            nullable: false,
+                                            ..
+                                        }
+                                    )
+                                }))
+                    }
                     1 => old.unique != col.unique,
                     _ => old.default_value != col.default_value,
                 };
@@ -185,7 +244,7 @@ pub fn rebuild_definition(
                     if let Some(constraints) = constraints {
                         constraints.retain(|item| {
                             !matches!(&item.constraint, TableConstraint::Unique { columns, .. }
-                            if columns.len() == 1 && column_expression(&columns[0].expr, &col.name))
+                            if columns.len() == 1 && column_expression(&columns[0].expr, &identifier(&col.name)))
                         });
                     }
                 }
@@ -209,10 +268,104 @@ pub fn rebuild_definition(
     for column in edited {
         columns.insert(column.col_name.clone(), column);
     }
+    if key_changed {
+        for col in columns.values_mut() {
+            col.constraints
+                .retain(|item| !matches!(item.constraint, ColumnConstraint::PrimaryKey { .. }));
+        }
+        let constraints = constraints.get_or_insert_with(Vec::new);
+        constraints.retain(|item| !matches!(item.constraint, TableConstraint::PrimaryKey { .. }));
+        let (name, mut keys, conflict) = match previous_key {
+            Some(NamedTableConstraint {
+                name,
+                constraint:
+                    TableConstraint::PrimaryKey {
+                        columns,
+                        conflict_clause,
+                        ..
+                    },
+            }) => (name, columns, conflict_clause),
+            _ => (None, Vec::new(), None),
+        };
+        keys.retain(|key| {
+            draft
+                .iter()
+                .any(|col| col.pk && column_expression(&key.expr, &identifier(&col.name)))
+        });
+        for col in draft.iter().filter(|col| col.pk) {
+            if !keys
+                .iter()
+                .any(|key| column_expression(&key.expr, &identifier(&col.name)))
+            {
+                keys.push(SortedColumn {
+                    expr: Expr::Name(identifier(&col.name)),
+                    order: None,
+                    nulls: None,
+                });
+            }
+        }
+        if !keys.is_empty() {
+            constraints.push(NamedTableConstraint {
+                name,
+                constraint: TableConstraint::PrimaryKey {
+                    columns: keys,
+                    auto_increment: false,
+                    conflict_clause: conflict,
+                },
+            });
+        }
+    }
+    if constraints.as_ref().is_some_and(Vec::is_empty) {
+        *constraints = None;
+    }
     *temporary = false;
     *if_not_exists = false;
     *tbl_name = qualified(schema, temporary_name);
     Ok(emit(command))
+}
+
+pub fn autoincrement_column(sql: &str) -> Result<Option<Name>, String> {
+    let Cmd::Stmt(Stmt::CreateTable {
+        body:
+            CreateTableBody::ColumnsAndConstraints {
+                columns,
+                constraints,
+                ..
+            },
+        ..
+    }) = parse(sql)?
+    else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    for col in columns.values() {
+        if col.constraints.iter().any(|item| {
+            matches!(
+                item.constraint,
+                ColumnConstraint::PrimaryKey {
+                    auto_increment: true,
+                    ..
+                }
+            )
+        }) {
+            return Ok(Some(col.col_name.clone()));
+        }
+    }
+    for constraint in constraints.into_iter().flatten() {
+        if let TableConstraint::PrimaryKey {
+            columns: keys,
+            auto_increment: true,
+            ..
+        } = constraint.constraint
+        {
+            if let [key] = keys.as_slice() {
+                return Ok(columns
+                    .values()
+                    .find(|col| column_expression(&key.expr, &col.col_name))
+                    .map(|col| col.col_name.clone()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 pub fn qualify_dependency(sql: &str, schema: &str) -> Result<String, String> {
