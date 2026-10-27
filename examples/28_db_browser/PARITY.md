@@ -328,3 +328,12 @@ with backwards-compatible defaults.
 - This is still partial DB4S parity. Native OS input/clipboard/IME, Linux/Windows
   runtime, performance budgets and DB4S binary round trips remain acceptance gaps.
   A window-only native render capture is separate from those checks.
+
+## Button availability (2026-10-27)
+
+Shared buttons now support disabled pointer/keyboard/focus behavior and themed
+colors. e28 page/record navigation reflects boundaries; clean, read-only, busy or
+disconnected databases disable Write/Revert. 271 workspace tests pass. Native
+Metal browse and Office renders were inspected; OS input/IME/clipboard acceptance
+and complete upstream action-state coverage remain. See
+[R-20261027-a99567b81242](../../docs/reviews/R-20261027-a99567b81242.md).
