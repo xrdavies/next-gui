@@ -4073,6 +4073,40 @@ mod interaction_tests {
     }
 
     #[test]
+    fn sql_editor_page_navigation_and_selection_survive_rebuild() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        let original: String = (1..=80).map(|i| format!("SELECT {i:02}, '中文';\n")).collect();
+        demo.state.sql_tabs[0] = original.clone();
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        let origin = (original.lines().next().unwrap().chars().count() + 1) * 3 + 2;
+        demo.ui.select_text_area_range(demo.ids.sql_area, origin..origin);
+        assert!(!demo.handle_browse_navigation_key(KeyCode::PageDown, Modifiers::default()));
+        assert!(demo.ui.key_input(map_key(KeyCode::PageDown, Modifiers::default()).unwrap()));
+        let first = demo.ui.text_area_caret(demo.ids.sql_area).unwrap();
+        assert!(first > origin + 30);
+        assert!(demo.ui.key_input(map_key(KeyCode::PageDown, Modifiers { shift: true, ..Modifiers::default() }).unwrap()));
+        let second = demo.ui.text_area_caret(demo.ids.sql_area).unwrap();
+        assert!(second > first);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(first..second));
+        assert!(demo.ui.text_area_scroll(demo.ids.sql_area).unwrap() > 0.0);
+        assert_eq!(demo.state.sql_editor(), original);
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 1400, 860).unwrap();
+        }
+        assert!(demo.ui.key_input(map_key(KeyCode::PageUp, Modifiers { shift: true, ..Modifiers::default() }).unwrap()));
+        assert_eq!(demo.ui.text_area_caret(demo.ids.sql_area), Some(first));
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(first..first));
+    }
+
+    #[test]
     fn sql_comment_changes_selected_lines_as_one_undoable_edit() {
         let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
         demo.state.tab = MainTab::ExecuteSql;

@@ -68,7 +68,10 @@ pub(super) fn display_text(
 }
 
 fn nearest(positions: &[(f32, f32)], x: f32, y: f32, line_height: f32) -> usize {
-    let row = (y / line_height).floor().max(0.0) * line_height;
+    nearest_on_row(positions, x, (y / line_height).floor().max(0.0) * line_height)
+}
+
+fn nearest_on_row(positions: &[(f32, f32)], x: f32, row: f32) -> usize {
     positions
         .iter()
         .enumerate()
@@ -396,6 +399,7 @@ impl Ui {
                     caret,
                     edit,
                     style,
+                    scroll_y,
                     ..
                 },
             ..
@@ -412,7 +416,19 @@ impl Ui {
             Some((style.width - style.padding_x * 2.0).max(1.0)),
         );
         let points = layout.caret_positions(value, self.font.metrics(style.size).ascent);
+        // shortcut: vertical moves use current x; preserve a desired column when crossing short lines.
         let (x, y) = points[old.min(len)];
+        let page_height = (((style.height - 2.0 * style.padding_y) / layout.line_height).floor() - 1.0)
+            .max(1.0) * layout.line_height;
+        let page_delta = match key {
+            UiKey::PageUp | UiKey::SelectPageUp => Some(-page_height),
+            UiKey::PageDown | UiKey::SelectPageDown => Some(page_height),
+            _ => None,
+        };
+        let page_scroll = page_delta.map(|delta| {
+            (*scroll_y + delta).clamp(0.0,
+                (layout.height + 2.0 * style.padding_y - style.height).max(0.0))
+        });
         let extend = matches!(
             key,
             UiKey::SelectLeft
@@ -421,6 +437,8 @@ impl Ui {
                 | UiKey::SelectDown
                 | UiKey::SelectHome
                 | UiKey::SelectEnd
+                | UiKey::SelectPageUp
+                | UiKey::SelectPageDown
         );
         let target = match key {
             UiKey::SelectAll => return self.select_text_area_range(id, 0..len),
@@ -475,18 +493,18 @@ impl Ui {
             UiKey::Right if !range.is_empty() => range.end,
             UiKey::Left | UiKey::SelectLeft => old.saturating_sub(1),
             UiKey::Right | UiKey::SelectRight => (old + 1).min(len),
-            UiKey::Up | UiKey::SelectUp => nearest(
-                &points,
-                x,
-                (y - layout.line_height).max(0.0),
-                layout.line_height,
-            ),
-            UiKey::Down | UiKey::SelectDown => {
-                nearest(&points, x, y + layout.line_height, layout.line_height)
+            UiKey::Up | UiKey::SelectUp => {
+                nearest_on_row(&points, x, (y - layout.line_height).max(0.0))
             }
-            UiKey::Home | UiKey::SelectHome => nearest(&points, 0.0, y, layout.line_height),
+            UiKey::Down | UiKey::SelectDown => {
+                nearest_on_row(&points, x, y + layout.line_height)
+            }
+            UiKey::PageUp | UiKey::SelectPageUp | UiKey::PageDown | UiKey::SelectPageDown => {
+                nearest_on_row(&points, x, (y + page_delta.unwrap()).max(0.0))
+            }
+            UiKey::Home | UiKey::SelectHome => nearest_on_row(&points, 0.0, y),
             UiKey::End | UiKey::SelectEnd => {
-                nearest(&points, layout.width + 1.0, y, layout.line_height)
+                nearest_on_row(&points, layout.width + 1.0, y)
             }
             _ => return false,
         };
@@ -495,6 +513,7 @@ impl Ui {
             edit,
             preedit,
             preedit_cursor,
+            scroll_y,
             ..
         } = &mut self.widgets.get_mut(&id).unwrap().kind
         else {
@@ -506,6 +525,9 @@ impl Ui {
             edit.anchor = None;
         }
         *caret = target;
+        if let Some(offset) = page_scroll {
+            *scroll_y = offset;
+        }
         edit.reveal = true;
         preedit.clear();
         *preedit_cursor = None;
@@ -717,6 +739,95 @@ mod tests {
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         (ui, scene, area)
+    }
+
+    #[test]
+    fn fractional_line_heights_do_not_skip_rows_during_keyboard_navigation() {
+        let line = "SELECT 01, '中文';\n";
+        let line_len = line.chars().count();
+        for size in [11.0, 12.0, 13.0, 14.0, 15.0] {
+            let (mut ui, mut scene, area) = editor(&line.repeat(80));
+            let Kind::TextArea { style, .. } = &mut ui.widgets.get_mut(&area).unwrap().kind else { unreachable!() };
+            style.size = size;
+            ui.sync(&mut scene);
+            let origin = 3 * line_len + 2;
+            ui.select_text_area_range(area, origin..origin);
+            for row in 4..20 {
+                assert!(ui.key_input(UiKey::Down));
+                assert_eq!(ui.text_area_caret(area), Some(row * line_len + 2), "size {size}");
+            }
+            for row in (3..19).rev() {
+                assert!(ui.key_input(UiKey::Up));
+                assert_eq!(ui.text_area_caret(area), Some(row * line_len + 2), "size {size}");
+            }
+            ui.key_input(UiKey::PageDown);
+            ui.key_input(UiKey::PageUp);
+            assert_eq!(ui.text_area_caret(area), Some(origin), "size {size}");
+        }
+    }
+
+    #[test]
+    fn page_keys_move_and_extend_selection_in_long_read_only_documents() {
+        let line = "SELECT '中文🙂';\n";
+        let original = line.repeat(80);
+        let line_len = line.chars().count();
+        let (mut ui, mut scene, area) = editor(&original);
+        ui.select_text_area_range(area, 2..2);
+        ui.set_text_area_read_only(area, true);
+        assert!(ui.key_input(UiKey::PageDown));
+        let first = ui.text_area_caret(area).unwrap();
+        assert!(first > line_len + 2, "PageDown must move more than one visual line");
+        assert_eq!(first % line_len, 2, "keep the caret's horizontal position");
+        assert_eq!(ui.text_area_selection(area), Some(first..first));
+        ui.sync(&mut scene);
+        assert!(ui.text_area_scroll(area).unwrap() > 0.0);
+        assert!(ui.key_input(UiKey::SelectPageDown));
+        let second = ui.text_area_caret(area).unwrap();
+        assert!(second > first);
+        assert_eq!(ui.text_area_selection(area), Some(first..second));
+        assert!(ui.key_input(UiKey::SelectPageUp));
+        assert_eq!(ui.text_area_caret(area), Some(first));
+        assert_eq!(ui.text_area_selection(area), Some(first..first));
+        assert!(ui.key_input(UiKey::PageUp));
+        assert_eq!(ui.text_area_caret(area), Some(2));
+        assert!(ui.key_input(UiKey::PageUp));
+        assert_eq!(ui.text_area_caret(area), Some(2));
+        for _ in 0..100 { assert!(ui.key_input(UiKey::PageDown)); }
+        assert_eq!(ui.text_area_caret(area), Some(original.chars().count()));
+        assert_eq!(ui.text_area_value(area), Some(original.as_str()));
+        let session = ui.text_area_state(area).unwrap();
+        let (mut next, _, next_area) = editor(&original);
+        assert!(next.restore_text_area_state(next_area, &session));
+        assert!(next.key_input(UiKey::SelectPageUp));
+        assert!(next.text_area_selection(next_area).unwrap().start < original.chars().count());
+        next.key_input(UiKey::Undo);
+        assert_eq!(next.text_area_value(next_area), Some(original.as_str()));
+    }
+
+    #[test]
+    fn page_keys_follow_wrapped_visual_lines_and_handle_tiny_or_empty_viewports() {
+        let original = "中文🙂".repeat(180);
+        let (mut ui, mut scene, area) = editor(&original);
+        ui.select_text_area_range(area, 0..0);
+        assert!(ui.key_input(UiKey::PageDown));
+        let normal = ui.text_area_caret(area).unwrap();
+        assert!(normal > 0 && normal < original.chars().count());
+        assert!(ui.key_input(UiKey::PageUp));
+        assert_eq!(ui.text_area_caret(area), Some(0));
+        let Kind::TextArea { style, .. } = &mut ui.widgets.get_mut(&area).unwrap().kind else { unreachable!() };
+        style.height = 1.0;
+        ui.sync(&mut scene);
+        assert!(ui.key_input(UiKey::SelectPageDown));
+        let tiny = ui.text_area_caret(area).unwrap();
+        assert!(tiny > 0 && tiny < normal, "a tiny viewport still advances one visual row");
+        assert_eq!(ui.text_area_selection(area), Some(0..tiny));
+        assert_eq!(ui.text_area_value(area), Some(original.as_str()));
+        ui.set_text_area_value(area, "");
+        for key in [UiKey::PageUp, UiKey::PageDown, UiKey::SelectPageUp, UiKey::SelectPageDown] {
+            assert!(ui.key_input(key));
+            assert_eq!(ui.text_area_caret(area), Some(0));
+            assert_eq!(ui.text_area_value(area), Some(""));
+        }
     }
 
     #[test]
