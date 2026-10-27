@@ -59,7 +59,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default/Collation, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
+| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default/Collation/first column CHECK, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
 | Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. Primary-key membership can also be added/changed/removed; AI can be enabled/disabled with type/key synchronization and sequence-safe rebuild; options/full constraint editing and moving tables remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
@@ -577,3 +577,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Declared collation editing progress (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-3a5677711d33.md): the editable Collation control loads actual declared metadata, offers registered names, preserves IME/focus across rebuilds and clears to default BINARY. CREATE/rebuild use quoted names and preserve effective constraint names; actual NOCASE/RTRIM/BINARY comparisons, uniqueness/FK conflict rollback and unknown-name drafts pass. 446 tests/strict checks, four Soft/Metal pairs and two native static forms inspected. CHECK/FK/generated/options/full constraints/move, original grid/tab presentation and native input acceptance remain.
+
+### Column CHECK editing progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-716541440405.md): first column CHECK reads/edits/removes through the safe rebuild, retains names and all untouched constraints/dependencies, validates data and rejects SQL tails atomically. Multiline SQL sessions follow column switch/reorder/add/remove. Shared TextArea now retains active composition, with focused CHECK/SQL/index restoration and current theme colors. 451 tests/strict checks, four Soft/Metal pairs and two native static forms inspected. Advanced column/table CHECK/FK/composite/generated/options editors, move, original grid/tab/preview layout and native acceptance remain.
