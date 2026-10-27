@@ -347,3 +347,12 @@ now carry modifiers on every host, including touch synthesis. 277 workspace test
 pass; native rendering was inspected, while native gesture and DB4S binary
 interoperability acceptance remain. See
 [R-20261027-a37bee216b33](../../docs/reviews/R-20261027-a37bee216b33.md).
+
+## Container rendering polish (2026-10-27)
+
+Fixed the shared no-background container visibility error behind black table
+bottom corners. Seven container types retain explicit fills, transparent gaps and
+child hits through full/partial repaint. 278 workspace tests pass; fresh e28
+Soft/Metal and every Office example window were visually inspected. This render
+check does not establish native input or full original interface parity. See
+[R-20261027-f434a694b24d](../../docs/reviews/R-20261027-f434a694b24d.md).

@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-f434a694b24d-F01 | verified | P2 | codex | shared / all | pre-existing layout | UI flex/panel/grid layout | 无背景容器被重新显示导致黑色底角；七类容器像素与命中回归通过 | [F01](R-20261027-f434a694b24d.md#r-20261027-f434a694b24d-f01) | f434a694b24d | f434a694b24d |
 | R-20261027-5e23229548d4-F01 | verified | P1 | codex | shared / e28 | a54e792 + rebuild path | UI key_table / e28 selection polling | 固定选择锚点，重建保留方向/焦点，拖选松手后同步 | [F01](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f01) | 15d4a96 / 5590dfb | 5e23229548d4 |
 | R-20261027-5e23229548d4-F02 | verified | P1 | codex | e28 / all | 36b7a52 | state paste_browse_tsv / db update_cells | 引号 TSV、类型保真剪贴板、逐记录原子粘贴与剪切回滚 | [F02](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f02) | 7df9386 / eb581ec / 7439f7c | 5e23229548d4 |
 | R-20261027-5e23229548d4-F03 | verified | P1 | codex | e28 / all | 3c323ea / 8f86cc7 | state browse/form/FK navigation | 草稿与查询失败保护，跨页保留列，缩小结果校正页码 | [F03](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f03) | 828908e / 141a9ab | 5e23229548d4 |
@@ -54,6 +55,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `3f05329..f434a694b24d` | Codex | issues — 278 tests/clippy/build/features pass; transparent wrapper black corners fixed, Soft/Metal and all Office renders inspected; full parity/native input remain | [Report](R-20261027-f434a694b24d.md) |
 | 2026-10-27 | `9031bee..a37bee216b33` | Codex | issues — 277 tests/clippy/build/features pass; ordered multi-sort, sorted exports, XML and pointer modifiers; full parity/native input remain | [Report](R-20261027-a37bee216b33.md) |
 | 2026-10-27 | `03b3ef74c0ec..a99567b81242` | Codex | issues — 271 tests/clippy/build/features pass; disabled buttons, browse boundaries and native Office render skim; full parity/native input remain | [Report](R-20261027-a99567b81242.md) |
 | 2026-10-27 | `e4f4cb17eb23..5e23229548d4` | Codex | issues — 266 tests, clippy/build/features pass; typed clipboard, atomic paste/cut, bounded snapshots, drag/focus and navigation repaired; evidence corrected; full parity/native input remain | [Report](R-20261027-5e23229548d4.md) |
