@@ -301,6 +301,7 @@ struct BuiltUiIds {
     ov_check: WidgetId,
     ov_without_rowid: WidgetId,
     ov_strict: WidgetId,
+    ov_pk_conflict: WidgetId,
     ov_nn: WidgetId,
     ov_unique: WidgetId,
     ov_default: WidgetId,
@@ -479,6 +480,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_check: b.ov_check,
             ov_without_rowid: b.ov_without_rowid,
             ov_strict: b.ov_strict,
+            ov_pk_conflict: b.ov_pk_conflict,
             ov_nn: b.ov_nn,
             ov_unique: b.ov_unique,
             ov_default: b.ov_default,
@@ -654,6 +656,17 @@ impl Demo {
                         MainTab::Browse
                     } else { MainTab::Structure }
                 }
+                "table-conflict" | "table-conflicted" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(code TEXT CONSTRAINT named_key PRIMARY KEY ON CONFLICT FAIL,note TEXT); INSERT INTO records VALUES('first','kept'),('second','key conflict policy');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_table_options.primary_key_conflict = Some(sqlite3_parser::ast::ResolveType::Replace);
+                    if tab == "table-conflicted" { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
+                }
                 "table-options" | "table-optioned" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(code TEXT PRIMARY KEY,amount INTEGER,note TEXT); INSERT INTO records VALUES('first',10,'kept'),('second',20,'strict values');").unwrap();
@@ -661,7 +674,7 @@ impl Demo {
                     let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
                     state.select_schema_node(10_000 + row as u64);
                     state.open_modify_table_wizard().unwrap();
-                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true };
+                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None };
                     if tab == "table-optioned" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
@@ -1143,6 +1156,9 @@ impl Demo {
             OverlayKind::EditTable => {
                 if let Some(on) = self.ui.is_checked(self.ids.ov_without_rowid) { self.state.wizard_table_options.without_rowid = on; }
                 if let Some(on) = self.ui.is_checked(self.ids.ov_strict) { self.state.wizard_table_options.strict = on; }
+                if let Some(index) = self.ui.select_selected(self.ids.ov_pk_conflict) {
+                    if let Some((_, action)) = table_sql::PRIMARY_KEY_CONFLICTS.get(index) { self.state.wizard_table_options.primary_key_conflict = *action; }
+                }
                 if self.ids.ov_schema.0 != 0 {
                     if let Some(index) = self.ui.select_selected(self.ids.ov_schema) {
                         if let Some(schema) = self.state.table_schemas().get(index) { self.state.wizard_schema = (*schema).into(); }
@@ -1419,6 +1435,10 @@ impl Demo {
             }
             self.ui.set_checked(self.ids.ov_ai, self.state.wizard_cols[sel].auto_increment);
         }
+        if previous_pk && !self.state.wizard_cols.iter().any(|column| column.pk) {
+            self.state.wizard_table_options.primary_key_conflict = None;
+            self.ui.set_select_selected(self.ids.ov_pk_conflict, Some(0));
+        }
         if self.ids.ov_nn.0 != 0 {
             if let Some(on) = self.ui.is_checked(self.ids.ov_nn) {
                 self.state.wizard_cols[sel].notnull = on;
@@ -1522,6 +1542,9 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let key_conflict_focused = self.state.overlay == Some(OverlayKind::EditTable)
+            && self.ui.focused() == Some(self.ids.ov_pk_conflict)
+            && self.ui.text_input_value(self.ids.ov_name) == Some(self.state.wizard_table_name.as_str());
         let check_focused = self.state.overlay == Some(OverlayKind::EditTable)
             && self.ui.focused() == Some(self.ids.ov_check)
             && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
@@ -1566,6 +1589,10 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if key_conflict_focused {
+            self.ui.set_focus(Some(self.ids.ov_pk_conflict));
+            self.ui.sync(&mut self.scene);
+        }
         if check_focused {
             self.ui.set_focus(Some(self.ids.ov_check));
             if let Some(Some(editor)) = self.state.wizard_column_check_states.get(self.state.wizard_col_sel) {
@@ -1661,7 +1688,18 @@ impl Demo {
     }
 
     fn set_error(&mut self, e: impl Into<String>) {
-        let e = e.into();
+        let mut e = e.into();
+        match self.state.recover_ended_transaction() {
+            Ok(true) => {
+                e.push_str("; SQLite ended the transaction; review earlier pending changes before continuing");
+                self.rebuild = true;
+            }
+            Ok(false) => {}
+            Err(recovery) => {
+                e.push_str(&format!("; could not refresh after the transaction ended: {recovery}"));
+                self.rebuild = true;
+            }
+        }
         if self.state.error_msg.as_deref() != Some(e.as_str()) {
             self.state.sql_log.push(crate::sql_log::Source::Error, &e);
         }
@@ -2500,7 +2538,8 @@ impl Demo {
                     .state
                     .wizard_col_sel
                     .min(self.state.wizard_cols.len() - 1);
-                self.state.wizard_cols.remove(i);
+                let removed = self.state.wizard_cols.remove(i);
+                if removed.pk && !self.state.wizard_cols.iter().any(|column| column.pk) { self.state.wizard_table_options.primary_key_conflict = None; }
                 self.state.wizard_column_check_states.remove(i);
                 if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.remove(i); }
                 if self.state.wizard_col_sel >= self.state.wizard_cols.len() {
@@ -6342,6 +6381,90 @@ mod interaction_tests {
     }
 
     #[test]
+    fn primary_key_conflict_control_saves_reopens_and_tracks_key_removal() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo = Demo::new(1400,1000,PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(code TEXT CONSTRAINT named_key PRIMARY KEY ON CONFLICT FAIL,note TEXT); INSERT INTO records VALUES('first','kept'),('second','key conflict policy');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema=="main" && o.name=="records" && o.kind==ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000+row as u64);
+            demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_pk_conflict).as_deref(),Some("Primary key conflict action"));
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_pk_conflict),Some(3));
+            demo.ui.set_select_selected(demo.ids.ov_pk_conflict,Some(5));
+            demo.ui.set_focus(Some(demo.ids.ov_pk_conflict));
+            demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.focused(),Some(demo.ids.ov_pk_conflict));
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_pk_conflict),Some(5));
+            demo.ui.set_text_input(demo.ids.ov_default,"0); DELETE FROM records; --");
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_some() && demo.state.overlay.is_some());
+            assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"records").unwrap(),2);
+            demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_pk_conflict),Some(5));
+            demo.ui.set_text_input(demo.ids.ov_default,""); demo.snapshot_inputs(); demo.clear_error();
+            for phase in ["draft","saved"] {
+                if phase=="saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_PK_CONFLICT_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("PK conflict {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("PK conflict GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn=demo.state.conn.as_ref().unwrap();
+            assert_eq!(conn.execute("INSERT INTO records VALUES('first','replacement')",[]).unwrap(),1);
+            assert_eq!(conn.query_row("SELECT note FROM records WHERE code='first'",[],|r|r.get::<_,String>(0)).unwrap(),"replacement");
+            demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_pk_conflict),Some(5));
+            demo.ui.set_select_selected(demo.ids.ov_pk_conflict,Some(0));
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            assert!(demo.state.conn.as_ref().unwrap().execute("INSERT INTO records VALUES('first','must fail')",[]).is_err());
+            demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+            demo.ui.set_select_selected(demo.ids.ov_pk_conflict,Some(3)); demo.snapshot_inputs();
+            demo.ui.set_checked(demo.ids.ov_pk,false); demo.snapshot_inputs();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_pk_conflict),Some(0));
+            assert_eq!(demo.state.wizard_table_options.primary_key_conflict,None);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            demo.state.conn.as_ref().unwrap().execute("INSERT INTO records VALUES('first','key removed')",[]).unwrap();
+            demo.state.open_create_table_wizard(); demo.do_rebuild();
+            assert_eq!(demo.ui.select_selected(demo.ids.ov_pk_conflict),Some(0));
+            demo.ui.set_checked(demo.ids.ov_pk,false); demo.snapshot_inputs();
+            demo.ui.set_select_selected(demo.ids.ov_pk_conflict,Some(4));
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.as_deref().is_some_and(|error|error.contains("primary-key column")));
+            demo.do_rebuild();
+            demo.ui.set_checked(demo.ids.ov_pk,true);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            let conn=demo.state.conn.as_ref().unwrap();
+            conn.execute("INSERT INTO new_table VALUES(1,'first')",[]).unwrap();
+            assert_eq!(conn.execute("INSERT INTO new_table VALUES(1,'ignored')",[]).unwrap(),0);
+        }
+    }
+
+    #[test]
     fn table_options_controls_validate_create_and_modify_and_reopen_actual_flags() {
         for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
             let mut demo = Demo::new(1400,1000,PresentBackend::Softbuffer);
@@ -6399,7 +6522,7 @@ mod interaction_tests {
                 }
             }
             let conn = demo.state.conn.as_ref().unwrap();
-            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true });
+            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None });
             assert!(conn.prepare("SELECT rowid FROM records").is_err());
             assert_eq!(conn.query_row("SELECT amount FROM records WHERE code='second'",[],|r|r.get::<_,String>(0)).unwrap(),"not an integer");
             demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
@@ -6419,7 +6542,7 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
             let conn = demo.state.conn.as_ref().unwrap();
-            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true });
+            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None });
             assert!(conn.execute("INSERT INTO created VALUES('bad','text')",[]).is_err());
             conn.execute("INSERT INTO created VALUES(1,'valid')",[]).unwrap();
         }
@@ -6956,6 +7079,41 @@ mod interaction_tests {
         demo.do_rebuild();
         demo.handle_button(demo.ids.btn_browse_clear_sort);
         assert!(demo.state.browse().ordering().is_empty());
+    }
+
+    #[test]
+    fn rollback_conflict_in_record_dialog_restores_unwritten_edit_transaction() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(code TEXT PRIMARY KEY ON CONFLICT ROLLBACK,note TEXT); INSERT INTO records VALUES('first','committed');").unwrap();
+        demo.state.write_changes().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("INSERT INTO records VALUES('pending','unwritten'); CREATE TABLE pending_schema(v);").unwrap();
+        demo.state.mark_dirty();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_mut().table = Some("records".into());
+        demo.state.refresh_browse().unwrap();
+        demo.state.tab = MainTab::Browse;
+        demo.state.open_insert_row().unwrap(); demo.do_rebuild();
+        for (i,value) in [(0,"first"),(1,"retained input")] {
+            demo.ui.set_select_selected(demo.ids.insert_modes[i],Some(2));
+            demo.ui.set_text_input(demo.ids.insert_values[i],value);
+        }
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.as_deref().is_some_and(|e|e.contains("UNIQUE constraint failed")));
+        assert!(!demo.state.conn.as_ref().unwrap().is_autocommit(), "failed ROLLBACK conflict left later GUI edits in autocommit");
+        assert!(!demo.state.dirty);
+        assert!(!demo.state.schema.iter().any(|o|o.name=="pending_schema"));
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(),1);
+        assert_eq!(demo.state.overlay,Some(OverlayKind::InsertRow));
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_input_value(demo.ids.insert_values[1]),Some("retained input"));
+        demo.ui.set_text_input(demo.ids.insert_values[0],"corrected");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+        assert!(demo.state.dirty);
+        assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"records").unwrap(),2);
+        demo.state.revert_changes().unwrap();
+        assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"records").unwrap(),1,"corrected record was committed before Write Changes");
     }
 
     #[test]

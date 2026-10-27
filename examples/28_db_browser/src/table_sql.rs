@@ -4,7 +4,8 @@ use fallible_iterator::FallibleIterator;
 use sqlite3_parser::{
     ast::{
         Cmd, ColFlags, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr, Name,
-        NamedTableConstraint, QualifiedName, SortedColumn, Stmt, TabFlags, TableConstraint,
+        NamedTableConstraint, QualifiedName, ResolveType, SortedColumn, Stmt, TabFlags,
+        TableConstraint,
     },
     lexer::sql::Parser,
 };
@@ -15,24 +16,106 @@ use crate::db::{self, ColDef};
 pub struct TableOptions {
     pub without_rowid: bool,
     pub strict: bool,
+    pub primary_key_conflict: Option<ResolveType>,
 }
 
+pub const PRIMARY_KEY_CONFLICTS: [(&str, Option<ResolveType>); 6] = [
+    ("Default", None),
+    ("ROLLBACK", Some(ResolveType::Rollback)),
+    ("ABORT", Some(ResolveType::Abort)),
+    ("FAIL", Some(ResolveType::Fail)),
+    ("IGNORE", Some(ResolveType::Ignore)),
+    ("REPLACE", Some(ResolveType::Replace)),
+];
+
 pub fn table_options(sql: &str) -> Result<TableOptions, String> {
+    table_options_of(&parse(sql)?)
+}
+
+fn table_options_of(command: &Cmd) -> Result<TableOptions, String> {
     let Cmd::Stmt(Stmt::CreateTable {
-        body: CreateTableBody::ColumnsAndConstraints { flags, .. },
+        body:
+            CreateTableBody::ColumnsAndConstraints {
+                flags,
+                columns,
+                constraints,
+            },
         ..
-    }) = parse(sql)?
+    }) = command
     else {
         return Err("Expected an ordinary CREATE TABLE definition".into());
     };
+    let mut primary_key_conflict = None;
+    for column in columns.values() {
+        for item in &column.constraints {
+            if let ColumnConstraint::PrimaryKey {
+                conflict_clause, ..
+            } = &item.constraint
+            {
+                primary_key_conflict = *conflict_clause;
+            }
+        }
+    }
+    for item in constraints.iter().flatten() {
+        if let TableConstraint::PrimaryKey {
+            conflict_clause, ..
+        } = &item.constraint
+        {
+            primary_key_conflict = *conflict_clause;
+        }
+    }
     Ok(TableOptions {
         without_rowid: flags.contains(TabFlags::WithoutRowid),
         strict: flags.contains(TabFlags::Strict),
+        primary_key_conflict,
     })
+}
+
+fn set_primary_key_conflict(command: &mut Cmd, action: Option<ResolveType>) -> Result<(), String> {
+    let Cmd::Stmt(Stmt::CreateTable {
+        body:
+            CreateTableBody::ColumnsAndConstraints {
+                columns,
+                constraints,
+                ..
+            },
+        ..
+    }) = command
+    else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    let mut found = false;
+    for column in columns.values_mut() {
+        for item in &mut column.constraints {
+            if let ColumnConstraint::PrimaryKey {
+                conflict_clause, ..
+            } = &mut item.constraint
+            {
+                *conflict_clause = action;
+                found = true;
+            }
+        }
+    }
+    for item in constraints.iter_mut().flatten() {
+        if let TableConstraint::PrimaryKey {
+            conflict_clause, ..
+        } = &mut item.constraint
+        {
+            *conflict_clause = action;
+            found = true;
+        }
+    }
+    if action.is_some() && !found {
+        return Err("Select a primary-key column before choosing its conflict action".into());
+    }
+    Ok(())
 }
 
 pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, String> {
     let mut command = parse(sql)?;
+    if table_options_of(&command)? == options {
+        return Ok(sql.to_string());
+    }
     let Cmd::Stmt(Stmt::CreateTable {
         body: CreateTableBody::ColumnsAndConstraints { flags, .. },
         ..
@@ -40,13 +123,9 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
     else {
         return Err("Expected an ordinary CREATE TABLE definition".into());
     };
-    if flags.contains(TabFlags::WithoutRowid) == options.without_rowid
-        && flags.contains(TabFlags::Strict) == options.strict
-    {
-        return Ok(sql.to_string());
-    }
     flags.set(TabFlags::WithoutRowid, options.without_rowid);
     flags.set(TabFlags::Strict, options.strict);
+    set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
     Ok(emit(command))
 }
 
@@ -430,6 +509,9 @@ pub fn rebuild_definition(
     *temporary = false;
     *if_not_exists = false;
     *tbl_name = qualified(schema, temporary_name);
+    if let Some(options) = options {
+        set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
+    }
     Ok(emit(command))
 }
 

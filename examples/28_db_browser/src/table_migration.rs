@@ -401,6 +401,188 @@ mod tests {
     use super::*;
 
     #[test]
+    fn primary_key_conflict_actions_match_sqlite_statement_and_transaction_semantics() {
+        for (_, action) in table_sql::PRIMARY_KEY_CONFLICTS {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t(k TEXT PRIMARY KEY,v TEXT); INSERT INTO t VALUES('original','kept'); BEGIN;").unwrap();
+            let draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+            let options = table_sql::TableOptions {
+                primary_key_conflict: action,
+                ..Default::default()
+            };
+            db::recreate_table_columns_in(
+                &conn,
+                "main",
+                "t",
+                "t",
+                &draft,
+                &[Some("k".into()), Some("v".into())],
+                Some(options),
+            )
+            .unwrap();
+            assert_eq!(db::table_options_in(&conn, "main", "t").unwrap(), options);
+            conn.execute_batch("COMMIT; BEGIN; INSERT INTO t VALUES('pending','unwritten');")
+                .unwrap();
+            let result = conn.execute("INSERT INTO t VALUES('new','before conflict'),('original','replacement'),('after','after conflict')",[]);
+            use sqlite3_parser::ast::ResolveType;
+            match action {
+                Some(ResolveType::Rollback) => {
+                    assert!(result.is_err());
+                    assert!(conn.is_autocommit());
+                    assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+                }
+                Some(ResolveType::Ignore) => {
+                    assert_eq!(result.unwrap(), 2);
+                    assert_eq!(count(&conn, "SELECT count(*) FROM t"), 4);
+                }
+                Some(ResolveType::Replace) => {
+                    assert_eq!(result.unwrap(), 3);
+                    assert_eq!(count(&conn, "SELECT count(*) FROM t"), 4);
+                }
+                Some(ResolveType::Fail) => {
+                    assert!(result.is_err());
+                    assert_eq!(count(&conn, "SELECT count(*) FROM t"), 3);
+                }
+                None | Some(ResolveType::Abort) => {
+                    assert!(result.is_err());
+                    assert_eq!(count(&conn, "SELECT count(*) FROM t"), 2);
+                }
+            }
+            assert_eq!(
+                conn.query_row("SELECT v FROM t WHERE k='original'", [], |r| r
+                    .get::<_, String>(0))
+                    .unwrap(),
+                if action == Some(ResolveType::Replace) {
+                    "replacement"
+                } else {
+                    "kept"
+                }
+            );
+            if !conn.is_autocommit() {
+                conn.execute_batch("ROLLBACK").unwrap();
+            }
+            assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+        }
+    }
+
+    #[test]
+    fn primary_key_conflict_edits_keep_names_key_details_and_other_policies_across_schemas() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            conn.execute_batch(&format!("CREATE TABLE {table}(a TEXT,b INTEGER,v TEXT CONSTRAINT other_unique UNIQUE ON CONFLICT IGNORE,CONSTRAINT named_key PRIMARY KEY(a COLLATE NOCASE DESC,b ASC) ON CONFLICT FAIL); INSERT INTO {table}(rowid,a,b,v) VALUES(7,'Alpha',1,'kept'); BEGIN;")).unwrap();
+            let draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            let sources = [Some("a".into()), Some("b".into()), Some("v".into())];
+            let mut options = db::table_options_in(&conn, schema, "t").unwrap();
+            assert_eq!(
+                options.primary_key_conflict,
+                Some(sqlite3_parser::ast::ResolveType::Fail)
+            );
+            for action in [
+                Some(sqlite3_parser::ast::ResolveType::Ignore),
+                Some(sqlite3_parser::ast::ResolveType::Replace),
+                None,
+            ] {
+                options.primary_key_conflict = action;
+                db::recreate_table_columns_in(
+                    &conn,
+                    schema,
+                    "t",
+                    "t",
+                    &draft,
+                    &sources,
+                    Some(options),
+                )
+                .unwrap();
+                assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
+                assert_eq!(count(&conn, &format!("SELECT rowid FROM {table}")), 7);
+                assert_eq!(
+                    conn.execute(&format!("INSERT INTO {table} VALUES('Other',2,'kept')"), [])
+                        .unwrap(),
+                    0,
+                    "the unrelated unique policy remains IGNORE"
+                );
+                let sql: String = conn
+                    .query_row(
+                        &format!(
+                            "SELECT sql FROM {}.sqlite_schema WHERE name='t'",
+                            db::quote_ident(schema)
+                        ),
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                for fragment in ["named_key", "other_unique", "COLLATE NOCASE DESC", "b ASC"] {
+                    assert!(sql.contains(fragment), "{sql}");
+                }
+            }
+            assert!(
+                conn.execute(
+                    &format!("INSERT INTO {table} VALUES('alpha',1,'different')"),
+                    []
+                )
+                .is_err(),
+                "key collation and default ABORT remain effective"
+            );
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(
+                db::table_options_in(&conn, schema, "t")
+                    .unwrap()
+                    .primary_key_conflict,
+                Some(sqlite3_parser::ast::ResolveType::Fail)
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_copy_aborts_even_for_rollback_ignore_or_replace_primary_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY,desired TEXT); INSERT INTO t VALUES(1,'duplicate'),(2,'duplicate'); BEGIN; INSERT INTO t VALUES(3,'pending');").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        draft[0].pk = false;
+        draft[1].pk = true;
+        for action in [
+            sqlite3_parser::ast::ResolveType::Rollback,
+            sqlite3_parser::ast::ResolveType::Ignore,
+            sqlite3_parser::ast::ResolveType::Replace,
+        ] {
+            let options = table_sql::TableOptions {
+                primary_key_conflict: Some(action),
+                ..Default::default()
+            };
+            assert!(db::recreate_table_columns_in(
+                &conn,
+                "main",
+                "t",
+                "t",
+                &draft,
+                &[Some("id".into()), Some("desired".into())],
+                Some(options)
+            )
+            .is_err());
+            assert!(
+                !conn.is_autocommit(),
+                "copy must not roll back the user's transaction"
+            );
+            assert_eq!(
+                count(&conn, "SELECT count(*) FROM t WHERE id IN(1,2,3)"),
+                3,
+                "copy must not discard or replace source rows"
+            );
+            assert_eq!(
+                db::table_options_in(&conn, "main", "t")
+                    .unwrap()
+                    .primary_key_conflict,
+                None
+            );
+        }
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 2);
+    }
+
+    #[test]
     fn table_options_preserve_data_keys_dependencies_and_pending_rollback() {
         for schema in ["main", "temp", "aux.\"db"] {
             let conn = Connection::open_in_memory().unwrap();
@@ -414,6 +596,7 @@ mod tests {
             let mut options = table_sql::TableOptions {
                 strict: true,
                 without_rowid: false,
+                primary_key_conflict: None,
             };
             db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
                 .unwrap();
@@ -532,10 +715,12 @@ mod tests {
         let strict = table_sql::TableOptions {
             strict: true,
             without_rowid: false,
+            primary_key_conflict: None,
         };
         let without_rowid = table_sql::TableOptions {
             strict: false,
             without_rowid: true,
+            primary_key_conflict: None,
         };
         for (name, options) in [
             ("t", strict),

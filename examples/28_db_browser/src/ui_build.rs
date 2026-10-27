@@ -180,6 +180,7 @@ pub struct BuiltUi {
     pub ov_check: WidgetId,
     pub ov_without_rowid: WidgetId,
     pub ov_strict: WidgetId,
+    pub ov_pk_conflict: WidgetId,
     pub ov_nn: WidgetId,
     pub ov_unique: WidgetId,
     pub ov_default: WidgetId,
@@ -458,6 +459,7 @@ pub fn build_ui(
     let mut ov_check = z;
     let mut ov_without_rowid = z;
     let mut ov_strict = z;
+    let mut ov_pk_conflict = z;
     let mut ov_nn = z;
     let mut ov_unique = z;
     let mut ov_default = z;
@@ -849,6 +851,13 @@ pub fn build_ui(
                                     r.tooltip("Enforce SQLite STRICT column types and stored values", |r| {
                                         ov_strict = r.switch_styled("Strict", state.wizard_table_options.strict, sw);
                                     });
+                                });
+                                c.row(row, |r| {
+                                    r.text("Primary key on conflict");
+                                    let mut selector = type_sel;
+                                    selector.width = 180.0;
+                                    ov_pk_conflict = r.select(crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().map(|(label,_)| *label),
+                                        crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().position(|(_,action)| *action == state.wizard_table_options.primary_key_conflict), "Default", selector);
                                 });
                                 let items: Vec<String> = state
                                     .wizard_cols
@@ -2067,6 +2076,7 @@ pub fn build_ui(
     ui.set_accessible_name(ov_check, "Column CHECK expression");
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
+    ui.set_accessible_name(ov_pk_conflict, "Primary key conflict action");
     if state.overlay == Some(OverlayKind::EditIndex) {
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");
@@ -2251,6 +2261,7 @@ pub fn build_ui(
         ov_check,
         ov_without_rowid,
         ov_strict,
+        ov_pk_conflict,
         ov_nn,
         ov_unique,
         ov_default,

@@ -2097,12 +2097,45 @@ impl AppState {
         self.status_msg = "Database closed".into();
     }
 
-    pub fn guard_writable(&self) -> Result<(), String> {
+    pub fn recover_ended_transaction(&mut self) -> Result<bool, String> {
+        let Some(conn) = self.conn.as_ref() else { return Ok(false); };
+        if self.read_only || !conn.is_autocommit() { return Ok(false); }
+        db::begin_deferred(conn)?;
+        self.dirty = false;
+        // ROLLBACK conflicts and triggers can invalidate every cached row identity.
+        for tab in &mut self.browse_tabs {
+            tab.result = None;
+            tab.rowids.clear();
+            tab.total_rows = None;
+            tab.clear_selection();
+        }
+        self.chart_points.clear();
+        self.refresh_schema()?;
+        if self.selected.as_ref().is_some_and(|selected| !self.schema.iter().any(|o| o.schema == selected.schema && o.kind == selected.kind && o.name == selected.name)) {
+            self.selected = None;
+        }
+        for tab in &mut self.browse_tabs {
+            if tab.table.as_ref().is_some_and(|table| !self.schema.iter().any(|o| o.schema == tab.schema && o.name == *table && matches!(o.kind, ObjectKind::Table | ObjectKind::View))) {
+                tab.table = None;
+            }
+        }
+        if self.chart_table.as_ref().is_some_and(|table| !self.schema.iter().any(|o| o.schema == self.chart_schema && o.name == *table && matches!(o.kind, ObjectKind::Table | ObjectKind::View))) {
+            self.chart_table = None;
+        }
+        if !self.has_cell_draft() { self.refresh_browse()?; }
+        self.refresh_chart()?;
+        Ok(true)
+    }
+
+    pub fn guard_writable(&mut self) -> Result<(), String> {
         if self.conn.is_none() {
             return Err("No database open".into());
         }
         if self.read_only {
             return Err("Database is open read-only".into());
+        }
+        if self.recover_ended_transaction()? {
+            return Err("SQLite ended the previous transaction; review earlier pending changes and retry".into());
         }
         Ok(())
     }
@@ -3377,6 +3410,46 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn ended_transaction_guard_invalidates_browse_identities_and_preserves_cell_draft() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TRIGGER reject_update BEFORE UPDATE ON t WHEN new.v='rejected' BEGIN SELECT RAISE(ROLLBACK,'rejected edit'); END;").unwrap();
+        state.write_changes().unwrap();
+        state.conn.as_ref().unwrap().execute_batch("INSERT INTO t VALUES('pending'); CREATE TABLE pending_schema(v);").unwrap();
+        state.mark_dirty();
+        state.refresh_schema().unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.add_browse_tab().unwrap();
+        state.goto_browse_record(1).unwrap();
+        state.edit_value = "rejected".into();
+        assert!(state.has_cell_draft());
+        assert!(state.apply_cell_draft().unwrap_err().contains("rejected edit"));
+        assert!(state.conn.as_ref().unwrap().is_autocommit());
+        assert!(state.guard_writable().unwrap_err().contains("previous transaction"));
+        assert!(!state.conn.as_ref().unwrap().is_autocommit());
+        assert!(!state.dirty);
+        assert!(!state.schema.iter().any(|o|o.name=="pending_schema"));
+        assert!(state.browse_tabs.iter().all(|t|t.result.is_none() && t.rowids.is_empty() && t.total_rows.is_none() && t.sel_row.is_none()));
+        assert_eq!(state.edit_value,"rejected");
+        assert!(state.has_cell_draft());
+        assert!(state.apply_cell_draft().unwrap_err().contains("Select a browse row"));
+        state.discard_cell_draft();
+        state.refresh_browse().unwrap();
+        state.goto_browse_record(1).unwrap();
+        state.edit_value = "corrected".into();
+        state.apply_cell_draft().unwrap();
+        state.revert_changes().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0],"saved");
+        assert!(!state.recover_ended_transaction().unwrap());
+        state.conn.as_ref().unwrap().execute_batch("ROLLBACK").unwrap();
+        state.read_only = true;
+        assert!(!state.recover_ended_transaction().unwrap());
+        assert!(state.conn.as_ref().unwrap().is_autocommit());
+        assert!(state.guard_writable().unwrap_err().contains("read-only"));
+        assert!(!AppState::empty().recover_ended_transaction().unwrap());
     }
 
     #[test]
