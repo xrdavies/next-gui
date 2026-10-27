@@ -553,3 +553,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Index key order and type checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-24b5a0495d77.md): selected-key ASC/DESC now uses SQLite expression preparation to preserve keyword-named operands, collations and comments. Order edits share Undo/Redo; row changes/reopen preserve raw SQL and selector focus. Available declaration types include generated columns and resist PRAGMA-table shadowing. 412 tests/strict checks, fourteen Soft/Metal pairs and two native static forms inspected. Exact upstream transfer filtering/interface, full table constraints/migrations and native acceptance remain unfinished.
+
+## Editable column declarations checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-30646db63f83.md): column types accept custom declarations or no type, with suggestions and rebuild-safe IME/selection/focus. Shared Autocomplete now supports clipboard, composition, bounded keyboard/wheel/pointer suggestions and readable theme highlights. Actual CREATE/ADD metadata and affinity pass across main/temp/quoted attachments; statement tails preserve the database. 418 tests/strict checks, twenty-two Soft/Metal pairs and native static captures inspected. Full table constraints/rebuild/move, richer editor selection/Undo and original/native acceptance remain unfinished.
