@@ -100,7 +100,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Structure toolbar: New Table, New Index, Modify, Delete, Refresh | done | Main wizards + Modify wired; schema-qualified Delete covers all namespaces. Attached/temp structured modify remains. |
-| Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Column/detail tree, object context actions and expansion/viewport sessions remain. |
+| Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Expansion, scroll, group selection and keyboard focus persist for the database session; active selection reveals ancestors. Column/detail tree, object context actions and project view persistence remain. |
 | Object SQL preview | partial | Schema identity retained in projects; attached/temp stored definitions are read-only, since SQLite removes their database/TEMP qualifiers. Structured qualified editing remains. |
 | Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
 | Print schema | partial | Text export only; no OS print dialog or preview. |
