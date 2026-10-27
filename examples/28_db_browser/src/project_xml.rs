@@ -328,7 +328,7 @@ pub fn decode(text: &str) -> Result<ProjectFile, String> {
     }
     if let Some(browse) = root.child("tab_browse") {
         let mut tabs = Vec::new();
-        for tab in browse.children().filter(|e| e.name == "table") {
+        for (index, tab) in browse.children().filter(|e| e.name == "table").enumerate() {
             let (schema, name) = object_id(tab.attr("table").unwrap_or("4,0:main"))?;
             // shortcut: attached-schema browse settings are preserved, apply after schema browsing is implemented.
             if schema != "main" {
@@ -336,8 +336,9 @@ pub fn decode(text: &str) -> Result<ProjectFile, String> {
             }
             let mut b = project
                 .browse_tabs
-                .iter()
-                .find(|b| b.table.as_deref() == Some(name))
+                .get(index)
+                .filter(|b| b.table.as_deref() == Some(name))
+                .or_else(|| project.browse_tabs.iter().find(|b| b.table.as_deref() == Some(name)))
                 .cloned()
                 .unwrap_or_else(|| BrowseTabState::new((!name.is_empty()).then(|| name.into())));
             b.title = tab.attr("title").unwrap_or(name).into();
@@ -528,7 +529,9 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let Content::Element(table) = &mut settings.content[index] else {
             unreachable!()
         };
-        if project.browse_tabs.iter().any(|tab| tab.table.as_deref() == Some(name.as_str())) {
+        if let Some(count) = options.frozen_cols {
+            table.set("freeze_columns", count.min(columns.len()));
+        } else if project.browse_tabs.iter().any(|tab| tab.table.as_deref() == Some(name.as_str())) {
             table.set("freeze_columns", project.frozen_cols.min(columns.len()));
         }
         let sort = table.ensure("sort");
@@ -582,6 +585,13 @@ fn restore_table_options(
     table: &Element,
     columns: &[String],
 ) -> Result<(), String> {
+    if let Some(count) = table.attr("freeze_columns") {
+        tab.frozen_cols = Some(
+            count.parse::<usize>()
+                .map_err(|_| "Invalid project frozen column count")?
+                .min(columns.len()),
+        );
+    }
     if let Some(sort) = table.child("sort") {
         tab.set_ordering(
             sort.children()
@@ -670,7 +680,12 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             } else if let Some(options) = tab.table_options.get(name) {
                 stored.set_options(options.clone());
             }
+            // Per-tab overrides take precedence over DB4S's shared table setting.
+            let frozen_override = stored.frozen_cols;
             restore_table_options(&mut stored, table, &columns)?;
+            if frozen_override.is_some() {
+                stored.frozen_cols = frozen_override;
+            }
             if active {
                 tab.set_options(stored.options());
                 project.frozen_cols = table

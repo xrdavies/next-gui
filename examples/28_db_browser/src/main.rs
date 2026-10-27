@@ -2328,8 +2328,11 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_freeze {
-            self.state.frozen_cols = if self.state.frozen_cols == 0 { 1 } else { 0 };
-            self.state.status_msg = format!("Frozen columns = {}", self.state.frozen_cols);
+            let count = if self.state.browse_frozen_cols() == 0 {
+                self.state.browse().sel_col.unwrap_or(0).saturating_add(1)
+            } else { 0 };
+            self.state.browse_mut().frozen_cols = Some(count);
+            self.state.status_msg = format!("Frozen columns = {}", self.state.browse_frozen_cols());
             self.rebuild = true;
             return;
         }

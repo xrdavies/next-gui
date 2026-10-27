@@ -598,6 +598,7 @@ fn per_table_filters_sort_and_widths_restore_in_each_tab_and_project_roundtrip()
             },
         ],
         column_widths: vec![147.0, 231.0],
+        frozen_cols: Some(0),
     };
     demo.state.browse_mut().set_options(options.clone());
     demo.state.refresh_browse().unwrap();
@@ -716,6 +717,7 @@ fn native_xml_restores_and_writes_options_for_tables_that_are_not_active() {
     );
     project.apply_to(&mut demo.state);
     demo.state.switch_browse_table("t").unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 1);
     assert_eq!(demo.state.browse().column_widths, [177.0, 233.0]);
     assert_eq!(demo.state.browse().global_filters, ["row"]);
     assert_eq!(demo.state.browse().col_filters[0], "<=9");
@@ -723,6 +725,7 @@ fn native_xml_restores_and_writes_options_for_tables_that_are_not_active() {
     demo.state.browse_mut().col_filters[0] = "<7".into();
     demo.state.refresh_browse().unwrap();
     demo.state.switch_browse_table("u").unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 0);
     let mut project = project::ProjectFile::from_state(&demo.state);
     project_xml::capture_connection(&mut project, demo.state.conn.as_ref().unwrap()).unwrap();
     let mut xml = project_xml::encode(&project, std::path::Path::new("native.sqbpro")).unwrap();
@@ -738,10 +741,12 @@ fn native_xml_restores_and_writes_options_for_tables_that_are_not_active() {
     assert_eq!(stored.ordering[0].column, "n");
     assert!(stored.ordering[0].descending);
     assert_eq!(stored.global_filters, ["row"]);
-    native.browse_tabs[0].table = Some("t".into());
-    project_xml::restore_browse(&mut native, demo.state.conn.as_ref().unwrap()).unwrap();
+    assert_eq!(stored.frozen_cols, Some(1));
+    native.apply_to(&mut demo.state);
+    demo.state.switch_browse_table("t").unwrap();
     assert_eq!(
-        native.frozen_cols, 1,
+        demo.state.browse_frozen_cols(),
+        1,
         "inactive freeze metadata survives saving other options"
     );
 }
@@ -782,5 +787,149 @@ fn opening_a_project_preflights_saved_tables_before_replacing_the_database() {
             db::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
             1205
         );
+    }
+}
+
+#[test]
+fn freeze_uses_selected_column_and_keeps_frozen_cells_and_filters_stationary() {
+    let mut demo = demo();
+    demo.state.frozen_cols = 0;
+    demo.state
+        .conn
+        .as_ref()
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE t ADD COLUMN c; ALTER TABLE t ADD COLUMN d; CREATE TABLE u(other)",
+        )
+        .unwrap();
+    demo.state.refresh_schema().unwrap();
+    demo.state.refresh_browse().unwrap();
+    demo.state.browse_mut().column_widths = vec![240.0; 4];
+    demo.state.browse_mut().sel_col = Some(1);
+    demo.win_w = 1000;
+    demo.do_rebuild();
+    demo.handle_button(demo.ids.btn_freeze);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse_frozen_cols(), 2);
+    demo.ui
+        .set_table_scroll_offset(demo.ids.browse_table, 150.0, 0.0);
+    demo.ui.sync(&mut demo.scene);
+    let table = demo
+        .scene
+        .iter_paint_order()
+        .into_iter()
+        .find(|node| demo.ui.widget_from_node(node.id) == Some(demo.ids.browse_table))
+        .unwrap()
+        .bounds;
+    let field = demo.ids.browse_col_filters[0];
+    let filter = demo
+        .scene
+        .iter_paint_order()
+        .into_iter()
+        .find(|node| demo.ui.widget_from_node(node.id) == Some(field))
+        .unwrap()
+        .bounds;
+    let style = next_gui_ui::TableStyle::from_theme(&demo.theme);
+    assert!((filter.x - table.x - style.padding - 2.0).abs() < 0.01);
+    assert!(demo.ui.pointer_pressed(
+        &mut demo.scene,
+        table.x + 150.0,
+        table.y + style.header_height + 12.0
+    ));
+    demo.ui.pointer_released();
+    assert_eq!(demo.ui.table_selected_col(demo.ids.browse_table), Some(0));
+    demo.snapshot_inputs();
+    demo.state.switch_browse_table("u").unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 0);
+    demo.state.switch_browse_table("t").unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 2);
+    demo.do_rebuild();
+    if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+        demo.scene
+            .mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+        let dirty = demo.scene.take_dirty();
+        let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+        renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+        write_ppm(
+            &path,
+            renderer.frame_pixels().unwrap().0,
+            demo.win_w,
+            demo.win_h,
+        )
+        .unwrap();
+    }
+    demo.handle_button(demo.ids.btn_freeze);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().frozen_cols, Some(0));
+    demo.state.switch_browse_table("u").unwrap();
+    demo.state.switch_browse_table("t").unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 0);
+    let mut empty = Demo::new(1000, 700, PresentBackend::Softbuffer);
+    empty.state.close_db();
+    empty.state.tab = MainTab::Browse;
+    empty.do_rebuild();
+    assert_eq!(empty.ui.button_enabled(empty.ids.btn_freeze), Some(false));
+}
+
+#[test]
+fn frozen_overrides_roundtrip_per_tab_and_legacy_projects_keep_the_global_count() {
+    let mut demo = demo();
+    demo.state.frozen_cols = 0;
+    demo.state.browse_mut().frozen_cols = Some(2);
+    demo.state.add_browse_tab().unwrap();
+    demo.state.switch_browse_table("t").unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 0);
+    demo.state.browse_mut().filter = "n<10".into();
+    demo.state.refresh_browse().unwrap();
+    demo.state.switch_browse_tab(0).unwrap();
+    let mut project = project::ProjectFile::from_state(&demo.state);
+    project_xml::capture_connection(&mut project, demo.state.conn.as_ref().unwrap()).unwrap();
+    let json = serde_json::to_string(&project).unwrap();
+    let xml = project_xml::encode(&project, std::path::Path::new("freeze.sqbpro")).unwrap();
+    for mut restored in [
+        serde_json::from_str::<project::ProjectFile>(&json).unwrap(),
+        project_xml::decode(&xml).unwrap(),
+    ] {
+        project_xml::restore_browse(&mut restored, demo.state.conn.as_ref().unwrap()).unwrap();
+        restored.apply_to(&mut demo.state);
+        demo.state.refresh_browse().unwrap();
+        assert_eq!(demo.state.browse_frozen_cols(), 2);
+        demo.state.switch_browse_tab(1).unwrap();
+        assert_eq!(demo.state.browse_frozen_cols(), 0);
+        assert_eq!(demo.state.browse().filter, "n<10");
+    }
+    let mut legacy = serde_json::to_value(&project).unwrap();
+    legacy["frozen_cols"] = serde_json::json!(1);
+    for tab in legacy["browse_tabs"].as_array_mut().unwrap() {
+        tab.as_object_mut().unwrap().remove("frozen_cols");
+    }
+    let legacy: project::ProjectFile = serde_json::from_value(legacy).unwrap();
+    legacy.apply_to(&mut demo.state);
+    demo.state.refresh_browse().unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 1);
+    demo.state.switch_browse_tab(1).unwrap();
+    assert_eq!(demo.state.browse_frozen_cols(), 1);
+    demo.state.browse_mut().frozen_cols = Some(usize::MAX);
+    assert_eq!(demo.state.browse_frozen_cols(), 2);
+}
+
+#[test]
+fn native_frozen_counts_are_validated_and_clamped_to_the_table_columns() {
+    let demo = demo();
+    for (value, expected) in [
+        ("0", Some(0)),
+        ("999", Some(2)),
+        ("-1", None),
+        ("invalid", None),
+    ] {
+        let xml = format!("<sqlb_project><db path=':memory:'/><tab_browse><table table='4,1:maint'/><browse_table_settings><table name='t' schema='main' freeze_columns='{value}'/></browse_table_settings></tab_browse></sqlb_project>");
+        let mut project = project_xml::decode(&xml).unwrap();
+        let restored = project_xml::restore_browse(&mut project, demo.state.conn.as_ref().unwrap());
+        if let Some(expected) = expected {
+            restored.unwrap();
+            assert_eq!(project.browse_tabs[0].frozen_cols, Some(expected));
+        } else {
+            assert!(restored.unwrap_err().contains("frozen column count"));
+        }
     }
 }

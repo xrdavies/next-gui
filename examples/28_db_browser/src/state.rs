@@ -120,6 +120,7 @@ pub struct BrowseTableOptions {
     pub col_filters: Vec<String>,
     pub ordering: Vec<db::OrderBy>,
     pub column_widths: Vec<f32>,
+    pub frozen_cols: Option<usize>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -140,6 +141,8 @@ pub struct BrowseTabState {
     pub additional_order: Vec<db::OrderBy>,
     #[serde(default)]
     pub column_widths: Vec<f32>,
+    #[serde(default)]
+    pub frozen_cols: Option<usize>,
     #[serde(default)]
     pub scroll: (f32, f32),
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -174,6 +177,7 @@ impl BrowseTabState {
             col_filters: self.col_filters.clone(),
             ordering: self.ordering(),
             column_widths: self.column_widths.clone(),
+            frozen_cols: self.frozen_cols,
         }
     }
 
@@ -183,6 +187,7 @@ impl BrowseTabState {
         self.col_filters = options.col_filters;
         self.set_ordering(options.ordering);
         self.column_widths = options.column_widths;
+        self.frozen_cols = options.frozen_cols;
     }
 
     pub fn ordering(&self) -> Vec<db::OrderBy> {
@@ -219,6 +224,7 @@ impl BrowseTabState {
             order_desc: false,
             additional_order: Vec::new(),
             column_widths: Vec::new(),
+            frozen_cols: None,
             scroll: (0.0, 0.0),
             table_options: BTreeMap::new(),
             result: None,
@@ -643,6 +649,12 @@ impl AppState {
             .get(self.browse_tab_idx)
             .or_else(|| self.browse_tabs.first())
             .expect("browse tabs")
+    }
+
+    pub fn browse_frozen_cols(&self) -> usize {
+        let tab = self.browse();
+        let count = tab.frozen_cols.unwrap_or(self.frozen_cols);
+        tab.result.as_ref().map_or(count, |result| count.min(result.columns.len()))
     }
 
     pub fn browse_mut(&mut self) -> &mut BrowseTabState {

@@ -40,6 +40,13 @@ pub struct ProjectFile {
 impl ProjectFile {
     pub fn from_state(state: &AppState) -> Self {
         let b = state.browse();
+        let mut browse_tabs = state.browse_tabs.clone();
+        for tab in &mut browse_tabs {
+            tab.frozen_cols.get_or_insert(state.frozen_cols);
+            for options in tab.table_options.values_mut() {
+                options.frozen_cols.get_or_insert(state.frozen_cols);
+            }
+        }
         Self {
             db_path: state.path.clone(),
             db4s_xml: state.project_xml.clone(),
@@ -53,7 +60,7 @@ impl ProjectFile {
             main_tab: state.tab.index(),
             browse_table: b.table.clone(),
             browse_filter: b.filter.clone(),
-            browse_tabs: state.browse_tabs.clone(),
+            browse_tabs,
             browse_tab_idx: state.browse_tab_idx,
             sql_tabs: state.sql_tabs.clone(),
             sql_files: state.sql_files.clone(),
@@ -62,7 +69,7 @@ impl ProjectFile {
             dock_schema: state.dock_schema,
             dock_log: state.dock_log,
             dock_plot: state.dock_plot,
-            frozen_cols: state.frozen_cols,
+            frozen_cols: state.browse_frozen_cols(),
             toolbar_db: state.toolbar_db,
             toolbar_extra: state.toolbar_extra,
             toolbar_project: state.toolbar_project,
@@ -115,7 +122,7 @@ impl ProjectFile {
         state.dock_schema = self.dock_schema;
         state.dock_log = self.dock_log;
         state.dock_plot = self.dock_plot;
-        state.frozen_cols = self.frozen_cols;
+        state.frozen_cols = state.prefs.frozen_cols_default;
         state.toolbar_db = self.toolbar_db;
         state.toolbar_extra = self.toolbar_extra;
         state.toolbar_project = self.toolbar_project;
@@ -134,6 +141,9 @@ impl ProjectFile {
             state.browse_tabs = vec![BrowseTabState::new(Some(t.clone()))];
             state.browse_tab_idx = 0;
             state.browse_mut().filter = self.browse_filter.clone();
+        }
+        for tab in &mut state.browse_tabs {
+            if tab.frozen_cols.is_none() { tab.frozen_cols = Some(self.frozen_cols); }
         }
     }
 }

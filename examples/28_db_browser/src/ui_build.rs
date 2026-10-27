@@ -1363,7 +1363,9 @@ pub fn build_ui(
                                     crate::state::BrowseViewMode::Table => "Form View",
                                     crate::state::BrowseViewMode::Form => "Grid View",
                                 });
-                                btn_freeze = row.tool_button(format!("Freeze {}", state.frozen_cols));
+                                btn_freeze = row.tool_button(if state.browse_frozen_cols() == 0 {
+                                    "Freeze columns".into()
+                                } else { format!("Unfreeze {} columns", state.browse_frozen_cols()) });
                                 btn_cond_fmt = row.tool_button("Cond Format…");
                                 btn_fk_nav = row.tool_button("FK →");
                             });
@@ -1856,7 +1858,7 @@ pub fn build_ui(
             }
         }
         if browse_table.0 != 0 {
-            ui.set_table_frozen_cols(browse_table, state.frozen_cols);
+            ui.set_table_frozen_cols(browse_table, state.browse_frozen_cols());
             ui.set_table_cell_bg(browse_table, state.cell_format_colors());
             for (column, width) in state.browse().column_widths.iter().enumerate() {
                 ui.set_table_column_width(browse_table, column, *width);
@@ -1921,6 +1923,7 @@ pub fn build_ui(
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
     ui.set_button_enabled(btn_browse_clear_sort, can_browse && !browse.ordering().is_empty());
+    ui.set_button_enabled(btn_freeze, can_browse && browse.result.as_ref().is_some_and(|result| !result.columns.is_empty()));
     let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));
     ui.set_button_enabled(btn_record_prev, can_browse && loaded > 0 && record > 0);
     ui.set_button_enabled(btn_record_next, can_browse && loaded > 0 && (browse.sel_row.is_none() || record.saturating_add(1) < total));
