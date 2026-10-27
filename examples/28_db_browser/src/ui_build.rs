@@ -1939,6 +1939,9 @@ pub fn build_ui(
     let loaded = browse.result.as_ref().map_or(0, |r| r.rows.len());
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
+    for id in [btn_browse_new_tab, btn_browse_close_tab].into_iter().chain(browse_tab_btns.iter().copied()) {
+        ui.set_button_enabled(id, !state.sql_busy);
+    }
     ui.set_button_enabled(btn_browse_clear_sort, can_browse && !browse.ordering().is_empty());
     ui.set_button_enabled(btn_freeze, can_browse && browse.result.as_ref().is_some_and(|result| !result.columns.is_empty()));
     let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));

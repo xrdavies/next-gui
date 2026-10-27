@@ -211,6 +211,41 @@ impl BrowseTabState {
         self.sel_col_end = None;
     }
 
+    // shortcut: remap within the refreshed preview; extend with whole-result virtual selection.
+    fn restore_selection(&mut self, previous: &Self) {
+        let (Some(row), Some(old), Some(new)) = (previous.sel_row, &previous.result, &self.result) else { return; };
+        if self.table != previous.table || old.columns != new.columns || old.columns.is_empty() { return; }
+        let anchor = previous.sel_row_start.unwrap_or(row);
+        let end = previous.sel_row_end.unwrap_or(row);
+        let first = row.min(anchor).min(end);
+        let last = row.max(anchor).max(end);
+        if last >= old.rows.len() || [previous.sel_col, previous.sel_col_start, previous.sel_col_end]
+            .into_iter().flatten().any(|col| col >= new.columns.len()) { return; }
+        let start = if previous.rowids.len() == old.rows.len() && self.rowids.len() == new.rows.len() {
+            let Some(start) = self.rowids.iter().position(|id| *id == previous.rowids[first]) else { return; };
+            if self.rowids.get(start..start + last - first + 1) != Some(&previous.rowids[first..=last]) { return; }
+            start
+        } else {
+            // Without a stable row key, retain only unchanged typed rows at the same positions.
+            if self.offset != previous.offset || last >= new.rows.len() || (first..=last).any(|row| {
+                let cols = 0..=old.columns.len() - 1;
+                match (old.values.rectangle(row..=row, cols.clone()), new.values.rectangle(row..=row, cols)) {
+                    (Ok(old), Ok(new)) => old != new,
+                    _ => true,
+                }
+            }) { return; }
+            first
+        };
+        let mapped = |row| start + row - first;
+        self.sel_row = Some(mapped(row));
+        self.sel_row_start = previous.sel_row_start.map(mapped);
+        self.sel_row_end = previous.sel_row_end.map(mapped);
+        self.sel_col = previous.sel_col;
+        self.sel_col_start = previous.sel_col_start;
+        self.sel_col_end = previous.sel_col_end;
+        self.goto_record = self.offset.saturating_add(mapped(row)).saturating_add(1).to_string();
+    }
+
     pub fn new(table: Option<String>) -> Self {
         let title = table.clone().unwrap_or_else(|| "Browse".into());
         Self {
@@ -1846,7 +1881,16 @@ impl AppState {
         }
     }
 
+    fn refresh_browse_tab(&mut self) -> Result<(), String> {
+        let previous = self.browse().clone();
+        self.refresh_browse()?;
+        self.browse_mut().restore_selection(&previous);
+        self.sync_edit_cell_from_selection();
+        Ok(())
+    }
+
     pub fn add_browse_tab(&mut self) -> Result<(), String> {
+        if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let table = self.browse().table.clone().or_else(|| {
             self.schema.iter().find(|o| o.kind == ObjectKind::Table).map(|o| o.name.clone())
@@ -1863,6 +1907,7 @@ impl AppState {
     }
 
     pub fn close_browse_tab(&mut self) -> Result<(), String> {
+        if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.browse_tabs.len() <= 1 {
             self.browse_tabs[0] = BrowseTabState::new(None);
@@ -1872,7 +1917,7 @@ impl AppState {
             let old_index = self.browse_tab_idx;
             let closed = self.browse_tabs.remove(old_index);
             self.browse_tab_idx = old_index.min(self.browse_tabs.len() - 1);
-            if let Err(e) = self.refresh_browse() {
+            if let Err(e) = self.refresh_browse_tab() {
                 self.browse_tabs.insert(old_index, closed);
                 self.browse_tab_idx = old_index;
                 return Err(e);
@@ -1883,11 +1928,12 @@ impl AppState {
     }
 
     pub fn switch_browse_tab(&mut self, index: usize) -> Result<(), String> {
+        if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if index >= self.browse_tabs.len() { return Err("Browse tab no longer exists".into()); }
         let old_index = self.browse_tab_idx;
         self.browse_tab_idx = index;
-        if let Err(e) = self.refresh_browse() {
+        if let Err(e) = self.refresh_browse_tab() {
             self.browse_tab_idx = old_index;
             return Err(e);
         }
@@ -3698,6 +3744,125 @@ mod chart_default_tests {
         state.form_prev_record().unwrap();
         assert_eq!(state.browse().offset, 0);
         assert_eq!(state.browse().sel_row, Some(499));
+    }
+
+    #[test]
+    fn browse_tab_switch_restores_selection_and_editor() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("INSERT INTO t VALUES('second'),('third');").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        {
+            let tab = state.browse_mut();
+            tab.sel_row = Some(0);
+            tab.sel_row_start = Some(2);
+            tab.sel_row_end = Some(0);
+            tab.sel_col = Some(0);
+            tab.sel_col_start = Some(0);
+            tab.sel_col_end = Some(0);
+            tab.scroll = (0.0, 12.0);
+        }
+        state.sync_edit_cell_from_selection();
+        state.add_browse_tab().unwrap();
+        state.browse_mut().sel_row = Some(1);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.switch_browse_tab(0).unwrap();
+        assert_eq!(state.browse().sel_row, Some(0));
+        assert_eq!(state.browse().sel_row_start, Some(2));
+        assert_eq!(state.browse().sel_row_end, Some(0));
+        assert_eq!(state.browse().sel_col, Some(0));
+        assert_eq!(state.browse().scroll, (0.0, 12.0));
+        assert_eq!(state.edit_value, "saved");
+        assert!(!state.has_cell_draft());
+        state.close_browse_tab().unwrap();
+        assert_eq!(state.browse().sel_row, Some(1));
+        assert_eq!(state.edit_value, "second");
+    }
+
+    #[test]
+    fn browse_tab_selection_tracks_rowids_and_clears_invalid_rectangles() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("INSERT INTO t VALUES('second'),('third');").unwrap();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(1);
+        state.browse_mut().sel_row_start = Some(2);
+        state.browse_mut().sel_row_end = Some(1);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.add_browse_tab().unwrap();
+        state.conn.as_ref().unwrap().execute_batch("DELETE FROM t WHERE rowid=1; UPDATE t SET v='updated' WHERE rowid=2;").unwrap();
+        state.switch_browse_tab(0).unwrap();
+        assert_eq!(state.browse().sel_row, Some(0));
+        assert_eq!(state.browse().sel_row_start, Some(1));
+        assert_eq!(state.browse().sel_row_end, Some(0));
+        assert_eq!(state.edit_value, "updated");
+        state.switch_browse_tab(1).unwrap();
+        state.conn.as_ref().unwrap().execute_batch("DELETE FROM t WHERE rowid=3;").unwrap();
+        state.switch_browse_tab(0).unwrap();
+        assert!(state.browse().sel_row.is_none(), "missing rows invalidate the whole rectangle");
+        assert!(state.browse().sel_col.is_none());
+        assert!(state.edit_col.is_empty());
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.switch_browse_tab(1).unwrap();
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE t RENAME COLUMN v TO renamed;").unwrap();
+        state.switch_browse_tab(0).unwrap();
+        assert!(state.browse().sel_row.is_none());
+        assert!(state.edit_col.is_empty());
+    }
+
+    #[test]
+    fn browse_tab_selection_without_rowids_requires_unchanged_typed_rows() {
+        for table in ["wr", "vw"] {
+            let mut state = test_state();
+            state.conn.as_ref().unwrap().execute_batch("CREATE TABLE wr(k TEXT PRIMARY KEY, v) WITHOUT ROWID;
+                INSERT INTO wr VALUES('a',X'0102'),('b',''); CREATE VIEW vw AS SELECT * FROM wr;").unwrap();
+            state.refresh_schema().unwrap();
+            state.browse_mut().table = Some(table.into());
+            state.refresh_browse().unwrap();
+            assert!(state.browse().rowids.is_empty());
+            state.browse_mut().sel_row = Some(0);
+            state.browse_mut().sel_col = Some(1);
+            state.sync_edit_cell_from_selection();
+            state.add_browse_tab().unwrap();
+            state.switch_browse_tab(0).unwrap();
+            assert_eq!(state.browse().sel_row, Some(0));
+            assert_eq!(state.edit_value, "0102");
+            state.switch_browse_tab(1).unwrap();
+            state.conn.as_ref().unwrap().execute_batch("UPDATE wr SET v=X'0304' WHERE k='a';").unwrap();
+            state.switch_browse_tab(0).unwrap();
+            assert!(state.browse().sel_row.is_none(), "same-length BLOB display labels are not identity");
+            assert!(state.edit_col.is_empty());
+        }
+    }
+
+    #[test]
+    fn browse_tab_navigation_rejects_worker_owned_connection_without_mutation() {
+        let mut state = test_state();
+        state.browse_mut().table = Some("t".into());
+        state.refresh_browse().unwrap();
+        state.add_browse_tab().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.sync_edit_cell_from_selection();
+        state.start_sql_text("SELECT 1".into()).unwrap();
+        assert!(state.conn.is_none());
+        assert!(state.add_browse_tab().is_err());
+        assert!(state.close_browse_tab().is_err());
+        assert!(state.switch_browse_tab(0).is_err());
+        assert_eq!(state.browse_tabs.len(), 2);
+        assert_eq!(state.browse_tab_idx, 1);
+        assert_eq!(state.browse().sel_row, Some(0));
+        assert_eq!(state.edit_value, "saved");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(state.conn.is_some());
     }
 
     #[test]

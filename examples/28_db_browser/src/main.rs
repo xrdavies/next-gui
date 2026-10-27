@@ -3665,6 +3665,68 @@ mod interaction_tests {
     }
 
     #[test]
+    fn browse_tab_buttons_restore_directional_selection_and_reject_busy_switches() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.run_sql_text_sync("CREATE TABLE t(a,b,c); INSERT INTO t VALUES(0,1,2),(3,4,5),(6,7,8),(9,10,11);").unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.tab = MainTab::Browse;
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((3, 3)), Some((2, 2)));
+        demo.ui.set_focus(Some(demo.ids.browse_table));
+        for key in [UiKey::SelectUp, UiKey::SelectUp, UiKey::SelectLeft, UiKey::SelectLeft] {
+            assert!(demo.ui.key_input(key));
+        }
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.btn_browse_new_tab);
+        demo.do_rebuild();
+        demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((2, 2)), Some((1, 1)));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.browse_tab_btns[0]);
+        demo.do_rebuild();
+        assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((1, 3)));
+        assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 2)));
+        assert_eq!(demo.ui.table_selection_anchor(demo.ids.browse_table), Some((3, Some(2))));
+        assert_eq!(demo.state.edit_col, "a");
+        assert_eq!(demo.state.edit_value, "3");
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(demo.win_w as f32, demo.win_h as f32);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(demo.win_w, demo.win_h, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
+        }
+        demo.ui.set_focus(Some(demo.ids.browse_table));
+        assert!(demo.ui.key_input(UiKey::SelectDown));
+        demo.poll_selection_changes();
+        assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((2, 3)));
+        demo.do_rebuild();
+        demo.handle_button(demo.ids.btn_browse_close_tab);
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse_tabs.len(), 1);
+        assert_eq!(demo.ui.table_selected_row(demo.ids.browse_table), Some(2));
+        assert_eq!(demo.state.edit_value, "7");
+        demo.state.start_sql_text("SELECT 1".into()).unwrap();
+        demo.do_rebuild();
+        for id in [demo.ids.btn_browse_new_tab, demo.ids.btn_browse_close_tab, demo.ids.browse_tab_btns[0]] {
+            assert_eq!(demo.ui.button_enabled(id), Some(false));
+            demo.handle_button(id);
+        }
+        assert_eq!(demo.state.browse_tabs.len(), 1);
+        assert_eq!(demo.state.browse().sel_row, Some(2));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !demo.state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        demo.do_rebuild();
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_browse_new_tab), Some(true));
+    }
+
+    #[test]
     fn backwards_browse_selection_keeps_anchor_through_every_rebuild() {
         let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
         demo.state.new_memory_db().unwrap();
