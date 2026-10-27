@@ -25,6 +25,12 @@
 
 `examples/02_counter`（及同类 Soft demo）在 `key_input` 之后 drain `take_button_activate`，与 `hit_widget` 点击共用同一套按钮逻辑。
 
+按钮默认启用。`set_button_enabled(id, false)` 从焦序中移除该按钮，拒绝直接设焦点，
+清除其焦点和待处理的键盘激活；指针按下返回 true 消费事件，并保留其他控件的焦点。
+`button_enabled(id)` 可供应用处理直接调用的动作；`hit_widget` 仍能命中禁用按钮，
+因此应用应先检查 `pointer_pressed` 的消费结果或查询启用状态。`sync` 后标签使用
+Theme 的 `disabled`、背景使用 `muted`，重新启用恢复原有样式。此状态尚未桥接到 OS 读屏接口。
+
 ### 1.2 只读多行文本
 
 `Ui::set_text_area_read_only(id, true)` 允许焦点、导航、选择和复制，阻止输入、

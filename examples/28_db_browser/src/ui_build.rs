@@ -1919,6 +1919,19 @@ pub fn build_ui(
         let _ = ui.set_modal_open(modal, true);
     }
 
+    let browse = state.browse();
+    let loaded = browse.result.as_ref().map_or(0, |r| r.rows.len());
+    let total = browse.total_rows.unwrap_or(0);
+    let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
+    ui.set_button_enabled(btn_page_prev, can_browse && browse.offset > 0);
+    ui.set_button_enabled(btn_page_next, can_browse && browse.offset.saturating_add(loaded) < total);
+    let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));
+    ui.set_button_enabled(btn_form_prev, can_browse && loaded > 0 && record > 0);
+    ui.set_button_enabled(btn_form_next, can_browse && loaded > 0 && record.saturating_add(1) < total);
+    let can_write = state.conn.is_some() && !state.read_only && state.dirty && !state.sql_busy;
+    ui.set_button_enabled(btn_write, can_write);
+    ui.set_button_enabled(btn_revert, can_write);
+
     ui.set_image_view(edit_image, state.edit_image_view);
     ui.set_text_area_read_only(log_area, true);
     ui.sync(&mut scene);

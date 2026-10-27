@@ -1950,7 +1950,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
-        if id.0 == 0 { return; }
+        if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
         self.snapshot_inputs();
         if id == self.ids.log_clear {
             self.state.sql_log.clear(crate::sql_log::Source::from_filter(self.state.sql_log_filter));
@@ -3119,6 +3119,104 @@ fn main() {
 #[cfg(test)]
 mod interaction_tests {
     use super::*;
+
+    #[test]
+    fn browse_buttons_follow_page_record_and_write_boundaries() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(
+            "CREATE TABLE t(v INTEGER); WITH RECURSIVE n(v) AS \
+             (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<501) INSERT INTO t SELECT v FROM n;"
+        ).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.refresh_browse().unwrap();
+        demo.state.write_changes().unwrap();
+        demo.state.tab = MainTab::Browse;
+        demo.do_rebuild();
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_prev), Some(false));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_next), Some(true));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_write), Some(false));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_revert), Some(false));
+        demo.handle_button(demo.ids.btn_page_prev);
+        demo.handle_button(demo.ids.btn_revert);
+        assert!(!demo.rebuild);
+        assert!(!demo.state.confirm_open);
+        demo.handle_button(demo.ids.btn_page_next);
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse().offset, 500);
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_prev), Some(true));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_next), Some(false));
+        demo.handle_button(demo.ids.btn_page_next);
+        assert!(!demo.rebuild);
+
+        demo.state.toggle_browse_view();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_form_prev), Some(true));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_form_next), Some(false));
+        demo.handle_button(demo.ids.btn_form_prev);
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse().sel_row, Some(499));
+        assert_eq!(demo.state.browse().offset, 0);
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_form_next), Some(true));
+        demo.state.browse_mut().sel_row = Some(0);
+        demo.state.sync_edit_cell_from_selection();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_form_prev), Some(false));
+        demo.handle_button(demo.ids.btn_form_prev);
+        assert!(!demo.rebuild);
+
+        demo.state.conn.as_ref().unwrap().execute("UPDATE t SET v=0 WHERE v=1", []).unwrap();
+        demo.state.mark_dirty();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_write), Some(true));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_revert), Some(true));
+        demo.handle_button(demo.ids.btn_write);
+        demo.do_rebuild();
+        assert!(!demo.state.dirty);
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_write), Some(false));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_revert), Some(false));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 1400, 860).unwrap();
+        }
+        demo.state.browse_mut().filter = "0".into();
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        for id in [demo.ids.btn_page_prev, demo.ids.btn_page_next, demo.ids.btn_form_prev, demo.ids.btn_form_next] {
+            assert_eq!(demo.ui.button_enabled(id), Some(false));
+        }
+    }
+
+    #[test]
+    fn write_buttons_are_disabled_when_disconnected_read_only_or_busy() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.dirty = true;
+        for (read_only, busy) in [(true, false), (false, true)] {
+            demo.state.read_only = read_only;
+            demo.state.sql_busy = busy;
+            demo.do_rebuild();
+            assert_eq!(demo.ui.button_enabled(demo.ids.btn_write), Some(false));
+            assert_eq!(demo.ui.button_enabled(demo.ids.btn_revert), Some(false));
+            demo.handle_button(demo.ids.btn_write);
+            demo.handle_button(demo.ids.btn_revert);
+            assert!(demo.state.dirty);
+            assert!(!demo.state.confirm_open);
+        }
+        demo.state.sql_busy = false;
+        demo.state.read_only = false;
+        demo.state.dirty = false;
+        demo.state.close_db();
+        demo.state.tab = MainTab::Browse;
+        demo.do_rebuild();
+        for id in [demo.ids.btn_write, demo.ids.btn_revert, demo.ids.btn_page_prev, demo.ids.btn_page_next] {
+            assert_eq!(demo.ui.button_enabled(id), Some(false));
+        }
+    }
 
     #[test]
     fn log_dock_keeps_full_read_only_text_selection_filters_and_clear_scope() {

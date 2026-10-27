@@ -1685,6 +1685,7 @@ enum Kind {
     },
     Button {
         label: String,
+        enabled: bool,
         bg: Color,
         fg: Color,
         size: f32,
@@ -2991,6 +2992,32 @@ impl Ui {
         false
     }
 
+    /// Whether a button accepts pointer, keyboard and focus navigation.
+    pub fn button_enabled(&self, id: WidgetId) -> Option<bool> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Button { enabled, .. }) => Some(*enabled),
+            _ => None,
+        }
+    }
+
+    /// Enable or disable a button; call [`Ui::sync`] to update its appearance.
+    pub fn set_button_enabled(&mut self, id: WidgetId, value: bool) -> bool {
+        let Some(Widget { kind: Kind::Button { enabled, .. }, .. }) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let changed = *enabled != value;
+        *enabled = value;
+        if !value {
+            if self.focus == Some(id) {
+                self.focus = None;
+            }
+            if self.pending_button_activate == Some(id) {
+                self.pending_button_activate = None;
+            }
+        }
+        changed
+    }
+
     /// Update a panel title; call [`Ui::sync`] afterwards.
     pub fn set_panel_title(&mut self, id: WidgetId, title: impl Into<String>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -3318,6 +3345,7 @@ impl Ui {
                 self.focus = Some(id);
                 self.pointer_tree_table(scene, id, x, y)
             }
+            Some(Kind::Button { enabled: false, .. }) => true,
             Some(Kind::Button { .. }) => {
                 // Dual path: focus for Tab/Space/Enter; apps still activate via
                 // `hit_widget` on pointer (this returns false so click semantics stay).
@@ -3500,7 +3528,7 @@ impl Ui {
 
     /// Set focus explicitly.
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
-        self.focus = id;
+        self.focus = id.filter(|id| self.button_enabled(*id) != Some(false));
     }
 
     /// Override the accessible name for `id` (P6d). Empty string clears to fallback.
@@ -3731,8 +3759,8 @@ impl Ui {
                 secondary_action,
                 ..
             } => primary_action.is_some() || secondary_action.is_some(),
-            Kind::Button { .. }
-            | Kind::TextInput { .. }
+            Kind::Button { enabled, .. } => *enabled,
+            Kind::TextInput { .. }
             | Kind::TextArea { .. }
             | Kind::InputNumber { .. }
             | Kind::Checkbox { .. }
@@ -4707,7 +4735,7 @@ impl Ui {
             Some(Kind::Transfer { .. }) => self.key_transfer(id, key),
             Some(Kind::PropertyGrid { .. }) => self.key_property_grid(id, key),
             Some(Kind::TreeTable { .. }) => self.key_tree_table(id, key),
-            Some(Kind::Button { .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
+            Some(Kind::Button { enabled: true, .. }) if matches!(key, UiKey::Space | UiKey::Enter) => {
                 self.pending_button_activate = Some(id);
                 true
             }
@@ -11196,12 +11224,13 @@ impl Ui {
                 fg,
                 size,
                 bg,
+                enabled,
                 ..
             } => {
                 let label = label.clone();
-                let fg = *fg;
+                let fg = if *enabled { *fg } else { self.theme.colors.disabled };
                 let size = *size;
-                let bg = *bg;
+                let bg = if *enabled { *bg } else { self.theme.colors.muted };
                 scene.set_fill(node, bg);
                 scene.set_mask(node, None);
                 self.apply_corner_radius(scene, node, false);
@@ -17412,6 +17441,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
+                    enabled: true,
                     bg,
                     fg,
                     size: (theme.typography.button * f).round().max(1.0),
@@ -17446,6 +17476,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
+                    enabled: true,
                     bg,
                     fg,
                     size: (theme.typography.button_sm * f).round().max(1.0),
@@ -22903,3 +22934,6 @@ mod tests {
 
 #[cfg(test)]
 mod table_selection_tests;
+
+#[cfg(test)]
+mod button_tests;
