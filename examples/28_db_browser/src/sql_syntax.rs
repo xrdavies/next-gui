@@ -15,6 +15,21 @@ pub(super) enum Kind {
     Comment,
 }
 
+pub(super) const EXTRA_KEYWORDS: &[&str] = &[
+    "ANY", "ROWID", "STORED", "STRICT", "INT", "INTEGER", "REAL", "TEXT", "BLOB", "NUMERIC", "CHAR",
+];
+
+pub(super) fn keyword(word: &str) -> bool {
+    word.is_ascii()
+        && (EXTRA_KEYWORDS
+            .iter()
+            .any(|extra| extra.eq_ignore_ascii_case(word))
+            || i32::try_from(word.len()).is_ok_and(|len| {
+                // SQLite reads exactly len bytes from this live UTF-8 slice.
+                unsafe { rusqlite::ffi::sqlite3_keyword_check(word.as_ptr().cast(), len) != 0 }
+            }))
+}
+
 pub(super) fn identifier(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' || ch as u32 >= 0x80
 }
@@ -141,12 +156,7 @@ pub(super) fn tokens(sql: &str) -> Vec<(Range<usize>, Kind)> {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
-            let keyword = word.is_ascii()
-                && i32::try_from(word.len()).is_ok_and(|len| {
-                    // SQLite reads exactly len bytes from this live UTF-8 slice.
-                    unsafe { rusqlite::ffi::sqlite3_keyword_check(word.as_ptr().cast(), len) != 0 }
-                });
-            if keyword {
+            if keyword(&word) {
                 Some(Kind::Keyword)
             } else if chars[i..].iter().find(|ch| !ch.is_whitespace()) == Some(&'(') {
                 Some(Kind::Function)

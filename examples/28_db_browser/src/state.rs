@@ -428,6 +428,7 @@ pub struct AppState {
     pub prefs_theme_dark: bool,
     pub prefs_confirm_drops: bool,
     pub prefs_sql_completion: bool,
+    pub prefs_sql_upper_keywords: bool,
     pub prefs_csv_delim: String,
     pub cond_col: String,
     pub cond_op_idx: usize,
@@ -662,6 +663,7 @@ impl AppState {
             prefs_theme_dark: true,
             prefs_confirm_drops: true,
             prefs_sql_completion: true,
+            prefs_sql_upper_keywords: true,
             prefs_csv_delim: ",".into(),
             cond_col: String::new(),
             cond_op_idx: 0,
@@ -2183,6 +2185,7 @@ impl AppState {
         self.prefs_theme_dark = self.prefs.default_theme_dark;
         self.prefs_confirm_drops = self.prefs.confirm_drops;
         self.prefs_sql_completion = self.prefs.sql_completion;
+        self.prefs_sql_upper_keywords = self.prefs.sql_upper_keywords;
         self.prefs_csv_delim = self.prefs.csv_delimiter.to_string();
         self.prefs_frozen_cols = self.frozen_cols;
     }
@@ -2200,6 +2203,7 @@ impl AppState {
         self.prefs.default_theme_dark = self.prefs_theme_dark;
         self.prefs.confirm_drops = self.prefs_confirm_drops;
         self.prefs.sql_completion = self.prefs_sql_completion;
+        self.prefs.sql_upper_keywords = self.prefs_sql_upper_keywords;
         if let Some(c) = self.prefs_csv_delim.chars().next() {
             self.prefs.csv_delimiter = if c == 't' { '\t' } else { c };
         }

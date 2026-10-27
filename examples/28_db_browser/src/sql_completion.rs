@@ -1,5 +1,6 @@
 //! Cached SQLite metadata and lexical completion context; never executes editor SQL.
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::OnceLock;
 
@@ -63,12 +64,13 @@ impl Default for Catalog {
                     if let Ok(name) =
                         std::str::from_utf8(std::slice::from_raw_parts(ptr.cast(), len as usize))
                     {
-                        for name in [name.to_owned(), name.to_ascii_lowercase()] {
-                            catalog.add(vec![name], Category::Keyword);
-                        }
+                        catalog.add(vec![name.to_ascii_uppercase()], Category::Keyword);
                     }
                 }
             }
+        }
+        for word in sql_syntax::EXTRA_KEYWORDS {
+            catalog.add(vec![(*word).to_owned()], Category::Keyword);
         }
         static BUILTINS: OnceLock<Result<Vec<String>, String>> = OnceLock::new();
         match BUILTINS.get_or_init(|| {
@@ -158,6 +160,7 @@ impl Catalog {
         sql: &str,
         caret: usize,
         explicit: bool,
+        upper_keywords: bool,
     ) -> Option<(Range<usize>, Vec<TextAreaCompletionItem>)> {
         // shortcut: synchronous lexical/catalog scans; move off-thread when profiling large scripts/schemas.
         let context = Context::parse(sql, caret)?;
@@ -181,13 +184,18 @@ impl Catalog {
                 continue;
             }
             let name = entry.path.last().unwrap();
+            let name = if entry.category == Category::Keyword && !upper_keywords {
+                Cow::Owned(name.to_ascii_lowercase())
+            } else {
+                Cow::Borrowed(name.as_str())
+            };
             if !name.starts_with(&context.prefix) {
                 continue;
             }
             let text = if matches!(entry.category, Category::Keyword | Category::Function) {
-                name.clone()
+                name.to_string()
             } else {
-                identifier_text(name, context.quote)
+                identifier_text(&name, context.quote)
             };
             let label = format!(
                 "{}{}  ·  {}",
@@ -223,12 +231,7 @@ fn identifier_text(name: &str, quote: Option<char>) -> String {
             .next()
             .is_some_and(|c| !c.is_ascii_digit() && c != '$' && sql_syntax::identifier(c))
             && name.chars().all(sql_syntax::identifier)
-            && unsafe {
-                rusqlite::ffi::sqlite3_keyword_check(
-                    name.as_ptr().cast(),
-                    name.len().try_into().unwrap_or(0),
-                ) == 0
-            } =>
+            && !sql_syntax::keyword(name) =>
         {
             name.to_owned()
         }
@@ -349,9 +352,56 @@ mod tests {
     use super::*;
 
     fn suggestions(c: &Catalog, sql: &str) -> Vec<String> {
-        c.suggest(sql, sql.chars().count(), true)
+        c.suggest(sql, sql.chars().count(), true, true)
             .map(|(_, v)| v.into_iter().map(|i| i.text).collect())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn original_extra_editor_words_are_completion_candidates_and_syntax_keywords() {
+        let c = Catalog::default();
+        for word in [
+            "ANY", "ROWID", "STORED", "STRICT", "INT", "INTEGER", "REAL", "TEXT", "BLOB",
+            "NUMERIC", "CHAR",
+        ] {
+            let (_, candidates) = c.suggest(word, word.len(), true, true).unwrap();
+            assert!(
+                candidates
+                    .iter()
+                    .any(|item| item.text == word && item.label.ends_with("Keyword")),
+                "missing original keyword candidate {word}"
+            );
+            assert_eq!(
+                sql_syntax::tokens(word),
+                vec![(0..word.len(), Kind::Keyword)],
+                "missing original keyword color {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn keyword_case_preference_preserves_function_and_object_names() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE MixedCase(ColumnCase)")
+            .unwrap();
+        let c = Catalog::load(&conn);
+        let candidates = |sql: &str, upper| {
+            c.suggest(sql, sql.chars().count(), true, upper)
+                .unwrap()
+                .1
+                .into_iter()
+                .map(|i| i.text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(candidates("SELE", true), ["SELECT"]);
+        assert!(candidates("sele", true).is_empty());
+        assert_eq!(candidates("sele", false), ["select"]);
+        assert!(candidates("SELE", false).is_empty());
+        for upper in [true, false] {
+            assert_eq!(candidates("LOW", upper), ["LOWER"]);
+            assert_eq!(candidates("low", upper), ["lower"]);
+            assert_eq!(candidates("MixedCase.Co", upper), ["ColumnCase"]);
+        }
     }
 
     #[test]
@@ -369,7 +419,7 @@ mod tests {
         let c = Catalog::load(&conn);
         assert!(c.warning.as_ref().is_some_and(|w| w.contains("broken")));
         assert_eq!(suggestions(&c, "SELECT SELE"), vec!["SELECT"]);
-        assert_eq!(suggestions(&c, "SELECT sele"), vec!["\"select\"", "select"]);
+        assert_eq!(suggestions(&c, "SELECT sele"), vec!["\"select\""]);
         assert!(suggestions(&c, "SELECT low").contains(&"lower".into()));
         assert_eq!(
             suggestions(&c, "SELECT custom_comp"),
@@ -399,7 +449,7 @@ mod tests {
         assert!(suggestions(&c, "SELECT \"Order Items\".\"").contains(&"\"select\"".into()));
         let sql = "SELECT main.\"Order Items\".\"中文列\"";
         let caret = sql.chars().position(|ch| ch == '文').unwrap() + 1;
-        let (range, items) = c.suggest(sql, caret, true).unwrap();
+        let (range, items) = c.suggest(sql, caret, true, true).unwrap();
         assert_eq!(items.len(), 1);
         let replaced = format!(
             "{}{}{}",
@@ -429,17 +479,20 @@ mod tests {
             "12sel",
             "SELECT 1 -- */",
         ] {
-            assert!(c.suggest(sql, sql.chars().count(), true).is_none(), "{sql}");
+            assert!(
+                c.suggest(sql, sql.chars().count(), true, true).is_none(),
+                "{sql}"
+            );
         }
-        assert!(c.suggest("se", 2, false).is_none());
-        assert!(c.suggest("sel", 3, false).is_some());
-        assert!(c.suggest("SELECT \"", 8, true).is_some());
+        assert!(c.suggest("se", 2, false, true).is_none());
+        assert!(c.suggest("sel", 3, false, true).is_some());
+        assert!(c.suggest("SELECT \"", 8, true, true).is_some());
         for sql in ["-- comment\n", "/* comment */"] {
-            assert!(c.suggest(sql, sql.chars().count(), true).is_some());
+            assert!(c.suggest(sql, sql.chars().count(), true, true).is_some());
         }
-        let (range, items) = c.suggest("SELECT", 3, true).unwrap();
+        let (range, items) = c.suggest("SELECT", 3, true, true).unwrap();
         assert_eq!(range, 0..6);
         assert!(items.iter().any(|i| i.text == "SELECT"));
-        assert!(c.suggest("x", usize::MAX, true).is_none());
+        assert!(c.suggest("x", usize::MAX, true, true).is_none());
     }
 }

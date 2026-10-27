@@ -206,6 +206,7 @@ pub struct BuiltUi {
     pub ov_prefs_theme: WidgetId,
     pub ov_prefs_confirm: WidgetId,
     pub ov_prefs_completion: WidgetId,
+    pub ov_prefs_upper_keywords: WidgetId,
     pub ov_prefs_delim: WidgetId,
     pub ov_frozen: WidgetId,
     pub ov_export_struct: WidgetId,
@@ -479,6 +480,7 @@ pub fn build_ui(
     let mut ov_prefs_theme = z;
     let mut ov_prefs_confirm = z;
     let mut ov_prefs_completion = z;
+    let mut ov_prefs_upper_keywords = z;
     let mut ov_prefs_delim = z;
     let mut ov_frozen = z;
     let mut ov_export_struct = z;
@@ -1001,6 +1003,7 @@ pub fn build_ui(
                             ov_prefs_theme = c.switch_styled("Default dark theme", state.prefs_theme_dark, sw);
                             ov_prefs_confirm = c.switch_styled("Confirm drops", state.prefs_confirm_drops, sw);
                             ov_prefs_completion = c.switch_styled("SQL auto completion", state.prefs_sql_completion, sw);
+                            ov_prefs_upper_keywords = c.switch_styled("Uppercase SQL keywords", state.prefs_sql_upper_keywords, sw);
                             c.row(row, |r| {
                                 r.text("CSV delimiter");
                                 ov_prefs_delim = r.text_input_styled(&state.prefs_csv_delim, ",", name_s);
@@ -2105,6 +2108,7 @@ pub fn build_ui(
         ov_prefs_theme,
         ov_prefs_confirm,
         ov_prefs_completion,
+        ov_prefs_upper_keywords,
         ov_prefs_delim,
         ov_frozen,
         ov_export_struct,

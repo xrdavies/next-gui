@@ -10,6 +10,7 @@ pub struct Prefs {
     pub default_theme_dark: bool,
     pub confirm_drops: bool,
     pub sql_completion: bool,
+    pub sql_upper_keywords: bool,
     pub csv_delimiter: char,
     pub frozen_cols_default: usize,
 }
@@ -21,6 +22,7 @@ impl Default for Prefs {
             default_theme_dark: true,
             confirm_drops: true,
             sql_completion: true,
+            sql_upper_keywords: true,
             csv_delimiter: ',',
             frozen_cols_default: 0,
         }
@@ -65,7 +67,9 @@ mod tests {
     #[test]
     fn old_preferences_enable_completion_and_explicit_false_round_trips() {
         assert!(serde_json::from_str::<Prefs>("{}").unwrap().sql_completion);
-        let prefs: Prefs = serde_json::from_str(r#"{"sql_completion":false}"#).unwrap();
-        assert!(!serde_json::from_str::<Prefs>(&serde_json::to_string(&prefs).unwrap()).unwrap().sql_completion);
+        assert!(serde_json::from_str::<Prefs>("{}").unwrap().sql_upper_keywords);
+        let prefs: Prefs = serde_json::from_str(r#"{"sql_completion":false,"sql_upper_keywords":false}"#).unwrap();
+        let restored: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert!(!restored.sql_completion && !restored.sql_upper_keywords);
     }
 }

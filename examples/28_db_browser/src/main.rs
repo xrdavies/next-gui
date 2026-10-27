@@ -296,6 +296,7 @@ struct BuiltUiIds {
     ov_prefs_theme: WidgetId,
     ov_prefs_confirm: WidgetId,
     ov_prefs_completion: WidgetId,
+    ov_prefs_upper_keywords: WidgetId,
     ov_prefs_delim: WidgetId,
     ov_frozen: WidgetId,
     ov_export_struct: WidgetId,
@@ -460,6 +461,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_prefs_theme: b.ov_prefs_theme,
             ov_prefs_confirm: b.ov_prefs_confirm,
             ov_prefs_completion: b.ov_prefs_completion,
+            ov_prefs_upper_keywords: b.ov_prefs_upper_keywords,
             ov_prefs_delim: b.ov_prefs_delim,
             ov_frozen: b.ov_frozen,
             ov_export_struct: b.ov_export_struct,
@@ -1010,6 +1012,9 @@ impl Demo {
                     if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_confirm) {
                         self.state.prefs_confirm_drops = on;
                     }
+                }
+                if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_upper_keywords) {
+                    self.state.prefs_sql_upper_keywords = on;
                 }
                 if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_completion) {
                     self.state.prefs_sql_completion = on;
@@ -2095,7 +2100,7 @@ impl Demo {
         { return false; }
         let Some(caret) = self.ui.text_area_caret(area) else { return false; };
         if self.ui.text_area_selection(area) != Some(caret..caret) { return false; }
-        let suggestion = self.state.sql_completion.suggest(self.ui.text_area_value(area).unwrap_or_default(), caret, explicit);
+        let suggestion = self.state.sql_completion.suggest(self.ui.text_area_value(area).unwrap_or_default(), caret, explicit, self.state.prefs.sql_upper_keywords);
         let Some((range, items)) = suggestion else {
             if self.ui.text_area_completions_open(area) { self.ui.close_popup(); }
             return false;
@@ -3941,12 +3946,16 @@ mod interaction_tests {
         }
         demo.ui.set_text_input(demo.ids.ov_frozen, "8");
         let completion = demo.state.prefs.sql_completion;
+        let upper_keywords = demo.state.prefs.sql_upper_keywords;
         demo.ui.set_checked(demo.ids.ov_prefs_completion, !completion);
+        demo.ui.set_checked(demo.ids.ov_prefs_upper_keywords, !upper_keywords);
         demo.snapshot_inputs();
         assert_eq!(demo.state.prefs_sql_completion, !completion);
+        assert_eq!(demo.state.prefs_sql_upper_keywords, !upper_keywords);
         demo.handle_button(demo.ids.ov_btn_cancel);
         assert_eq!(demo.state.frozen_cols, 2);
         assert_eq!(demo.state.prefs.sql_completion, completion);
+        assert_eq!(demo.state.prefs.sql_upper_keywords, upper_keywords);
         demo.state.tab = MainTab::Pragmas;
         demo.do_rebuild();
         let b = demo
@@ -4225,6 +4234,7 @@ mod interaction_tests {
         demo.state.new_memory_db().unwrap();
         demo.state.tab = MainTab::ExecuteSql;
         demo.state.prefs.sql_completion = true;
+        demo.state.prefs.sql_upper_keywords = true;
         demo.state.sql_tabs[0].clear();
         demo.do_rebuild();
         demo.ui.set_focus(Some(demo.ids.sql_area));
@@ -4258,6 +4268,12 @@ mod interaction_tests {
         demo.ui.set_text_area_value(demo.ids.sql_area, "-- SEL");
         demo.ui.select_text_area_range(demo.ids.sql_area, 6..6);
         assert!(!demo.show_sql_completions(true));
+        demo.state.prefs.sql_upper_keywords = false;
+        demo.ui.set_text_area_value(demo.ids.sql_area, "sele");
+        demo.ui.select_text_area_range(demo.ids.sql_area, 4..4);
+        assert!(demo.show_sql_completions(true));
+        demo.handle_sql_completion_key(KeyCode::Tab, Modifiers::default());
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("select"));
     }
 
     #[test]
@@ -4283,7 +4299,7 @@ mod interaction_tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         demo.state.close_db();
-        let (_, candidates) = demo.state.sql_completion.suggest("completion_peo", 14, true).unwrap();
+        let (_, candidates) = demo.state.sql_completion.suggest("completion_peo", 14, true, true).unwrap();
         assert!(candidates.is_empty(), "closed databases must not leak old schema names");
     }
 
@@ -4298,7 +4314,7 @@ mod interaction_tests {
             demo.state.refresh_schema().unwrap();
             demo.state.tab = MainTab::ExecuteSql;
             demo.theme = theme;
-            demo.state.sql_tabs[0] = format!("{}SELECT sub", "-- completion demo 中文\n".repeat(25));
+            demo.state.sql_tabs[0] = format!("{}CREATE TABLE metrics(value NUMERIC) STRICT;\nSELECT sub", "-- completion demo 中文\n".repeat(24));
             demo.do_rebuild();
             demo.ui.set_focus(Some(demo.ids.sql_area));
             let end = demo.state.sql_editor().chars().count();
