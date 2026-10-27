@@ -241,6 +241,8 @@ pub struct AppState {
     // Find/Replace
     pub find_text: String,
     pub replace_text: String,
+    pub find_search: crate::sql_search::Search,
+    pub find_message: String,
 
     // Execute SQL
     pub sql_tabs: Vec<String>,
@@ -481,6 +483,8 @@ impl AppState {
             attach_schema: "other".into(),
             find_text: String::new(),
             replace_text: String::new(),
+            find_search: crate::sql_search::Search::default(),
+            find_message: String::new(),
             sql_edit_states: Vec::new(),
             sql_files: Vec::new(),
             sql_saved: Vec::new(),
@@ -615,6 +619,8 @@ impl AppState {
         self.sql_message = output.message;
         self.error_msg = None;
         self.sql_tab_idx = index;
+        self.find_search.reset(&self.sql_tabs[index], 0..0);
+        self.find_message.clear();
     }
 
     fn project_snapshot(&self) -> serde_json::Value {
@@ -742,6 +748,8 @@ impl AppState {
             self.sql_column_widths.clear();
             self.sql_scroll = (0.0, 0.0);
             self.sql_tab_idx = 0;
+            self.find_search.reset("", 0..0);
+            self.find_message.clear();
         } else if self.sql_tab_idx > index { self.sql_tab_idx -= 1; }
     }
 
@@ -2226,6 +2234,8 @@ impl AppState {
         self.edit_value.clear();
         self.edit_image_rgba = None;
         self.sql_edit_states.clear();
+        self.find_search.reset(self.sql_tabs.get(self.sql_tab_idx).map(String::as_str).unwrap_or_default(), 0..0);
+        self.find_message.clear();
         self.refresh_schema()?;
         self.refresh_pragmas()?;
         self.refresh_browse()?;

@@ -183,6 +183,8 @@ pub struct BuiltUi {
     pub ov_attach_schema: WidgetId,
     pub ov_find: WidgetId,
     pub ov_replace: WidgetId,
+    pub ov_find_options: [WidgetId; 6],
+    pub ov_btn_find_all: WidgetId,
     pub ov_btn_find: WidgetId,
     pub ov_btn_repl: WidgetId,
     pub ov_btn_repl_all: WidgetId,
@@ -453,6 +455,8 @@ pub fn build_ui(
     let mut ov_attach_schema = z;
     let mut ov_find = z;
     let mut ov_replace = z;
+    let mut ov_find_options = [z; 6];
+    let mut ov_btn_find_all = z;
     let mut ov_btn_find = z;
     let mut ov_btn_repl = z;
     let mut ov_btn_repl_all = z;
@@ -512,9 +516,12 @@ pub fn build_ui(
     const STATUS_H: f32 = 40.0;
     let shell_w = (win_w - 12.0).max(640.0);
     let shell_h = (win_h - STATUS_H - 4.0).max(360.0);
+    let compact_find = state.overlay == Some(OverlayKind::FindReplace) && win_h < 720.0;
+    let extra_visible = state.toolbar_extra && !compact_find;
+    let project_visible = state.toolbar_project && !compact_find;
     let chrome_h = 50.0 + if state.toolbar_db { 42.0 } else { 0.0 }
-        + if state.toolbar_extra { 40.0 } else { 0.0 }
-        + if state.toolbar_project { 40.0 } else { 0.0 };
+        + if extra_visible { 40.0 } else { 0.0 }
+        + if project_visible { 40.0 } else { 0.0 };
     let content_h = (shell_h - chrome_h).max(300.0);
     let docks_on = state.any_dock_visible() && state.overlay.is_none();
     let pane_width = shell_w - 20.0;
@@ -671,7 +678,7 @@ pub fn build_ui(
                 );
             });
         }
-        if state.toolbar_extra {
+        if extra_visible {
             let mut extra_tb = main_tb;
             extra_tb.height = 36.0;
             col.scroll_row(extra_tb, |tb| {
@@ -680,7 +687,7 @@ pub fn build_ui(
                 tb.text_styled("Extra DB", theme.colors.text_secondary, 11.0);
             });
         }
-        if state.toolbar_project {
+        if project_visible {
             let mut proj_tb = main_tb;
             proj_tb.height = 36.0;
             col.scroll_row(proj_tb, |tb| {
@@ -698,7 +705,7 @@ pub fn build_ui(
             // —— Overlay wizard panel ——
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
-            panel.height = content_h - 50.0;
+            panel.height = content_h - if kind == OverlayKind::FindReplace { 0.0 } else { 50.0 };
             let title = match kind {
                 OverlayKind::InsertRow => "New Record",
                 OverlayKind::EditTable => {
@@ -903,24 +910,41 @@ pub fn build_ui(
                             c.text("Encoding: UTF-8");
                         }
                         OverlayKind::FindReplace => {
-                            c.row(row, |r| {
-                                r.text("Find");
-                                ov_find = r.text_input_styled(&state.find_text, "find", wide_s);
+                            let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+                            scroll.width = shell_w - 64.0;
+                            scroll.height = ov_col.height - 16.0;
+                            scroll.padding = 0.0;
+                            c.scroll_area(scroll, |c| {
+                                c.scroll_row(row, |r| {
+                                    r.text("Find");
+                                    ov_find = r.text_input_styled(&state.find_text, "find", wide_s);
+                                });
+                                c.scroll_row(row, |r| {
+                                    r.text("Replace");
+                                    ov_replace = r.text_input_styled(&state.replace_text, "replace", wide_s);
+                                });
+                                let flags = state.find_search.options.flags();
+                                for indices in [[0, 1, 5], [2, 3, 4]] {
+                                    c.scroll_row(row, |r| {
+                                        for i in indices {
+                                            ov_find_options[i] = r.switch_styled(
+                                                ["Match case", "Whole words", "Wrap around", "Backwards", "Selection only", "Regular expression"][i], flags[i], sw);
+                                        }
+                                    });
+                                }
+                                c.scroll_row(row, |r| {
+                                    ov_btn_find = r.tool_button("Find Next");
+                                    ov_btn_find_all = r.tool_button("Find All");
+                                    ov_btn_repl = r.tool_button("Replace");
+                                    ov_btn_repl_all = r.tool_button("Replace All");
+                                });
+                                c.text(if state.find_message.is_empty() { "F3: find next · Shift+F3: reverse direction" } else { &state.find_message });
+                                c.text_styled(r"Regex replacements: \0–\9 captures · \n \r \t escapes", theme.colors.text_secondary, 11.0);
+                                let mut editor_style = area_s;
+                                editor_style.width = shell_w - 80.0;
+                                editor_style.height = (scroll.height - 242.0).max(100.0);
+                                sql_area = c.text_area(state.sql_editor(), "SQL…", editor_style);
                             });
-                            c.row(row, |r| {
-                                r.text("Replace");
-                                ov_replace = r.text_input_styled(&state.replace_text, "replace", wide_s);
-                            });
-                            c.row(row, |r| {
-                                ov_btn_find = r.tool_button("Find Next");
-                                ov_btn_repl = r.tool_button("Replace");
-                                ov_btn_repl_all = r.tool_button("Replace All");
-                            });
-                            c.text("SQL — selected match; changes apply immediately");
-                            let mut editor_style = area_s;
-                            editor_style.width = shell_w - 72.0;
-                            editor_style.height = (ov_col.height - 170.0).max(100.0);
-                            sql_area = c.text_area(state.sql_editor(), "SQL…", editor_style);
                         }
                         OverlayKind::Attach => {
                             c.row(row, |r| {
@@ -1989,6 +2013,8 @@ pub fn build_ui(
         ov_attach_schema,
         ov_find,
         ov_replace,
+        ov_find_options,
+        ov_btn_find_all,
         ov_btn_find,
         ov_btn_repl,
         ov_btn_repl_all,

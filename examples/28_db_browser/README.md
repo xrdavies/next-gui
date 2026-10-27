@@ -175,3 +175,25 @@ connected yet; the Error category contains application/execution failures.
 
 `NEXT_GUI_DB_BROWSER_QA=1 NEXT_GUI_DB_BROWSER_QA_TAB=log` captures the log dock;
 `NEXT_GUI_DB_BROWSER_QA_THEME=light` selects the light theme.
+
+### SQL search (2026-10-27)
+
+Find / Replace has Match case, Whole words, Wrap around, Backwards, Selection only
+and Regular expression options. Find All marks all matches without changing the
+selection. F3 follows the current direction; Shift+F3 reverses it once. Replace
+acts on a matching selection, and Replace All is one undoable edit.
+
+Selection only keeps its original range through subsequent matches/replacements.
+Manual document changes require choosing the range again; switching SQL tabs or
+restoring projects resets the search session. The compact 800×600 panel temporarily
+hides the extra/project toolbars so the editor remains visible, restoring their
+settings when closed.
+
+Regex uses the existing Unicode PCRE2 engine: capture replacements `\0`–`\9`,
+`\n`, `\r`, `\t` and `\\` escapes; literal mode keeps replacement text literal.
+Invalid expressions, split Unicode captures or exhausted limits leave the document
+unchanged. Match/depth limits are 1,000,000/1,000 and each scan has a one-second
+budget. Forward navigation stops at its first match. Large backward overlap scans
+still need a cancellable worker; full Scintilla regex dialect/native acceptance
+is not established. The six options and transient search scope are session state,
+not additional project XML settings.

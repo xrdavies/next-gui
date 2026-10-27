@@ -10,6 +10,7 @@ mod prefs;
 mod project;
 mod project_xml;
 mod sql_log;
+mod sql_search;
 mod state;
 mod ui_build;
 
@@ -263,6 +264,8 @@ struct BuiltUiIds {
     ov_attach_schema: WidgetId,
     ov_find: WidgetId,
     ov_replace: WidgetId,
+    ov_find_options: [WidgetId; 6],
+    ov_btn_find_all: WidgetId,
     ov_btn_find: WidgetId,
     ov_btn_repl: WidgetId,
     ov_btn_repl_all: WidgetId,
@@ -416,6 +419,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_attach_schema: b.ov_attach_schema,
             ov_find: b.ov_find,
             ov_replace: b.ov_replace,
+            ov_find_options: b.ov_find_options,
+            ov_btn_find_all: b.ov_btn_find_all,
             ov_btn_find: b.ov_btn_find,
             ov_btn_repl: b.ov_btn_repl,
             ov_btn_repl_all: b.ov_btn_repl_all,
@@ -907,6 +912,13 @@ impl Demo {
                 }
             }
             OverlayKind::FindReplace => {
+                let mut flags = self.state.find_search.options.flags();
+                for (flag, id) in flags.iter_mut().zip(self.ids.ov_find_options) {
+                    if let Some(value) = self.ui.is_checked(id) { *flag = value; }
+                }
+                self.state.find_search.set_options(sql_search::Options::from_flags(flags),
+                    self.ui.text_area_value(self.ids.sql_area).unwrap_or_default(),
+                    self.ui.text_area_selection(self.ids.sql_area).unwrap_or(0..0));
                 if self.ids.ov_find.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_find) {
                         self.state.find_text = v.to_string();
@@ -1859,32 +1871,56 @@ impl Demo {
             self.rebuild = true;
             return true;
         }
-        if id == self.ids.ov_btn_find || id == self.ids.ov_btn_repl || id == self.ids.ov_btn_repl_all {
+        if id == self.ids.ov_btn_find || id == self.ids.ov_btn_find_all || id == self.ids.ov_btn_repl || id == self.ids.ov_btn_repl_all {
             self.snapshot_inputs();
-            let area = self.ids.sql_area;
-            let needle = self.state.find_text.clone();
-            let replacement = self.state.replace_text.clone();
-            if id == self.ids.ov_btn_repl_all {
-                let text = self.ui.text_area_value(area).unwrap_or_default().to_string();
-                let count = if needle.is_empty() { 0 } else { text.matches(&needle).count() };
-                if count > 0 {
-                    self.ui.select_text_area_range(area, 0..text.chars().count());
-                    self.ui.replace_text_area_selection(area, &text.replace(&needle, &replacement));
-                }
-                self.state.status_msg = format!("Replaced {count}");
-            } else {
-                let selected_match = !needle.is_empty() && self.ui.text_area_selected_text(area).as_deref() == Some(needle.as_str());
-                let found = (id == self.ids.ov_btn_repl && selected_match) || self.ui.find_in_text_area(area, &needle);
-                if found && id == self.ids.ov_btn_repl {
-                    self.ui.replace_text_area_selection(area, &replacement);
-                }
-                self.state.status_msg = if !found { "Not found" } else if id == self.ids.ov_btn_repl { "Replaced one" } else { "Match selected in SQL editor" }.into();
-            }
-            self.snapshot_inputs();
-            self.rebuild = true;
+            let action = if id == self.ids.ov_btn_find_all { sql_search::Action::FindAll }
+                else if id == self.ids.ov_btn_repl { sql_search::Action::Replace }
+                else if id == self.ids.ov_btn_repl_all { sql_search::Action::ReplaceAll }
+                else { sql_search::Action::Find };
+            self.search_sql(action);
             return true;
         }
         false
+    }
+
+    fn open_sql_find(&mut self) {
+        self.snapshot_inputs();
+        self.state.find_search.reset(self.ui.text_area_value(self.ids.sql_area).unwrap_or_default(),
+            self.ui.text_area_selection(self.ids.sql_area).unwrap_or(0..0));
+        self.state.find_message.clear();
+        self.state.overlay = Some(OverlayKind::FindReplace);
+        self.rebuild = true;
+    }
+
+    fn handle_sql_search_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if key != KeyCode::Function(3) || modifiers.commandish() || modifiers.alt || self.state.tab != MainTab::ExecuteSql
+            || self.state.confirm_open || !matches!(self.state.overlay, None | Some(OverlayKind::FindReplace)) { return false; }
+        self.snapshot_inputs();
+        if self.state.find_text.is_empty() { self.open_sql_find(); }
+        else { self.search_sql(if modifiers.shift { sql_search::Action::FindReverse } else { sql_search::Action::Find }); }
+        true
+    }
+
+    fn search_sql(&mut self, action: sql_search::Action) {
+        let area = self.ids.sql_area;
+        let result = self.state.find_search.apply(action, self.ui.text_area_value(area).unwrap_or_default(),
+            &self.state.find_text, &self.state.replace_text, self.ui.text_area_selection(area).unwrap_or(0..0));
+        match result {
+            Ok(outcome) => {
+                self.ui.set_text_area_highlights(area, outcome.highlights, self.theme.colors.warning);
+                if let Some(edit) = outcome.edit {
+                    self.ui.select_text_area_range(area, edit.range);
+                    self.ui.replace_text_area_selection(area, &edit.text);
+                }
+                if let Some(selection) = outcome.selection { self.ui.select_text_area_range(area, selection); }
+                self.state.find_message = outcome.message.clone();
+                self.state.status_msg = outcome.message;
+                self.clear_error();
+                self.snapshot_inputs();
+            }
+            Err(e) => { self.state.find_message = e.clone(); self.set_error(e); }
+        }
+        self.rebuild = true;
     }
 
     fn execute_sql_selection(&mut self) {
@@ -2155,9 +2191,7 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_sql_find {
-            self.snapshot_inputs();
-            self.state.overlay = Some(OverlayKind::FindReplace);
-            self.rebuild = true;
+            self.open_sql_find();
             return;
         }
         for (i, bid) in self.ids.sql_tab_btns.iter().enumerate() {
@@ -2830,6 +2864,10 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
+                if self.handle_sql_search_key(key, modifiers) {
+                    self.after_ui(ctx);
+                    return;
+                }
                 if self.state.tab == MainTab::Browse && self.state.overlay.is_none() && !self.state.confirm_open {
                     if key == KeyCode::Enter && self.ui.focused().is_some_and(|id| id == self.ids.browse_filter || id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)) {
                         self.handle_button(self.ids.btn_browse_go);
@@ -2864,9 +2902,7 @@ impl AppCallbacks for Demo {
                             return;
                         }
                         KeyCode::Char('f' | 'F') if self.state.tab == MainTab::ExecuteSql && self.state.overlay.is_none() => {
-                            self.snapshot_inputs();
-                            self.state.overlay = Some(OverlayKind::FindReplace);
-                            self.rebuild = true;
+                            self.open_sql_find();
                             self.after_ui(ctx);
                             return;
                         }
@@ -3517,6 +3553,9 @@ mod interaction_tests {
         });
         ui.select_text_area_range(area, 0..0);
         ui.find_in_text_area(area, "SELECT 40");
+        let mut search = sql_search::Search::default();
+        let highlights = search.apply(sql_search::Action::FindAll, ui.text_area_value(area).unwrap(), "中文", "", 0..0).unwrap().highlights;
+        assert!(ui.set_text_area_highlights(area, highlights, Color::rgb(220, 160, 40)));
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         scene.mark_full_dirty(400.0, 200.0);
@@ -3562,6 +3601,105 @@ mod interaction_tests {
         demo.do_rebuild();
         assert!(demo.ui.text_area_scroll(demo.ids.sql_area).unwrap() > overlay_scroll);
         assert_eq!(demo.ui.text_area_selected_text(demo.ids.sql_area).as_deref(), Some("SELECT 40"));
+    }
+
+    #[test]
+    fn compact_find_keeps_editor_visible_and_restores_toolbars() {
+        let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.toolbar_extra = true;
+        demo.state.toolbar_project = true;
+        demo.state.find_search.options.regex = true;
+        demo.open_sql_find();
+        demo.do_rebuild();
+        let node = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.sql_area)).unwrap();
+        let bounds = node.bounds;
+        let mut parent = node.parent;
+        let viewport = loop {
+            let node = demo.scene.get(parent.unwrap()).unwrap();
+            if demo.ui.widget_from_node(node.id).is_some_and(|id| demo.ui.scroll_offset(id).is_some()) { break node.bounds; }
+            parent = node.parent;
+        };
+        assert!(bounds.y >= viewport.y && bounds.y + bounds.height <= viewport.y + viewport.height, "editor={bounds:?} viewport={viewport:?}");
+        assert!(bounds.height >= 100.0);
+        assert_eq!(demo.ids.toolbar_extra, WidgetId(0));
+        assert_eq!(demo.ids.toolbar_project, WidgetId(0));
+        assert!(demo.state.toolbar_extra && demo.state.toolbar_project);
+        demo.handle_button(demo.ids.ov_btn_ok);
+        demo.do_rebuild();
+        assert_ne!(demo.ids.toolbar_extra, WidgetId(0));
+        assert_ne!(demo.ids.toolbar_project, WidgetId(0));
+    }
+
+    #[test]
+    fn sql_search_options_all_highlights_scope_undo_errors_and_function_shortcuts() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        let original = "SELECT 'alpha ALPHA alpha_x 中文 中文';\nSELECT 'alpha';";
+        demo.state.sql_tabs[0] = original.into();
+        demo.do_rebuild();
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        demo.handle_button(demo.ids.btn_sql_find);
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_find, "alpha");
+        demo.ui.set_checked(demo.ids.ov_find_options[1], true);
+        demo.handle_button(demo.ids.ov_btn_find_all);
+        assert_eq!(demo.state.find_message, "3 match(es)");
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(0..0));
+        assert!(!demo.state.find_search.options.case_sensitive);
+        assert!(demo.state.find_search.options.whole_words);
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
+            for (width, height, suffix) in [(1400, 860, "ppm"), (800, 600, "narrow.ppm")] {
+                demo.win_w = width; demo.win_h = height;
+                demo.do_rebuild();
+                demo.scene.mark_full_dirty(width as f32, height as f32);
+                let dirty = demo.scene.take_dirty();
+                let mut renderer = SoftRenderer::new(width, height, clear_color(&demo.theme));
+                renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+                write_ppm(&PathBuf::from(&path).with_extension(suffix).to_string_lossy(), renderer.frame_pixels().unwrap().0, width, height).unwrap();
+            }
+            demo.win_w = 1400; demo.win_h = 860; demo.do_rebuild();
+        }
+        assert!(demo.handle_sql_search_key(KeyCode::Function(3), Modifiers::default()));
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_selected_text(demo.ids.sql_area).as_deref(), Some("alpha"));
+        assert!(demo.handle_sql_search_key(KeyCode::Function(3), Modifiers { shift: true, ..Modifiers::default() }));
+        demo.do_rebuild();
+        assert!(demo.ui.text_area_selection(demo.ids.sql_area).unwrap().start > 35);
+        assert!(!demo.state.find_search.options.backwards);
+        assert!(!demo.handle_sql_search_key(KeyCode::Function(3), Modifiers { ctrl: true, ..Modifiers::default() }));
+        demo.ui.set_checked(demo.ids.ov_find_options[0], true);
+        demo.handle_button(demo.ids.ov_btn_find_all);
+        assert_eq!(demo.state.find_message, "2 match(es)");
+        demo.do_rebuild();
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..original.lines().next().unwrap().chars().count());
+        demo.ui.set_checked(demo.ids.ov_find_options[4], true);
+        demo.ui.set_checked(demo.ids.ov_find_options[5], true);
+        demo.ui.set_text_input(demo.ids.ov_find, "(中文)");
+        demo.ui.set_text_input(demo.ids.ov_replace, r"東京🙂\1");
+        demo.handle_button(demo.ids.ov_btn_repl_all);
+        demo.do_rebuild();
+        assert_eq!(demo.state.sql_editor(), original.replace("中文", "東京🙂中文"));
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.key_input(UiKey::Undo);
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.sql_editor(), original);
+        demo.ui.set_checked(demo.ids.ov_find_options[4], false);
+        demo.ui.set_text_input(demo.ids.ov_find, "[");
+        let selection = demo.ui.text_area_selection(demo.ids.sql_area);
+        demo.handle_button(demo.ids.ov_btn_repl_all);
+        assert!(demo.state.error_msg.as_deref().unwrap().contains("Invalid search pattern"));
+        assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), selection);
+        assert_eq!(demo.state.sql_editor(), original);
+        demo.state.find_search.options.selection_only = true;
+        demo.state.find_search.options.regex = false;
+        demo.state.find_search.reset(original, 0..35);
+        demo.state.sql_tabs.push(original.into());
+        demo.state.switch_sql_tab(1);
+        let error = demo.state.find_search.apply(sql_search::Action::Find, original, "alpha", "", 0..0).err().unwrap();
+        assert!(error.contains("Select text"), "{error}");
     }
 
     #[test]

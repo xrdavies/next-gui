@@ -124,6 +124,8 @@ impl ProjectFile {
             state.sql_tabs = self.sql_tabs.clone();
             state.sql_edit_states.clear();
             state.sql_tab_idx = self.sql_tab_idx.min(state.sql_tabs.len().saturating_sub(1));
+            state.find_search.reset(&state.sql_tabs[state.sql_tab_idx], 0..0);
+            state.find_message.clear();
         }
         if !self.browse_tabs.is_empty() {
             state.browse_tabs = self.browse_tabs.clone();
