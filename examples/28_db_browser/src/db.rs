@@ -337,7 +337,11 @@ pub fn list_schema_in(conn: &Connection, schema: &str) -> Result<Vec<SchemaObjec
 }
 
 pub fn table_columns(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let q = format!("PRAGMA main.table_info({})", quote_ident(table));
+    table_columns_in(conn, "main", table)
+}
+
+pub fn table_columns_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+    let q = format!("PRAGMA {}.table_info({})", quote_ident(schema), quote_ident(table));
     let mut stmt = conn.prepare(&q).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -387,8 +391,12 @@ pub const DEFAULT_LIMIT: usize = 500;
 
 /// Browse a table/view with optional ORDER BY, WHERE filter, and limit.
 pub fn table_column_names(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
+    table_column_names_in(conn, "main", table)
+}
+
+pub fn table_column_names_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<String>, String> {
     let stmt = conn
-        .prepare(&format!("SELECT * FROM {} LIMIT 0", qualified_name("main", table)))
+        .prepare(&format!("SELECT * FROM {} LIMIT 0", qualified_name(schema, table)))
         .map_err(|e| e.to_string())?;
     Ok(stmt.column_names().into_iter().map(String::from).collect())
 }
@@ -399,9 +407,9 @@ pub struct OrderBy {
     pub descending: bool,
 }
 
-fn append_order_by(conn: &Connection, table: &str, sql: &mut String, ordering: &[OrderBy]) -> Result<(), String> {
+fn append_order_by(conn: &Connection, schema: &str, table: &str, sql: &mut String, ordering: &[OrderBy]) -> Result<(), String> {
     if ordering.is_empty() { return Ok(()); }
-    let columns = table_column_names(conn, table)?;
+    let columns = table_column_names_in(conn, schema, table)?;
     if let Some(order) = ordering.iter().find(|order| !columns.iter().any(|column| column.eq_ignore_ascii_case(&order.column))) {
         return Err(format!("Sort column does not exist: {}", order.column));
     }
@@ -422,13 +430,24 @@ pub fn browse_table(
     limit: usize,
     offset: usize,
 ) -> Result<QueryResult, String> {
+    browse_table_in(conn, "main", table, ordering, filter, limit, offset)
+}
+
+pub fn browse_table_in(
+    conn: &Connection, schema: &str,
+    table: &str,
+    ordering: &[OrderBy],
+    filter: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<QueryResult, String> {
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
-    let mut sql = format!("SELECT * FROM {}", qualified_name("main", table));
+    let mut sql = format!("SELECT * FROM {}", qualified_name(schema, table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
     }
-    append_order_by(conn, table, &mut sql, ordering)?;
+    append_order_by(conn, schema, table, &mut sql, ordering)?;
     sql.push_str(&format!(
         " LIMIT {} OFFSET {offset}",
         limit.saturating_add(1)
@@ -442,7 +461,15 @@ pub fn count_browse_rows(
     table: &str,
     filter: Option<&str>,
 ) -> Result<usize, String> {
-    let mut sql = format!("SELECT COUNT(*) FROM {}", qualified_name("main", table));
+    count_browse_rows_in(conn, "main", table, filter)
+}
+
+pub fn count_browse_rows_in(
+    conn: &Connection, schema: &str,
+    table: &str,
+    filter: Option<&str>,
+) -> Result<usize, String> {
+    let mut sql = format!("SELECT COUNT(*) FROM {}", qualified_name(schema, table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
@@ -627,7 +654,11 @@ pub fn insert_row(
 }
 
 pub fn delete_row_by_rowid(conn: &Connection, table: &str, rowid: i64) -> Result<u64, String> {
-    let sql = format!("DELETE FROM {} WHERE rowid = ?1", qualified_name("main", table));
+    delete_row_by_rowid_in(conn, "main", table, rowid)
+}
+
+pub fn delete_row_by_rowid_in(conn: &Connection, schema: &str, table: &str, rowid: i64) -> Result<u64, String> {
+    let sql = format!("DELETE FROM {} WHERE rowid = ?1", qualified_name(schema, table));
     conn.execute(&sql, [rowid]).map_err(|e| e.to_string())?;
     Ok(conn.changes())
 }
@@ -639,9 +670,19 @@ pub fn update_cell(
     column: &str,
     value: &rusqlite::types::Value,
 ) -> Result<u64, String> {
+    update_cell_in(conn, "main", table, rowid, column, value)
+}
+
+pub fn update_cell_in(
+    conn: &Connection, schema: &str,
+    table: &str,
+    rowid: i64,
+    column: &str,
+    value: &rusqlite::types::Value,
+) -> Result<u64, String> {
     let sql = format!(
         "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
-        qualified_name("main", table),
+        qualified_name(schema, table),
         quote_ident(column)
     );
     conn.execute(&sql, rusqlite::params![value, rowid])
@@ -656,6 +697,15 @@ pub fn update_cells(
     columns: &[String],
     updates: &[(i64, Vec<CellValue>)],
 ) -> Result<(), String> {
+    update_cells_in(conn, "main", table, columns, updates)
+}
+
+pub fn update_cells_in(
+    conn: &Connection, schema: &str,
+    table: &str,
+    columns: &[String],
+    updates: &[(i64, Vec<CellValue>)],
+) -> Result<(), String> {
     if columns.is_empty() || updates.is_empty()
         || updates.iter().any(|(_, row)| row.len() != columns.len())
     {
@@ -664,7 +714,7 @@ pub fn update_cells(
     let assignments = columns.iter().enumerate()
         .map(|(i, col)| format!("{} = ?{}", quote_ident(col), i + 1))
         .collect::<Vec<_>>().join(", ");
-    let sql = format!("UPDATE {} SET {assignments} WHERE rowid = ?{}", qualified_name("main", table), columns.len() + 1);
+    let sql = format!("UPDATE {} SET {assignments} WHERE rowid = ?{}", qualified_name(schema, table), columns.len() + 1);
     with_savepoint(conn, || {
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         for (rowid, values) in updates {
@@ -687,8 +737,19 @@ pub fn browse_with_rowid(
     limit: usize,
     offset: usize,
 ) -> Result<QueryResult, String> {
+    browse_with_rowid_in(conn, "main", table, ordering, filter, limit, offset)
+}
+
+pub fn browse_with_rowid_in(
+    conn: &Connection, schema: &str,
+    table: &str,
+    ordering: &[OrderBy],
+    filter: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<QueryResult, String> {
     if conn
-        .prepare(&format!("SELECT * FROM {}", qualified_name("main", table)))
+        .prepare(&format!("SELECT * FROM {}", qualified_name(schema, table)))
         .map_err(|e| e.to_string())?
         .column_names()
         .iter()
@@ -697,12 +758,12 @@ pub fn browse_with_rowid(
         return Err("Grid editing requires an unshadowed rowid".into());
     }
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
-    let mut sql = format!("SELECT rowid AS __rowid__, * FROM {}", qualified_name("main", table));
+    let mut sql = format!("SELECT rowid AS __rowid__, * FROM {}", qualified_name(schema, table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
     }
-    append_order_by(conn, table, &mut sql, ordering)?;
+    append_order_by(conn, schema, table, &mut sql, ordering)?;
     sql.push_str(&format!(
         " LIMIT {} OFFSET {offset}",
         limit.saturating_add(1)
@@ -992,12 +1053,23 @@ pub fn export_table(
     path: &Path,
     json: bool,
 ) -> Result<(), String> {
+    export_table_in(conn, "main", table, ordering, filter, path, json)
+}
+
+pub fn export_table_in(
+    conn: &Connection, schema: &str,
+    table: &str,
+    ordering: &[OrderBy],
+    filter: Option<&str>,
+    path: &Path,
+    json: bool,
+) -> Result<(), String> {
     guard_output_path(conn, path)?;
-    let mut sql = format!("SELECT * FROM {}", qualified_name("main", table));
+    let mut sql = format!("SELECT * FROM {}", qualified_name(schema, table));
     if let Some(filter) = filter.filter(|s| !s.is_empty()) {
         sql.push_str(&format!(" WHERE {filter}"));
     }
-    append_order_by(conn, table, &mut sql, ordering)?;
+    append_order_by(conn, schema, table, &mut sql, ordering)?;
     let mut stmt = prepare_browse(conn, &sql)?;
     let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let parent = path
@@ -1443,6 +1515,58 @@ pub fn default_demo_path() -> PathBuf {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn data_helpers_target_quoted_attached_and_temp_namespaces() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";").unwrap();
+        for schema in ["main", "temp", "aux.\"db"] {
+            let table = qualified_name(schema, "same.\"table");
+            conn.execute_batch(&format!("CREATE TABLE {table}(id INTEGER PRIMARY KEY, v TEXT);
+                INSERT INTO {table} VALUES(1, 'original'), (2, 'second');")).unwrap();
+        }
+        let order = vec![OrderBy { column: "id".into(), descending: true }];
+        let dir = tempfile::tempdir().unwrap();
+        for schema in ["temp", "aux.\"db"] {
+            let table = "same.\"table";
+            assert_eq!(table_columns_in(&conn, schema, table).unwrap().len(), 2);
+            assert_eq!(table_column_names_in(&conn, schema, table).unwrap(), ["id", "v"]);
+            assert_eq!(count_browse_rows_in(&conn, schema, table, Some("id=1")).unwrap(), 1);
+            let rows = browse_table_in(&conn, schema, table, &order, Some("id>0"), 1, 0).unwrap();
+            assert_eq!(rows.rows[0][0], "2");
+            assert!(rows.truncated);
+            let rows = browse_with_rowid_in(&conn, schema, table, &[], None, 500, 0).unwrap();
+            assert_eq!(rows.columns[0], "__rowid__");
+            update_cell_in(&conn, schema, table, 1, "v", &rusqlite::types::Value::Text(schema.into())).unwrap();
+            let values = [(1, vec![CellValue::Text(b"atomic".to_vec())]), (999, vec![CellValue::Null])];
+            assert!(update_cells_in(&conn, schema, table, &["v".into()], &values).is_err());
+            let out = dir.path().join(if schema == "temp" { "temp.json" } else { "attached.json" });
+            export_table_in(&conn, schema, table, &[], Some("id=1"), &out, true).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+            assert_eq!(json[0]["v"], schema);
+            assert_eq!(delete_row_by_rowid_in(&conn, schema, table, 2).unwrap(), 1);
+            assert_eq!(count_browse_rows_in(&conn, schema, table, None).unwrap(), 1);
+        }
+        assert_eq!(count_rows(&conn, "same.\"table").unwrap(), 2);
+        assert_eq!(browse_table(&conn, "same.\"table", &[], None, 500, 0).unwrap().rows[0][1], "original");
+        assert!(browse_table_in(&conn, "missing\"; DROP TABLE main.t", "same.\"table", &[], None, 500, 0).is_err());
+    }
+
+    #[test]
+    fn foreign_key_metadata_resolves_the_parent_in_the_same_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";
+            CREATE TABLE main.parent(main_id INTEGER PRIMARY KEY);
+            CREATE TABLE main.child(main_ref REFERENCES parent);").unwrap();
+        for schema in ["temp", "aux.\"db"] {
+            conn.execute_batch(&format!("CREATE TABLE {}(other_id INTEGER PRIMARY KEY);
+                CREATE TABLE {}(other_ref REFERENCES parent);", qualified_name(schema, "parent"), qualified_name(schema, "child"))).unwrap();
+            let keys = list_foreign_keys_in(&conn, schema, "child").unwrap();
+            assert_eq!(keys[0].from_col, "other_ref");
+            assert_eq!(keys[0].to_col, "other_id");
+        }
+        assert_eq!(list_foreign_keys(&conn, "child").unwrap()[0].to_col, "main_id");
+    }
 
     #[test]
     fn main_browse_helpers_ignore_same_named_temp_tables() {
@@ -2136,7 +2260,11 @@ pub struct FkRef {
 }
 
 pub fn list_foreign_keys(conn: &Connection, table: &str) -> Result<Vec<FkRef>, String> {
-    let sql = format!("PRAGMA main.foreign_key_list({})", quote_ident(table));
+    list_foreign_keys_in(conn, "main", table)
+}
+
+pub fn list_foreign_keys_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<FkRef>, String> {
+    let sql = format!("PRAGMA {}.foreign_key_list({})", quote_ident(schema), quote_ident(table));
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -2155,8 +2283,8 @@ pub fn list_foreign_keys(conn: &Connection, table: &str) -> Result<Vec<FkRef>, S
         if fk.to_col.is_empty() {
             fk.to_col = conn
                 .query_row(
-                    "SELECT name FROM pragma_table_info(?1, 'main') WHERE pk=?2",
-                    rusqlite::params![fk.to_table, fk.seq + 1],
+                    "SELECT name FROM pragma_table_info(?1, ?3) WHERE pk=?2",
+                    rusqlite::params![fk.to_table, fk.seq + 1, schema],
                     |r| r.get(0),
                 )
                 .map_err(|e| format!("Cannot resolve parent primary key: {e}"))?;
