@@ -1,0 +1,11 @@
+# Capture provenance
+
+Implementation `4731f9c09196c2fac69d43731ba3c84b5747612b`, macOS27.0.1 arm64, 2026-10-28.
+
+- `soft-metal-contact.png` / `small-light.png`: `NEXT_GUI_DB_BROWSER_KEY_TYPE_QA_OUT=/tmp/next-gui-key-type-status cargo test -p e28_db_browser key_type_cells_validate_atomically_cancel_autoincrement_and_preserve_ordered_key_migrations -- --nocapture`. Writer98996 exit0 awaited before PNG conversion/contact (both exit0). Both themes800×600 closed type editor and1400×1000 open popup; all four Soft/Metal pairs max channel delta2. Contact inspected. Captured after final status correction, before the native-only QA redraw hook, which is inactive in these tests.
+- `native-popups.png` / `native-popup-light.png`: final build90717 exit0; owned GPU `table-key-type` fixture in both themes, readiness and own layer0 window checked. Helper53188 exit0, both owned SIGINT-2 exits awaited. Final source automatically reopens this fixture's dropdown after startup layout; this is static QA, not injected/native input acceptance. Both captures/contact and full light inspected. `/tmp/next-gui-key-type-native-final-{dark,light}` includes source captures/logs/metadata. Earlier helper73200 captures showed the initially closed dropdown and were superseded.
+- `office-contact.png`:14 owned GPU windows e10–15/e20–27, all skimmed; helper73200 exit0 and every owned SIGINT-2 exit awaited. Captured after the shared Select change, before example-only status/refactor/QA hook; Office source/rendering is unaffected by those later changes.
+
+Targets remained inactive; native keyboard/pointer/IME/Save was not accepted. No original-binary pixel match or Windows/Linux runtime is inferred.
+
+Final522 tests/43 groups, e28301/UI156, zero failures/ignored: `/tmp/next-gui-key-type-workspace-verified.log`, session48761 exit0 awaited. Final strict Clippy/workspace build/macOS/Windows feature compile: `/tmp/next-gui-key-type-{clippy,build,macos,windows}-verified.log`, orchestrator85498 exit0 and each child0. Focused shared test55146 exit0; app status/visual98996 exit0. Earlier full suites76861/22901, checks72530/78330 and app visual84333/24057 also exit0 awaited; first draft fixture checks33295/63173 failed and were corrected before final verification.
