@@ -584,6 +584,7 @@ fn per_table_filters_sort_and_widths_restore_in_each_tab_and_project_roundtrip()
         .unwrap();
     demo.state.refresh_schema().unwrap();
     let options = state::BrowseTableOptions {
+        column_names: vec!["n".into(), "label".into()],
         filter: "n%2=1".into(),
         global_filters: vec!["row".into()],
         col_filters: vec!["<=999".into(), String::new()],

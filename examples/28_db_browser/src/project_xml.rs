@@ -511,10 +511,11 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
             table_options.insert((tab.schema.clone(), name.clone()), tab.options());
         }
     }
-    for ((schema, name), options) in table_options {
+    for ((schema, name), mut options) in table_options {
         if schema == "temp" && db::table_columns_in(conn, &schema, &name)?.is_empty() { continue; }
         let columns = db::table_column_names_in(conn, &schema, &name)?;
         if columns.is_empty() { continue; }
+        options.remap_columns(&columns);
         let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == schema && e.attr("name") == Some(name.as_str()))).unwrap_or_else(|| {
             let mut table = Element::new("table");
             table.set("schema", &schema); table.set("name", &name);
@@ -529,6 +530,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
             .any(|tab| tab.schema == schema && tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
         if let Some(count) = frozen {
             let count = count.min(columns.len());
+            table.set("next_gui_frozen_names", serde_json::to_string(&columns[..count]).map_err(|e| e.to_string())?);
             // Keep a row-id-only prefix while that column remains unapplied in e28.
             if count > 0 || table.attr("freeze_columns") != Some("1") {
                 table.set("freeze_columns", if count == 0 { 0 } else { count + 1 });
@@ -536,18 +538,29 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         }
         let sort = table.ensure("sort");
         let old_ordering = sort.children().filter(|e| e.name == "column").filter_map(|column| {
-            column.attr("index").and_then(|i| i.parse::<usize>().ok()).and_then(|i| columns.get(i))
+            setting_column_index(column, &columns, false).and_then(|i| columns.get(i))
                 .map(|name| db::OrderBy { column: name.clone(), descending: column.attr("mode") == Some("1") })
         }).collect::<Vec<_>>();
         let ordering = options.ordering;
-        if old_ordering != ordering {
+        if old_ordering != ordering || sort.children().filter(|e| e.name == "column").count() != ordering.len() {
             sort.retain_elements(|e| e.name != "column");
             for order in &ordering {
                 if let Some(index) = columns.iter().position(|c| c == &order.column) {
                     let mut column = Element::new("column");
                     column.set("index", index);
                     column.set("mode", u8::from(order.descending));
+                    column.set("next_gui_name", &order.column);
                     sort.push(column);
+                }
+            }
+        }
+        for content in &mut sort.content {
+            if let Content::Element(column) = content {
+                if column.name == "column" {
+                    if let Some(index) = setting_column_index(column, &columns, false) {
+                        column.set("index", index);
+                        column.set("next_gui_name", &columns[index]);
+                    }
                 }
             }
         }
@@ -556,6 +569,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         for (index, width) in options.column_widths.iter().enumerate().take(columns.len()) {
             let mut column = Element::new("column");
             column.set("index", index + 1);
+            column.set("next_gui_name", &columns[index]);
             column.set("value", width.round().max(32.0) as u32);
             widths.push(column);
         }
@@ -564,6 +578,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         for (index, value) in options.col_filters.iter().enumerate().take(columns.len()).filter(|(_, value)| !value.is_empty()) {
             let mut column = Element::new("column");
             column.set("index", index);
+            column.set("next_gui_name", &columns[index]);
             column.set("value", value);
             filters.push(column);
         }
@@ -580,11 +595,22 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
 }
 
 /// Map column indices only after the database schema is available.
+fn setting_column_index(column: &Element, columns: &[String], row_id: bool) -> Option<usize> {
+    if let Some(name) = column.attr("next_gui_name") {
+        columns.iter().position(|c| c.eq_ignore_ascii_case(name))
+    } else {
+        let index = column.attr("index")?.parse::<usize>().ok()?;
+        let index = if row_id { index.checked_sub(1)? } else { index };
+        (index < columns.len()).then_some(index)
+    }
+}
+
 fn restore_table_options(
     tab: &mut BrowseTabState,
     table: &Element,
     columns: &[String],
 ) -> Result<(), String> {
+    tab.column_names = columns.to_vec();
     if let Some(count) = table.attr("freeze_columns") {
         tab.frozen_cols = Some(
             count.parse::<usize>()
@@ -593,15 +619,16 @@ fn restore_table_options(
                 .min(columns.len()),
         );
     }
+    if let Some(names) = table.attr("next_gui_frozen_names") {
+        let names: Vec<String> = serde_json::from_str(names).map_err(|e| format!("Invalid frozen column names: {e}"))?;
+        tab.frozen_cols = Some(columns.iter().take_while(|name| names.iter().any(|old| old.eq_ignore_ascii_case(name))).count());
+    }
     if let Some(sort) = table.child("sort") {
         tab.set_ordering(
             sort.children()
                 .filter(|e| e.name == "column")
                 .filter_map(|column| {
-                    column
-                        .attr("index")
-                        .and_then(|i| i.parse::<usize>().ok())
-                        .and_then(|i| columns.get(i))
+                    setting_column_index(column, columns, false).and_then(|i| columns.get(i))
                         .map(|name| db::OrderBy {
                             column: name.clone(),
                             descending: column.attr("mode") == Some("1"),
@@ -613,11 +640,7 @@ fn restore_table_options(
     if let Some(widths) = table.child("column_widths") {
         tab.column_widths.resize(columns.len(), 140.0);
         for column in widths.children().filter(|e| e.name == "column") {
-            if let Some(index) = column
-                .attr("index")
-                .and_then(|s| s.parse::<usize>().ok())
-                .and_then(|index| index.checked_sub(1))
-                .filter(|&i| i < columns.len())
+            if let Some(index) = setting_column_index(column, columns, true)
             {
                 let width = column
                     .attr("value")
@@ -634,11 +657,10 @@ fn restore_table_options(
     if let Some(filters) = table.child("filter_values") {
         tab.col_filters = vec![String::new(); columns.len()];
         for column in filters.children().filter(|e| e.name == "column") {
-            let index = column
-                .attr("index")
-                .and_then(|s| s.parse::<usize>().ok())
-                .filter(|&i| i < columns.len())
-                .ok_or("Invalid project filter column index")?;
+            let Some(index) = setting_column_index(column, columns, false) else {
+                if column.attr("next_gui_name").is_some() { continue; }
+                return Err("Invalid project filter column index".into());
+            };
             tab.col_filters[index] = column.attr("value").unwrap_or("").into();
         }
     }
@@ -684,6 +706,9 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             } else if let Some(options) = tab.stored_options(schema, name) {
                 stored.set_options(options.clone());
             }
+            let mut options = stored.options();
+            options.remap_columns(&columns);
+            stored.set_options(options);
             // Per-tab overrides take precedence over DB4S's shared table setting.
             let frozen_override = stored.frozen_cols;
             let widths_override = (!stored.column_widths.is_empty()).then(|| stored.column_widths.clone());
@@ -884,6 +909,45 @@ pub fn restore_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_native_browse_settings_survive_removed_columns_with_or_without_extension() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(a INTEGER,b INTEGER,c INTEGER); INSERT INTO t VALUES(1,2,3),(4,5,6)").unwrap();
+        let mut tab = BrowseTabState::new(Some("t".into()));
+        tab.column_names = vec!["a".into(), "b".into(), "c".into()];
+        tab.col_filters = vec![String::new(), "=2".into(), ">0".into()];
+        tab.column_widths = vec![111.0, 222.0, 333.0];
+        tab.frozen_cols = Some(2);
+        tab.set_ordering(vec![db::OrderBy { column: "b".into(), descending: true }, db::OrderBy { column: "c".into(), descending: false }]);
+        let mut project = ProjectFile { db_path: ":memory:".into(), browse_tabs: vec![tab], ..ProjectFile::default() };
+        capture_connection(&mut project, &conn).unwrap();
+        let encoded = encode(&project, Path::new("names.sqbpro")).unwrap();
+        assert!(encoded.contains("next_gui_name"));
+        conn.execute_batch("ALTER TABLE t DROP COLUMN b").unwrap();
+        for extension in [true, false] {
+            let mut root = parse(&encoded).unwrap();
+            if !extension { root.retain_elements(|e| e.name != "next_gui"); }
+            let mut restored = decode(&render(&root).unwrap()).unwrap();
+            restore_browse(&mut restored, &conn).unwrap();
+            let tab = &restored.browse_tabs[0];
+            assert_eq!(tab.column_names, ["a", "c"]);
+            assert_eq!(tab.col_filters, ["", ">0"]);
+            assert_eq!(tab.column_widths, [111.0, 333.0]);
+            assert_eq!(tab.frozen_cols, Some(1));
+            assert_eq!(tab.ordering(), [db::OrderBy { column: "c".into(), descending: false }]);
+            capture_connection(&mut restored, &conn).unwrap();
+            let root = parse(restored.db4s_xml.as_ref().unwrap()).unwrap();
+            let table = root.child("tab_browse").unwrap().child("browse_table_settings").unwrap().children().find(|e| e.name == "table").unwrap();
+            let sort: Vec<_> = table.child("sort").unwrap().children().filter(|e| e.name == "column").collect();
+            assert_eq!(sort.len(), 1);
+            assert_eq!(sort[0].attr("index"), Some("1"));
+            assert_eq!(sort[0].attr("next_gui_name"), Some("c"));
+            assert_eq!(table.child("filter_values").unwrap().children().next().unwrap().attr("index"), Some("1"));
+            let widths: Vec<_> = table.child("column_widths").unwrap().children().filter_map(|e| e.attr("index").zip(e.attr("value"))).collect();
+            assert_eq!(widths, [("1", "111"), ("2", "333")]);
+        }
+    }
 
     // Structure and attribute names follow upstream v3.13.1 MainWindow::saveProject.
     const PROJECT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>

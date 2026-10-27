@@ -116,6 +116,7 @@ pub struct SelectedObject {
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct BrowseTableOptions {
+    pub column_names: Vec<String>,
     pub filter: String,
     pub global_filters: Vec<String>,
     pub col_filters: Vec<String>,
@@ -124,12 +125,36 @@ pub struct BrowseTableOptions {
     pub frozen_cols: Option<usize>,
 }
 
+impl BrowseTableOptions {
+    pub fn remap_columns(&mut self, columns: &[String]) {
+        if !self.column_names.is_empty() && self.column_names != columns {
+            let positions: Vec<_> = columns.iter().map(|name| self.column_names.iter().position(|old| old.eq_ignore_ascii_case(name))).collect();
+            if !self.col_filters.is_empty() {
+                self.col_filters = positions.iter().map(|i| i.and_then(|i| self.col_filters.get(i)).cloned().unwrap_or_default()).collect();
+            }
+            if !self.column_widths.is_empty() {
+                self.column_widths = positions.iter().map(|i| i.and_then(|i| self.column_widths.get(i)).copied().unwrap_or(140.0)).collect();
+            }
+            self.ordering.retain_mut(|order| {
+                if let Some(name) = columns.iter().find(|name| name.eq_ignore_ascii_case(&order.column)) { order.column = name.clone(); true }
+                else { false }
+            });
+            if let Some(count) = self.frozen_cols {
+                self.frozen_cols = Some(positions.iter().take_while(|i| i.is_some_and(|i| i < count)).count());
+            }
+        }
+        self.column_names = columns.to_vec();
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrowseTabState {
     pub title: String,
     #[serde(default = "main_schema")]
     pub schema: String,
     pub table: Option<String>,
+    #[serde(default)]
+    pub column_names: Vec<String>,
     pub filter: String,
     #[serde(default)]
     pub global_filters: Vec<String>,
@@ -191,6 +216,7 @@ impl BrowseTabState {
     }
     pub fn options(&self) -> BrowseTableOptions {
         BrowseTableOptions {
+            column_names: if self.column_names.is_empty() { self.result.as_ref().map(|r| r.columns.clone()).unwrap_or_default() } else { self.column_names.clone() },
             filter: self.filter.clone(),
             global_filters: self.global_filters.clone(),
             col_filters: self.col_filters.clone(),
@@ -201,6 +227,7 @@ impl BrowseTabState {
     }
 
     pub fn set_options(&mut self, options: BrowseTableOptions) {
+        self.column_names = options.column_names;
         self.filter = options.filter;
         self.global_filters = options.global_filters;
         self.col_filters = options.col_filters;
@@ -275,6 +302,7 @@ impl BrowseTabState {
             title,
             schema: schema.into(),
             table,
+            column_names: Vec::new(),
             filter: String::new(),
             global_filters: Vec::new(),
             col_filters: Vec::new(),
@@ -1091,12 +1119,16 @@ impl AppState {
         let tab = self.browse();
         let table = tab.table.as_ref().ok_or("Select a table to export")?;
         let columns = db::table_column_names_in(conn, &schema, table)?;
+        let mut options = tab.options();
+        options.remap_columns(&columns);
+        let mut candidate = tab.clone();
+        candidate.set_options(options);
         db::export_table_in(
             conn,
             &schema,
             table,
-            &tab.ordering(),
-            Self::composed_where(tab, &columns)?.as_deref(),
+            &candidate.ordering(),
+            Self::composed_where(&candidate, &columns)?.as_deref(),
             path,
             json,
         )
@@ -1115,18 +1147,7 @@ impl AppState {
             self.clear_browse_editor();
             return Ok(());
         }
-        let (table, ordering, mut col_filters, mut prev_cols) = {
-            let t = self.browse_mut();
-            (
-                t.table.clone(),
-                t.ordering(),
-                t.col_filters.clone(),
-                t.result
-                    .as_ref()
-                    .map(|r| r.columns.clone())
-                    .unwrap_or_default(),
-            )
-        };
+        let table = self.browse().table.clone();
         let Some(table) = table else {
             let t = self.browse_mut();
             t.result = None;
@@ -1136,15 +1157,18 @@ impl AppState {
             self.clear_browse_editor();
             return Ok(());
         };
-        if prev_cols.is_empty() {
-            prev_cols = db::table_column_names_in(self.conn.as_ref().unwrap(), &schema, &table)?;
-        }
+        let columns = db::table_column_names_in(self.conn.as_ref().unwrap(), &schema, &table)?;
+        let mut options = self.browse().options();
+        options.remap_columns(&columns);
+        let mut candidate = self.browse().clone();
+        candidate.set_options(options);
+        let ordering = candidate.ordering();
         let is_view = self
             .schema
             .iter()
             .any(|o| o.schema == schema && o.name == table && o.kind == ObjectKind::View);
 
-        let where_sql = Self::composed_where(self.browse(), &prev_cols)?;
+        let where_sql = Self::composed_where(&candidate, &columns)?;
 
         let total_rows = db::count_browse_rows_in(self.conn.as_ref().unwrap(), &schema, &table, where_sql.as_deref())?;
         let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
@@ -1209,8 +1233,7 @@ impl AppState {
             }
         };
 
-        let n = result.columns.len();
-        col_filters.resize(n, String::new());
+        candidate.col_filters.resize(result.columns.len(), String::new());
         let nrows = result.rows.len();
         let truncated = result.truncated;
         let order_note = if ordering.is_empty() { String::new() } else {
@@ -1218,7 +1241,7 @@ impl AppState {
         };
         {
             let t = self.browse_mut();
-            t.col_filters = col_filters;
+            t.set_options(candidate.options());
             t.offset = offset;
             t.title = if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) };
             t.rowids = rowids;
@@ -2442,25 +2465,33 @@ impl AppState {
                     }
                 }
             }
-            if let Some(table) = &tab.table {
+            if let Some(table) = tab.table.clone() {
                 if tab.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
                     return Err(format!("Browse tab {}: invalid column width", tab.title));
                 }
                 let result = (|| {
-                    let columns = db::table_column_names_in(conn, &tab.schema, table)?;
-                    db::browse_table_in(conn, &tab.schema, table, &tab.ordering(),
+                    let columns = db::table_column_names_in(conn, &tab.schema, &table)?;
+                    let mut options = tab.options();
+                    options.remap_columns(&columns);
+                    tab.set_options(options);
+                    db::browse_table_in(conn, &tab.schema, &table, &tab.ordering(),
                         Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
                 })();
                 result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
             }
-            for (schema, table, options) in tab.saved_options() {
-                if tab.schema == schema && tab.table.as_deref() == Some(table) { continue; }
+            let active_schema = tab.schema.clone();
+            let active_table = tab.table.clone();
+            let active_options = tab.options();
+            for (schema, table, options) in tab.table_options.iter_mut().map(|(table, options)| ("main", table, options))
+                .chain(tab.schema_table_options.iter_mut().flat_map(|(schema, tables)| tables.iter_mut().map(move |(table, options)| (schema.as_str(), table, options)))) {
+                if active_schema == schema && active_table.as_deref() == Some(table) { *options = active_options.clone(); continue; }
                 if schema == "temp" && db::table_columns_in(conn, schema, table)?.is_empty() { continue; }
                 let columns = db::table_column_names_in(conn, schema, table)?;
                 if columns.is_empty() { continue; }
                 if options.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
                     return Err(format!("Saved table {table}: invalid column width"));
                 }
+                options.remap_columns(&columns);
                 let mut stored = BrowseTabState::new_in(schema, Some(table.into()));
                 stored.set_options(options.clone());
                 let result = (|| {
@@ -3235,6 +3266,66 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn browse_schema_refresh_remaps_column_filters_order_and_widths_by_name() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE same(a INTEGER,b INTEGER,c INTEGER); ATTACH ':memory:' AS aux;
+            CREATE TABLE aux.same(a INTEGER,b INTEGER,c INTEGER); INSERT INTO aux.same VALUES(1,2,3),(4,5,6);").unwrap();
+        state.refresh_schema().unwrap();
+        state.switch_browse_table_in("aux", "same").unwrap();
+        state.browse_mut().col_filters = vec![String::new(), "=2".into(), ">0".into()];
+        state.browse_mut().column_widths = vec![111.0, 222.0, 333.0];
+        state.browse_mut().frozen_cols = Some(2);
+        state.browse_mut().set_ordering(vec![db::OrderBy { column: "b".into(), descending: true }, db::OrderBy { column: "c".into(), descending: false }]);
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 1);
+        let mut project = crate::project::ProjectFile::from_state(&state);
+        let mut inactive = BrowseTabState::new(Some("t".into()));
+        inactive.store_options("aux", "same", state.browse().options());
+        project.browse_tabs.push(inactive);
+        let json = serde_json::to_string(&project).unwrap();
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE aux.same DROP COLUMN b").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let exported = dir.path().join("remapped.json");
+        state.export_browse(&exported, true).unwrap();
+        let rows: serde_json::Value = serde_json::from_slice(&std::fs::read(exported).unwrap()).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 2);
+        assert!(rows[0].get("b").is_none());
+        state.refresh_schema().unwrap();
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().columns, ["a", "c"]);
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        assert_eq!(state.browse().col_filters, ["", ">0"]);
+        assert_eq!(state.browse().column_widths, [111.0, 333.0]);
+        assert_eq!(state.browse().frozen_cols, Some(1));
+        assert_eq!(state.browse().ordering(), [db::OrderBy { column: "c".into(), descending: false }]);
+        assert_eq!(db::table_column_names_in(state.conn.as_ref().unwrap(), "temp", "same").unwrap(), ["a", "b", "c"]);
+        let mut project: crate::project::ProjectFile = serde_json::from_str(&json).unwrap();
+        AppState::preflight_project_browse(&mut project, state.conn.as_ref().unwrap()).unwrap();
+        for options in [project.browse_tabs[0].options(), project.browse_tabs[1].stored_options("aux", "same").unwrap().clone()] {
+            assert_eq!(options.column_names, ["a", "c"]);
+            assert_eq!(options.col_filters, ["", ">0"]);
+            assert_eq!(options.column_widths, [111.0, 333.0]);
+            assert_eq!(options.frozen_cols, Some(1));
+        }
+        state.browse_mut().filter = "b=2".into();
+        let before = state.browse().options();
+        assert!(state.refresh_browse().is_err());
+        assert_eq!(state.browse().options(), before);
+        let path = dir.path().join("bad-filter.json");
+        assert!(state.export_browse(&path, true).is_err());
+        assert!(!path.exists());
+        state.browse_mut().filter.clear();
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
+        let mut options = state.browse().options();
+        options.remap_columns(&["C".into(), "a".into(), "added".into()]);
+        assert_eq!(options.col_filters, [">0", "", ""]);
+        assert_eq!(options.column_widths, [333.0, 111.0, 140.0]);
+        assert_eq!(options.frozen_cols, Some(0));
+        assert_eq!(options.ordering[0].column, "C");
     }
 
     #[test]
