@@ -521,3 +521,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Qualified schema wizard controls checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-6a2fb87f7784.md): basic table create/modify and atomic index create/replace now carry main/temp/attached identities. Renaming follows browse tabs/settings/formats/Plot; custom/empty types and edited DDL survive. Scrollable forms keep Save visible at narrow sizes. 399 tests/strict checks, ten frames per renderer and two native static captures pass; input interiors differ by 1, primitive edges up to 73 remain F01. F02 tracks column-setting refresh after ALTER. Full constraint/migration, expression/partial-index, original appearance and native input acceptance remain unfinished.
+
+
+## Browse column identity checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-80c8803f4766.md): F02 verified. Surviving column names now map filters, sorting, widths and the frozen prefix after schema changes, including export before refresh and active/inactive JSON/native XML projects. Invalid raw WHERE drafts remain intact. Re-saved XML indices match the new columns. 401 tests/strict checks and scoped Soft/native Browse static captures pass. Legacy unnamed settings retain first-load positions; external column renames, renderer F01, full schema/Plot/interface and native input acceptance remain unfinished.

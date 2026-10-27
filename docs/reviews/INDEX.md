@@ -14,7 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R-20261027-6a2fb87f7784-F02 | open | P2 | grok | e28 / all | existing positional settings | refresh_browse | Schema changes reuse old column filters/order/width positions; identity remapping needs verification | [F02](R-20261027-6a2fb87f7784.md#r-20261027-6a2fb87f7784-f02) | — | — |
+| R-20261027-6a2fb87f7784-F02 | verified | P2 | grok | e28 / all | existing positional settings | refresh_browse | Named surviving filters/order/widths/frozen prefix verified in refresh/export and active/inactive JSON/XML projects | [F02](R-20261027-6a2fb87f7784.md#r-20261027-6a2fb87f7784-f02) | 80c8803f4766 | 80c8803f4766 |
 | R-20261027-6a2fb87f7784-F01 | open | P3 | grok | shared render / macOS | existing primitive paths | fractional rectangle edges | Soft/Metal List edge max delta 73; input interiors delta 1, coverage parity remains | [F01](R-20261027-6a2fb87f7784.md#r-20261027-6a2fb87f7784-f01) | — | — |
 | R-20261027-1ca20533cf37-F01 | verified | P2 | grok | shared / e28 | existing Chart title | Ui::paint_chart | Bounded Unicode caption wrapping/ellipsis, full accessible text and e28 tooltip verified; Soft/Metal and native Office inspected | [F01](R-20261027-1ca20533cf37.md#r-20261027-1ca20533cf37-f01) | 14a98a98cdb1 | 14a98a98cdb1 |
 | R-20261027-9ce12cc31802-F01 | verified | P2 | grok | shared / e28 | existing branch | Tree navigation sessions | Focus, schema-keyed expansion, group selection, viewport and ancestor reveal survive browser rebuilds | [F01](R-20261027-9ce12cc31802.md#r-20261027-9ce12cc31802-f01) | 9ce12cc31802 | 9ce12cc31802 |
@@ -83,6 +83,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `67f87f4..80c8803f4766` | Codex | issues — column refresh F02 verified; 401 tests/strict checks; Soft/native Browse static inspected; renderer/full parity remain | [Report](R-20261027-80c8803f4766.md) |
 | 2026-10-27 | `7d58515..6a2fb87f7784` | Codex | issues — 399 tests/strict checks, qualified wizard controls/types/rollback and scroll/native static captures verified; edge coverage/browse settings/full/native parity remain | [Report](R-20261027-6a2fb87f7784.md) |
 | 2026-10-27 | `77b9ad0..30de3bbd49ad` | Codex | issues — 396 tests/strict checks; quoted schema CREATE/index/atomic ALTER foundation and dependency guard verified; wizard UI/full/native parity remain | [Report](R-20261027-30de3bbd49ad.md) |
 | 2026-10-27 | `c4ab7bb..14a98a98cdb1` | Codex | issues — F01 verified: 395 tests/strict checks, bounded Unicode captions, four chart Metal deltas 2 and native e28/fourteen Office static inspection; full/native parity remain | [Report](R-20261027-14a98a98cdb1.md) |
