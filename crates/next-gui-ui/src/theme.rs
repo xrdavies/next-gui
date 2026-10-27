@@ -2077,6 +2077,7 @@ impl AutocompleteStyle {
             bg: c.popup,
             popup_bg: c.popup,
             selected_bg: c.selected_bg,
+            selected_fg: c.on_accent,
             focus_border: c.focus,
         }
     }

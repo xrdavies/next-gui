@@ -866,12 +866,10 @@ pub fn build_ui(
                                     );
                                     r.text("Type");
                                     let types = state.column_type_names();
-                                    let ti = coldef
-                                        .and_then(|c| {
-                                            types.iter().position(|t| t == &c.type_name)
-                                        })
-                                        .unwrap_or(1);
-                                    ov_col_type = r.select(types, Some(ti), "type", type_sel);
+                                    let mut type_style = next_gui_ui::AutocompleteStyle::from_theme(&theme);
+                                    type_style.width = (row.width - 340.0).clamp(140.0, 300.0);
+                                    ov_col_type = r.autocomplete_placeholder(types,
+                                        coldef.map(|c| c.type_name.as_str()).unwrap_or(""), "No type", type_style);
                                 });
                                 c.row(row, |r| {
                                     ov_pk = r.switch_styled("PK", coldef.map(|c| c.pk).unwrap_or(false), sw);
@@ -2029,6 +2027,7 @@ pub fn build_ui(
 
     let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
     ui.set_accessible_name(browse_header_menu, "Browse column actions");
+    ui.set_accessible_name(ov_col_type, "Column declared type (editable)");
     if state.overlay == Some(OverlayKind::EditIndex) {
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");

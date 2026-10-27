@@ -574,8 +574,13 @@ impl Demo {
                 "browse" | "header-menu" => MainTab::Browse,
                 "pragmas" => MainTab::Pragmas,
                 "sql" | "execute" | "sql-long" | "sql-calltip" | "sql-word" => MainTab::ExecuteSql,
-                "wizard" | "table" => {
+                "wizard" | "table" | "table-types" => {
                     state.open_create_table_wizard();
+                    if tab == "table-types" {
+                        state.wizard_cols[1].type_name = "DECIMAL(10,2)".into();
+                        state.wizard_cols.push(db::ColDef::new("untyped", ""));
+                        state.wizard_col_sel = 1;
+                    }
                     MainTab::Structure
                 }
                 "index" => {
@@ -1274,7 +1279,7 @@ impl Demo {
             }
         }
         if self.ids.ov_col_type.0 != 0 {
-            if let Some(value) = self.ui.select_value(self.ids.ov_col_type) {
+            if let Some(value) = self.ui.autocomplete_value(self.ids.ov_col_type) {
                 self.state.wizard_cols[sel].type_name = value.into();
             }
         }
@@ -1377,6 +1382,11 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let column_type_session = (self.state.overlay == Some(OverlayKind::EditTable)
+            && self.ui.focused() == Some(self.ids.ov_col_type)
+            && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
+            && self.ui.autocomplete_value(self.ids.ov_col_type) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.type_name.as_str()))
+            .then(|| self.ui.autocomplete_state(self.ids.ov_col_type)).flatten();
         let index_focused = (self.state.overlay == Some(OverlayKind::EditIndex)).then(||
             [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available, self.ids.ov_idx_order].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
         ).flatten();
@@ -1403,6 +1413,12 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(session) = column_type_session {
+            if self.ui.set_autocomplete_state(self.ids.ov_col_type, &session) {
+                self.ui.set_focus(Some(self.ids.ov_col_type));
+                self.ui.sync(&mut self.scene);
+            }
+        }
         if let Some(index) = index_focused {
             self.ui.set_focus(Some([self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available, self.ids.ov_idx_order][index]));
             self.ui.sync(&mut self.scene);
@@ -3599,9 +3615,7 @@ impl AppCallbacks for Demo {
                                 if let Err(e) = ctx.clipboard_set_text(&text) {
                                     self.set_error(e.to_string());
                                 } else if matches!(key, KeyCode::Char('x' | 'X')) {
-                                    if let Some(area) = self.ui.focused() {
-                                        self.ui.replace_text_area_selection(area, "");
-                                    }
+                                    self.ui.delete_focused_text_selection();
                                     self.after_ui(ctx);
                                 }
                             }
@@ -5859,11 +5873,11 @@ mod interaction_tests {
         demo.snapshot_inputs();
         assert_eq!(demo.state.wizard_cols[0].type_name, "");
         assert_eq!(demo.state.wizard_cols[1].type_name, "DECIMAL(10,2)");
-        let custom = demo.ui.select_selected(demo.ids.ov_col_type).unwrap();
-        demo.ui.set_select_selected(demo.ids.ov_col_type, Some(0));
+        assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type), Some("DECIMAL(10,2)"));
+        demo.ui.set_autocomplete_value(demo.ids.ov_col_type, "INTEGER");
         demo.snapshot_inputs();
         assert_ne!(demo.state.wizard_cols[1].type_name, "DECIMAL(10,2)");
-        demo.ui.set_select_selected(demo.ids.ov_col_type, Some(custom));
+        demo.ui.set_autocomplete_value(demo.ids.ov_col_type, "DECIMAL(10,2)");
         demo.snapshot_inputs();
         assert_eq!(demo.state.wizard_cols[1].type_name, "DECIMAL(10,2)");
         demo.handle_button(demo.ids.ov_btn_ok);
@@ -5881,13 +5895,31 @@ mod interaction_tests {
                         demo.state.wizard_index_cols = "lower(region) COLLATE NOCASE DESC,\nrevenue -- keep column comment".into();
                         demo.state.wizard_index_where = "revenue >= 100\nAND region IS NOT NULL".into();
                     }
-                    else { demo.state.open_create_table_wizard(); }
+                    else {
+                        demo.state.open_create_table_wizard();
+                        demo.state.wizard_cols[1].type_name = "DECIMAL(10,2)".into();
+                        demo.state.wizard_cols.push(dbmod::ColDef::new("untyped", ""));
+                        demo.state.wizard_col_sel = 1;
+                    }
                     demo.state.wizard_schema = "analytics".into();
                     demo.do_rebuild();
                     let phases: &[&str] = if width == 800 && index { &["top", "middle", "bottom"] }
-                        else if width == 800 { &["top", "bottom"] } else { &["top"] };
+                        else if width == 800 { &["top", "bottom", "type-options", "type-ime"] }
+                        else if !index { &["top", "type-options", "type-ime"] } else { &["top"] };
                     for phase in phases {
-                        if *phase != "top" {
+                        if !index && matches!(*phase, "type-options" | "type-ime") {
+                            demo.ui.set_focus(Some(demo.ids.ov_col_type));
+                            demo.ui.set_autocomplete_value(demo.ids.ov_col_type, "");
+                            demo.ui.key_input(UiKey::Down);
+                            if *phase == "type-ime" {
+                                demo.ui.ime_preedit("中文类型", Some((6, 6)));
+                                assert!(!demo.ui.has_open_popup());
+                            }
+                            demo.ui.sync(&mut demo.scene);
+                            let focus = demo.ui.ime_cursor_area(&demo.scene).unwrap();
+                            assert!(focus.0 >= 0.0 && focus.0 + focus.2 <= width as f32);
+                        }
+                        if matches!(*phase, "middle" | "bottom") {
                             assert!(demo.ui.set_scroll_offset(demo.ids.ov_scroll, 0.0, if *phase == "middle" { 200.0 } else { 10000.0 }));
                             demo.ui.sync(&mut demo.scene);
                             let offset = demo.ui.scroll_offset(demo.ids.ov_scroll).unwrap();
@@ -5932,6 +5964,55 @@ mod interaction_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn table_wizard_accepts_custom_and_empty_types_with_rebuild_safe_ime() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.open_create_table_wizard();
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_name, "custom_types");
+        demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_col_name, "amount");
+        demo.ui.set_focus(Some(demo.ids.ov_col_type));
+        demo.ui.key_input(UiKey::SelectAll);
+        assert!(demo.ui.paste_into_focused_text("DECIMAL(10,2)"));
+        demo.snapshot_inputs();
+        demo.ui.key_input(UiKey::Home);
+        demo.ui.ime_preedit("中文", Some((3, 3)));
+        demo.ui.sync(&mut demo.scene);
+        let before = demo.ui.ime_cursor_area(&demo.scene).unwrap();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.ov_col_type));
+        assert_eq!(demo.ui.ime_cursor_area(&demo.scene), Some(before));
+        assert!(demo.ui.ime_commit("类型"));
+        assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type), Some("类型DECIMAL(10,2)"));
+        demo.ui.key_input(UiKey::SelectAll);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert!(demo.ui.paste_into_focused_text("DECIMAL(10,2)"));
+        demo.snapshot_inputs();
+        demo.handle_button(demo.ids.ov_btn_add);
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_col_name, "untyped");
+        demo.ui.set_autocomplete_value(demo.ids.ov_col_type, "");
+        demo.snapshot_inputs();
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        let types: Vec<_> = dbmod::table_columns(demo.state.conn.as_ref().unwrap(), "custom_types").unwrap().into_iter().map(|col| col.type_name).collect();
+        assert_eq!(types, ["INTEGER", "DECIMAL(10,2)", ""]);
+        let customers = dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "customers").unwrap();
+        demo.state.open_create_table_wizard();
+        demo.do_rebuild();
+        demo.ui.set_text_input(demo.ids.ov_name, "bad_type");
+        demo.ui.set_autocomplete_value(demo.ids.ov_col_type, "TEXT); DELETE FROM customers; --");
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_some());
+        assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type), Some("TEXT); DELETE FROM customers; --"));
+        assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "customers").unwrap(), customers);
+        assert!(!dbmod::list_schema(demo.state.conn.as_ref().unwrap()).unwrap().iter().any(|obj| obj.name == "bad_type"));
     }
 
     #[test]

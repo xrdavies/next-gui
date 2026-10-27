@@ -59,7 +59,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Create Table… | partial | Main/temp/attached schema selection; basic column PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
+| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, basic PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; table definition changes/reordering require explicit SQL; expression/partial index definitions edit in the qualified wizard |
 | Delete Object… | done | confirm + DROP |

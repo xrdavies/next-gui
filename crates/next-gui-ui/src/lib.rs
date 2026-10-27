@@ -31,6 +31,8 @@ use text_area_hint::TextAreaHint;
 pub use text_completion::TextAreaCompletionItem;
 use text_completion::TextAreaCompletion;
 mod tabs;
+mod autocomplete;
+pub use autocomplete::AutocompleteState;
 pub use tabs::TabsState;
 use tabs::TabStripState;
 mod scrollbars;
@@ -2072,6 +2074,9 @@ enum Kind {
         options: Vec<String>,
         value: String,
         caret: usize,
+        select_all: bool,
+        preedit: String,
+        preedit_cursor: Option<(usize, usize)>,
         open: bool,
         highlight: Option<usize>,
         placeholder: String,
@@ -3521,6 +3526,12 @@ impl Ui {
                 return true;
             }
         }
+        if let Some(id) = self.open_popup {
+            if self.autocomplete_popup_window(scene, id).is_some_and(|(panel, _)| panel.contains(x, y)) {
+                if dy != 0.0 { self.key_autocomplete(id, if dy > 0.0 { UiKey::Down } else { UiKey::Up }); }
+                return true;
+            }
+        }
         if self.wheel_text_area_hint(scene, x, y, dy) { return true; }
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
@@ -3983,9 +3994,9 @@ impl Ui {
     }
 
 
-    /// Text to place on the OS clipboard from the focused TextInput / TextArea.
+    /// Text to place on the OS clipboard from the focused TextInput / TextArea / Autocomplete.
     ///
-    /// TextArea returns only its selection. TextInput returns its full non-secret
+    /// TextArea returns only its selection. TextInput / Autocomplete return their full non-secret
     /// value. `None` when no copyable text is selected.
     pub fn focused_text_for_copy(&self) -> Option<String> {
         let id = self.focus?;
@@ -3994,15 +4005,32 @@ impl Ui {
                 value,
                 secret: false,
                 ..
-            }) if !value.is_empty() => Some(value.clone()),
+            } | Kind::Autocomplete { value, .. }) if !value.is_empty() => Some(value.clone()),
             Some(Kind::TextArea { .. }) => self.text_area_selected_text(id),
             _ => None,
         }
     }
 
-    /// Insert `text` into the focused TextInput / TextArea at the caret.
+    /// Delete the text returned by `focused_text_for_copy`, after a successful clipboard write.
     ///
-    /// Replaces the TextArea selection or the whole TextInput when `select_all` is set.
+    /// TextArea deletes only its selection and honors read-only mode. Single-line
+    /// TextInput / Autocomplete delete their full value, matching their copy behavior.
+    pub fn delete_focused_text_selection(&mut self) -> bool {
+        let Some(id) = self.focus else { return false; };
+        if self.focused_text_for_copy().is_none() { return false; }
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, ""),
+            Some(Kind::TextInput { .. } | Kind::Autocomplete { .. }) => {
+                self.key_input(UiKey::SelectAll);
+                self.key_input(UiKey::Backspace)
+            }
+            _ => false,
+        }
+    }
+
+    /// Insert `text` into the focused TextInput / TextArea / Autocomplete at the caret.
+    ///
+    /// Replaces the TextArea selection or the whole single-line value when `select_all` is set.
     /// Clears IME preedit.
     pub fn paste_into_focused_text(&mut self, text: &str) -> bool {
         let Some(id) = self.focus else {
@@ -4019,7 +4047,7 @@ impl Ui {
                 preedit,
                 preedit_cursor,
                 ..
-            }) => {
+            } | Kind::Autocomplete { value, caret, select_all, preedit, preedit_cursor, .. }) => {
                 preedit.clear();
                 *preedit_cursor = None;
                 if *select_all {
@@ -4035,6 +4063,9 @@ impl Ui {
                     *caret += text.chars().count();
                     *value = chars.into_iter().collect();
                 }
+                if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
+                    self.refresh_autocomplete_popup(id);
+                }
                 true
             }
             Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, text),
@@ -4045,13 +4076,16 @@ impl Ui {
     /// True when a text editor is focused (app should enable OS IME).
     pub fn text_input_wants_ime(&self) -> bool {
         self.focus
-            .is_some_and(|id| matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { .. } | Kind::TextArea { read_only: false, .. })))
+            .is_some_and(|id| matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { .. } | Kind::Autocomplete { .. } | Kind::TextArea { read_only: false, .. })))
     }
 
-    /// Caret rectangle for the focused TextInput / TextArea (physical px), for IME candidate placement.
+    /// Caret rectangle for the focused editor (physical px), for IME candidate placement.
     pub fn ime_cursor_area(&self, scene: &Scene) -> Option<(f32, f32, f32, f32)> {
         let id = self.focus?;
         let w = self.widgets.get(&id)?;
+        if matches!(w.kind, Kind::Autocomplete { .. }) {
+            return self.autocomplete_cursor_area(scene, id);
+        }
         if matches!(w.kind, Kind::TextArea { .. }) {
             return self.text_area_position_area(scene, id, None);
         }
@@ -4079,16 +4113,20 @@ impl Ui {
         Some((cx, cy, 2.0_f32.max(1.0), ch))
     }
 
-    /// Update IME preedit on the focused TextInput / TextArea. Empty `text` clears composition.
+    /// Update IME preedit on the focused editor. Empty `text` clears composition.
     pub fn ime_preedit(&mut self, text: impl Into<String>, cursor: Option<(usize, usize)>) -> bool {
         let Some(id) = self.focus else {
             return false;
         };
+        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
+            self.close_popup_internal();
+        }
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
         if matches!(w.kind, Kind::TextArea { read_only: true, .. }) { return false; }
         let (Kind::TextInput { preedit, preedit_cursor, .. }
+            | Kind::Autocomplete { preedit, preedit_cursor, .. }
             | Kind::TextArea { preedit, preedit_cursor, .. }) = &mut w.kind
         else {
             return false;
@@ -4099,7 +4137,7 @@ impl Ui {
         true
     }
 
-    /// Commit IME text into the focused TextInput / TextArea at the caret (clears preedit).
+    /// Commit IME text into the focused editor at the caret (clears preedit).
     pub fn ime_commit(&mut self, text: impl AsRef<str>) -> bool {
         let Some(id) = self.focus else {
             return false;
@@ -4117,14 +4155,14 @@ impl Ui {
             *preedit_cursor = None;
             return self.paste_into_focused_text(text);
         }
-        let Kind::TextInput {
+        let (Kind::TextInput {
             value,
             caret,
             select_all,
             preedit,
             preedit_cursor,
             ..
-        } = &mut w.kind
+        } | Kind::Autocomplete { value, caret, select_all, preedit, preedit_cursor, .. }) = &mut w.kind
         else {
             return false;
         };
@@ -4142,10 +4180,13 @@ impl Ui {
             *caret += 1;
         }
         *value = chars.into_iter().collect();
+        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
+            self.refresh_autocomplete_popup(id);
+        }
         true
     }
 
-    /// Clear preedit on the focused TextInput / TextArea (IME disabled / cancelled).
+    /// Clear preedit on the focused editor (IME disabled / cancelled).
     pub fn ime_clear_preedit(&mut self) -> bool {
         self.ime_preedit("", None)
     }
@@ -4156,7 +4197,13 @@ impl Ui {
             if Some(*id) == focus {
                 continue;
             }
+            if let Kind::Autocomplete { open, highlight, .. } = &mut w.kind {
+                *open = false;
+                *highlight = None;
+                if self.open_popup == Some(*id) { self.open_popup = None; }
+            }
             if let Kind::TextInput { preedit, preedit_cursor, .. }
+                | Kind::Autocomplete { preedit, preedit_cursor, .. }
                 | Kind::TextArea { preedit, preedit_cursor, .. } = &mut w.kind
             {
                 if !preedit.is_empty() || preedit_cursor.is_some() {
@@ -4852,7 +4899,7 @@ impl Ui {
                     }
                     _ => {}
                 }
-                if self.focus == Some(id) {
+                if self.focus == Some(id) && !matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
                     self.focus = None;
                 }
             }
@@ -4884,7 +4931,7 @@ impl Ui {
         let key = if key == UiKey::Space
             && matches!(
                 self.widgets.get(&id).map(|w| &w.kind),
-                Some(Kind::TextInput { .. } | Kind::TextArea { .. })
+                Some(Kind::TextInput { .. } | Kind::TextArea { .. } | Kind::Autocomplete { .. })
             ) {
             UiKey::Char(' ')
         } else {
@@ -5109,14 +5156,14 @@ impl Ui {
         let Some(w) = self.widgets.get_mut(&id) else {
             return false;
         };
-        let Kind::TextInput {
+        let (Kind::TextInput {
             value,
             caret,
             select_all,
             preedit,
             preedit_cursor,
             ..
-        } = &mut w.kind
+        } | Kind::Autocomplete { value, caret, select_all, preedit, preedit_cursor, .. }) = &mut w.kind
         else {
             return false;
         };
@@ -6440,6 +6487,9 @@ impl Ui {
             if let Kind::Autocomplete {
                 value: v,
                 caret,
+                select_all,
+                preedit,
+                preedit_cursor,
                 open,
                 highlight,
                 ..
@@ -6447,6 +6497,9 @@ impl Ui {
             {
                 *caret = value.chars().count();
                 *v = value;
+                *select_all = false;
+                preedit.clear();
+                *preedit_cursor = None;
                 *open = false;
                 *highlight = None;
                 if self.open_popup == Some(id) {
@@ -8436,22 +8489,7 @@ impl Ui {
     }
 
     fn pointer_autocomplete_focus(&mut self, _scene: &mut Scene, id: WidgetId) -> bool {
-        // Focus field; open filtered popup when there are matches.
-        let value = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Autocomplete { value, .. }) => value.clone(),
-            _ => return false,
-        };
-        let filtered = self.autocomplete_filtered(id);
-        if !value.is_empty() && !filtered.is_empty() {
-            self.close_popup_internal();
-            if let Some(w) = self.widgets.get_mut(&id) {
-                if let Kind::Autocomplete { open, highlight, .. } = &mut w.kind {
-                    *open = true;
-                    *highlight = Some(0);
-                }
-            }
-            self.open_popup = Some(id);
-        }
+        self.refresh_autocomplete_popup(id);
         true
     }
 
@@ -8486,19 +8524,14 @@ impl Ui {
             }
         }
         let filtered = self.autocomplete_filtered(id);
-        let (style, aux) = match self.widgets.get(&id) {
+        let style = match self.widgets.get(&id) {
             Some(Widget {
                 kind: Kind::Autocomplete { style, .. },
-                aux,
                 ..
-            }) => (*style, aux.clone()),
+            }) => *style,
             _ => return false,
         };
-        let panel = aux
-            .first()
-            .and_then(|n| scene.get(*n))
-            .map(|n| n.bounds)
-            .unwrap_or_else(Rect::empty);
+        let Some((panel, visible)) = self.autocomplete_popup_window(scene, id) else { return false; };
         if panel.is_empty() || !panel.contains(x, y) {
             self.hide_popup_aux_mut(scene, id);
             self.close_popup_internal();
@@ -8510,34 +8543,17 @@ impl Ui {
         } else {
             -1
         };
-        if idx < 0 || (idx as usize) >= filtered.len() {
+        if idx < 0 || (idx as usize) >= visible.len() {
             return true;
         }
-        let chosen = filtered[idx as usize].1.clone();
+        let chosen = filtered[visible.start + idx as usize].1.clone();
         self.commit_autocomplete(id, chosen);
         self.hide_popup_aux_mut(scene, id);
         true
     }
 
     fn commit_autocomplete(&mut self, id: WidgetId, value: String) {
-        if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Autocomplete {
-                value: v,
-                caret,
-                open,
-                highlight,
-                ..
-            } = &mut w.kind
-            {
-                *caret = value.chars().count();
-                *v = value.clone();
-                *open = false;
-                *highlight = None;
-            }
-        }
-        if self.open_popup == Some(id) {
-            self.open_popup = None;
-        }
+        self.set_autocomplete_value(id, value.clone());
         self.pending_autocomplete_change = Some((id, value));
     }
 
@@ -8651,6 +8667,9 @@ impl Ui {
     }
 
     fn key_autocomplete(&mut self, id: WidgetId, key: UiKey) -> bool {
+        if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { preedit, .. }) if !preedit.is_empty()) {
+            return self.key_text_input(id, key);
+        }
         let open = matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Autocomplete { open: true, .. })
@@ -8724,107 +8743,13 @@ impl Ui {
                 }
                 true
             }
-            UiKey::Char(c) => {
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::Autocomplete {
-                        value,
-                        caret,
-                        open,
-                        highlight,
-                        ..
-                    } = &mut w.kind
-                    {
-                        let mut chars: Vec<char> = value.chars().collect();
-                        let i = (*caret).min(chars.len());
-                        chars.insert(i, c);
-                        *value = chars.into_iter().collect();
-                        *caret = i + 1;
-                        *open = true;
-                        *highlight = Some(0);
-                    }
+            _ => {
+                let changed = self.key_text_input(id, key);
+                if changed && matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete) {
+                    self.refresh_autocomplete_popup(id);
                 }
-                self.close_popup_internal();
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::Autocomplete { open, .. } = &mut w.kind {
-                        *open = true;
-                    }
-                }
-                self.open_popup = Some(id);
-                // If filter empty, still leave open with no rows (or close).
-                if self.autocomplete_filtered(id).is_empty() {
-                    if let Some(w) = self.widgets.get_mut(&id) {
-                        if let Kind::Autocomplete { open, highlight, .. } = &mut w.kind {
-                            *open = false;
-                            *highlight = None;
-                        }
-                    }
-                    self.open_popup = None;
-                }
-                true
+                changed
             }
-            UiKey::Backspace => {
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::Autocomplete {
-                        value,
-                        caret,
-                        open,
-                        highlight,
-                        ..
-                    } = &mut w.kind
-                    {
-                        if *caret == 0 {
-                            return false;
-                        }
-                        let mut chars: Vec<char> = value.chars().collect();
-                        let i = *caret - 1;
-                        chars.remove(i);
-                        *value = chars.into_iter().collect();
-                        *caret = i;
-                        *highlight = Some(0);
-                        *open = !value.is_empty();
-                    }
-                }
-                let should_open = matches!(
-                    self.widgets.get(&id).map(|w| &w.kind),
-                    Some(Kind::Autocomplete { open: true, .. })
-                ) && !self.autocomplete_filtered(id).is_empty();
-                if should_open {
-                    self.close_popup_internal();
-                    if let Some(w) = self.widgets.get_mut(&id) {
-                        if let Kind::Autocomplete { open, .. } = &mut w.kind {
-                            *open = true;
-                        }
-                    }
-                    self.open_popup = Some(id);
-                } else {
-                    self.close_popup_internal();
-                }
-                true
-            }
-            UiKey::Left => {
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::Autocomplete { caret, .. } = &mut w.kind {
-                        if *caret > 0 {
-                            *caret -= 1;
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            UiKey::Right => {
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::Autocomplete { value, caret, .. } = &mut w.kind {
-                        let n = value.chars().count();
-                        if *caret < n {
-                            *caret += 1;
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            _ => false,
         }
     }
 
@@ -14747,77 +14672,8 @@ impl Ui {
         }
     }
 
-    fn paint_autocomplete_field(&mut self, scene: &mut Scene, id: WidgetId) {
-        let Some(Widget {
-            kind:
-                Kind::Autocomplete {
-                    value,
-                    caret,
-                    placeholder,
-                    open,
-                    style,
-                    ..
-                },
-            node,
-            label_node,
-            chrome_node,
-            ..
-        }) = self.widgets.get(&id)
-        else {
-            return;
-        };
-        let value = value.clone();
-        let caret = *caret;
-        let placeholder = placeholder.clone();
-        let open = *open;
-        let style = *style;
-        let Some(host) = *node else { return };
-        let label_node = *label_node;
-        let chrome_node = *chrome_node;
-        let bounds = scene.get(host).map(|n| n.bounds).unwrap_or_else(Rect::empty);
-        scene.set_fill(host, if open { style.selected_bg } else { style.bg });
-        scene.set_mask(host, None);
-        scene.set_visible(host, true);
-        self.apply_corner_radius(scene, host, false);
-        let focused = self.focus == Some(id);
-        let (text, fg) = if value.is_empty() {
-            (placeholder, style.placeholder_fg)
-        } else {
-            (value.clone(), style.fg)
-        };
-        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
-        let lx = bounds.x + style.padding;
-        let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
-        if let Some(lid) = label_node {
-            scene.set_bounds(lid, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-            scene.set_fill(lid, fg);
-            scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
-            scene.set_visible(lid, true);
-        }
-        if let Some(cid) = chrome_node {
-            if focused && !value.is_empty() {
-                let prefix: String = value.chars().take(caret).collect();
-                let (pw, _) = self.font.measure_line(&prefix, style.size);
-                scene.set_bounds(
-                    cid,
-                    Rect::new(lx + pw, ly, 2.0, mask.height as f32),
-                );
-                scene.set_fill(cid, style.focus_border);
-                scene.set_mask(cid, None);
-                scene.set_visible(cid, true);
-            } else if focused && value.is_empty() {
-                scene.set_bounds(cid, Rect::new(lx, ly, 2.0, style.size.max(12.0)));
-                scene.set_fill(cid, style.focus_border);
-                scene.set_mask(cid, None);
-                scene.set_visible(cid, true);
-            } else {
-                scene.set_visible(cid, false);
-            }
-        }
-    }
-
     fn paint_autocomplete_popup(&mut self, scene: &mut Scene, id: WidgetId) {
-        let (filtered, highlight, style, host_bounds) = match self.widgets.get(&id) {
+        let (filtered, highlight, style) = match self.widgets.get(&id) {
             Some(Widget {
                 kind:
                     Kind::Autocomplete {
@@ -14826,28 +14682,18 @@ impl Ui {
                         style,
                         ..
                     },
-                node,
                 ..
             }) => {
-                let b = node
-                    .and_then(|n| scene.get(n).map(|n| n.bounds))
-                    .unwrap_or_else(Rect::empty);
                 let filtered = self.autocomplete_filtered(id);
-                (filtered, *highlight, *style, b)
+                (filtered, *highlight, *style)
             }
             _ => return,
         };
         if filtered.is_empty() {
             return;
         }
-        let n = filtered.len();
-        let popup_h = (style.item_height * n as f32).min(style.popup_max_height);
-        let panel = Rect::new(
-            host_bounds.x,
-            host_bounds.y + host_bounds.height,
-            host_bounds.width.max(style.width),
-            popup_h,
-        );
+        let Some((panel, visible)) = self.autocomplete_popup_window(scene, id) else { return; };
+        let n = visible.len();
         self.ensure_overlay_aux(scene, id, 1 + n * 2);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         if let Some(&bg) = aux.first() {
@@ -14858,10 +14704,10 @@ impl Ui {
             self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
-        for (i, (_, label)) in filtered.iter().enumerate() {
+        for (i, (_, label)) in filtered[visible.clone()].iter().enumerate() {
             let y = panel.y + i as f32 * style.item_height;
             let row = Rect::new(panel.x, y, panel.width, style.item_height);
-            let hi = highlight == Some(i);
+            let hi = highlight == Some(visible.start + i);
             if let Some(&rbg) = aux.get(1 + i * 2) {
                 scene.set_bounds(rbg, row);
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
@@ -14877,8 +14723,9 @@ impl Ui {
                 let lx = row.x + style.padding;
                 let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-                scene.set_fill(lab, style.fg);
+                scene.set_fill(lab, if hi { style.selected_fg } else { style.fg });
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_clip(lab, Some(panel));
                 scene.set_visible(lab, true);
             }
         }
@@ -19568,6 +19415,9 @@ impl FlexBuilder<'_> {
                     options,
                     value,
                     caret,
+                    select_all: false,
+                    preedit: String::new(),
+                    preedit_cursor: None,
                     open: false,
                     highlight: None,
                     placeholder: placeholder.into(),
@@ -23086,6 +22936,73 @@ mod tests {
             ui.widgets.get(&ac).map(|w| &w.kind),
             Some(Kind::Autocomplete { open: false, .. })
         ));
+    }
+
+    #[test]
+    fn autocomplete_replaces_selection_with_clipboard_and_ime() {
+        let mut ui = Ui::new();
+        let mut id = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            id = col.autocomplete(["TEXT", "INTEGER"], "TEXT", AutocompleteStyle::default());
+        });
+        ui.set_focus(Some(id));
+        assert!(ui.text_input_wants_ime());
+        assert_eq!(ui.focused_text_for_copy().as_deref(), Some("TEXT"));
+        assert!(ui.key_input(UiKey::SelectAll));
+        assert!(ui.paste_into_focused_text("DECIMAL(10,2)"));
+        assert_eq!(ui.autocomplete_value(id), Some("DECIMAL(10,2)"));
+        assert!(ui.key_input(UiKey::SelectAll));
+        assert!(ui.ime_preedit("中", Some((3, 3))));
+        assert!(!ui.key_input(UiKey::Char('x')));
+        assert_eq!(ui.autocomplete_value(id), Some("DECIMAL(10,2)"));
+        assert!(ui.ime_commit("中文"));
+        assert_eq!(ui.autocomplete_value(id), Some("中文"));
+        assert!(ui.key_input(UiKey::Home));
+        assert!(ui.key_input(UiKey::Delete));
+        assert_eq!(ui.autocomplete_value(id), Some("文"));
+        assert!(ui.key_input(UiKey::End));
+        assert!(ui.key_input(UiKey::Space));
+        assert!(ui.key_input(UiKey::Char('型')));
+        assert_eq!(ui.autocomplete_value(id), Some("文 型"));
+        assert!(ui.key_input(UiKey::SelectAll));
+        assert!(ui.key_input(UiKey::Backspace));
+        assert_eq!(ui.autocomplete_value(id), Some(""));
+        assert!(ui.key_input(UiKey::Escape));
+        assert_eq!(ui.focused(), Some(id));
+        assert!(ui.key_input(UiKey::Down));
+        assert!(ui.key_input(UiKey::Enter));
+        assert_eq!(ui.autocomplete_value(id), Some("TEXT"));
+        assert_eq!(ui.take_autocomplete_change(), Some((id, "TEXT".into())));
+    }
+
+    #[test]
+    fn clipboard_deletion_matches_copy_scope_and_preserves_protected_fields() {
+        let mut ui = Ui::new();
+        let (mut input, mut secret, mut area) = (WidgetId(0), WidgetId(0), WidgetId(0));
+        ui.column(ColumnStyle::default(), |col| {
+            input = col.text_input_styled("中文value", "input", TextInputStyle::default());
+            secret = col.text_input_styled("secret", "password", TextInputStyle::default());
+            area = col.text_area("ABCDE", "text", TextAreaStyle::default());
+        });
+        ui.set_text_input_secret(secret, true);
+        ui.set_focus(Some(input));
+        assert_eq!(ui.focused_text_for_copy().as_deref(), Some("中文value"));
+        assert!(ui.delete_focused_text_selection());
+        assert_eq!(ui.text_input_value(input), Some(""));
+        ui.set_focus(Some(secret));
+        assert!(!ui.delete_focused_text_selection());
+        assert_eq!(ui.text_input_value(secret), Some("secret"));
+        ui.set_focus(Some(area));
+        ui.select_text_area_range(area, 1..3);
+        assert_eq!(ui.focused_text_for_copy().as_deref(), Some("BC"));
+        ui.set_text_area_read_only(area, true);
+        assert!(!ui.delete_focused_text_selection());
+        assert_eq!(ui.text_area_value(area), Some("ABCDE"));
+        ui.set_text_area_read_only(area, false);
+        assert!(ui.delete_focused_text_selection());
+        assert_eq!(ui.text_area_value(area), Some("ADE"));
+        assert!(ui.key_input(UiKey::Undo));
+        assert_eq!(ui.text_area_value(area), Some("ABCDE"));
     }
 
     #[test]

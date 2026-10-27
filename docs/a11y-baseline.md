@@ -10,7 +10,7 @@ Tree exposes `tree_expanded` (including hidden descendants), finite/clamped `tre
 - **查询：** `Ui::focusable_widgets() -> Vec<WidgetId>`  
   稳定顺序：按 `Ui` **roots 声明顺序**，对每个根做 **DFS（先序）** 走容器 `children`（Column / Row / Toolbar / Panel / StatusBar / Splitter / ScrollArea / ContextMenu / Tabs / Badge / Tooltip / Form / Spin）。
 - **参与种类：** 与指针按下已会 `set_focus` 的种类一致，并含 **Button**（`tool_button` 同为 `Kind::Button`）：  
-  **Button** / TextInput / TextArea / InputNumber / Checkbox / Radio / Switch / List / Tree / Table / Menu / Tabs / Select / TreeSelect / AlarmList / Slider / Segmented / Pagination / Collapse / DateTime / Transfer / PropertyGrid / TreeTable。  
+  **Button** / TextInput / TextArea / Autocomplete / InputNumber / Checkbox / Radio / Switch / List / Tree / Table / Menu / Tabs / Select / TreeSelect / AlarmList / Slider / Segmented / Pagination / Collapse / DateTime / Transfer / PropertyGrid / TreeTable。
   **不含** Tag / Alert / Breadcrumb / ScrollArea 等。
 - **移动：** `focus_next` / `focus_prev`（环绕；无焦点时 next→首、prev→末）。
 - **键盘：** `UiKey::Tab` / `UiKey::BackTab`（Shift+Tab）在 `key_input` **顶层**处理——不要求事先已有焦点；文本框不插入 Tab 字符。打开的 Modal / Drawer 在焦点落在其上时 **吸收** Tab/BackTab（焦点陷阱）。
@@ -40,6 +40,14 @@ Theme 的 `disabled`、背景使用 `muted`，重新启用恢复原有样式。�
 设置只读会清除未提交的组合文本。程序调用 `set_text_area_value` 仍可更新内容。
 现有 TextArea 默认可编辑，编辑历史在切换只读期间保留。这是共享控件行为，
 不表示已向 OS 暴露只读可访问状态。
+
+Autocomplete 复用 TextInput 的全选、删除、Home/End、字符输入路径，并支持共享
+IME/剪贴板 API。组合文本带下划线、候选位置跟随可见光标；长值在字段内裁剪并跟随光标。
+建议窗口按视口向上/下展开，方向键或滚轮翻动候选，Escape 关闭建议并保留编辑焦点。
+`autocomplete_state` / `set_autocomplete_state` 保留光标、全选、组合和按文字定位的候选，
+只恢复文字仍相同的控件；应用负责恢复焦点及转发 OS IME/剪贴板事件。
+`delete_focused_text_selection` 在剪贴板写入成功后删除对应复制范围；单行控件删除整值，
+多行控件仅删除选区，密码和只读保护仍生效。这些逻辑测试不代表 OS 输入验收。
 
 ### 1.3 多处文本高亮
 

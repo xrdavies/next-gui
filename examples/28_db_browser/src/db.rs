@@ -1298,12 +1298,12 @@ pub fn create_table_ddl_in(schema: &str, name: &str, cols: &[ColDef]) -> String 
     let mut parts = Vec::new();
     let mut pk_cols = Vec::new();
     for c in cols {
-        let ty = if c.type_name.trim().is_empty() {
-            "TEXT"
-        } else {
-            c.type_name.trim()
-        };
-        let mut piece = format!("{} {}", quote_ident(&c.name), ty);
+        let mut piece = quote_ident(&c.name);
+        let ty = c.type_name.trim();
+        if !ty.is_empty() {
+            piece.push(' ');
+            piece.push_str(ty);
+        }
         if c.pk {
             pk_cols.push(quote_ident(&c.name));
         }
@@ -1649,6 +1649,24 @@ mod tests {
         assert_eq!(count_rows(&conn, "same.\"table").unwrap(), 2);
         assert_eq!(browse_table(&conn, "same.\"table", &[], None, 500, 0).unwrap().rows[0][1], "original");
         assert!(browse_table_in(&conn, "missing\"; DROP TABLE main.t", "same.\"table", &[], None, 500, 0).is_err());
+    }
+
+    #[test]
+    fn table_wizard_creates_and_adds_columns_without_inventing_types() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";").unwrap();
+        for schema in ["main", "temp", "aux.\"db"] {
+            let mut cols = vec![ColDef::new("untyped.\"col", ""), ColDef::new("amount", "DECIMAL(10,2)"), ColDef::new("label", "VARYING CHARACTER(48)")];
+            execute_single_statement(&conn, &create_table_ddl_in(schema, "custom", &cols)).unwrap();
+            let types: Vec<_> = table_columns_in(&conn, schema, "custom").unwrap().into_iter().map(|col| col.type_name).collect();
+            assert_eq!(types, ["", "DECIMAL(10,2)", "VARYING CHARACTER(48)"]);
+            conn.execute_batch(&format!("INSERT INTO {} VALUES(7, 1.5, 'original');", qualified_name(schema, "custom"))).unwrap();
+            cols.push(ColDef::new("new_untyped", "   "));
+            recreate_table_in(&conn, schema, "custom", "custom", &cols).unwrap();
+            assert_eq!(table_columns_in(&conn, schema, "custom").unwrap().last().unwrap().type_name, "");
+            let stored: (String, i64, f64, String) = conn.query_row(&format!("SELECT typeof({}), {}, amount, label FROM {}", quote_ident("untyped.\"col"), quote_ident("untyped.\"col"), qualified_name(schema, "custom")), [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).unwrap();
+            assert_eq!(stored, ("integer".into(), 7, 1.5, "original".into()));
+        }
     }
 
     #[test]

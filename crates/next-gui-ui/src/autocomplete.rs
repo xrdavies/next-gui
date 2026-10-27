@@ -1,0 +1,472 @@
+use crate::{AlphaMask, Kind, Rect, Scene, Ui, WidgetId};
+use std::ops::Range;
+
+/// Autocomplete editing and suggestion session, independent of widget IDs.
+#[derive(Debug, Clone)]
+pub struct AutocompleteState {
+    value: String,
+    caret: usize,
+    select_all: bool,
+    preedit: String,
+    preedit_cursor: Option<(usize, usize)>,
+    open: bool,
+    highlighted: Option<String>,
+}
+
+impl Ui {
+    /// Snapshot text editing, IME composition and the highlighted suggestion.
+    pub fn autocomplete_state(&self, id: WidgetId) -> Option<AutocompleteState> {
+        let Kind::Autocomplete {
+            value,
+            caret,
+            select_all,
+            preedit,
+            preedit_cursor,
+            open,
+            highlight,
+            ..
+        } = &self.widgets.get(&id)?.kind
+        else {
+            return None;
+        };
+        Some(AutocompleteState {
+            value: value.clone(),
+            caret: *caret,
+            select_all: *select_all,
+            preedit: preedit.clone(),
+            preedit_cursor: *preedit_cursor,
+            open: *open,
+            highlighted: highlight.and_then(|i| {
+                self.autocomplete_filtered(id)
+                    .get(i)
+                    .map(|(_, s)| s.clone())
+            }),
+        })
+    }
+
+    /// Restore a session only when its text still matches; does not change focus or emit.
+    pub fn set_autocomplete_state(&mut self, id: WidgetId, state: &AutocompleteState) -> bool {
+        if self.autocomplete_value(id) != Some(state.value.as_str()) {
+            return false;
+        }
+        let filtered = self.autocomplete_filtered(id);
+        let open = state.open && state.preedit.is_empty() && !filtered.is_empty();
+        if open {
+            self.close_popup_internal();
+        }
+        let Some(widget) = self.widgets.get_mut(&id) else {
+            return false;
+        };
+        let Kind::Autocomplete {
+            caret,
+            select_all,
+            preedit,
+            preedit_cursor,
+            open: popup,
+            highlight,
+            ..
+        } = &mut widget.kind
+        else {
+            return false;
+        };
+        *caret = state.caret.min(state.value.chars().count());
+        *select_all = state.select_all;
+        *preedit = state.preedit.clone();
+        *preedit_cursor = state.preedit_cursor;
+        *popup = open;
+        *highlight = state
+            .highlighted
+            .as_ref()
+            .and_then(|s| filtered.iter().position(|(_, label)| label == s));
+        if open {
+            self.open_popup = Some(id);
+        } else if self.open_popup == Some(id) {
+            self.open_popup = None;
+        }
+        true
+    }
+
+    pub(super) fn refresh_autocomplete_popup(&mut self, id: WidgetId) {
+        self.close_popup_internal();
+        let matches = !self.autocomplete_filtered(id).is_empty();
+        if let Some(widget) = self.widgets.get_mut(&id) {
+            if let Kind::Autocomplete {
+                open,
+                highlight,
+                preedit,
+                ..
+            } = &mut widget.kind
+            {
+                *open = matches && preedit.is_empty();
+                *highlight = (*open).then_some(0);
+                if *open {
+                    self.open_popup = Some(id);
+                }
+            }
+        }
+    }
+
+    pub(super) fn autocomplete_popup_window(
+        &self,
+        scene: &Scene,
+        id: WidgetId,
+    ) -> Option<(Rect, Range<usize>)> {
+        let widget = self.widgets.get(&id)?;
+        let Kind::Autocomplete {
+            style,
+            highlight,
+            open: true,
+            ..
+        } = &widget.kind
+        else {
+            return None;
+        };
+        let host = scene.get(widget.node?)?.bounds;
+        let count = self.autocomplete_filtered(id).len();
+        if count == 0 || style.item_height <= 0.0 {
+            return None;
+        }
+        let desired = (count as f32 * style.item_height).min(style.popup_max_height);
+        let below = (self.viewport.1 - host.y - host.height).max(0.0);
+        let above = host.y.max(0.0);
+        let down = below >= desired || below >= above;
+        let space = if down { below } else { above };
+        let rows = (space.min(desired) / style.item_height).floor() as usize;
+        if rows == 0 {
+            return None;
+        }
+        let height = rows as f32 * style.item_height;
+        let width = host.width.max(style.width).min(self.viewport.0);
+        let first = highlight
+            .unwrap_or(0)
+            .min(count - 1)
+            .saturating_sub(rows - 1);
+        let panel = Rect::new(
+            host.x.clamp(0.0, self.viewport.0 - width),
+            if down {
+                host.y + host.height
+            } else {
+                host.y - height
+            },
+            width,
+            height,
+        );
+        Some((panel, first..(first + rows).min(count)))
+    }
+
+    // Character ranges keep candidate placement and the painted composition aligned.
+    fn autocomplete_display(&self, id: WidgetId) -> Option<(String, usize, Range<usize>)> {
+        let Kind::Autocomplete {
+            value,
+            caret,
+            select_all,
+            preedit,
+            preedit_cursor,
+            ..
+        } = &self.widgets.get(&id)?.kind
+        else {
+            return None;
+        };
+        if self.focus != Some(id) || preedit.is_empty() {
+            return Some((value.clone(), *caret, 0..0));
+        }
+        let before: String = value
+            .chars()
+            .take(if *select_all { 0 } else { *caret })
+            .collect();
+        let after: String = if *select_all {
+            String::new()
+        } else {
+            value.chars().skip(*caret).collect()
+        };
+        let start = before.chars().count();
+        let end = start + preedit.chars().count();
+        let cursor = preedit_cursor
+            .and_then(|(b, _)| preedit.get(..b))
+            .map_or(end, |s| start + s.chars().count());
+        Some((format!("{before}{preedit}{after}"), cursor, start..end))
+    }
+
+    pub(super) fn autocomplete_cursor_area(
+        &self,
+        scene: &Scene,
+        id: WidgetId,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let widget = self.widgets.get(&id)?;
+        let Kind::Autocomplete { style, .. } = &widget.kind else {
+            return None;
+        };
+        let bounds = scene.get(widget.node?)?.bounds;
+        let (text, caret, _) = self.autocomplete_display(id)?;
+        let prefix: String = text.chars().take(caret).collect();
+        let (width, _) = self.font.measure_line(&prefix, style.size);
+        let visible = (bounds.width - 2.0 * style.padding - 2.0).max(0.0);
+        Some((
+            bounds.x + style.padding + width.min(visible),
+            bounds.y + 4.0,
+            2.0,
+            (bounds.height - 8.0).max(8.0),
+        ))
+    }
+
+    pub(super) fn paint_autocomplete_field(&mut self, scene: &mut Scene, id: WidgetId) {
+        let Some(widget) = self.widgets.get(&id) else {
+            return;
+        };
+        let Kind::Autocomplete {
+            value,
+            select_all,
+            preedit_cursor,
+            placeholder,
+            style,
+            ..
+        } = &widget.kind
+        else {
+            return;
+        };
+        let Some(host) = widget.node else {
+            return;
+        };
+        let label = widget.label_node;
+        let chrome = widget.chrome_node;
+        let style = *style;
+        let focused = self.focus == Some(id);
+        let select_all = focused && *select_all && !value.is_empty();
+        let cursor_visible = preedit_cursor.is_some();
+        let placeholder = placeholder.clone();
+        let (text, caret, composition) = self.autocomplete_display(id).unwrap();
+        let composing = composition.start != composition.end;
+        let selected = select_all && !composing;
+        let bounds = scene.get(host).map_or_else(Rect::empty, |n| n.bounds);
+        scene.set_clip(host, Some(bounds));
+        scene.set_fill(
+            host,
+            if selected {
+                style.selected_bg
+            } else {
+                style.bg
+            },
+        );
+        scene.set_mask(host, None);
+        scene.set_visible(host, true);
+        self.apply_corner_radius(scene, host, false);
+        let prefix: String = text.chars().take(caret).collect();
+        let (cw, _) = self.font.measure_line(&prefix, style.size);
+        let visible = (bounds.width - 2.0 * style.padding - 2.0).max(0.0);
+        let scroll = if focused {
+            (cw - visible).max(0.0)
+        } else {
+            0.0
+        };
+        let lx = bounds.x + style.padding - scroll;
+        let fg = if text.is_empty() {
+            style.placeholder_fg
+        } else if selected {
+            style.selected_fg
+        } else {
+            style.fg
+        };
+        let display = if text.is_empty() { &placeholder } else { &text };
+        let (_, mask) = self.font.rasterize_text(display, style.size, None);
+        let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
+        if let Some(label) = label {
+            scene.set_bounds(
+                label,
+                Rect::new(lx, ly, mask.width as f32, mask.height as f32),
+            );
+            scene.set_fill(label, fg);
+            scene.set_mask(
+                label,
+                Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+            );
+            scene.set_visible(label, true);
+        }
+        if let Some(chrome) = chrome {
+            scene.set_visible(chrome, focused);
+            if focused {
+                let width = bounds.width.ceil().max(1.0) as u32;
+                let height = bounds.height.ceil().max(1.0) as u32;
+                let mut pixels = vec![0u8; width as usize * height as usize];
+                let mut stroke = |x: f32, y: f32, w: f32, h: f32| {
+                    for py in y.max(0.0) as u32..(y + h).ceil().max(0.0).min(height as f32) as u32 {
+                        for px in
+                            x.max(0.0) as u32..(x + w).ceil().max(0.0).min(width as f32) as u32
+                        {
+                            pixels[(py * width + px) as usize] = 255;
+                        }
+                    }
+                };
+                if !composing || cursor_visible {
+                    stroke(
+                        style.padding + cw - scroll,
+                        4.0,
+                        2.0,
+                        (bounds.height - 8.0).max(8.0),
+                    );
+                }
+                if composing {
+                    let before: String = text.chars().take(composition.start).collect();
+                    let preedit: String = text
+                        .chars()
+                        .skip(composition.start)
+                        .take(composition.end - composition.start)
+                        .collect();
+                    let (bw, _) = self.font.measure_line(&before, style.size);
+                    let (pw, _) = self.font.measure_line(&preedit, style.size);
+                    stroke(
+                        style.padding + bw - scroll,
+                        bounds.height - 3.0,
+                        pw.max(1.0),
+                        2.0,
+                    );
+                }
+                scene.set_bounds(chrome, bounds);
+                scene.set_fill(chrome, style.focus_border);
+                scene.set_mask(chrome, Some(AlphaMask::new(width, height, pixels)));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AutocompleteStyle, ColumnStyle, UiKey};
+
+    fn field(options: &[&str], value: &str) -> (Ui, Scene, WidgetId) {
+        let mut ui = Ui::new();
+        ui.set_viewport(400.0, 300.0);
+        let mut id = WidgetId(0);
+        ui.column(ColumnStyle::default(), |col| {
+            id = col.autocomplete(
+                options.iter().copied(),
+                value,
+                AutocompleteStyle {
+                    width: 120.0,
+                    ..AutocompleteStyle::default()
+                },
+            );
+        });
+        ui.set_focus(Some(id));
+        let mut scene = Scene::new();
+        ui.sync(&mut scene);
+        (ui, scene, id)
+    }
+
+    #[test]
+    fn session_restores_named_suggestion_selection_and_composition_geometry() {
+        let (mut ui, mut scene, id) = field(&["TEXT", "INTEGER"], "");
+        assert!(ui.key_input(UiKey::Down));
+        assert!(ui.key_input(UiKey::Down));
+        let session = ui.autocomplete_state(id).unwrap();
+        let (mut rebuilt, _, new_id) = field(&["INTEGER", "TEXT"], "");
+        assert!(rebuilt.set_autocomplete_state(new_id, &session));
+        assert!(rebuilt.key_input(UiKey::Enter));
+        assert_eq!(rebuilt.autocomplete_value(new_id), Some("INTEGER"));
+        assert!(!rebuilt.set_autocomplete_state(new_id, &session));
+        assert!(!rebuilt.set_autocomplete_state(WidgetId(0), &session));
+
+        ui.set_autocomplete_value(id, "VARYING CHARACTER(123456789)");
+        ui.key_input(UiKey::Home);
+        ui.key_input(UiKey::Right);
+        ui.ime_preedit("中文", Some((3, 3)));
+        ui.sync(&mut scene);
+        assert!(!ui.has_open_popup());
+        assert_eq!(
+            ui.autocomplete_display(id).unwrap(),
+            ("V中文ARYING CHARACTER(123456789)".into(), 2, 1..3)
+        );
+        let at = ui.ime_cursor_area(&scene).unwrap();
+        let session = ui.autocomplete_state(id).unwrap();
+        let (mut rebuilt, mut next_scene, new_id) = field(&[], "VARYING CHARACTER(123456789)");
+        assert!(rebuilt.set_autocomplete_state(new_id, &session));
+        rebuilt.sync(&mut next_scene);
+        assert_eq!(rebuilt.ime_cursor_area(&next_scene), Some(at));
+        assert!(rebuilt.ime_commit("中"));
+        assert_eq!(
+            rebuilt.autocomplete_value(new_id),
+            Some("V中ARYING CHARACTER(123456789)")
+        );
+        rebuilt.key_input(UiKey::End);
+        rebuilt.sync(&mut next_scene);
+        let host = next_scene
+            .get(rebuilt.widgets[&new_id].node.unwrap())
+            .unwrap()
+            .bounds;
+        let caret = rebuilt.ime_cursor_area(&next_scene).unwrap();
+        assert!(caret.0 >= host.x && caret.0 + caret.2 <= host.x + host.width);
+
+        rebuilt.key_input(UiKey::SelectAll);
+        let selection = rebuilt.autocomplete_state(new_id).unwrap();
+        assert!(rebuilt.set_autocomplete_state(new_id, &selection));
+        assert!(rebuilt.ime_preedit("型", None));
+        assert_eq!(rebuilt.autocomplete_display(new_id).unwrap().0, "型");
+        rebuilt.set_focus(None);
+        rebuilt.sync(&mut next_scene);
+        assert!(rebuilt
+            .autocomplete_state(new_id)
+            .unwrap()
+            .preedit
+            .is_empty());
+        rebuilt.set_focus(Some(new_id));
+        assert!(rebuilt.delete_focused_text_selection());
+        assert_eq!(rebuilt.autocomplete_value(new_id), Some(""));
+        assert!(!rebuilt.delete_focused_text_selection());
+    }
+
+    #[test]
+    fn popup_stays_in_viewport_and_pointer_selects_the_scrolled_suggestion() {
+        let mut ui = Ui::new();
+        ui.set_viewport(400.0, 300.0);
+        let options: Vec<_> = (0..20).map(|i| format!("Type {i}")).collect();
+        let mut id = WidgetId(0);
+        ui.column(
+            ColumnStyle {
+                x: 350.0,
+                y: 240.0,
+                ..ColumnStyle::default()
+            },
+            |col| {
+                id = col.autocomplete(
+                    options,
+                    "",
+                    AutocompleteStyle {
+                        width: 120.0,
+                        ..AutocompleteStyle::default()
+                    },
+                );
+            },
+        );
+        ui.set_focus(Some(id));
+        ui.key_input(UiKey::Down);
+        let mut scene = Scene::new();
+        ui.sync(&mut scene);
+        let (panel, visible) = ui.autocomplete_popup_window(&scene, id).unwrap();
+        let host = scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+        assert!(panel.x >= 0.0 && panel.x + panel.width <= 400.0);
+        assert!(panel.y >= 0.0 && panel.y + panel.height <= host.y);
+        assert_eq!(visible.start, 0);
+        assert!(visible.end < 20);
+        for _ in 0..19 {
+            ui.key_input(UiKey::Down);
+        }
+        ui.sync(&mut scene);
+        let (panel, visible) = ui.autocomplete_popup_window(&scene, id).unwrap();
+        assert_eq!(visible.end, 20);
+        assert!(visible.start > 0);
+        assert!(ui.pointer_scroll(&scene, panel.x + 2.0, panel.y + 2.0, 0.0, -26.0));
+        ui.sync(&mut scene);
+        let (panel, visible) = ui.autocomplete_popup_window(&scene, id).unwrap();
+        assert_eq!(visible.end, 19);
+        let expected = format!("Type {}", visible.start);
+        assert!(ui.pointer_pressed(&mut scene, panel.x + 4.0, panel.y + 4.0));
+        assert_eq!(ui.autocomplete_value(id), Some(expected.as_str()));
+        assert_eq!(ui.take_autocomplete_change(), Some((id, expected)));
+        assert!(!ui.has_open_popup());
+        ui.set_autocomplete_value(id, "");
+        ui.key_input(UiKey::Down);
+        ui.set_focus(None);
+        ui.sync(&mut scene);
+        assert!(!ui.has_open_popup());
+    }
+}

@@ -668,6 +668,8 @@ pub struct AutocompleteStyle {
     pub popup_bg: Color,
     /// Highlighted suggestion row.
     pub selected_bg: Color,
+    /// Text on the highlighted suggestion or selected field value.
+    pub selected_fg: Color,
     /// Focus border hint.
     pub focus_border: Color,
 }
@@ -686,6 +688,7 @@ impl Default for AutocompleteStyle {
             bg: Color::rgb(0x2a, 0x2a, 0x32),
             popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
             selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            selected_fg: Color::rgb(0xff, 0xff, 0xff),
             focus_border: Color::rgb(0x3b, 0x82, 0xf6),
         }
     }
