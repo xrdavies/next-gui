@@ -50,6 +50,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 ## Review runs
 
+| 2026-10-27 | `c212f20..1639d7a` | Codex | issues — contiguous browse row ranges/TSV copy verified; 242 tests/clippy/build/features pass; narrow Soft frame; native/full parity remain | [Report](R-20261027-1639d7a.md) |
+
 | 2026-10-27 | `6eb558d..a5afa25` | Codex | issues — SQL search/options/highlights verified; 242 tests/clippy/build/features pass; five search + four legacy Soft captures; native/full parity remain | [Report](R-20261027-a5afa25.md) |
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
