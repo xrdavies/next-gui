@@ -10040,9 +10040,7 @@ impl Ui {
             placed.max_width = out_w;
             placed.max_height = out_h;
             scene.set_bounds(node, Rect::new(ox, oy, out_w, out_h));
-            if has_bg {
-                scene.set_visible(node, true);
-            }
+            scene.set_visible(node, has_bg);
             let rects = layout_flex(&placed, &measures);
             for (child_id, rect) in children.iter().copied().zip(rects) {
                 self.place_child(scene, child_id, rect);
@@ -10173,9 +10171,7 @@ impl Ui {
 
         if let Some(node) = col_node {
             scene.set_bounds(node, Rect::new(ox, oy, w, h));
-            if style.background.is_some() {
-                scene.set_visible(node, true);
-            }
+            scene.set_visible(node, style.background.is_some());
         }
         if let Some(chrome) = chrome {
             scene.set_bounds(chrome, Rect::new(ox, oy, w, style.title_height));
@@ -13707,9 +13703,7 @@ impl Ui {
         };
         if let Some(n) = host {
             scene.set_bounds(n, Rect::new(ox, oy, w, h));
-            if style.background.is_some() {
-                scene.set_visible(n, true);
-            }
+            scene.set_visible(n, style.background.is_some());
         }
         let pad = style.padding;
         let gap = style.gap;
@@ -22937,3 +22931,6 @@ mod table_selection_tests;
 
 #[cfg(test)]
 mod button_tests;
+
+#[cfg(test)]
+mod container_render_tests;
