@@ -177,6 +177,11 @@ with virtual data must load further rows themselves (e28 plain PageUp/PageDown
 uses its guarded full-result navigation). This is keyboard behavior, not an OS
 accessibility-tree bridge or native input acceptance.
 
+Tables can opt into checkable cells with `set_table_check_cells`. Click the visible
+box or press Space on the selected cell to toggle it; ordinary cells keep their
+selection behavior. Drain `take_table_check_change` and refresh copied row text
+when applying or rejecting the edit. Replacing rows clears this metadata.
+
 ## Menu and context popup navigation
 
 A focused Menu opens with Enter, Space or Down. An open Menu/ContextMenu consumes

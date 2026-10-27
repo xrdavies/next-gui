@@ -672,6 +672,11 @@ impl TableColumn {
     }
 }
 
+fn table_check_rect(x: f32, y: f32, width: f32, height: f32, box_size: f32) -> Rect {
+    let size = box_size.min((width - 4.0).max(0.0)).min((height - 4.0).max(0.0));
+    Rect::new(x + (width - size) * 0.5, y + (height - size) * 0.5, size, size)
+}
+
 // Shared geometry keeps painting, sorting and resizing aligned behind frozen columns.
 fn table_column_rects(
     bounds: Rect,
@@ -1797,6 +1802,8 @@ enum Kind {
         frozen_cols: usize,
         /// Optional per-cell foreground tint (conditional formatting).
         cell_bg: Vec<Vec<Option<Color>>>,
+        /// Some(bool) renders an interactive checkbox in this cell.
+        checks: Vec<Vec<Option<bool>>>,
         /// When true, only a visible window of body rows is materialized in scene aux.
         virtualized: bool,
         style: TableStyle,
@@ -2323,6 +2330,7 @@ pub struct Ui {
     pending_pagination_change: Option<(WidgetId, usize)>,
     /// Last Table header column click; drained by [`Ui::take_table_header_click`].
     pending_table_header_click: Option<(WidgetId, usize)>,
+    pending_table_check_change: Option<(WidgetId, usize, usize, bool)>,
     /// Queued notification toasts (global overlay).
     notifications: Vec<NotificationItem>,
     /// Next notification id.
@@ -2466,6 +2474,7 @@ impl Ui {
             pending_breadcrumb_click: None,
             pending_pagination_change: None,
             pending_table_header_click: None,
+            pending_table_check_change: None,
             notifications: Vec::new(),
             next_notification_id: 1,
             notification_style: NotificationStyle::from_theme(&Theme::dark()),
@@ -4788,9 +4797,10 @@ impl Ui {
     /// Replace table body rows, clamping both selection endpoints.
     pub fn set_table_rows(&mut self, id: WidgetId, rows: Vec<Vec<String>>) {
         if let Some(Widget { kind: Kind::Table {
-            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, ..
+            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, ..
         }, .. }) = self.widgets.get_mut(&id) {
             *slot = rows;
+            checks.clear();
             if let Some(last) = slot.len().checked_sub(1) {
                 *selected_row = selected_row.map(|i| i.min(last));
                 *selected_range = selected_range.map(|(a, b)| (a.min(last), b.min(last)));
@@ -4828,6 +4838,35 @@ impl Ui {
                 *dest = cell_bg;
             }
         }
+    }
+
+    /// Set checkable cells; omitted cells retain ordinary text. Reject out-of-range metadata.
+    /// Row strings remain the source for copied text; update them after handling a change.
+    /// Replacing rows clears check metadata, but leaves an undrained change available.
+    pub fn set_table_check_cells(&mut self, id: WidgetId, cells: Vec<Vec<Option<bool>>>) -> bool {
+        let Some(Widget { kind: Kind::Table { rows, columns, checks, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        if cells.len() > rows.len() || cells.iter().any(|row| row.len() > columns.len()) { return false; }
+        *checks = cells;
+        true
+    }
+
+    /// Checked state of a checkable table cell, or None for an ordinary cell.
+    pub fn table_cell_checked(&self, id: WidgetId, row: usize, col: usize) -> Option<bool> {
+        let Kind::Table { checks, .. } = &self.widgets.get(&id)?.kind else { return None; };
+        checks.get(row)?.get(col).copied().flatten()
+    }
+
+    /// Drain the last checkbox edit as (table, row, column, checked).
+    pub fn take_table_check_change(&mut self) -> Option<(WidgetId, usize, usize, bool)> {
+        self.pending_table_check_change.take()
+    }
+
+    fn toggle_table_check(&mut self, id: WidgetId, row: usize, col: usize) -> bool {
+        let Some(Widget { kind: Kind::Table { checks, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let Some(Some(checked)) = checks.get_mut(row).and_then(|cells| cells.get_mut(col)) else { return false; };
+        *checked = !*checked;
+        self.pending_table_check_change = Some((id, row, col, *checked));
+        true
     }
 
     /// Horizontal scroll offset for a table.
@@ -5844,6 +5883,9 @@ impl Ui {
         } else {
             -1
         };
+        let check_hit = column_hit.filter(|&col| table_check_rect(cells[col].0,
+            body_top + idx as f32 * style.row_height - sy, columns[col].width,
+            style.row_height, self.checkbox_style().box_size).contains(x, y));
         if idx >= 0 && (idx as usize) < n_rows {
             if let Some(w) = self.widgets.get_mut(&id) {
                 if let Kind::Table {
@@ -5858,6 +5900,14 @@ impl Ui {
                     *selected_col = column_hit;
                     *selected_range = Some((idx as usize, idx as usize));
                     *selected_col_range = column_hit.map(|col| (col, col));
+                }
+            }
+        }
+        if idx >= 0 && (idx as usize) < n_rows {
+            if let Some(col) = check_hit {
+                if self.toggle_table_check(id, idx as usize, col) {
+                    self.drag = None;
+                    return true;
                 }
             }
         }
@@ -6114,6 +6164,10 @@ impl Ui {
             rows, columns, selected_row, selected_col, selected_range, selected_col_range, ..
         }) = self.widgets.get(&id).map(|w| &w.kind) else { return false; };
         if rows.is_empty() { return false; }
+        if key == UiKey::Space {
+            let cell = selected_row.zip(*selected_col);
+            return cell.is_some_and(|(row, col)| self.toggle_table_check(id, row, col));
+        }
         let (mut row, mut col) = (selected_row.unwrap_or(0), *selected_col);
         let extend = matches!(key, UiKey::SelectUp | UiKey::SelectDown | UiKey::SelectLeft | UiKey::SelectRight | UiKey::SelectPageUp | UiKey::SelectPageDown);
         let page = self.table_visible_rows(id).unwrap_or(0).saturating_sub(1).max(1);
@@ -12090,6 +12144,7 @@ impl Ui {
                     scroll_x,
                     frozen_cols,
                     cell_bg,
+                    checks,
                     virtualized,
                     style,
                 },
@@ -12110,6 +12165,8 @@ impl Ui {
         let scroll_x = *scroll_x;
         let frozen_cols = *frozen_cols;
         let cell_bg = cell_bg.clone();
+        let checks = checks.clone();
+        let check_style = self.checkbox_style();
         let virtualized = *virtualized;
         let style = *style;
         let host = match *node {
@@ -12134,8 +12191,9 @@ impl Ui {
         } else {
             (0, rows.len())
         };
-        // aux: [header x ncols] + window slots [row_bg + cell_bg x ncols + cell_text x ncols]
-        let needed = ncols + count * (1 + 2 * ncols);
+        // Check cells reuse text nodes for boxes; optional final nodes paint ticks above them.
+        let stride = 1 + 2 * ncols + if checks.is_empty() { 0 } else { ncols };
+        let needed = ncols + count * stride;
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
@@ -12183,13 +12241,13 @@ impl Ui {
         for slot in 0..count {
             let ri = first + slot;
             let Some(row) = rows.get(ri) else { break };
-            let base = ncols + slot * (1 + 2 * ncols);
+            let base = ncols + slot * stride;
             let y = body_top + ri as f32 * style.row_height - scroll_y;
             if !virtualized
                 && (y + style.row_height < body_top - style.row_height
                     || y > bounds.y + bounds.height + style.row_height)
             {
-                for k in 0..(1 + 2 * ncols) {
+                for k in 0..stride {
                     if let Some(&n) = aux.get(base + k) {
                         scene.set_visible(n, false);
                     }
@@ -12254,8 +12312,35 @@ impl Ui {
                         scene.set_visible(cbg, false);
                     }
                 }
+                let tick = aux.get(base + 1 + 2 * ncols + ci).copied().filter(|_| !checks.is_empty());
+                if let Some(checked) = checks.get(ri).and_then(|row| row.get(ci)).copied().flatten() {
+                    let rect = table_check_rect(ox, y, col.width, style.row_height, check_style.box_size);
+                    if let Some(&box_node) = aux.get(base + 1 + ncols + ci) {
+                        scene.set_bounds(box_node, rect); scene.set_clip(box_node, Some(clip));
+                        scene.set_fill(box_node, if checked { check_style.checked_bg } else if is_sel { style.selected_fg } else { style.header_fg });
+                        scene.set_mask(box_node, None); scene.set_visible(box_node, visible && !rect.is_empty());
+                        self.apply_corner_radius(scene, box_node, false);
+                    }
+                    if let Some(tick) = tick {
+                        if checked {
+                            let mask = icon::rasterize_icon(IconName::Check, (rect.width * 0.7).max(1.0));
+                            scene.set_bounds(tick, Rect::new(rect.x + (rect.width - mask.width as f32) * 0.5,
+                                rect.y + (rect.height - mask.height as f32) * 0.5, mask.width as f32, mask.height as f32));
+                            scene.set_fill(tick, check_style.check_fg); scene.set_mask(tick, Some(mask)); scene.set_corner_radius(tick,0.0);
+                        } else {
+                            let inset=1.5_f32.min(rect.width*0.5);
+                            scene.set_bounds(tick,Rect::new(rect.x+inset,rect.y+inset,rect.width-2.0*inset,rect.height-2.0*inset));
+                            scene.set_fill(tick,check_style.box_bg); scene.set_mask(tick,None);
+                            scene.set_corner_radius(tick,(self.theme.radii.control-inset).max(0.0));
+                        }
+                        scene.set_clip(tick, Some(clip)); scene.set_visible(tick, visible && !rect.is_empty());
+                    }
+                    continue;
+                }
+                if let Some(tick) = tick { scene.set_visible(tick, false); }
                 let (_, mask) = self.font.rasterize_text(cell, style.size, None);
                 if let Some(&lab) = aux.get(base + 1 + ncols + ci) {
+                    scene.set_corner_radius(lab,0.0);
                     scene.set_clip(lab, Some(clip));
                     let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
                     let max_w = (col.width - 8.0).max(4.0);
@@ -12291,7 +12376,7 @@ impl Ui {
         }
 
         // Hide leftover slots beyond current window
-        let used = ncols + count * (1 + 2 * ncols);
+        let used = ncols + count * stride;
         for i in used..aux.len() {
             if let Some(&n) = aux.get(i) {
                 scene.set_visible(n, false);
@@ -18107,6 +18192,7 @@ impl FlexBuilder<'_> {
                     scroll_x: 0.0,
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
+                    checks: Vec::new(),
                     virtualized: false,
                     style,
                 },
@@ -18766,6 +18852,7 @@ impl FlexBuilder<'_> {
                     scroll_x: 0.0,
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
+                    checks: Vec::new(),
                     virtualized: true,
                     style,
                 },
@@ -20886,6 +20973,48 @@ mod tests {
             (f32::NAN, bounds.y),
         ] {
             assert_eq!(ui.table_header_column_at(&scene, table, x, y), None);
+        }
+    }
+
+    #[test]
+    fn table_check_cells_share_pointer_keyboard_and_frozen_scroll_geometry() {
+        for virtualized in [false,true] {
+            let mut ui=Ui::new();let mut scene=Scene::new();let mut table=WidgetId(0);
+            let style=TableStyle { width:300.0,height:160.0,header_height:28.0,row_height:28.0,..TableStyle::default() };
+            let rows=(0..30).map(|i|vec![format!("row{i}"),"copy state".into(),"ordinary".into()]).collect::<Vec<_>>();
+            ui.column(ColumnStyle {width:320.0,height:200.0,..Default::default()},|c| {
+                let cols=vec![TableColumn::new("Name",120.0),TableColumn::new("Flag",90.0),TableColumn::new("Text",150.0)];
+                table=if virtualized {c.virtual_table(cols,rows,style)} else {c.table(cols,rows,style)};
+            });
+            let checks=(0..30).map(|i|vec![None,Some(i%2==1)]).collect::<Vec<_>>();
+            assert!(ui.set_table_check_cells(table,checks.clone()));
+            assert!(!ui.set_table_check_cells(table,vec![vec![None;4]]));
+            assert!(!ui.set_table_check_cells(table,vec![vec![];31]));
+            assert!(!ui.set_table_check_cells(WidgetId(0),checks));
+            assert_eq!(ui.table_cell_checked(table,0,1),Some(false));assert_eq!(ui.table_cell_checked(table,0,2),None);
+            ui.set_table_frozen_cols(table,1);ui.set_table_scroll_offset(table,28.0,28.0);ui.sync(&mut scene);
+            let w=ui.widgets.get(&table).unwrap();let bounds=scene.get(w.node.unwrap()).unwrap().bounds;
+            let Kind::Table {columns,scroll_x,..}=&w.kind else {panic!()};
+            let cells=table_column_rects(bounds,columns,style.padding,*scroll_x,1);
+            let rect=table_check_rect(cells[1].0,bounds.y+style.header_height,90.0,28.0,ui.checkbox_style().box_size);
+            assert!(ui.pointer_pressed(&mut scene,rect.x+rect.width*0.5,rect.y+rect.height*0.5));ui.pointer_released();
+            assert_eq!(ui.take_table_check_change(),Some((table,1,1,false)));assert_eq!(ui.table_selected_row(table),Some(1));assert_eq!(ui.table_selected_col(table),Some(1));
+            assert!(ui.key_input(UiKey::Space));assert_eq!(ui.take_table_check_change(),Some((table,1,1,true)));
+            assert!(ui.pointer_pressed(&mut scene,cells[1].1.x+1.0,rect.y+rect.height*0.5));ui.pointer_released();assert_eq!(ui.take_table_check_change(),None);
+            ui.set_table_selected_col(table,Some(2));assert!(!ui.key_input(UiKey::Space));assert_eq!(ui.take_table_check_change(),None);
+            ui.set_table_selected_col(table,Some(0));assert!(!ui.key_input(UiKey::Space));
+            ui.set_table_selected_col(table,Some(1));ui.set_table_selected_row(table,Some(1));ui.sync(&mut scene);
+            let w=ui.widgets.get(&table).unwrap();let stride=10;let first=if virtualized {p1_rest::virtual_window(28.0,132.0,28.0,30,2).0} else {0};
+            let base=3+(1-first)*stride;let box_node=scene.get(w.aux[base+1+3+1]).unwrap();let tick=scene.get(w.aux[base+1+6+1]).unwrap();
+            assert!(box_node.visible && box_node.mask.is_none());assert!(tick.visible && tick.mask.is_some());assert_eq!(box_node.bounds,rect);
+            assert!(scene.get(w.aux[base+1+3]).unwrap().mask.is_some());
+            assert_eq!(ui.table_selected_text(table).as_deref(),Some("copy state"));
+            assert!(ui.key_input(UiKey::Space));ui.sync(&mut scene);
+            let w=ui.widgets.get(&table).unwrap();let border=scene.get(w.aux[base+1+3+1]).unwrap();let inner=scene.get(w.aux[base+1+6+1]).unwrap();
+            assert!(inner.visible && inner.mask.is_none());assert_eq!(inner.bounds.width,rect.width-3.0);assert_ne!(border.fill,inner.fill);
+            ui.set_table_rows(table,vec![vec!["replacement".into()]]);
+            assert_eq!(ui.table_cell_checked(table,0,1),None);assert_eq!(ui.take_table_check_change(),Some((table,1,1,false)));assert_eq!(ui.take_table_check_change(),None);
+            ui.sync(&mut scene);assert!(ui.widgets.get(&table).unwrap().aux.iter().skip(10).all(|id|!scene.get(*id).unwrap().visible));
         }
     }
 

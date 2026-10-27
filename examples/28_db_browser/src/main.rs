@@ -780,9 +780,10 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-fields" | "table-fields-references" | "table-advanced" => {
+                "table-fields" | "table-fields-references" | "table-field-checks" | "table-advanced" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE DEFAULT 'customer' CHECK(length(name)>0) COLLATE NOCASE,parent_id INTEGER REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL,amount REAL DEFAULT 0 CHECK(amount>=0),total REAL AS(amount*1.2) STORED); INSERT INTO records(name,parent_id,amount) VALUES('First customer',1,12.5),('Second customer',1,24);").unwrap();state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_col_sel=1;state.wizard_scroll=(0.0,180.0);state.wizard_field_column=Some(if tab=="table-fields-references" {9} else {0});state.wizard_field_scroll=(if tab=="table-fields-references" {10000.0} else {0.0},0.0);
+                    if tab=="table-field-checks" { state.wizard_scroll=(0.0,0.0); }
                     if tab=="table-advanced" { state.wizard_table_advanced=true; state.wizard_table_page=2; }
                     MainTab::Structure
                 }
@@ -1663,7 +1664,21 @@ impl Demo {
     fn refresh_table_field_rows(&mut self) {
         let offset = self.ui.table_scroll_offset(self.ids.ov_fields_table);
         self.ui.set_table_rows(self.ids.ov_fields_table,ui_build::table_field_rows(&self.state));
+        self.ui.set_table_check_cells(self.ids.ov_fields_table,ui_build::table_field_checks(&self.state));
         if let Some((x,y)) = offset { self.ui.set_table_scroll_offset(self.ids.ov_fields_table,x,y); }
+    }
+
+    fn handle_field_check_change(&mut self) {
+        let Some((table,row,column,checked)) = self.ui.take_table_check_change() else { return; };
+        if table != self.ids.ov_fields_table || self.state.overlay != Some(OverlayKind::EditTable)
+            || row >= self.state.wizard_cols.len() { return; }
+        // Pointer snapshots flush the previous row first; rebuild its replacement before editing it.
+        if self.rebuild { self.do_rebuild(); }
+        if row != self.state.wizard_col_sel { return; }
+        let control = match column { 2=>self.ids.ov_nn,3=>self.ids.ov_pk,4=>self.ids.ov_ai,5=>self.ids.ov_unique,_=>return };
+        self.ui.set_checked(control,checked);
+        self.flush_wizard_col();
+        self.sync_table_constraint_names();
     }
 
     fn refresh_table_index_controls(&mut self) {
@@ -4149,6 +4164,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
+        self.handle_field_check_change();
         while let Some(id) = self.ui.take_button_activate() {
             self.snapshot_inputs();
             self.handle_button(id);
@@ -7516,6 +7532,57 @@ mod interaction_tests {
             assert_eq!(demo.ui.text_area_value(demo.ids.edit_value),Some("8"));
             demo.state.browse_mut().sel_col=Some(0); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
             assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(true));
+        }
+    }
+
+    #[test]
+    fn field_check_cells_preserve_previous_row_validate_keys_and_save_qualified_data() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(untouched); INSERT INTO records VALUES(42); ATTACH ':memory:' AS \"aux.\"\"db\"; CREATE TABLE \"aux.\"\"db\".records(id INTEGER PRIMARY KEY,code TEXT,qty TEXT,total AS(length(code))); INSERT INTO \"aux.\"\"db\".records VALUES(7,'first','12'),(11,'second','24'); CREATE VIEW \"aux.\"\"db\".visible AS SELECT code,total FROM records;").unwrap();
+            demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.schema=="aux.\"db" && object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.do_rebuild();
+            let finish=|demo:&mut Demo| {
+                demo.handle_field_check_change();
+                if demo.rebuild {demo.do_rebuild();} else {demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();} else {demo.ui.sync(&mut demo.scene);}}
+            };
+            let click=|demo:&mut Demo,row:usize,col:usize| {
+                let table=demo.ids.ov_fields_table;let bounds=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(table)).unwrap().bounds;
+                let style=next_gui_ui::TableStyle::from_theme(&demo.theme);let widths=demo.ui.table_column_widths(table).unwrap();
+                let x=bounds.x+style.padding+widths[..col].iter().sum::<f32>()+widths[col]*0.5;
+                let y=bounds.y+style.header_height+(row as f32+0.5)*style.row_height;
+                assert_eq!(demo.ui.hit_widget(&demo.scene,x,y),Some(table));assert!(demo.ui.pointer_pressed(&mut demo.scene,x,y));demo.ui.pointer_released();
+                demo.snapshot_inputs();finish(demo);
+            };
+            demo.ui.set_text_input(demo.ids.ov_default,"100");click(&mut demo,1,2);
+            assert_eq!(demo.state.wizard_cols[0].default_value,"100");assert!(demo.state.wizard_cols[1].notnull);assert_eq!(demo.state.wizard_col_sel,1);
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_nn),Some(true));assert_eq!(demo.ui.table_cell_checked(demo.ids.ov_fields_table,1,2),Some(true));
+            demo.ui.set_table_selected_col(demo.ids.ov_fields_table,Some(5));demo.ui.set_focus(Some(demo.ids.ov_fields_table));assert!(demo.ui.key_input(UiKey::Space));finish(&mut demo);
+            assert!(demo.state.wizard_cols[1].unique);assert_eq!(demo.ui.table_selected_text(demo.ids.ov_fields_table).as_deref(),Some("Yes"));
+            click(&mut demo,3,3);assert!(demo.state.error_msg.as_deref().unwrap().contains("Generated"));assert!(!demo.state.wizard_cols[3].pk);
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_pk),Some(false));assert_eq!(demo.ui.table_cell_checked(demo.ids.ov_fields_table,3,3),Some(false));assert!(demo.state.wizard_cols[0].pk);
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT sum(id) FROM \"aux.\"\"db\".records",[],|row|row.get::<_,i64>(0)).unwrap(),18);
+            demo.clear_error();demo.do_rebuild();
+            if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_FIELD_CHECK_QA_OUT") {
+                demo.scene.mark_full_dirty(1400.0,1000.0);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(1400,1000,clear);soft.render(&commands,&dirty);
+                write_ppm(&format!("{prefix}-{theme_name}.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
+                if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear) {gpu.render(&commands,&dirty);let a=soft.frame_pixels().unwrap().0;let b=gpu.frame_pixels().unwrap().0;write_ppm(&format!("{prefix}-{theme_name}-metal.ppm"),b,1400,1000).unwrap();let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}: {delta}");eprintln!("Fields checks {theme_name}: Soft/Metal delta {delta}");}
+                else {eprintln!("Fields checks GPU comparison not_run: adapter unavailable");}
+            }
+            demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());
+            let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT sum(rowid)+sum(id) FROM \"aux.\"\"db\".records",[],|row|row.get::<_,i64>(0)).unwrap(),36);
+            assert!(conn.execute("INSERT INTO \"aux.\"\"db\".records(code) VALUES('first')",[]).is_err());assert!(conn.execute("UPDATE \"aux.\"\"db\".records SET code=NULL",[]).is_err());
+            assert_eq!(conn.query_row("SELECT sum(total) FROM \"aux.\"\"db\".visible",[],|row|row.get::<_,i64>(0)).unwrap(),11);assert_eq!(conn.query_row("SELECT untouched FROM main.records",[],|row|row.get::<_,i64>(0)).unwrap(),42);
+            demo.state.open_create_table_wizard();demo.state.wizard_cols[0].type_name="TEXT".into();demo.do_rebuild();click(&mut demo,0,4);
+            assert_eq!(demo.state.wizard_cols[0].type_name,"INTEGER");assert!(demo.state.wizard_cols[0].pk && demo.state.wizard_cols[0].auto_increment);
+            assert_eq!(demo.ui.table_cell_checked(demo.ids.ov_fields_table,0,3),Some(true));assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type),Some("INTEGER"));
+            click(&mut demo,0,3);assert!(!demo.state.wizard_cols[0].pk && !demo.state.wizard_cols[0].auto_increment);assert_eq!(demo.ui.table_cell_checked(demo.ids.ov_fields_table,0,4),Some(false));
+            click(&mut demo,0,4);demo.state.wizard_table_options.without_rowid=true;demo.do_rebuild();demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_some());assert_eq!(demo.state.overlay,Some(OverlayKind::EditTable));assert!(demo.state.wizard_cols[0].auto_increment);
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM main.sqlite_schema WHERE name='new_table'",[],|row|row.get::<_,i64>(0)).unwrap(),0);
+            demo.clear_error();demo.state.wizard_table_options.without_rowid=false;demo.do_rebuild();demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            let conn=demo.state.conn.as_ref().unwrap();let schema=demo.state.wizard_schema.clone();let table=dbmod::qualified_name(&schema,"new_table");
+            conn.execute(&format!("INSERT INTO {table}(name) VALUES('created')"),[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT id FROM {table}"),[],|row|row.get::<_,i64>(0)).unwrap(),1);
+            assert!(dbmod::table_column_defs_in(conn,&schema,"new_table").unwrap()[0].auto_increment);
         }
     }
 

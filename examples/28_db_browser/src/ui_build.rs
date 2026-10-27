@@ -329,6 +329,11 @@ pub fn table_field_rows(state: &AppState) -> Vec<Vec<String>> {
         column.check_expression.clone(),column.collation.clone(),column.foreign_key_clause.clone()]).collect()
 }
 
+pub fn table_field_checks(state: &AppState) -> Vec<Vec<Option<bool>>> {
+    state.wizard_cols.iter().map(|column|vec![None,None,Some(column.notnull),Some(column.pk),
+        Some(column.auto_increment),Some(column.unique)]).collect()
+}
+
 fn decorate_browse_cols(state: &AppState, cols: &[String]) -> Vec<TableColumn> {
     let n = cols.len().max(1);
     let w = (720.0 / n as f32).clamp(72.0, 200.0);
@@ -962,7 +967,7 @@ pub fn build_ui(
                                 let columns = [("Name",180.0),("Type",160.0),("NN",44.0),("PK",44.0),("AI",44.0),("U",44.0),
                                     ("Default",140.0),("Check",240.0),("Collation",140.0),("Foreign Key",280.0)].into_iter()
                                     .map(|(title,width)|TableColumn::new(title,width)).collect();
-                                // shortcut: cells use selected-column controls; add inline editors for DB4S parity.
+                                // shortcut: text cells use selected-column controls; add inline text editors for DB4S parity.
                                 ov_fields_table = c.table(columns,table_field_rows(state),fields_style);
                                 let sel = state.wizard_col_sel.min(state.wizard_cols.len().saturating_sub(1));
                                 let coldef = state.wizard_cols.get(sel);
@@ -2125,8 +2130,9 @@ pub fn build_ui(
         ui.set_table_selected_row(ov_fields_table,Some(state.wizard_col_sel));
         ui.set_table_selected_col(ov_fields_table,state.wizard_field_column);
         ui.set_table_frozen_cols(ov_fields_table,1);
+        ui.set_table_check_cells(ov_fields_table,table_field_checks(state));
         for (column,width) in state.wizard_field_widths.iter().enumerate() { ui.set_table_column_width(ov_fields_table,column,*width); }
-        ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key");
+        ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key. Click a checkbox or press Space to toggle.");
         ui.set_accessible_name(ov_field_top,"Move selected column to top"); ui.set_accessible_name(ov_field_bottom,"Move selected column to bottom");
         for button in [ov_field_top,ov_btn_up] { ui.set_button_enabled(button,state.wizard_col_sel>0 && !state.wizard_cols.is_empty()); }
         for button in [ov_field_bottom,ov_btn_down] { ui.set_button_enabled(button,state.wizard_col_sel+1<state.wizard_cols.len()); }
