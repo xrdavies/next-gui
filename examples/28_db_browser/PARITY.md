@@ -22,7 +22,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Main toolbar: New, Open, Write Changes, Revert | done | + Theme (exceeds DB4S); View-toggleable |
 | Extra DB / Project toolbars | partial | Local subset; no upstream movable toolbar/overflow behavior. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
-| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; body/structure ratios persist in projects. Independent floating/docking panes remain absent. |
+| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; content-width titles, overflow arrows and keyboard reveal remain usable at narrow widths, with rebuild viewport retention. Body/structure ratios persist in projects. Independent floating/docking panes remain absent. |
 | Status bar: path, encoding, read-only, encryption, busy | done | Reads actual main.encoding on schema refresh; cached while SQL runs; clears on Close. UTF-8 and both UTF-16 byte orders tested. |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S; Preferences default theme |
@@ -446,3 +446,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Desired-column checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-4356e82aef7b.md): vertical/page/Shift movement remembers its horizontal goal through shorter lines and rebuild. Explicit placements/edits and changed font/width reset it. The 14-vs-21 baseline now passes; 322 tests and strict checks pass, with Soft page-session and native SQL/all Office render inspection. This closes page checkpoint F03. Complete editor, dock overflow refinement and full native/original acceptance remain open.
+
+### Dock tab overflow checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-ef5bd92927fb.md): shared optional content-width strips provide overflow arrows, selected-title reveal and opaque rebuild viewport retention. e28 enables them on dock titles; dark/light 800×600/1400×860, native browse and all Office static renders inspected, with 327 tests and strict checks passed. This supersedes the earlier pending dock-overflow refinement, not independent docking/dragging/closing or full narrow-window parity. Native interaction acceptance and actual Remote service remain open.

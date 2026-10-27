@@ -14,6 +14,8 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `318105e..ef5bd92927fb` | Codex | pass for scrollable tab strips — 327 tests and strict checks; dark/light narrow/wide, native browse/14 Office render inspected; full/native parity remain | [Report](R-20261027-ef5bd92927fb.md) |
+| R-20261027-ef5bd92927fb-F01 | verified | P2 | grok | shared / e28 | existing branch | Tabs / dock rebuild | Content-width dock titles, overflow arrows and selected-title reveal | [F01](R-20261027-ef5bd92927fb.md#r-20261027-ef5bd92927fb-f01) | ef5bd92927fb | ef5bd92927fb |
 | R-20261027-4bb6e7d46905-F01 | verified | P2 | grok | shared / e28 | existing branch | text_area | TextArea handles page navigation, Shift selection and viewport movement | [F01](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f01) | 4bb6e7d46905 | 4bb6e7d46905 |
 | R-20261027-4bb6e7d46905-F02 | verified | P2 | grok | shared / e28 | existing branch | text_area | Keyboard row targeting avoids fractional-height one-row drift | [F02](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f02) | 4bb6e7d46905 | 4bb6e7d46905 |
 | R-20261027-4bb6e7d46905-F03 | verified | P2 | grok | shared / e28 | existing branch | text_area | Vertical keys retain horizontal goal across shorter lines | [F03](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f03) | 4356e82aef7b | 4356e82aef7b |
