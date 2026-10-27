@@ -120,6 +120,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
+| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-table settings restoration and attached/temp schemas remain. |
 | Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment and full form controls remain. Plain PageUp/PageDown and Ctrl/Cmd+Home/End reach the full result; Shift ranges remain cache-local. |
 
 ## Edit Pragmas tab
@@ -385,3 +386,13 @@ Workspace: 289 tests, clippy/build/platform features pass. e28 Soft/Metal and al
 14 Office windows were inspected. Native hardware input, cross-cache Shift ranges,
 whole-result scrolling and original row/top alignment remain open. See
 [review and API migration](../../docs/reviews/R-20261027-3f3153b4c200.md).
+
+### Safe table-switch checkpoint (2026-10-27)
+
+`8ab0778f3a16` restores the prior table/result/editor after failed switching and
+reports the error; the before-fix broken-view regression failed as intended.
+Dropdown, Apply and Ctrl/Cmd+PageUp/PageDown use one guarded path. Cycles wrap
+through tables/views, and source filters do not leak into unrelated schemas.
+Workspace: 292 tests, clippy/build/platform features pass; Soft failure recovery
+and native Metal painting inspected. Per-table option restoration is the next
+gap; full reproduction and native input remain open. See [review](../../docs/reviews/R-20261027-8ab0778f3a16.md).
