@@ -481,11 +481,22 @@ pub fn count_browse_rows_in(
     usize::try_from(count).map_err(|_| "Browse row count is negative".into())
 }
 
-fn prepare_browse<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
-    // Browse filters must never execute a second statement or write to the database.
+fn prepare_single_statement<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
     let stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     // Expanded SQL contains only the first statement; never prepare a PRAGMA in the tail.
-    if !stmt.readonly() || stmt.expanded_sql().as_deref() != Some(sql) {
+    if stmt.expanded_sql().as_deref() != Some(sql) {
+        return Err("SQL fields require a single statement without parameters".into());
+    }
+    Ok(stmt)
+}
+
+pub fn execute_single_statement(conn: &Connection, sql: &str) -> Result<(), String> {
+    prepare_single_statement(conn, sql)?.execute([]).map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn prepare_browse<'conn>(conn: &'conn Connection, sql: &str) -> Result<rusqlite::Statement<'conn>, String> {
+    let stmt = prepare_single_statement(conn, sql)?;
+    if !stmt.readonly() {
         return Err("Browse requires a single read-only statement".into());
     }
     Ok(stmt)
@@ -779,7 +790,7 @@ pub fn drop_object(conn: &Connection, kind: ObjectKind, schema: &str, name: &str
         ObjectKind::Trigger => "TRIGGER",
     };
     let sql = format!("DROP {kw} {}.{}", quote_ident(schema), quote_ident(name));
-    conn.execute_batch(&sql).map_err(|e| e.to_string())
+    execute_single_statement(conn, &sql)
 }
 
 pub fn create_table_simple(conn: &Connection, name: &str, columns_ddl: &str) -> Result<(), String> {
@@ -788,7 +799,7 @@ pub fn create_table_simple(conn: &Connection, name: &str, columns_ddl: &str) -> 
         quote_ident(name),
         columns_ddl.trim().trim_end_matches(',')
     );
-    conn.execute_batch(&sql).map_err(|e| e.to_string())
+    execute_single_statement(conn, &sql)
 }
 
 pub fn create_index(
@@ -817,7 +828,7 @@ pub fn create_index_in(
         quote_ident(table),
         columns.trim()
     );
-    conn.execute_batch(&sql).map_err(|e| e.to_string())
+    execute_single_statement(conn, &sql)
 }
 
 /// Common pragmas for the Edit Pragmas tab.
@@ -1251,7 +1262,7 @@ pub fn attach_database_mode(conn: &Connection, path: &str, schema: &str, read_on
         quote_literal(path),
         quote_ident(schema)
     );
-    conn.execute_batch(&sql).map_err(|e| e.to_string())
+    execute_single_statement(conn, &sql)
 }
 
 fn quote_literal(s: &str) -> String {
@@ -1384,27 +1395,24 @@ pub fn recreate_table_in(
         for col in added {
             let ddl = create_table_ddl("unused", std::slice::from_ref(col));
             let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
-            conn.execute_batch(&format!(
+            execute_single_statement(conn, &format!(
                 "ALTER TABLE {} ADD COLUMN {definition}",
                 qualified_name(schema, old_name)
-            ))
-            .map_err(|e| e.to_string())?;
+            ))?;
         }
         for col in removed {
-            conn.execute_batch(&format!(
+            execute_single_statement(conn, &format!(
                 "ALTER TABLE {} DROP COLUMN {}",
                 qualified_name(schema, old_name),
                 quote_ident(&col.name)
-            ))
-            .map_err(|e| e.to_string())?;
+            ))?;
         }
         if old_name != new_name {
-            conn.execute_batch(&format!(
+            execute_single_statement(conn, &format!(
                 "ALTER TABLE {} RENAME TO {}",
                 qualified_name(schema, old_name),
                 quote_ident(new_name)
-            ))
-            .map_err(|e| e.to_string())?;
+            ))?;
         }
         Ok(())
     })
@@ -1571,6 +1579,21 @@ pub fn default_demo_path() -> PathBuf {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn generated_schema_statements_keep_literal_semicolons_and_reject_tails() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+        assert!(create_table_simple(&conn, "rejected", "v); PRAGMA foreign_keys=ON; --").is_err());
+        assert_eq!(read_pragma(&conn, "foreign_keys").unwrap(), "0");
+        assert!(table_columns(&conn, "rejected").unwrap().is_empty());
+        create_table_simple(&conn, "quoted;\"表", "amount DECIMAL(10,2), marker TEXT DEFAULT ('中文; literal')").unwrap();
+        create_index(&conn, "index;\"名", "quoted;\"表", "length(marker || ';') DESC", false).unwrap();
+        conn.execute(&format!("INSERT INTO {} DEFAULT VALUES", quote_ident("quoted;\"表")), []).unwrap();
+        let result = browse_table(&conn, "quoted;\"表", &[], None, 10, 0).unwrap();
+        assert_eq!(result.rows[0][1], "中文; literal");
+        assert_eq!(table_columns(&conn, "quoted;\"表").unwrap()[0].type_name, "DECIMAL(10,2)");
+    }
 
     #[test]
     fn data_helpers_target_quoted_attached_and_temp_namespaces() {

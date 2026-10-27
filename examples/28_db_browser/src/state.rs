@@ -1634,7 +1634,7 @@ impl AppState {
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
             let ddl = db::create_table_ddl_in(&schema, &name, &self.wizard_cols);
-            conn.execute_batch(&ddl).map_err(|e| e.to_string())?;
+            db::execute_single_statement(conn, &ddl)?;
             self.log_sql(ddl);
         }
         self.mark_dirty();
@@ -3266,6 +3266,52 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn schema_wizard_fields_reject_sql_tails_before_mutation() {
+        for tail in ["DELETE FROM main.t", "PRAGMA foreign_keys=ON", "COMMIT"] {
+            let mut state = test_state();
+            let foreign_keys = db::read_pragma(state.conn.as_ref().unwrap(), "foreign_keys").unwrap();
+            state.refresh_schema().unwrap();
+            state.open_create_index_wizard();
+            state.wizard_index_name = "rejected".into();
+            state.wizard_index_cols = format!("v); {tail}; --");
+            let result = state.apply_index_wizard();
+            let conn = state.conn.as_ref().unwrap();
+            let rows = db::count_rows(conn, "t").unwrap();
+            assert!(result.is_err() && rows == 1, "index result={result:?}, rows={rows}, tail={tail}");
+            assert!(!conn.is_autocommit());
+            assert_eq!(db::read_pragma(conn, "foreign_keys").unwrap(), foreign_keys);
+            assert!(!db::list_schema(conn).unwrap().iter().any(|o| o.name == "rejected"));
+            assert!(!state.dirty);
+            assert_eq!(state.overlay, Some(OverlayKind::EditIndex));
+        }
+        let mut state = test_state();
+        state.refresh_schema().unwrap();
+        state.open_create_table_wizard();
+        state.wizard_cols = vec![ColDef { default_value: "0); DELETE FROM main.t; --".into(), ..ColDef::new("x", "TEXT") }];
+        assert!(state.apply_table_wizard().is_err());
+        assert_eq!(db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(), 1);
+        assert!(!db::list_schema(state.conn.as_ref().unwrap()).unwrap().iter().any(|o| o.name == "new_table"));
+        state.selected = Some(SelectedObject { schema: "main".into(), kind: ObjectKind::Table, name: "t".into() });
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_cols.push(ColDef { default_value: "0; DELETE FROM main.t; --".into(), ..ColDef::new("x", "TEXT") });
+        assert!(state.apply_table_wizard().is_err());
+        assert_eq!(db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(), 1);
+        assert_eq!(db::table_column_names(state.conn.as_ref().unwrap(), "t").unwrap(), ["v"]);
+        assert!(!state.dirty);
+        state.conn.as_ref().unwrap().execute_batch("CREATE INDEX main.kept ON t(v)").unwrap();
+        state.refresh_schema().unwrap();
+        state.selected = Some(SelectedObject { schema: "main".into(), kind: ObjectKind::Index, name: "kept".into() });
+        state.open_modify_index_wizard().unwrap();
+        state.wizard_index_cols = "v); COMMIT; DELETE FROM main.t; --".into();
+        assert!(state.apply_index_wizard().is_err());
+        let conn = state.conn.as_ref().unwrap();
+        assert!(!conn.is_autocommit());
+        assert_eq!(db::count_rows(conn, "t").unwrap(), 1);
+        assert!(db::list_schema(conn).unwrap().iter().any(|o| o.name == "kept"));
+        assert!(!state.dirty);
     }
 
     #[test]
