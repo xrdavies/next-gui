@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `c4b1035..41db9f2e6d78` | Codex | pass for qualified helpers — 385 tests/strict checks, namespace data isolation/atomicity/export/FK; attached UI/full/native parity remain | [Report](R-20261027-41db9f2e6d78.md) |
 | 2026-10-27 | `a1a75f7..9ce12cc31802` | Codex | pass for Tree sessions — 383 tests/strict checks, focus/scroll/expand/identity regressions, e28 and 14 Office native static inspection; full/native parity remain | [Report](R-20261027-9ce12cc31802.md) |
 | R-20261027-9ce12cc31802-F01 | verified | P2 | grok | shared / e28 | existing branch | Tree navigation sessions | Focus, schema-keyed expansion, group selection, viewport and ancestor reveal survive browser rebuilds | [F01](R-20261027-9ce12cc31802.md#r-20261027-9ce12cc31802-f01) | 9ce12cc31802 | 9ce12cc31802 |
 | 2026-10-27 | `3f65f21..443ef848a739` | Codex | issues — 381 tests/strict checks, namespace identity/main safety, both-theme tree/DDL delta 1 and native static inspection; full namespace/native parity remain | [Report](R-20261027-443ef848a739.md) |
