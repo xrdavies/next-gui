@@ -116,6 +116,7 @@ pub struct ColDef {
     pub type_name: String,
     pub pk: bool,
     pub auto_increment: bool,
+    pub collation: String,
     pub notnull: bool,
     pub unique: bool,
     pub default_value: String,
@@ -128,6 +129,7 @@ impl ColDef {
             type_name: type_name.into(),
             pk: false,
             auto_increment: false,
+            collation: String::new(),
             notnull: false,
             unique: false,
             default_value: String::new(),
@@ -367,6 +369,7 @@ pub fn table_columns_in(conn: &Connection, schema: &str, table: &str) -> Result<
 pub fn table_column_defs_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<ColDef>, String> {
     let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", quote_ident(schema)), [table], |row| row.get(0)).map_err(|e| e.to_string())?;
     let auto_increment = crate::table_sql::autoincrement_column(&sql)?;
+    let collations = crate::table_sql::column_collations(&sql)?;
     let mut unique_columns = Vec::new();
     let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", quote_ident(schema), quote_literal(table))).map_err(|e| e.to_string())?;
     let indexes = stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, String>(3)?))).map_err(|e| e.to_string())?;
@@ -379,6 +382,7 @@ pub fn table_column_defs_in(conn: &Connection, schema: &str, table: &str) -> Res
     }
     Ok(table_columns_in(conn, schema, table)?.into_iter().map(|col| ColDef {
         auto_increment: auto_increment.as_ref().is_some_and(|name| name.eq(col.name.as_str())),
+        collation: collations.iter().find(|(name, _)| name.eq(col.name.as_str())).map(|(_, collation)| collation.clone()).unwrap_or_default(),
         unique: unique_columns.iter().any(|name| name.eq_ignore_ascii_case(&col.name)),
         name: col.name, type_name: col.type_name, pk: col.pk, notnull: col.notnull,
         default_value: col.default_value.unwrap_or_default(),
@@ -1336,6 +1340,10 @@ pub fn create_table_ddl_in(schema: &str, name: &str, cols: &[ColDef]) -> String 
         if c.unique {
             piece.push_str(" UNIQUE");
         }
+        if !c.collation.is_empty() {
+            piece.push_str(" COLLATE ");
+            piece.push_str(&quote_ident(&c.collation));
+        }
         if !c.default_value.trim().is_empty() {
             piece.push_str(" DEFAULT (");
             piece.push_str(c.default_value.trim());
@@ -1385,11 +1393,13 @@ pub fn recreate_table_in(
     for (col, source) in draft.iter_mut().zip(&sources) {
         if let Some(old) = source.as_ref().and_then(|source| existing.iter().find(|old| old.name == *source)) {
             if !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.pk != col.pk || old.notnull != col.notnull
-                || old.default_value != col.default_value || col.unique || (col.auto_increment && !old.auto_increment) {
+                || old.default_value != col.default_value || col.unique || (col.auto_increment && !old.auto_increment)
+                || (!col.collation.is_empty() && !old.collation.eq_ignore_ascii_case(&col.collation)) {
                 return Err("Changing existing column definitions requires an explicit SQL migration; the wizard preserves existing constraints".into());
             }
             col.unique = old.unique;
             col.auto_increment = old.auto_increment;
+            col.collation = old.collation.clone();
         }
     }
     recreate_table_columns_in(conn, schema, old_name, new_name, &draft, &sources)
@@ -1424,10 +1434,10 @@ pub fn recreate_table_columns_in(
             let old = existing.iter().find(|c| c.name == *source).ok_or_else(|| format!("Original column no longer exists: {source}"))?;
             crate::table_sql::column_definition(col, Some(old))?;
             rebuild |= old.pk != col.pk || old.auto_increment != col.auto_increment || !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
-                || old.default_value != col.default_value || old.unique != col.unique;
+                || old.default_value != col.default_value || old.unique != col.unique || !old.collation.eq_ignore_ascii_case(&col.collation);
         } else {
             crate::table_sql::column_definition(col, None)?;
-            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty();
+            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty() || !col.collation.is_empty();
         }
     }
     let added: Vec<_> = cols
@@ -1860,6 +1870,7 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";").unwrap();
         let table = "same.\"table";
         let cols = [ColDef { name: "id".into(), type_name: "INTEGER".into(), pk: true, auto_increment: false,
+            collation: String::new(),
             notnull: false, unique: false, default_value: String::new() }, ColDef::new("value.\"col", "TEXT")];
         for schema in ["main", "temp", "aux.\"db"] {
             conn.execute_batch(&create_table_ddl_in(schema, table, &cols)).unwrap();
@@ -2052,6 +2063,7 @@ mod tests {
                 type_name: c.type_name,
                 pk: c.pk,
                 auto_increment: false,
+                collation: String::new(),
                 notnull: c.notnull,
                 unique: false,
                 default_value: c.default_value.unwrap_or_default(),

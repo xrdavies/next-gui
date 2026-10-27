@@ -297,6 +297,7 @@ struct BuiltUiIds {
     ov_col_type: WidgetId,
     ov_pk: WidgetId,
     ov_ai: WidgetId,
+    ov_collation: WidgetId,
     ov_nn: WidgetId,
     ov_unique: WidgetId,
     ov_default: WidgetId,
@@ -471,6 +472,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_col_type: b.ov_col_type,
             ov_pk: b.ov_pk,
             ov_ai: b.ov_ai,
+            ov_collation: b.ov_collation,
             ov_nn: b.ov_nn,
             ov_unique: b.ov_unique,
             ov_default: b.ov_default,
@@ -645,6 +647,17 @@ impl Demo {
                         state.apply_table_wizard().unwrap();
                         MainTab::Browse
                     } else { MainTab::Structure }
+                }
+                "table-collation" | "table-collated" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(value TEXT UNIQUE,note TEXT); INSERT INTO records VALUES('Zulu','last with NOCASE'),('alpha','first with NOCASE');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[0].collation = "NOCASE".into();
+                    if tab == "table-collated" { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
                 }
                 "index" => {
                     state.open_create_index_wizard();
@@ -1385,6 +1398,9 @@ impl Demo {
                 self.state.wizard_cols[sel].default_value = v.to_string();
             }
         }
+        if let Some(value) = self.ui.autocomplete_value(self.ids.ov_collation) {
+            self.state.wizard_cols[sel].collation = value.to_string();
+        }
         if previous_pk != self.state.wizard_cols[sel].pk || previous_ai != self.state.wizard_cols[sel].auto_increment {
             self.ui.set_list_items(self.ids.ov_list, self.state.wizard_cols.iter().enumerate().map(|(index, column)| {
                 format!("{}. {} {}{}{}", index + 1, column.name, column.type_name,
@@ -1470,6 +1486,11 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let collation_session = (self.state.overlay == Some(OverlayKind::EditTable)
+            && self.ui.focused() == Some(self.ids.ov_collation)
+            && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
+            && self.ui.autocomplete_value(self.ids.ov_collation) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.collation.as_str()))
+            .then(|| self.ui.autocomplete_state(self.ids.ov_collation)).flatten();
         let column_type_session = (self.state.overlay == Some(OverlayKind::EditTable)
             && self.ui.focused() == Some(self.ids.ov_col_type)
             && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
@@ -1501,6 +1522,12 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(session) = collation_session {
+            if self.ui.set_autocomplete_state(self.ids.ov_collation, &session) {
+                self.ui.set_focus(Some(self.ids.ov_collation));
+                self.ui.sync(&mut self.scene);
+            }
+        }
         if let Some(session) = column_type_session {
             if self.ui.set_autocomplete_state(self.ids.ov_col_type, &session) {
                 self.ui.set_focus(Some(self.ids.ov_col_type));
@@ -6247,6 +6274,88 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn table_wizard_collation_controls_keep_sessions_and_save_comparison_rules() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(value TEXT UNIQUE,note TEXT); INSERT INTO records VALUES('Zulu','last with NOCASE'),('alpha','first with NOCASE');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000 + row as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert!(demo.state.column_collation_names().contains(&"NOCASE".into()));
+            demo.ui.set_focus(Some(demo.ids.ov_collation));
+            demo.ui.key_input(UiKey::SelectAll);
+            assert!(demo.ui.paste_into_focused_text("NOCASE"));
+            demo.snapshot_inputs();
+            demo.ui.key_input(UiKey::Home);
+            demo.ui.ime_preedit("中文", Some((3,3)));
+            demo.ui.sync(&mut demo.scene);
+            let cursor = demo.ui.ime_cursor_area(&demo.scene).unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.focused(), Some(demo.ids.ov_collation));
+            assert_eq!(demo.ui.ime_cursor_area(&demo.scene), Some(cursor));
+            assert!(demo.ui.ime_commit("custom"));
+            demo.ui.key_input(UiKey::SelectAll);
+            demo.ui.paste_into_focused_text("NOCASE");
+            demo.snapshot_inputs();
+            demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_collation), Some(""));
+            demo.ui.set_list_selected(demo.ids.ov_list, Some(0));
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_collation), Some("NOCASE"));
+            for phase in ["draft", "saved"] {
+                if phase == "saved" {
+                    demo.ui.set_autocomplete_value(demo.ids.ov_collation, "unknown collation");
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_some() && demo.state.overlay.is_some());
+                    assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "records").unwrap(), 2);
+                    demo.do_rebuild();
+                    assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_collation), Some("unknown collation"));
+                    demo.ui.set_autocomplete_value(demo.ids.ov_collation, "NOCASE");
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_COLLATION_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Collation {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Collation GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(conn.query_row("SELECT value FROM records ORDER BY value LIMIT 1", [], |r| r.get::<_,String>(0)).unwrap(), "alpha");
+            assert!(conn.execute("INSERT INTO records(value) VALUES('ALPHA')", []).is_err());
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_collation), Some("NOCASE"));
+            demo.ui.set_autocomplete_value(demo.ids.ov_collation, "");
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+            demo.state.conn.as_ref().unwrap().execute("INSERT INTO records(value) VALUES('ALPHA')", []).unwrap();
         }
     }
 

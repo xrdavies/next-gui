@@ -176,6 +176,7 @@ pub struct BuiltUi {
     pub ov_col_type: WidgetId,
     pub ov_pk: WidgetId,
     pub ov_ai: WidgetId,
+    pub ov_collation: WidgetId,
     pub ov_nn: WidgetId,
     pub ov_unique: WidgetId,
     pub ov_default: WidgetId,
@@ -450,6 +451,7 @@ pub fn build_ui(
     let mut ov_col_type = z;
     let mut ov_pk = z;
     let mut ov_ai = z;
+    let mut ov_collation = z;
     let mut ov_nn = z;
     let mut ov_unique = z;
     let mut ov_default = z;
@@ -889,6 +891,13 @@ pub fn build_ui(
                                         "default",
                                         wide_s,
                                     );
+                                });
+                                c.row(row, |r| {
+                                    r.text("Collation");
+                                    let mut style = next_gui_ui::AutocompleteStyle::from_theme(&theme);
+                                    style.width = 260.0;
+                                    ov_collation = r.autocomplete_placeholder(state.column_collation_names(),
+                                        coldef.map(|column| column.collation.as_str()).unwrap_or(""), "Default (BINARY)", style);
                                 });
                             });
                         }
@@ -2035,6 +2044,7 @@ pub fn build_ui(
     ui.set_accessible_name(browse_header_menu, "Browse column actions");
     ui.set_accessible_name(ov_col_type, "Column declared type (editable)");
     ui.set_accessible_name(ov_ai, "Column autoincrement");
+    ui.set_accessible_name(ov_collation, "Column collation (editable)");
     if state.overlay == Some(OverlayKind::EditIndex) {
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");
@@ -2211,6 +2221,7 @@ pub fn build_ui(
         ov_col_type,
         ov_pk,
         ov_ai,
+        ov_collation,
         ov_nn,
         ov_unique,
         ov_default,

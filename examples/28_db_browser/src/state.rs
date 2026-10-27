@@ -678,6 +678,7 @@ impl AppState {
                     type_name: "INTEGER".into(),
                     pk: true,
                     auto_increment: false,
+                    collation: String::new(),
                     notnull: false,
                     unique: false,
                     default_value: String::new(),
@@ -1536,6 +1537,7 @@ impl AppState {
                 type_name: "INTEGER".into(),
                 pk: true,
                 auto_increment: false,
+                collation: String::new(),
                 notnull: false,
                 unique: false,
                 default_value: String::new(),
@@ -1857,6 +1859,22 @@ impl AppState {
             if !types.contains(&column.type_name) { types.push(column.type_name.clone()); }
         }
         types
+    }
+
+    pub fn column_collation_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = ["", "BINARY", "NOCASE", "RTRIM"].into_iter().map(str::to_string).collect();
+        if let Some(conn) = &self.conn {
+            let loaded = conn.prepare("PRAGMA collation_list").and_then(|mut statement| {
+                statement.query_map([], |row| row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()
+            });
+            if let Ok(loaded) = loaded {
+                for name in loaded { if !names.iter().any(|old| old.eq_ignore_ascii_case(&name)) { names.push(name); } }
+            }
+        }
+        if let Some(column) = self.wizard_cols.get(self.wizard_col_sel) {
+            if !names.iter().any(|old| old.eq_ignore_ascii_case(&column.collation)) { names.push(column.collation.clone()); }
+        }
+        names
     }
 
     fn adopt_conn(
@@ -5372,6 +5390,7 @@ mod chart_default_tests {
                 type_name: "INTEGER".into(),
                 pk: true,
                 auto_increment: false,
+                collation: String::new(),
                 notnull: false,
                 unique: false,
                 default_value: String::new(),

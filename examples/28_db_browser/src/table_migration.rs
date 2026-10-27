@@ -397,6 +397,141 @@ mod tests {
     use super::*;
 
     #[test]
+    fn collation_edits_preserve_constraints_and_actual_comparison_semantics() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            conn.execute_batch(&format!("CREATE TABLE {table}(v TEXT CONSTRAINT ignored COLLATE BINARY CONSTRAINT chosen COLLATE 'NOCASE' CONSTRAINT uq UNIQUE CHECK(length(v)>0),n INTEGER); INSERT INTO {table}(rowid,v,n) VALUES(7,'Alpha',1),(9,'Beta',2); BEGIN;")).unwrap();
+            let mut draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            assert_eq!(draft[0].collation, "NOCASE");
+            let sources = [Some("v".into()), Some("n".into())];
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE v='alpha'")
+                ),
+                1
+            );
+            draft[0].collation = "RTRIM".into();
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE v='Alpha  '")
+                ),
+                1
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE v='alpha'")
+                ),
+                0
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+            let sql: String = conn
+                .query_row(
+                    &format!(
+                        "SELECT sql FROM {}.sqlite_schema WHERE name='t'",
+                        db::quote_ident(schema)
+                    ),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(sql.contains("CONSTRAINT chosen"), "{sql}");
+            assert!(!sql.contains("CONSTRAINT ignored"), "{sql}");
+            assert!(sql.contains("CONSTRAINT uq"), "{sql}");
+            assert!(conn
+                .execute(&format!("INSERT INTO {table}(v) VALUES('')"), [])
+                .is_err());
+            assert!(conn
+                .execute(&format!("INSERT INTO {table}(v) VALUES('Alpha ')"), [])
+                .is_err());
+            draft[0].collation.clear();
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert!(db::table_column_defs_in(&conn, schema, "t").unwrap()[0]
+                .collation
+                .is_empty());
+            conn.execute(&format!("INSERT INTO {table}(v) VALUES('Alpha ')"), [])
+                .unwrap();
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(
+                db::table_column_defs_in(&conn, schema, "t").unwrap()[0].collation,
+                "NOCASE"
+            );
+            let created = [ColDef {
+                collation: "NOCASE".into(),
+                unique: true,
+                ..ColDef::new("v", "TEXT")
+            }];
+            db::execute_single_statement(
+                &conn,
+                &db::create_table_ddl_in(schema, "created", &created),
+            )
+            .unwrap();
+            conn.execute(
+                &format!(
+                    "INSERT INTO {} VALUES('one')",
+                    db::qualified_name(schema, "created")
+                ),
+                [],
+            )
+            .unwrap();
+            assert!(conn
+                .execute(
+                    &format!(
+                        "INSERT INTO {} VALUES('ONE')",
+                        db::qualified_name(schema, "created")
+                    ),
+                    []
+                )
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn collation_conflicts_foreign_keys_and_unknown_names_roll_back() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(v TEXT UNIQUE); INSERT INTO t(rowid,v) VALUES(7,'A'),(9,'a'); BEGIN; INSERT INTO t(rowid,v) VALUES(11,'pending');").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        draft[0].collation = "NOCASE".into();
+        assert!(apply(&conn, "main", "t", &draft, &[Some("v".into())]).is_err());
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM t WHERE rowid IN(7,9,11)"),
+            3
+        );
+        draft[0].collation = "NOCASE\"); DROP TABLE t; --".into();
+        assert!(apply(&conn, "main", "t", &draft, &[Some("v".into())]).is_err());
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 3);
+        conn.execute_batch("CREATE TABLE parent(v TEXT COLLATE NOCASE UNIQUE); INSERT INTO parent VALUES('Alpha'); CREATE TABLE child(p REFERENCES parent(v)); INSERT INTO child VALUES('alpha');").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "parent").unwrap();
+        draft[0].collation = "BINARY".into();
+        assert!(apply(&conn, "main", "parent", &draft, &[Some("v".into())])
+            .unwrap_err()
+            .contains("foreign key"));
+        assert!(foreign_key_violations(&conn, "main").unwrap().is_empty());
+        assert_eq!(
+            db::table_column_defs_in(&conn, "main", "parent").unwrap()[0].collation,
+            "NOCASE"
+        );
+        assert!(conn
+            .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY)
+            .unwrap());
+        assert!(!conn.is_autocommit());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 2);
+    }
+
+    #[test]
     fn autoincrement_edits_preserve_ids_assign_nulls_and_track_sequence_in_every_schema() {
         for schema in ["main", "temp", "aux.\"db"] {
             let conn = Connection::open_in_memory().unwrap();
