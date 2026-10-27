@@ -83,6 +83,7 @@ the first entries. Keep the status in this index and its report synchronized.
 ## Review runs
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
+| 2026-10-27 | `8820f95..8dcf321b3729` | Codex | Native column identity/rename verified; full migration/native acceptance remain | [Report](R-20261027-8dcf321b3729.md) |
 |---|---|---|---|---|
 | 2026-10-27 | `4486fda..30646db63f83` | Codex | issues — editable column declarations and shared Autocomplete editing verified; 418 tests/strict checks, twenty-two Soft/Metal pairs and native static captures inspected; full/native parity remains | [Report](R-20261027-30646db63f83.md) |
 | 2026-10-27 | `ffaa9ed..24b5a0495d77` | Codex | issues — per-key order/type controls verified; 412 tests/strict checks, fourteen Soft/Metal pairs and two native static forms inspected; full original/native parity remains | [Report](R-20261027-24b5a0495d77.md) |

@@ -61,7 +61,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |--------|--------|-------|
 | Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, basic PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
-| Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; table definition changes/reordering require explicit SQL; expression/partial index definitions edit in the qualified wizard |
+| Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; full definition changes/reordering still require migration. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
 
@@ -557,3 +557,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Editable column declarations checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-30646db63f83.md): column types accept custom declarations or no type, with suggestions and rebuild-safe IME/selection/focus. Shared Autocomplete now supports clipboard, composition, bounded keyboard/wheel/pointer suggestions and readable theme highlights. Actual CREATE/ADD metadata and affinity pass across main/temp/quoted attachments; statement tails preserve the database. 418 tests/strict checks, twenty-two Soft/Metal pairs and native static captures inspected. Full table constraints/rebuild/move, richer editor selection/Undo and original/native acceptance remain unfinished.
+
+## Column rename identity checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-8dcf321b3729.md): Modify Table now saves column renames, name swaps and case-only changes using explicit source identities and atomic native ALTER. Qualified filters/order/widths/frozen prefixes, conditional formats and Plot references follow the same columns. Main/attached dependencies, constraints, generated values, sequence and pending transaction preservation pass; raw WHERE errors report saved DDL and clear stale browse data. 424 tests/strict checks, four Soft/Metal pairs and two native static windows inspected. Full rebuild/constraints/move, temp-trigger engine workaround, original interface and native input acceptance remain.
