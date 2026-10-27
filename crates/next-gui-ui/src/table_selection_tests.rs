@@ -91,6 +91,27 @@ fn keyboard_reveals_the_active_column_without_resetting_horizontal_scroll() {
 }
 
 #[test]
+fn programmatic_reveal_keeps_the_range_anchor_focus_and_frozen_column() {
+    let (mut ui, id) = grid();
+    ui.set_table_frozen_cols(id, 1);
+    ui.set_table_selected_cells(id, Some((2, 5)), Some((1, 5)));
+    ui.reveal_table_selection(id);
+    assert_eq!(ui.table_scroll_offset(id), Some((280.0, 44.0)));
+    assert_eq!(ui.table_selection_anchor(id), Some((2, Some(1))));
+    assert_eq!(ui.table_selected_rows(id), Some((2, 5)));
+    assert_eq!(ui.table_selected_cols(id), Some((1, 5)));
+    assert_eq!(ui.focused(), Some(id));
+    ui.set_table_selected_cells(id, Some((0, 0)), Some((0, 0)));
+    ui.reveal_table_selection(id);
+    assert_eq!(ui.table_scroll_offset(id), Some((280.0, 0.0)));
+    ui.set_table_rows(id, Vec::new());
+    ui.reveal_table_selection(id);
+    assert_eq!(ui.table_selected_row(id), None);
+    assert_eq!(ui.table_scroll_offset(id).unwrap().1, 0.0);
+    ui.reveal_table_selection(WidgetId(u64::MAX));
+}
+
+#[test]
 fn copy_quotes_tabs_line_breaks_and_quotes() {
     let (mut ui, id) = grid();
     ui.set_table_rows(

@@ -5734,7 +5734,9 @@ impl Ui {
         self.set_any_scroll(id, 0.0, ny);
     }
 
-    fn ensure_selected_visible_table(&mut self, id: WidgetId) {
+    /// Scroll just enough to reveal the active table cell, preserving its selection.
+    /// Uses current viewport/column geometry; call [`Ui::sync`] to repaint.
+    pub fn reveal_table_selection(&mut self, id: WidgetId) {
         let Some(Kind::Table {
             selected_row, selected_col, columns, frozen_cols, style, scroll_x, scroll_y, ..
         }) = self.widgets.get(&id).map(|w| &w.kind) else { return; };
@@ -5888,7 +5890,7 @@ impl Ui {
             *selected_range = Some((anchor_row, row));
             *selected_col_range = anchor_col.zip(col);
         }
-        self.ensure_selected_visible_table(id);
+        self.reveal_table_selection(id);
         true
     }
 

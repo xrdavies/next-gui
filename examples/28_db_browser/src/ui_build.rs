@@ -113,6 +113,10 @@ pub struct BuiltUi {
     pub btn_browse_go: WidgetId,
     pub btn_page_prev: WidgetId,
     pub btn_page_next: WidgetId,
+    pub btn_record_first: WidgetId,
+    pub btn_record_last: WidgetId,
+    pub record_number: WidgetId,
+    pub btn_record_go: WidgetId,
     pub btn_add_row: WidgetId,
     pub btn_del_row: WidgetId,
     pub browse_table: WidgetId,
@@ -383,6 +387,10 @@ pub fn build_ui(
     let mut btn_browse_go = z;
     let mut btn_page_prev = z;
     let mut btn_page_next = z;
+    let mut btn_record_first = z;
+    let mut btn_record_last = z;
+    let mut record_number = z;
+    let mut btn_record_go = z;
     let mut btn_add_row = z;
     let mut btn_del_row = z;
     let mut browse_table = z;
@@ -1185,7 +1193,7 @@ pub fn build_ui(
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.drag_select = true;
             browse_table_style.width = main_w - 24.0;
-            browse_table_style.height = (tab_page_h - 232.0).max(160.0);
+            browse_table_style.height = (tab_page_h - 268.0).max(160.0);
 
             let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
@@ -1439,15 +1447,18 @@ pub fn build_ui(
                                     browse_table = WidgetId(0);
                                 }
                             }
-                            p.text_styled(
-                                format!(
-                                    "Tip: Ctrl/Cmd+header adds sort · filters · Freeze={} · Cond rules={} · FK → parent",
-                                    state.frozen_cols,
-                                    state.cond_rules.len()
-                                ),
-                                theme.colors.text_secondary,
-                                12.0,
-                            );
+                            p.scroll_row(tool_row, |row| {
+                                btn_record_first = row.tool_button("|◀ First");
+                                row.text("Go to record");
+                                let number_style = TextInputStyle { width: 84.0, ..col_filt_style };
+                                let value = &state.browse().goto_record;
+                                record_number = row.text_input_styled(value, "Record #", number_style);
+                                btn_record_go = row.tool_button("Go");
+                                btn_record_last = row.tool_button("Last ▶|");
+                                let tab = state.browse();
+                                row.text(format!("{} / {} records", tab.sel_row.map_or(0, |r| tab.offset + r + 1), tab.total_rows.unwrap_or(0)));
+                            });
+                            p.text_styled("Ctrl/Cmd+click a header to add a sort column.", theme.colors.text_secondary, 12.0);
                             });
                         });
 
@@ -1926,6 +1937,9 @@ pub fn build_ui(
     let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));
     ui.set_button_enabled(btn_form_prev, can_browse && loaded > 0 && record > 0);
     ui.set_button_enabled(btn_form_next, can_browse && loaded > 0 && record.saturating_add(1) < total);
+    ui.set_button_enabled(btn_record_first, can_browse && total > 0 && (browse.sel_row.is_none() || record > 0));
+    ui.set_button_enabled(btn_record_last, can_browse && total > 0 && (browse.sel_row.is_none() || record.saturating_add(1) < total));
+    ui.set_button_enabled(btn_record_go, can_browse && total > 0);
     let can_write = state.conn.is_some() && !state.read_only && state.dirty && !state.sql_busy;
     ui.set_button_enabled(btn_write, can_write);
     ui.set_button_enabled(btn_revert, can_write);
@@ -1986,6 +2000,10 @@ pub fn build_ui(
         btn_browse_go,
         btn_page_prev,
         btn_page_next,
+        btn_record_first,
+        btn_record_last,
+        record_number,
+        btn_record_go,
         btn_add_row,
         btn_del_row,
         browse_table,

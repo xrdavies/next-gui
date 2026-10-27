@@ -150,6 +150,8 @@ pub struct BrowseTabState {
     pub sel_col_end: Option<usize>,
     #[serde(skip)]
     pub total_rows: Option<usize>,
+    #[serde(skip)]
+    pub goto_record: String,
 }
 
 impl BrowseTabState {
@@ -197,6 +199,7 @@ impl BrowseTabState {
             sel_col_start: None,
             sel_col_end: None,
             total_rows: None,
+            goto_record: "1".into(),
         }
     }
 }
@@ -1137,6 +1140,30 @@ impl AppState {
             *self.browse_mut() = previous;
             return Err(error);
         }
+        Ok(())
+    }
+
+    /// Jump to a one-based record in the complete filtered/sorted result.
+    pub fn goto_browse_record(&mut self, record: usize) -> Result<(), String> {
+        if self.conn.is_none() { return Err("No database open".into()); }
+        if self.browse().table.is_none() { return Err("Select a table first".into()); }
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        if self.sql_busy { return Err("Wait for SQL to finish before navigating".into()); }
+        let previous = self.browse().clone();
+        let target = record.saturating_sub(1);
+        self.browse_mut().offset = target / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
+        if let Err(error) = self.refresh_browse() {
+            *self.browse_mut() = previous;
+            return Err(error);
+        }
+        let tab = self.browse_mut();
+        if let Some(result) = tab.result.as_ref().filter(|r| !r.rows.is_empty()) {
+            let row = target.saturating_sub(tab.offset).min(result.rows.len() - 1);
+            tab.sel_row = Some(row);
+            tab.sel_col = (!result.columns.is_empty()).then(|| previous.sel_col.unwrap_or(0).min(result.columns.len() - 1));
+            tab.goto_record = (tab.offset + row + 1).to_string();
+        } else { tab.goto_record = "0".into(); }
+        self.sync_edit_cell_from_selection();
         Ok(())
     }
 

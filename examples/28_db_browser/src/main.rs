@@ -169,6 +169,7 @@ struct Demo {
     last_log_revision: u64,
     cell_clipboard: Option<cell_clipboard::CellClipboard>,
     exit_requested: bool,
+    reveal_browse_selection: bool,
 }
 
 #[allow(dead_code)]
@@ -207,6 +208,10 @@ struct BuiltUiIds {
     btn_browse_go: WidgetId,
     btn_page_prev: WidgetId,
     btn_page_next: WidgetId,
+    btn_record_first: WidgetId,
+    btn_record_last: WidgetId,
+    record_number: WidgetId,
+    btn_record_go: WidgetId,
     btn_add_row: WidgetId,
     btn_del_row: WidgetId,
     browse_table: WidgetId,
@@ -364,6 +369,10 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_browse_go: b.btn_browse_go,
             btn_page_prev: b.btn_page_prev,
             btn_page_next: b.btn_page_next,
+            btn_record_first: b.btn_record_first,
+            btn_record_last: b.btn_record_last,
+            record_number: b.record_number,
+            btn_record_go: b.btn_record_go,
             btn_add_row: b.btn_add_row,
             btn_del_row: b.btn_del_row,
             browse_table: b.browse_table,
@@ -693,6 +702,7 @@ impl Demo {
             last_log_revision,
             cell_clipboard: None,
             exit_requested: false,
+            reveal_browse_selection: false,
         }
     }
 
@@ -729,6 +739,9 @@ impl Demo {
             if let Some(v) = self.ui.text_input_value(self.ids.browse_filter) {
                 self.state.browse_mut().filter = v.to_string();
             }
+        }
+        if let Some(value) = self.ui.text_input_value(self.ids.record_number) {
+            self.state.browse_mut().goto_record = value.to_string();
         }
         if let Some(v) = self.ui.text_input_value(self.ids.browse_global_filter) {
             self.state.browse_mut().global_filters = v.trim().split(' ').filter(|s| !s.is_empty()).map(String::from).collect();
@@ -1116,6 +1129,14 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if std::mem::take(&mut self.reveal_browse_selection) && self.ids.browse_table.0 != 0 {
+            self.ui.reveal_table_selection(self.ids.browse_table);
+            self.ui.set_focus(Some(self.ids.browse_table));
+            self.ui.sync(&mut self.scene);
+            if let Some(scroll) = self.ui.table_scroll_offset(self.ids.browse_table) {
+                self.state.browse_mut().scroll = scroll;
+            }
+        }
         if browse_focused && self.ids.browse_table.0 != 0 {
             self.ui.set_focus(Some(self.ids.browse_table));
             self.ui.sync(&mut self.scene);
@@ -2105,6 +2126,19 @@ impl Demo {
             self.rebuild = true;
             return;
         }
+        if id == self.ids.btn_record_first || id == self.ids.btn_record_last || id == self.ids.btn_record_go {
+            let record = if id == self.ids.btn_record_first { Ok(1) }
+                else if id == self.ids.btn_record_last { Ok(usize::MAX) }
+                else { self.state.browse().goto_record.trim().parse::<i128>()
+                    .map(|n| usize::try_from(n.max(1)).unwrap_or(usize::MAX))
+                    .map_err(|_| "Enter a whole record number".to_string()) };
+            match record.and_then(|n| self.state.goto_browse_record(n)) {
+                Ok(()) => { self.clear_error(); self.reveal_browse_selection = true; }
+                Err(error) => self.set_error(error),
+            }
+            self.rebuild = true;
+            return;
+        }
         if id == self.ids.btn_page_prev || id == self.ids.btn_page_next {
             match self.state.browse_page(id == self.ids.btn_page_next) {
                 Ok(()) => self.clear_error(),
@@ -2894,6 +2928,11 @@ impl AppCallbacks for Demo {
                     return;
                 }
                 if self.state.tab == MainTab::Browse && self.state.overlay.is_none() && !self.state.confirm_open {
+                    if key == KeyCode::Enter && self.ui.focused() == Some(self.ids.record_number) {
+                        self.handle_button(self.ids.btn_record_go);
+                        self.after_ui(ctx);
+                        return;
+                    }
                     if key == KeyCode::Enter && self.ui.focused().is_some_and(|id| id == self.ids.browse_filter || id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)) {
                         self.handle_button(self.ids.btn_browse_go);
                         self.after_ui(ctx);
@@ -4310,3 +4349,6 @@ mod interaction_tests {
 
 #[cfg(test)]
 mod browse_sort_tests;
+
+#[cfg(test)]
+mod browse_navigation_tests;
