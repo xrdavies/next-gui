@@ -4410,6 +4410,19 @@ impl Ui {
         }
     }
 
+    /// Number of rows at least half visible in the current table body viewport.
+    pub fn table_visible_rows(&self, id: WidgetId) -> Option<usize> {
+        let Kind::Table { rows, style, scroll_y, .. } = &self.widgets.get(&id)?.kind else { return None; };
+        let body = (style.height - style.header_height).max(0.0);
+        let height = style.row_height;
+        if !body.is_finite() || !height.is_finite() || height <= 0.0 || body < height / 2.0 {
+            return Some(0);
+        }
+        let first = (scroll_y / height - 0.5).ceil().max(0.0) as usize;
+        let end = ((scroll_y + body) / height - 0.5).floor() + 1.0;
+        Some((end.max(0.0) as usize).min(rows.len()).saturating_sub(first.min(rows.len())))
+    }
+
     /// Selected table row index.
     pub fn table_selected_row(&self, id: WidgetId) -> Option<usize> {
         match self.widgets.get(&id).map(|w| &w.kind) {

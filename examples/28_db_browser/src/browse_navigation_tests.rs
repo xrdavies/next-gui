@@ -259,6 +259,36 @@ fn narrow_window_reveals_the_navigation_input_when_focused() {
         demo.ui.hit_widget(&demo.scene, x, y),
         Some(demo.ids.record_number)
     );
+    for id in [
+        demo.ids.btn_record_go,
+        demo.ids.btn_record_next,
+        demo.ids.btn_record_last,
+    ] {
+        demo.ui.set_focus(Some(id));
+        demo.ui.sync(&mut demo.scene);
+        let bounds = demo
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|node| demo.ui.widget_from_node(node.id) == Some(id))
+            .unwrap()
+            .bounds;
+        assert!(
+            bounds.x >= 0.0 && bounds.x + bounds.width <= 800.0,
+            "{bounds:?}"
+        );
+        assert!(
+            bounds.y >= 0.0 && bounds.y + bounds.height <= 600.0,
+            "{bounds:?}"
+        );
+        assert_eq!(
+            demo.ui
+                .hit_widget(&demo.scene, bounds.x + 5.0, bounds.y + 5.0),
+            Some(id)
+        );
+    }
+    demo.ui.set_focus(Some(demo.ids.record_number));
+    demo.ui.sync(&mut demo.scene);
     if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
         demo.scene.mark_full_dirty(800.0, 600.0);
         let dirty = demo.scene.take_dirty();
@@ -274,4 +304,77 @@ fn narrow_window_reveals_the_navigation_input_when_focused() {
         )
         .unwrap();
     }
+}
+
+#[test]
+fn previous_next_step_by_the_live_viewport_and_cross_cache_boundaries() {
+    let mut demo = demo();
+    go(&mut demo, "499");
+    let step = demo.ui.table_visible_rows(demo.ids.browse_table).unwrap() - 1;
+    assert!(step > 2 && step < 500);
+    demo.handle_button(demo.ids.btn_record_next);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().goto_record, (499 + step).to_string());
+    assert_eq!(demo.state.browse().offset, 500);
+    assert_eq!(demo.state.browse().sel_col, Some(1));
+    demo.handle_button(demo.ids.btn_record_prev);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().goto_record, "499");
+    assert_eq!(demo.state.browse().offset, 0);
+    demo.win_h = 680;
+    demo.do_rebuild();
+    let smaller_step = demo.ui.table_visible_rows(demo.ids.browse_table).unwrap() - 1;
+    assert!(smaller_step < step);
+    demo.handle_button(demo.ids.btn_record_prev);
+    demo.do_rebuild();
+    assert_eq!(
+        demo.state.browse().goto_record,
+        (499 - smaller_step).to_string()
+    );
+    go(&mut demo, "2");
+    demo.handle_button(demo.ids.btn_record_prev);
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(
+        demo.ui.button_enabled(demo.ids.btn_record_prev),
+        Some(false)
+    );
+    demo.state.toggle_browse_view();
+    demo.do_rebuild();
+    demo.handle_button(demo.ids.btn_record_next);
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 1, "1203"));
+    demo.handle_button(demo.ids.btn_record_prev);
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+}
+
+#[test]
+fn previous_next_keep_drafts_and_failed_query_selection_intact() {
+    let mut demo = demo();
+    demo.ui
+        .set_text_area_value(demo.ids.edit_value, "keep draft");
+    demo.handle_button(demo.ids.btn_record_next);
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(demo.state.edit_value, "keep draft");
+    assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
+    demo.handle_button(demo.ids.btn_edit_discard);
+    demo.do_rebuild();
+    demo.ui
+        .set_text_input(demo.ids.browse_filter, "missing_function()");
+    demo.handle_button(demo.ids.btn_record_next);
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(demo.state.edit_value, "row 1205");
+    assert!(demo.state.error_msg.is_some());
+    assert!(!demo.state.dirty);
+    demo.ui.set_text_input(demo.ids.browse_filter, "n%2=1");
+    demo.handle_button(demo.ids.btn_browse_go);
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().sel_row, None);
+    demo.handle_button(demo.ids.btn_record_next);
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert!(demo.state.error_msg.is_none());
 }

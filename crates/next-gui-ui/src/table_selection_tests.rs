@@ -112,6 +112,26 @@ fn programmatic_reveal_keeps_the_range_anchor_focus_and_frozen_column() {
 }
 
 #[test]
+fn visible_rows_counts_half_rows_and_uses_the_current_viewport() {
+    let (mut ui, id) = grid();
+    assert_eq!(ui.table_visible_rows(id), Some(4));
+    ui.set_table_scroll_offset(id, 0.0, 13.0);
+    assert_eq!(ui.table_visible_rows(id), Some(5));
+    ui.set_table_scroll_offset(id, 0.0, 14.0);
+    assert_eq!(ui.table_visible_rows(id), Some(4));
+    let Kind::Table { style, .. } = &mut ui.widgets.get_mut(&id).unwrap().kind else { unreachable!() };
+    style.height = 40.0;
+    assert_eq!(ui.table_visible_rows(id), Some(0));
+    let Kind::Table { style, .. } = &mut ui.widgets.get_mut(&id).unwrap().kind else { unreachable!() };
+    style.height = 1000.0;
+    ui.set_table_scroll_offset(id, 0.0, 0.0);
+    assert_eq!(ui.table_visible_rows(id), Some(6));
+    ui.set_table_rows(id, Vec::new());
+    assert_eq!(ui.table_visible_rows(id), Some(0));
+    assert_eq!(ui.table_visible_rows(WidgetId(u64::MAX)), None);
+}
+
+#[test]
 fn copy_quotes_tabs_line_breaks_and_quotes() {
     let (mut ui, id) = grid();
     ui.set_table_rows(

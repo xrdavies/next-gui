@@ -206,8 +206,8 @@ struct BuiltUiIds {
     btn_browse_clear_filters: WidgetId,
     btn_browse_clear_sort: WidgetId,
     btn_browse_go: WidgetId,
-    btn_page_prev: WidgetId,
-    btn_page_next: WidgetId,
+    btn_record_prev: WidgetId,
+    btn_record_next: WidgetId,
     btn_record_first: WidgetId,
     btn_record_last: WidgetId,
     record_number: WidgetId,
@@ -367,8 +367,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_browse_clear_filters: b.btn_browse_clear_filters,
             btn_browse_clear_sort: b.btn_browse_clear_sort,
             btn_browse_go: b.btn_browse_go,
-            btn_page_prev: b.btn_page_prev,
-            btn_page_next: b.btn_page_next,
+            btn_record_prev: b.btn_record_prev,
+            btn_record_next: b.btn_record_next,
             btn_record_first: b.btn_record_first,
             btn_record_last: b.btn_record_last,
             record_number: b.record_number,
@@ -2126,23 +2126,24 @@ impl Demo {
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_record_first || id == self.ids.btn_record_last || id == self.ids.btn_record_go {
+        if id == self.ids.btn_record_first || id == self.ids.btn_record_last || id == self.ids.btn_record_go
+            || id == self.ids.btn_record_prev || id == self.ids.btn_record_next {
             let record = if id == self.ids.btn_record_first { Ok(1) }
                 else if id == self.ids.btn_record_last { Ok(usize::MAX) }
+                else if id == self.ids.btn_record_prev || id == self.ids.btn_record_next {
+                    let tab = self.state.browse();
+                    let current = tab.offset.saturating_add(tab.sel_row.unwrap_or(0)).saturating_add(1);
+                    let step = self.ui.table_visible_rows(self.ids.browse_table).unwrap_or(2).saturating_sub(1).max(1);
+                    Ok(if tab.sel_row.is_none() { 1 }
+                        else if id == self.ids.btn_record_next { current.saturating_add(step) }
+                        else { current.saturating_sub(step).max(1) })
+                }
                 else { self.state.browse().goto_record.trim().parse::<i128>()
                     .map(|n| usize::try_from(n.max(1)).unwrap_or(usize::MAX))
                     .map_err(|_| "Enter a whole record number".to_string()) };
             match record.and_then(|n| self.state.goto_browse_record(n)) {
                 Ok(()) => { self.clear_error(); self.reveal_browse_selection = true; }
                 Err(error) => self.set_error(error),
-            }
-            self.rebuild = true;
-            return;
-        }
-        if id == self.ids.btn_page_prev || id == self.ids.btn_page_next {
-            match self.state.browse_page(id == self.ids.btn_page_next) {
-                Ok(()) => self.clear_error(),
-                Err(e) => self.set_error(e),
             }
             self.rebuild = true;
             return;
@@ -3170,20 +3171,20 @@ mod interaction_tests {
         demo.state.write_changes().unwrap();
         demo.state.tab = MainTab::Browse;
         demo.do_rebuild();
-        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_prev), Some(false));
-        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_next), Some(true));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_record_prev), Some(false));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_record_next), Some(true));
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_write), Some(false));
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_revert), Some(false));
-        demo.handle_button(demo.ids.btn_page_prev);
+        demo.handle_button(demo.ids.btn_record_prev);
         demo.handle_button(demo.ids.btn_revert);
         assert!(!demo.rebuild);
         assert!(!demo.state.confirm_open);
-        demo.handle_button(demo.ids.btn_page_next);
+        demo.handle_button(demo.ids.btn_record_last);
         demo.do_rebuild();
         assert_eq!(demo.state.browse().offset, 500);
-        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_prev), Some(true));
-        assert_eq!(demo.ui.button_enabled(demo.ids.btn_page_next), Some(false));
-        demo.handle_button(demo.ids.btn_page_next);
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_record_prev), Some(true));
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_record_next), Some(false));
+        demo.handle_button(demo.ids.btn_record_next);
         assert!(!demo.rebuild);
 
         demo.state.toggle_browse_view();
@@ -3222,7 +3223,7 @@ mod interaction_tests {
         demo.state.browse_mut().filter = "0".into();
         demo.state.refresh_browse().unwrap();
         demo.do_rebuild();
-        for id in [demo.ids.btn_page_prev, demo.ids.btn_page_next, demo.ids.btn_form_prev, demo.ids.btn_form_next] {
+        for id in [demo.ids.btn_record_prev, demo.ids.btn_record_next, demo.ids.btn_form_prev, demo.ids.btn_form_next] {
             assert_eq!(demo.ui.button_enabled(id), Some(false));
         }
     }
@@ -3249,7 +3250,7 @@ mod interaction_tests {
         demo.state.close_db();
         demo.state.tab = MainTab::Browse;
         demo.do_rebuild();
-        for id in [demo.ids.btn_write, demo.ids.btn_revert, demo.ids.btn_page_prev, demo.ids.btn_page_next] {
+        for id in [demo.ids.btn_write, demo.ids.btn_revert, demo.ids.btn_record_prev, demo.ids.btn_record_next] {
             assert_eq!(demo.ui.button_enabled(id), Some(false));
         }
     }

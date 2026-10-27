@@ -111,8 +111,8 @@ pub struct BuiltUi {
     pub btn_browse_clear_filters: WidgetId,
     pub btn_browse_clear_sort: WidgetId,
     pub btn_browse_go: WidgetId,
-    pub btn_page_prev: WidgetId,
-    pub btn_page_next: WidgetId,
+    pub btn_record_prev: WidgetId,
+    pub btn_record_next: WidgetId,
     pub btn_record_first: WidgetId,
     pub btn_record_last: WidgetId,
     pub record_number: WidgetId,
@@ -385,8 +385,8 @@ pub fn build_ui(
     let mut btn_browse_clear_filters = z;
     let mut btn_browse_clear_sort = z;
     let mut btn_browse_go = z;
-    let mut btn_page_prev = z;
-    let mut btn_page_next = z;
+    let mut btn_record_prev = z;
+    let mut btn_record_next = z;
     let mut btn_record_first = z;
     let mut btn_record_last = z;
     let mut record_number = z;
@@ -1366,19 +1366,6 @@ pub fn build_ui(
                                 btn_freeze = row.tool_button(format!("Freeze {}", state.frozen_cols));
                                 btn_cond_fmt = row.tool_button("Cond Format…");
                                 btn_fk_nav = row.tool_button("FK →");
-                                btn_page_prev = row.tool_button("◀ Page");
-                                let offset = state.browse().offset;
-                                let total = state.browse().total_rows.unwrap_or(0);
-                                let pages = total.max(1).div_ceil(crate::db::DEFAULT_LIMIT);
-                                row.text(format!(
-                                    "Page {} / {} · {}–{} of {}",
-                                    offset / crate::db::DEFAULT_LIMIT + 1,
-                                    pages,
-                                    if total == 0 { 0 } else { offset + 1 },
-                                    (offset + browse_rows.len()).min(total),
-                                    total
-                                ));
-                                btn_page_next = row.tool_button("Page ▶");
                             });
                             // Per-column filters
                             if !col_names.is_empty() && state.browse_view == crate::state::BrowseViewMode::Form {
@@ -1449,11 +1436,13 @@ pub fn build_ui(
                             }
                             p.scroll_row(tool_row, |row| {
                                 btn_record_first = row.tool_button("|◀ First");
+                                btn_record_prev = row.tool_button("◀ Previous");
                                 row.text("Go to record");
                                 let number_style = TextInputStyle { width: 84.0, ..col_filt_style };
                                 let value = &state.browse().goto_record;
                                 record_number = row.text_input_styled(value, "Record #", number_style);
                                 btn_record_go = row.tool_button("Go");
+                                btn_record_next = row.tool_button("Next ▶");
                                 btn_record_last = row.tool_button("Last ▶|");
                                 let tab = state.browse();
                                 row.text(format!("{} / {} records", tab.sel_row.map_or(0, |r| tab.offset + r + 1), tab.total_rows.unwrap_or(0)));
@@ -1683,7 +1672,7 @@ pub fn build_ui(
                                                 );
                                             }
                                             if let Some(row) = state.browse().sel_row {
-                                                c.text(format!("Browse row #{row}"));
+                                                c.text(format!("Record {} of {}", state.browse().offset + row + 1, state.browse().total_rows.unwrap_or(0)));
                                             } else {
                                                 c.text("Select a browse row");
                                             }
@@ -1932,9 +1921,9 @@ pub fn build_ui(
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
     ui.set_button_enabled(btn_browse_clear_sort, can_browse && !browse.ordering().is_empty());
-    ui.set_button_enabled(btn_page_prev, can_browse && browse.offset > 0);
-    ui.set_button_enabled(btn_page_next, can_browse && browse.offset.saturating_add(loaded) < total);
     let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));
+    ui.set_button_enabled(btn_record_prev, can_browse && loaded > 0 && record > 0);
+    ui.set_button_enabled(btn_record_next, can_browse && loaded > 0 && (browse.sel_row.is_none() || record.saturating_add(1) < total));
     ui.set_button_enabled(btn_form_prev, can_browse && loaded > 0 && record > 0);
     ui.set_button_enabled(btn_form_next, can_browse && loaded > 0 && record.saturating_add(1) < total);
     ui.set_button_enabled(btn_record_first, can_browse && total > 0 && (browse.sel_row.is_none() || record > 0));
@@ -1998,8 +1987,8 @@ pub fn build_ui(
         btn_browse_clear_filters,
         btn_browse_clear_sort,
         btn_browse_go,
-        btn_page_prev,
-        btn_page_next,
+        btn_record_prev,
+        btn_record_next,
         btn_record_first,
         btn_record_last,
         record_number,
