@@ -14,7 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
+| R-20261027-5e23229548d4-F01 | verified | P1 | codex | shared / e28 | a54e792 + rebuild path | UI key_table / e28 selection polling | 固定选择锚点，重建保留方向/焦点，拖选松手后同步 | [F01](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f01) | 15d4a96 / 5590dfb | 5e23229548d4 |
+| R-20261027-5e23229548d4-F02 | verified | P1 | codex | e28 / all | 36b7a52 | state paste_browse_tsv / db update_cells | 引号 TSV、类型保真剪贴板、逐记录原子粘贴与剪切回滚 | [F02](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f02) | 7df9386 / eb581ec / 7439f7c | 5e23229548d4 |
+| R-20261027-5e23229548d4-F03 | verified | P1 | codex | e28 / all | 3c323ea / 8f86cc7 | state browse/form/FK navigation | 草稿与查询失败保护，跨页保留列，缩小结果校正页码 | [F03](R-20261027-5e23229548d4.md#r-20261027-5e23229548d4-f03) | 828908e / 141a9ab | 5e23229548d4 |
 | R-20261027-2b16b7cb2279-F01 | verified | P1 | codex | e28 / all | pre-existing guard | db::query_preview / export_table | 不再解析被拒绝的尾部 PRAGMA；预览/导出统一防护 | [F01](R-20261027-2b16b7cb2279.md#r-20261027-2b16b7cb2279-f01) | 219e686fa0d6 | 219e686fa0d6 |
 | R-20261027-2bfc8ad51380-F01 | verified | P2 | codex | e28 / shared | pre-existing path | state::open_project | 所有恢复标签预检 WHERE/REGEXP，失败保留旧会话 | [F01](R-20261027-2bfc8ad51380.md#r-20261027-2bfc8ad51380-f01) | 65759338765f | 65759338765f |
 | R-20261025-b90d5a7b4143-F01 | verified | P1 | codex | e28 / shared | existing branch | see report | 共享 TextArea 长文本编辑与 SQL Tab 状态已补齐 | [F01](R-20261025-b90d5a7b4143.md#r-20261025-b90d5a7b4143-f01) | c72f34b584c3 | c72f34b584c3 |
@@ -50,24 +52,17 @@ the first entries. Keep the status in this index and its report synchronized.
 
 ## Review runs
 
-| 2026-10-27 | `0b52704..832cebe` | Codex | issues — BOM-aware UTF-8/UTF-16 CSV import verified; e28 96 tests/clippy/build pass; native/full parity remain | [Report](R-20261027-832cebe.md) |
-
-| 2026-10-27 | `f9d523e..8f86cc7` | Codex | issues — Form View crosses filtered 500-row pages; e28 96 tests/clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-8f86cc7.md) |
-
-| 2026-10-27 | `7063588..b818a89` | Codex | issues — browse sort asc/desc/clear cycle verified; e28 sort regression passes; multi-sort/native/full parity remain | [Report](R-20261027-b818a89.md) |
-
-| 2026-10-27 | `bd6c317..3c323ea` | Codex | issues — browse-tab close/one-tab invariant verified; 245 tests, clippy/build pass; Soft browse frame; native/full parity remain | [Report](R-20261027-3c323ea.md) |
-
-| 2026-10-27 | `d2492ad..a54e792` | Codex | issues — rectangular cell selection/TSV persistence verified; 244 tests, clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-a54e792.md) |
-
-| 2026-10-27 | `fc35e45..fa942d3` | Codex | issues — filtered browse totals/page ranges verified; 243 tests, clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-fa942d3.md) |
-
-| 2026-10-27 | `c212f20..1639d7a` | Codex | issues — contiguous browse row ranges/TSV copy verified; 242 tests/clippy/build/features pass; narrow Soft frame; native/full parity remain | [Report](R-20261027-1639d7a.md) |
-
-| 2026-10-27 | `6eb558d..a5afa25` | Codex | issues — SQL search/options/highlights verified; 242 tests/clippy/build/features pass; five search + four legacy Soft captures; native/full parity remain | [Report](R-20261027-a5afa25.md) |
-
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `e4f4cb17eb23..5e23229548d4` | Codex | issues — 266 tests, clippy/build/features pass; typed clipboard, atomic paste/cut, bounded snapshots, drag/focus and navigation repaired; evidence corrected; full parity/native input remain | [Report](R-20261027-5e23229548d4.md) |
+| 2026-10-27 | `0b52704..832cebe` | Codex | issues — BOM-aware UTF-8/UTF-16 CSV import verified; e28 96 tests/clippy/build pass; native/full parity remain | [Report](R-20261027-832cebe.md) |
+| 2026-10-27 | `f9d523e..8f86cc7` | Codex | issues — Form View crosses filtered 500-row pages; e28 96 tests/clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-8f86cc7.md) |
+| 2026-10-27 | `7063588..b818a89` | Codex | issues — browse sort asc/desc/clear cycle verified; e28 sort regression passes; multi-sort/native/full parity remain | [Report](R-20261027-b818a89.md) |
+| 2026-10-27 | `bd6c317..3c323ea` | Codex | issues — browse-tab close/one-tab invariant verified; 245 tests, clippy/build pass; Soft browse frame; native/full parity remain | [Report](R-20261027-3c323ea.md) |
+| 2026-10-27 | `d2492ad..a54e792` | Codex | issues — rectangular cell selection/TSV persistence verified; 244 tests, clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-a54e792.md) |
+| 2026-10-27 | `fc35e45..fa942d3` | Codex | issues — filtered browse totals/page ranges verified; 243 tests, clippy/build/features pass; Soft browse frame; native/full parity remain | [Report](R-20261027-fa942d3.md) |
+| 2026-10-27 | `c212f20..1639d7a` | Codex | issues — contiguous browse row ranges/TSV copy verified; 242 tests/clippy/build/features pass; narrow Soft frame; native/full parity remain | [Report](R-20261027-1639d7a.md) |
+| 2026-10-27 | `6eb558d..a5afa25` | Codex | issues — SQL search/options/highlights verified; 242 tests/clippy/build/features pass; five search + four legacy Soft captures; native/full parity remain | [Report](R-20261027-a5afa25.md) |
 | 2026-10-27 | `48f96b8..94a116d32399` | Codex | issues — actual encoding and toolbar overflow fixed; 229 tests/clippy/build/features pass; four Soft frames; native/full parity remain | [Report](R-20261027-94a116d32399.md) |
 | 2026-10-27 | `4516dcb..f9b5dee2ee74` | Codex | issues — F13 and PRAGMA-tail guard verified; 227 tests/clippy/build/features pass; full log/readonly/categorized export and Soft captures; native/full parity remain | [Report](R-20261027-f9b5dee2ee74.md) |
 | 2026-10-27 | `f800a85..2b16b7cb2279` | Codex | issues — project query safety and rounded clipping verified; 220 tests/clippy/build/features pass; Soft/Metal pixels and available framebuffer review; native/full parity remain | [Report](R-20261027-2b16b7cb2279.md) |
@@ -84,6 +79,7 @@ the first entries. Keep the status in this index and its report synchronized.
 | 2026-10-18 | `24e0008bf5dc..ded2d152ebca` | Codex | issues — original three behavior findings verified; macOS build regression fixed in 11bbe29; 60 tests, clippy, macOS checks and 17 builds/GUI Escape checks pass; Linux test-environment finding open | [Report](R-20261018-ded2d152ebca.md) |
 | 2026-10-18 | `96175797e2a9..0e892e6f7b78` | Codex | issues — F04/F05/F06 verified; F03/F07 reopened; 1 new shared finding; 59 tests, clippy and 17 builds pass; GUI failures and formatting differences recorded | [Report](R-20261018-0e892e6f7b78.md) |
 | 2026-10-18 | Initial snapshot `7c9427cf60064739140281ed9adf65dc1ee7210b`; incoming `20eb0ee..7c9427c` inspected | Codex | issues — 2 macOS integration gaps fixed/verified; 57 tests and 17 example builds pass; 5 shared findings open; clippy fails | [Report](R-20261018-7c9427cf6006.md) |
+| 2026-10-25 | `3e40bd13dec9..b90d5a7b4143` + full e28 page inventory vs DB4S 3.13.1 | Codex | issues — 13 open findings, 2 repaired groups; 167 tests and clippy pass; 23 Soft captures; native acceptance unavailable | [Report](R-20261025-b90d5a7b4143.md) |
 
 ## Status and severity
 

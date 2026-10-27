@@ -6,7 +6,9 @@ Reference: upstream **v3.13.1** `src/MainWindow.ui`, EditTableDialog, EditIndexD
 
 Status legend: `done` = implemented local subset, not upstream parity or native acceptance; `partial` = known missing or defective behavior; `todo` = absent.
 
-**Current audit:** [2026-10-25 page inventory, framework gaps and reproducible findings](../../docs/reviews/R-20261025-b90d5a7b4143.md). This supersedes earlier completeness claims. Source and Soft framebuffer review covered four main pages, five docks and all 13 overlay kinds; native OS input acceptance remains unavailable.
+**Current regression/evidence correction:** [2026-10-27 report](../../docs/reviews/R-20261027-5e23229548d4.md). This records the latest tested scope and corrects unsupported earlier claims.
+
+**Page inventory audit:** [2026-10-25 page inventory, framework gaps and reproducible findings](../../docs/reviews/R-20261025-b90d5a7b4143.md). This supersedes earlier completeness claims. Source and Soft framebuffer review covered four main pages, five docks and all 13 overlay kinds; native OS input acceptance remains unavailable.
 
 The earlier “done 101 / partial 0” claim was not supported by acceptance tests. The review below distinguishes implemented local workflows from upstream compatibility. See the 2026-10-25 review in `docs/reviews/INDEX.md`.
 
@@ -109,16 +111,16 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | Table selector | done | |
 | Filter / WHERE | partial | Raw WHERE and original any-column term search share export conditions; Clear Filters, Enter and Cmd/Ctrl+Alt+F. Automatic debounce and escape preferences remain. |
-| Data grid | partial | 500-row pages with filtered total counts and page ranges; shared column resize/clip/scroll fix added. Shared visible scrollbars and focus reveal are available. Shift+Arrow selects a contiguous row/column range, Cmd/Ctrl+C copies the selected rectangle (or full selected rows) as TSV, and Cmd/Ctrl+V pastes a bounded TSV matrix into rowid-backed pages. Pointer drag ranges, inline editor, hiding/reorder and full bulk-edit semantics remain. |
+| Data grid | partial | Filtered totals and clamped 500-row pages; resize, frozen columns, scrollbars and focus reveal. Anchored Shift ranges and pointer drag rectangles survive rebuilds. Copy/cut/paste supports typed internal cells with HTML provenance, quoted TSV, headers (Cmd/Ctrl+Shift+C), INSERT statements (Cmd/Ctrl+Alt+C), single-cell fill, and atomic row updates/rollback. External TSV preserves literal NULL as text. Inline editors, discontiguous/cross-page ranges, stationary edge autoscroll, hiding/reorder and complete bulk operations remain. |
 | Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort cycles ascending/descending/clear, while multi-sort UI remains. |
 | Filter-per-column | partial | Shared inputs align with resized/scrolled/frozen columns. DB4S comparisons, numeric ranges, NULL/empty text, wildcards and Unicode PCRE2 REGEXP are supported. Escape preference and automatic debounce remain. |
-| Multi browse tabs | partial | Add/switch/close with scrollable tab strip; reorder and close affordances per tab remain. |
+| Multi browse tabs | partial | Add/switch/close guard cell drafts and restore the current tab on query failure; last-tab close clears the editor. Reorder, per-tab close affordances and selection restoration on switching remain. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
 | Edit cell → Edit Cell dock | partial | Explicit NULL/INTEGER/REAL/TEXT/BLOB and multiline editing; numeric types retained; Hex validation errors preserve the draft (F06 addressed). SQLite affinity still applies. |
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Record / form view | partial | Scrollable form navigation now crosses 500-row pages and reports the filtered global record number; advanced inline editing and full DB4S form controls remain. |
+| Record / form view | partial | Cross-page navigation preserves the active column, reports query errors and guards drafts; empty results remain unselected. Filtered global record number is shown. Advanced inline editing and full DB4S form controls remain. |
 
 ## Edit Pragmas tab
 
@@ -158,7 +160,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
 | EditIndexDialog | partial | Basic raw columns entry/unique; no partial clause or structured column order UI. |
-| ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
+| ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; malformed units/surrogates and unsupported UTF-32 BOMs are rejected before writing; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
 | PreferencesDialog | partial | Font/theme/drop confirmation/CSV delimiter/frozen count; Cancel preserves current frozen count (F11 addressed); full upstream preferences absent. |
@@ -304,3 +306,25 @@ with backwards-compatible defaults.
 - 217 workspace tests and strict clippy/build checks pass. See the
   [latest review](../../docs/reviews/R-20261027-2bfc8ad51380.md) for captures,
   the project browse-error finding and native acceptance limits.
+
+
+## Grid correctness and evidence correction — 2026-10-27
+
+- Shared Table keeps directional selection anchors, ordered copy bounds and the
+  active column in view. `TableStyle::drag_select` enables rectangular drag
+  selection using the same frozen/scrolled geometry. Existing tables keep body
+  panning by default. e28 defers selection changes until pointer release and
+  preserves grid focus through rebuilds.
+- The platform now exposes HTML clipboard reads/writes on WindowCtx on all three
+  backends. e28 uses an HTML stamp to recognize its typed internal copy buffer.
+  Preview snapshots retain SQLite storage classes and raw TEXT/BLOB bytes, with payloads over 8 MiB moved to temporary disk storage; typed
+  copies do not substitute display labels. External TSV remains a text format.
+- Paste/cut uses one UPDATE per record inside a savepoint. Constraints, a stale
+  target or trigger-induced row loss roll back the whole operation while keeping
+  earlier unwritten edits. Bounds are checked before writes.
+- Invalid UTF-8 TEXT can be browsed, copied, pasted and used in foreign keys
+  without a panic. The Value-based cell editor still cannot edit such TEXT; it
+  reports the limitation instead of converting the stored bytes.
+- This is still partial DB4S parity. Native OS input/clipboard/IME, Linux/Windows
+  runtime, performance budgets and DB4S binary round trips remain acceptance gaps.
+  A window-only native render capture is separate from those checks.
