@@ -126,6 +126,11 @@ pub struct BrowseTableOptions {
 }
 
 impl BrowseTableOptions {
+    fn rename_columns(&mut self, renames: &[(String, String)]) {
+        for name in &mut self.column_names { rename_column(name, renames); }
+        for order in &mut self.ordering { rename_column(&mut order.column, renames); }
+    }
+
     pub fn remap_columns(&mut self, columns: &[String]) {
         if !self.column_names.is_empty() && self.column_names != columns {
             let positions: Vec<_> = columns.iter().map(|name| self.column_names.iter().position(|old| old.eq_ignore_ascii_case(name))).collect();
@@ -144,6 +149,12 @@ impl BrowseTableOptions {
             }
         }
         self.column_names = columns.to_vec();
+    }
+}
+
+fn rename_column(name: &mut String, renames: &[(String, String)]) {
+    if let Some((_, target)) = renames.iter().find(|(source, _)| source.eq_ignore_ascii_case(name)) {
+        *name = target.clone();
     }
 }
 
@@ -398,6 +409,7 @@ pub struct AppState {
     pub wizard_table_name: String,
     pub wizard_table_original: Option<SelectedObject>,
     pub wizard_cols: Vec<ColDef>,
+    pub wizard_col_sources: Vec<Option<String>>,
     pub wizard_col_sel: usize,
     pub wizard_index_name: String,
     pub wizard_index_table: String,
@@ -662,6 +674,7 @@ impl AppState {
                 },
                 ColDef::new("name", "TEXT"),
             ],
+            wizard_col_sources: Vec::new(),
             wizard_col_sel: 0,
             wizard_index_name: "idx_name".into(),
             wizard_index_table: String::new(),
@@ -1516,6 +1529,7 @@ impl AppState {
             },
             ColDef::new("name", "TEXT"),
         ];
+        self.wizard_col_sources.clear();
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
     }
@@ -1531,6 +1545,7 @@ impl AppState {
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let cols = db::table_columns_in(conn, &sel.schema, &sel.name)?;
         if cols.is_empty() { return Err("Table has no editable columns".into()); }
+        self.wizard_col_sources = cols.iter().map(|col| Some(col.name.clone())).collect();
         self.wizard_schema = sel.schema.clone();
         self.wizard_scroll = (0.0, 0.0);
         self.wizard_table_name = sel.name.clone();
@@ -1631,6 +1646,8 @@ impl AppState {
         if self.wizard_cols.is_empty() { return Err("Add at least one column".into()); }
         if self.wizard_cols.iter().any(|c| c.name.trim().is_empty()) { return Err("Column name required".into()); }
         let original = self.wizard_table_original.clone();
+        let renames: Vec<_> = self.wizard_cols.iter().zip(&self.wizard_col_sources)
+            .filter_map(|(col, source)| source.as_ref().filter(|source| **source != col.name).map(|source| (source.clone(), col.name.clone()))).collect();
         if original.as_ref().is_some_and(|o| o.schema != schema) {
             return Err("Moving a table between databases requires an explicit SQL migration".into());
         }
@@ -1638,7 +1655,7 @@ impl AppState {
         let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         if let Some(orig) = original.as_ref() {
-            db::recreate_table_in(conn, &schema, &orig.name, &name, &self.wizard_cols)?;
+            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources)?;
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
             let ddl = db::create_table_ddl_in(&schema, &name, &self.wizard_cols);
@@ -1662,12 +1679,44 @@ impl AppState {
             }
             if self.chart_schema == schema && self.chart_table.as_deref() == Some(&orig.name) { self.chart_table = Some(name.clone()); }
         }
+        if original.is_some() && !renames.is_empty() {
+            for tab in &mut self.browse_tabs {
+                if let Some(mut options) = tab.stored_options(&schema, &name).cloned() {
+                    options.rename_columns(&renames);
+                    tab.store_options(&schema, &name, options);
+                }
+                if tab.schema == schema && tab.table.as_deref() == Some(&name) {
+                    let mut options = tab.options();
+                    options.rename_columns(&renames);
+                    tab.set_options(options);
+                    tab.result = None;
+                    tab.rowids.clear();
+                    tab.total_rows = None;
+                    tab.clear_selection();
+                }
+            }
+            for rule in &mut self.cond_rules {
+                if rule.schema == schema && rule.table.as_deref() == Some(&name) { rename_column(&mut rule.column, &renames); }
+            }
+            if self.chart_schema == schema && self.chart_table.as_deref() == Some(&name) { rename_column(&mut self.chart_column, &renames); }
+        }
         self.refresh_schema()?;
         self.select_saved_object(&schema, ObjectKind::Table, &name, clean_ddl);
-        if self.browse().schema == schema && self.browse().table.as_deref() == Some(&name) { self.refresh_browse()?; }
-        else { self.switch_browse_table_in(&schema, &name)?; }
+        let browse = if self.browse().schema == schema && self.browse().table.as_deref() == Some(&name) { self.refresh_browse() }
+            else { self.switch_browse_table_in(&schema, &name) };
+        let browse_error = browse.err().map(|error| {
+            if self.browse().schema == schema && self.browse().table.as_deref() == Some(&name) {
+                let tab = self.browse_mut();
+                tab.result = None;
+                tab.rowids.clear();
+                tab.total_rows = None;
+                tab.clear_selection();
+                self.clear_browse_editor();
+            }
+            format!("; browse unavailable: {error}")
+        }).unwrap_or_default();
         let plot_error = self.refresh_chart().err().map(|e| format!("; plot unavailable: {e}")).unwrap_or_default();
-        self.status_msg = format!("Table {} saved (unwritten){plot_error}", db::qualified_name(&schema, &name));
+        self.status_msg = format!("Table {} saved (unwritten){browse_error}{plot_error}", db::qualified_name(&schema, &name));
         Ok(())
     }
 
@@ -3326,6 +3375,7 @@ mod chart_default_tests {
         state.selected = Some(SelectedObject { schema: "main".into(), kind: ObjectKind::Table, name: "t".into() });
         state.open_modify_table_wizard().unwrap();
         state.wizard_cols.push(ColDef { default_value: "0; DELETE FROM main.t; --".into(), ..ColDef::new("x", "TEXT") });
+        state.wizard_col_sources.push(None);
         assert!(state.apply_table_wizard().is_err());
         assert_eq!(db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(), 1);
         assert_eq!(db::table_column_names(state.conn.as_ref().unwrap(), "t").unwrap(), ["v"]);
@@ -3404,6 +3454,108 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn table_wizard_renames_a_column_without_replacing_its_data() {
+        let mut state = test_state();
+        state.refresh_schema().unwrap();
+        let index = state.schema.iter().position(|object| object.schema == "main" && object.name == "t").unwrap();
+        state.select_schema_node(10_000 + index as u64);
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_cols[0].name = "renamed.\"列".into();
+        state.apply_table_wizard().unwrap();
+        let conn = state.conn.as_ref().unwrap();
+        assert_eq!(db::table_column_names(conn, "t").unwrap(), ["renamed.\"列"]);
+        assert_eq!(db::browse_table(conn, "t", &[], None, 5, 0).unwrap().rows[0][0], "saved");
+        assert!(!conn.is_autocommit());
+    }
+
+    #[test]
+    fn table_wizard_column_swaps_follow_qualified_browse_plot_and_format_identities() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(a,b); ATTACH ':memory:' AS aux;
+            CREATE TABLE aux.t(a INTEGER,b INTEGER); INSERT INTO aux.t VALUES(25,50),(26,51);").unwrap();
+        state.refresh_schema().unwrap();
+        let index = state.schema.iter().position(|o| o.schema == "aux" && o.name == "t").unwrap();
+        state.select_schema_node(10_000 + index as u64);
+        let options = BrowseTableOptions { column_names: vec!["a".into(), "b".into()],
+            col_filters: vec!["=25".into(), "=50".into()], column_widths: vec![211.0, 322.0], frozen_cols: Some(1),
+            ordering: vec![db::OrderBy { column: "a".into(), descending: true }], ..Default::default() };
+        state.browse_mut().set_options(options.clone());
+        state.refresh_browse().unwrap();
+        state.browse_mut().store_options("aux", "t", options.clone());
+        state.add_browse_tab().unwrap();
+        state.browse_mut().set_options(options.clone());
+        state.browse_mut().store_options("aux", "t", options.clone());
+        state.refresh_browse().unwrap();
+        let mut inactive = BrowseTabState::new(Some("t".into()));
+        inactive.store_options("aux", "t", options.clone());
+        inactive.store_options("temp", "t", options.clone());
+        state.browse_tabs.push(inactive);
+        state.chart_schema = "aux".into();
+        state.chart_table = Some("t".into());
+        state.chart_column = "b".into();
+        state.cond_col = "a".into();
+        state.cond_value = "25".into();
+        state.add_cond_format_rule();
+        let mut other_rule = state.cond_rules[0].clone();
+        other_rule.schema = "temp".into();
+        state.cond_rules.push(other_rule);
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_cols[0].name = "b".into();
+        state.wizard_cols[1].name = "a".into();
+        state.wizard_table_name = "renamed.\"t".into();
+        state.apply_table_wizard().unwrap();
+        let mut expected = options.clone();
+        expected.column_names = vec!["b".into(), "a".into()];
+        expected.ordering[0].column = "b".into();
+        for tab in &state.browse_tabs {
+            assert_eq!(tab.stored_options("aux", "renamed.\"t"), Some(&expected));
+            assert!(tab.stored_options("aux", "t").is_none());
+        }
+        assert_eq!(state.browse_tabs.last().unwrap().stored_options("temp", "t"), Some(&options));
+        assert_eq!(state.browse().options(), expected);
+        assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 1);
+        assert_eq!(state.chart_column, "a");
+        assert_eq!(state.chart_points, [50.0, 51.0]);
+        assert_eq!(state.cond_rules[0].column, "b");
+        assert_eq!(state.cond_rules[0].table.as_deref(), Some("renamed.\"t"));
+        assert_eq!(state.cond_rules[1].column, "a");
+        assert_eq!(state.cond_rules[1].table.as_deref(), Some("t"));
+        let project = crate::project::ProjectFile::from_state(&state);
+        let mut restored: crate::project::ProjectFile = serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+        AppState::preflight_project_browse(&mut restored, state.conn.as_ref().unwrap()).unwrap();
+        assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(), expected);
+        assert_eq!(db::browse_table(state.conn.as_ref().unwrap(), "t", &[], None, 5, 0).unwrap().rows[0][0], "saved");
+    }
+
+    #[test]
+    fn column_rename_reports_saved_schema_when_a_raw_filter_needs_manual_update() {
+        let mut state = test_state();
+        state.refresh_schema().unwrap();
+        let index = state.schema.iter().position(|o| o.schema == "main" && o.name == "t").unwrap();
+        state.select_schema_node(10_000 + index as u64);
+        state.browse_mut().filter = "v = 'saved'".into();
+        state.refresh_browse().unwrap();
+        state.goto_browse_record(1).unwrap();
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_cols[0].name = "renamed".into();
+        state.apply_table_wizard().unwrap();
+        assert!(state.status_msg.contains("saved (unwritten); browse unavailable:"), "{}", state.status_msg);
+        assert!(state.overlay.is_none());
+        assert!(state.dirty);
+        assert_eq!(state.browse().filter, "v = 'saved'");
+        assert_eq!(state.browse().column_names, ["renamed"]);
+        assert!(state.browse().result.is_none());
+        assert!(state.browse().rowids.is_empty());
+        assert!(state.browse().total_rows.is_none());
+        assert!(state.browse().sel_row.is_none());
+        assert!(!state.has_cell_draft());
+        assert!(state.ddl_draft.contains("renamed"));
+        state.browse_mut().filter.clear();
+        state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "saved");
+    }
+
+    #[test]
     fn namespace_table_wizards_keep_data_options_drafts_and_identity() {
         let mut state = test_state();
         state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp');
@@ -3428,6 +3580,7 @@ mod chart_default_tests {
         assert_eq!(state.wizard_cols[0].type_name, "");
         assert!(state.column_type_names().contains(&String::new()));
         state.wizard_cols.push(ColDef::new("extra", "TEXT"));
+        state.wizard_col_sources.push(None);
         state.wizard_table_name = "renamed.\"t".into();
         state.apply_table_wizard().unwrap();
         assert!(state.browse_tabs.iter().all(|t| t.schema == "aux.\"db" && t.table.as_deref() == Some("renamed.\"t")));

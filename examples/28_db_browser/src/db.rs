@@ -1352,11 +1352,38 @@ pub fn recreate_table_in(
     cols: &[ColDef],
 ) -> Result<(), String> {
     let existing = table_columns_in(conn, schema, old_name)?;
+    let sources: Vec<_> = cols.iter().map(|col| existing.iter().find(|old| old.name == col.name).map(|old| old.name.clone())).collect();
+    if sources.iter().any(Option::is_none) && existing.iter().any(|old| !sources.iter().any(|source| source.as_ref() == Some(&old.name))) {
+        return Err("Use ALTER TABLE RENAME COLUMN in Execute SQL to rename a column".into());
+    }
+    recreate_table_columns_in(conn, schema, old_name, new_name, cols, &sources)
+}
+
+/// Apply column edits using explicit original identities; None denotes a new column.
+pub fn recreate_table_columns_in(
+    conn: &Connection,
+    schema: &str,
+    old_name: &str,
+    new_name: &str,
+    cols: &[ColDef],
+    sources: &[Option<String>],
+) -> Result<(), String> {
+    let existing = table_columns_in(conn, schema, old_name)?;
     if existing.is_empty() {
         return Err(format!("Table {} has no editable columns", qualified_name(schema, old_name)));
     }
-    for col in cols {
-        if let Some(old) = existing.iter().find(|c| c.name == col.name) {
+    if cols.is_empty() || sources.len() != cols.len() {
+        return Err("Column identities do not match the table draft; reopen Modify Table".into());
+    }
+    for (index, (col, source)) in cols.iter().zip(sources).enumerate() {
+        if cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&col.name)) {
+            return Err(format!("Duplicate column name: {}", col.name));
+        }
+        if let Some(source) = source {
+            if sources[..index].iter().any(|old| old.as_ref() == Some(source)) {
+                return Err(format!("Duplicate original column identity: {source}"));
+            }
+            let old = existing.iter().find(|c| c.name == *source).ok_or_else(|| format!("Original column no longer exists: {source}"))?;
             if !old.type_name.eq_ignore_ascii_case(&col.type_name)
                 || old.pk != col.pk
                 || old.notnull != col.notnull
@@ -1369,18 +1396,15 @@ pub fn recreate_table_in(
             return Err("SQLite ALTER cannot add PRIMARY KEY or UNIQUE columns".into());
         }
     }
-    // A renamed column has no identity in this form; never guess and drop its data.
     let added: Vec<_> = cols
         .iter()
-        .filter(|c| !existing.iter().any(|o| o.name == c.name))
+        .zip(sources)
+        .filter_map(|(col, source)| source.is_none().then_some(col))
         .collect();
     let removed: Vec<_> = existing
         .iter()
-        .filter(|c| !cols.iter().any(|o| o.name == c.name))
+        .filter(|c| !sources.iter().any(|source| source.as_ref() == Some(&c.name)))
         .collect();
-    if !added.is_empty() && !removed.is_empty() {
-        return Err("Use ALTER TABLE RENAME COLUMN in Execute SQL to rename a column".into());
-    }
     if !removed.is_empty() {
         let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", quote_ident(schema), quote_literal(old_name))).map_err(|e| e.to_string())?;
         let indexes = stmt.query_map([], |r| r.get::<_, String>(1)).map_err(|e| e.to_string())?;
@@ -1400,31 +1424,52 @@ pub fn recreate_table_in(
     }
     let retained: Vec<_> = existing
         .iter()
-        .filter(|c| cols.iter().any(|o| o.name == c.name))
+        .filter(|c| sources.iter().any(|source| source.as_ref() == Some(&c.name)))
         .map(|c| &c.name)
         .collect();
-    let requested: Vec<_> = cols
-        .iter()
-        .filter(|c| existing.iter().any(|o| o.name == c.name))
-        .map(|c| &c.name)
-        .collect();
-    if retained != requested {
+    let requested: Vec<_> = sources.iter().filter_map(Option::as_ref).collect();
+    if retained != requested || sources.iter().skip_while(|source| source.is_some()).any(Option::is_some) {
         return Err("Reordering existing columns requires an explicit SQL migration".into());
     }
+    let mut reserved = table_column_names_in(conn, schema, old_name)?;
+    reserved.extend(cols.iter().map(|col| col.name.clone()));
+    let mut renames = Vec::new();
+    for (col, source) in cols.iter().zip(sources) {
+        if let Some(source) = source.as_ref().filter(|source| **source != col.name) {
+            let mut number = reserved.len();
+            let temporary = loop {
+                let candidate = format!("__next_gui_column_{number}");
+                if !reserved.iter().any(|name| name.eq_ignore_ascii_case(&candidate)) { break candidate; }
+                number += 1;
+            };
+            reserved.push(temporary.clone());
+            renames.push((source, &col.name, temporary));
+        }
+    }
     with_savepoint(conn, || {
-        for col in added {
-            let ddl = create_table_ddl("unused", std::slice::from_ref(col));
-            let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
-            execute_single_statement(conn, &format!(
-                "ALTER TABLE {} ADD COLUMN {definition}",
-                qualified_name(schema, old_name)
-            ))?;
+        // Temporary column names let swaps and case-only renames preserve identity.
+        for (source, _, temporary) in &renames {
+            execute_single_statement(conn, &format!("ALTER TABLE {} RENAME COLUMN {} TO {}",
+                qualified_name(schema, old_name), quote_ident(source), quote_ident(temporary)))
+                .map_err(|error| format!("Cannot rename column {source}: {error}"))?;
         }
         for col in removed {
             execute_single_statement(conn, &format!(
                 "ALTER TABLE {} DROP COLUMN {}",
                 qualified_name(schema, old_name),
                 quote_ident(&col.name)
+            ))?;
+        }
+        for (_, target, temporary) in &renames {
+            execute_single_statement(conn, &format!("ALTER TABLE {} RENAME COLUMN {} TO {}",
+                qualified_name(schema, old_name), quote_ident(temporary), quote_ident(target)))
+                .map_err(|error| format!("Cannot rename column to {target}: {error}"))?;
+        }
+        for col in added {
+            let ddl = create_table_ddl("unused", std::slice::from_ref(col));
+            let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
+            execute_single_statement(conn, &format!(
+                "ALTER TABLE {} ADD COLUMN {definition}", qualified_name(schema, old_name)
             ))?;
         }
         if old_name != new_name {
@@ -1649,6 +1694,107 @@ mod tests {
         assert_eq!(count_rows(&conn, "same.\"table").unwrap(), 2);
         assert_eq!(browse_table(&conn, "same.\"table", &[], None, 500, 0).unwrap().rows[0][1], "original");
         assert!(browse_table_in(&conn, "missing\"; DROP TABLE main.t", "same.\"table", &[], None, 500, 0).is_err());
+    }
+
+    #[test]
+    fn mapped_column_renames_preserve_qualified_dependencies_and_rollback_every_step() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\"; BEGIN;").unwrap();
+        for schema in ["main", "temp", "aux.\"db"] {
+            let parent = qualified_name(schema, "parent");
+            conn.execute_batch(&format!("CREATE TABLE {parent}(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                a TEXT NOT NULL DEFAULT 'fallback' CHECK(a != 'bad'), b TEXT DEFAULT 'B',
+                g TEXT GENERATED ALWAYS AS(a || '!') STORED);
+                CREATE TABLE {}(p REFERENCES parent(id) ON DELETE CASCADE);
+                CREATE TABLE {}(a,b);
+                CREATE UNIQUE INDEX {} ON parent(lower(a)) WHERE b != 'excluded';
+                CREATE VIEW {} AS SELECT id,a,b,g FROM parent;
+                CREATE TRIGGER {} AFTER INSERT ON {parent} BEGIN INSERT INTO child VALUES(new.id); INSERT INTO audit VALUES(new.a,new.b); END;
+                INSERT INTO {parent}(id,a,b) VALUES(1,'A','B'),(100,'removed','gone');
+                DELETE FROM {parent} WHERE id=100;",
+                qualified_name(schema, "child"), qualified_name(schema, "audit"), qualified_name(schema, "ix"),
+                qualified_name(schema, "viewed"), qualified_name(schema, "tr"))).unwrap();
+            if schema == "temp" {
+                // SQLite 3.45 reparses temp triggers/views twice during RENAME COLUMN.
+                let before: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
+                let mut cols: Vec<_> = table_columns_in(&conn, schema, "parent").unwrap().into_iter().map(|col| ColDef {
+                    name: col.name, type_name: col.type_name, pk: col.pk, notnull: col.notnull,
+                    unique: false, default_value: col.default_value.unwrap_or_default(),
+                }).collect();
+                let sources: Vec<_> = cols.iter().map(|col| Some(col.name.clone())).collect();
+                cols[0].name = "ID".into();
+                assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &sources).is_err());
+                let after: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
+                assert_eq!(after, before);
+                conn.execute_batch("DROP TRIGGER temp.tr; DROP VIEW temp.viewed;").unwrap();
+            }
+            let mut cols: Vec<_> = table_columns_in(&conn, schema, "parent").unwrap().into_iter().map(|col| ColDef {
+                name: col.name, type_name: col.type_name, pk: col.pk, notnull: col.notnull,
+                unique: false, default_value: col.default_value.unwrap_or_default(),
+            }).collect();
+            let mut sources: Vec<_> = cols.iter().map(|col| Some(col.name.clone())).collect();
+            cols[0].name = "ID".into();
+            cols[1].name = "b".into();
+            cols[2].name = "a".into();
+            let original_schema: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
+            let mut bad = cols.clone();
+            bad.push(ColDef { default_value: "0; PRAGMA foreign_keys=OFF; --".into(), ..ColDef::new("tail", "TEXT") });
+            let mut bad_sources = sources.clone();
+            bad_sources.push(None);
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "changed", &bad, &bad_sources).is_err());
+            let after: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
+            assert_eq!(after, original_schema);
+            assert_eq!(count_browse_rows_in(&conn, schema, "child", None).unwrap(), 1);
+            assert_eq!(conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            assert!(!conn.is_autocommit());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &sources[..2]).is_err());
+            let mut invalid = sources.clone();
+            invalid[1] = invalid[0].clone();
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &invalid).is_err());
+            invalid[1] = Some("missing".into());
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &cols, &invalid).is_err());
+            let mut duplicate = cols.clone();
+            duplicate[2].name = "B".into();
+            assert!(recreate_table_columns_in(&conn, schema, "parent", "parent", &duplicate, &sources).is_err());
+            cols.push(ColDef::new("untyped", ""));
+            sources.push(None);
+            recreate_table_columns_in(&conn, schema, "parent", "changed.\"parent", &cols, &sources).unwrap_or_else(|error| panic!("{schema}: {error}"));
+            let changed = qualified_name(schema, "changed.\"parent");
+            let row: (i64, String, String, String, Option<String>) = conn.query_row(&format!("SELECT \"ID\",a,b,g,untyped FROM {changed}"), [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();
+            assert_eq!(row, (1,"B".into(),"A".into(),"A!".into(),None));
+            if schema != "temp" { assert_eq!(count_browse_rows_in(&conn, schema, "viewed", None).unwrap(), 1); }
+            assert_eq!(conn.query_row(&format!("SELECT \"table\" FROM pragma_foreign_key_list('child', {})", quote_literal(schema)), [], |r| r.get::<_, String>(0)).unwrap(), "changed.\"parent");
+            assert!(conn.execute(&format!("INSERT INTO {changed}(a,b) VALUES('new','a')"), []).is_err());
+            assert!(conn.execute(&format!("INSERT INTO {changed}(a,b) VALUES('new','bad')"), []).is_err());
+            conn.execute(&format!("INSERT INTO {changed}(a,b) VALUES('new B','new A')"), []).unwrap();
+            assert_eq!(conn.last_insert_rowid(), 101);
+            assert_eq!(count_browse_rows_in(&conn, schema, "child", None).unwrap(), if schema == "temp" { 1 } else { 2 });
+            let audit: (String,String) = conn.query_row(&format!("SELECT a,b FROM {} ORDER BY rowid DESC LIMIT 1", qualified_name(schema, "audit")), [], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+            assert_eq!(audit, if schema == "temp" { ("removed".into(),"gone".into()) } else { ("new A".into(),"new B".into()) });
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM pragma_foreign_key_check(NULL,{})", quote_literal(schema)), [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        }
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert!(list_schema(&conn).unwrap().iter().all(|object| object.name != "changed.\"parent"));
+    }
+
+    #[test]
+    fn mapped_column_rename_rolls_back_earlier_steps_when_a_view_becomes_ambiguous() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE p(id,a); CREATE TABLE q(a);
+            CREATE VIEW joined AS SELECT * FROM p JOIN q USING(a); INSERT INTO p VALUES(1,'kept');
+            INSERT INTO q VALUES('kept'); BEGIN; INSERT INTO p VALUES(2,'pending');").unwrap();
+        let before: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
+        let cols = [ColDef::new("ID", ""), ColDef::new("changed", "")];
+        let sources = [Some("id".into()), Some("a".into())];
+        assert!(recreate_table_columns_in(&conn, "main", "p", "p", &cols, &sources).is_err());
+        let after: Vec<_> = list_schema(&conn).unwrap().into_iter().map(|o| (o.schema, o.name, o.sql)).collect();
+        assert_eq!(after, before);
+        assert_eq!(count_rows(&conn, "p").unwrap(), 2);
+        assert_eq!(count_rows(&conn, "joined").unwrap(), 1);
+        assert_eq!(conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(!conn.is_autocommit());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count_rows(&conn, "p").unwrap(), 1);
     }
 
     #[test]

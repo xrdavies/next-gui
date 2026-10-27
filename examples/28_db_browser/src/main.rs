@@ -583,6 +583,16 @@ impl Demo {
                     }
                     MainTab::Structure
                 }
+                "table-rename" | "table-renamed" => {
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "customers" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[0].name = "customer_key".into();
+                    if tab == "table-renamed" {
+                        state.apply_table_wizard().unwrap();
+                        MainTab::Browse
+                    } else { MainTab::Structure }
+                }
                 "index" => {
                     state.open_create_index_wizard();
                     MainTab::Structure
@@ -2312,6 +2322,7 @@ impl Demo {
             self.state
                 .wizard_cols
                 .push(dbmod::ColDef::new("col", "TEXT"));
+            if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.push(None); }
             self.state.wizard_col_sel = self.state.wizard_cols.len() - 1;
             self.rebuild = true;
             return true;
@@ -2324,6 +2335,7 @@ impl Demo {
                     .wizard_col_sel
                     .min(self.state.wizard_cols.len() - 1);
                 self.state.wizard_cols.remove(i);
+                if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.remove(i); }
                 if self.state.wizard_col_sel >= self.state.wizard_cols.len() {
                     self.state.wizard_col_sel = self.state.wizard_cols.len().saturating_sub(1);
                 }
@@ -2336,6 +2348,7 @@ impl Demo {
             let i = self.state.wizard_col_sel;
             if i > 0 {
                 self.state.wizard_cols.swap(i, i - 1);
+                if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.swap(i, i - 1); }
                 self.state.wizard_col_sel = i - 1;
             }
             self.rebuild = true;
@@ -2346,6 +2359,7 @@ impl Demo {
             let i = self.state.wizard_col_sel;
             if i + 1 < self.state.wizard_cols.len() {
                 self.state.wizard_cols.swap(i, i + 1);
+                if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.swap(i, i + 1); }
                 self.state.wizard_col_sel = i + 1;
             }
             self.rebuild = true;
@@ -6013,6 +6027,75 @@ mod interaction_tests {
         assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type), Some("TEXT); DELETE FROM customers; --"));
         assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "customers").unwrap(), customers);
         assert!(!dbmod::list_schema(demo.state.conn.as_ref().unwrap()).unwrap().iter().any(|obj| obj.name == "bad_type"));
+    }
+
+    #[test]
+    fn modify_table_tracks_column_identity_through_buttons_rebuild_and_save() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "customers" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000 + row as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            let sources = demo.state.wizard_col_sources.clone();
+            let original = dbmod::browse_table(demo.state.conn.as_ref().unwrap(), "customers", &[], None, 500, 0).unwrap().rows;
+            demo.do_rebuild();
+            demo.ui.set_text_input(demo.ids.ov_col_name, "customer_key");
+            demo.handle_button(demo.ids.ov_btn_down);
+            demo.do_rebuild();
+            assert_eq!(demo.state.wizard_col_sources[1], sources[0]);
+            assert_eq!(demo.ui.text_input_value(demo.ids.ov_col_name), Some("customer_key"));
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.as_deref().unwrap().contains("Reordering"));
+            assert!(demo.state.overlay.is_some());
+            demo.do_rebuild();
+            demo.handle_button(demo.ids.ov_btn_up);
+            demo.do_rebuild();
+            assert_eq!(demo.state.wizard_col_sources, sources);
+            demo.handle_button(demo.ids.ov_btn_add);
+            demo.do_rebuild();
+            assert_eq!(demo.state.wizard_col_sources.last(), Some(&None));
+            demo.handle_button(demo.ids.ov_btn_del);
+            demo.do_rebuild();
+            assert_eq!(demo.state.wizard_col_sources, sources);
+            demo.ui.set_list_selected(demo.ids.ov_list, Some(0));
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.text_input_value(demo.ids.ov_col_name), Some("customer_key"));
+            for phase in ["draft", "saved"] {
+                if phase == "saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                    assert!(demo.state.overlay.is_none());
+                    demo.state.tab = MainTab::Browse;
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_RENAME_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Column rename {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Column rename GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(dbmod::table_column_names(conn, "customers").unwrap()[0], "customer_key");
+            assert_eq!(dbmod::browse_table(conn, "customers", &[], None, 500, 0).unwrap().rows, original);
+            demo.state.open_modify_table_wizard().unwrap();
+            assert_eq!(demo.state.wizard_col_sources[0].as_deref(), Some("customer_key"));
+        }
     }
 
     #[test]
