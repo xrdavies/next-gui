@@ -511,3 +511,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Readable Chart caption checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-14a98a98cdb1.md): shared Chart wraps bounded captions with grapheme-safe ellipsis, keeps chart bodies below them and exposes full accessible text; e28 adds its existing tooltip. F01 verified. 395 tests/strict checks, four theme/size chart Metal readback deltas of 2, native CJK Plot and all fourteen Office static captures pass. Full Plot/DB4S, typography polish and native input acceptance remain unfinished.
+
+
+## Schema wizard helper checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-30de3bbd49ad.md): explicit main/temp/attached CREATE TABLE, CREATE INDEX and atomic native ALTER helpers pass 396 workspace tests and strict checks. Index-dependent column removals are guarded against quoted attached-column conversion; expression-index removals require an explicit migration. Controls remain main-only until UI integration. Full schema migration/editor and native acceptance remain unfinished.

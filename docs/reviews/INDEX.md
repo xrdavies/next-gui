@@ -81,6 +81,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `77b9ad0..30de3bbd49ad` | Codex | issues — 396 tests/strict checks; quoted schema CREATE/index/atomic ALTER foundation and dependency guard verified; wizard UI/full/native parity remain | [Report](R-20261027-30de3bbd49ad.md) |
 | 2026-10-27 | `c4ab7bb..14a98a98cdb1` | Codex | issues — F01 verified: 395 tests/strict checks, bounded Unicode captions, four chart Metal deltas 2 and native e28/fourteen Office static inspection; full/native parity remain | [Report](R-20261027-14a98a98cdb1.md) |
 | 2026-10-27 | `dc03314..1ca20533cf37` | Codex | issues — 393 tests/strict checks, qualified Plot/project identity and both-theme/native static frames verified; narrow caption/full/native parity remain | [Report](R-20261027-1ca20533cf37.md) |
 | 2026-10-27 | `60b0c30..901390905c25` | Codex | pass for namespace Browse — 391 tests/strict checks, typed operations/projects/FK/isolation and both-theme wide/narrow/native static inspection; full/native parity remain | [Report](R-20261027-901390905c25.md) |
