@@ -303,6 +303,10 @@ struct BuiltUiIds {
     ov_btn_down: WidgetId,
     ov_btn_ok: WidgetId,
     ov_btn_cancel: WidgetId,
+    ov_idx_available: WidgetId,
+    ov_idx_expression: WidgetId,
+    ov_idx_edit_key: WidgetId,
+    ov_idx_preview: WidgetId,
     ov_idx_table: WidgetId,
     ov_idx_cols: WidgetId,
     ov_idx_where: WidgetId,
@@ -471,6 +475,10 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_btn_down: b.ov_btn_down,
             ov_btn_ok: b.ov_btn_ok,
             ov_btn_cancel: b.ov_btn_cancel,
+            ov_idx_available: b.ov_idx_available,
+            ov_idx_expression: b.ov_idx_expression,
+            ov_idx_edit_key: b.ov_idx_edit_key,
+            ov_idx_preview: b.ov_idx_preview,
             ov_idx_table: b.ov_idx_table,
             ov_idx_cols: b.ov_idx_cols,
             ov_idx_where: b.ov_idx_where,
@@ -1038,17 +1046,21 @@ impl Demo {
                 self.flush_wizard_col();
             }
             OverlayKind::EditIndex => {
-                for (index, area) in [self.ids.ov_idx_cols, self.ids.ov_idx_where].into_iter().enumerate() {
+                for (index, area) in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview].into_iter().enumerate() {
                     self.state.wizard_index_edit_states[index] = self.ui.text_area_state(area);
                 }
                 if let Some(value) = self.ui.text_area_value(self.ids.ov_idx_where) {
                     self.state.wizard_index_where = value.to_string();
                 }
-                if self.ids.ov_idx_cols.0 != 0 {
-                    if let Some(v) = self.ui.text_area_value(self.ids.ov_idx_cols) {
-                        self.state.wizard_index_cols = v.to_string();
-                    }
+                for (index, list) in [self.ids.ov_list, self.ids.ov_idx_available].into_iter().enumerate() {
+                    if let Some(offset) = self.ui.list_scroll_offset(list) { self.state.wizard_index_list_scroll[index] = offset; }
                 }
+                let previous_keys = self.state.wizard_index_cols.clone();
+                if let Some(value) = self.ui.text_area_value(self.ids.ov_idx_cols) {
+                    self.state.wizard_index_cols = value.to_string();
+                }
+                if let Some(index) = self.ui.list_selected(self.ids.ov_list) { self.state.wizard_index_key_sel = index; }
+                if let Some(index) = self.ui.list_selected(self.ids.ov_idx_available) { self.state.wizard_index_available_sel = index; }
                 if self.ids.ov_idx_unique.0 != 0 {
                     if let Some(on) = self.ui.is_checked(self.ids.ov_idx_unique) {
                         self.state.wizard_index_unique = on;
@@ -1057,11 +1069,17 @@ impl Demo {
                 if self.ids.ov_idx_table.0 != 0 {
                     if let Some(i) = self.ui.select_selected(self.ids.ov_idx_table) {
                         if let Some((schema, table)) = self.state.index_tables().get(i).map(|(schema, table)| (schema.to_string(), table.to_string())) {
-                            self.state.wizard_schema = schema;
-                            self.state.wizard_index_table = table;
+                            if self.state.wizard_schema != schema || self.state.wizard_index_table != table {
+                                self.state.wizard_schema = schema;
+                                self.state.wizard_index_table = table;
+                                self.state.wizard_index_available_sel = 0;
+                                self.state.wizard_index_list_scroll[1] = 0.0;
+                                self.rebuild = true;
+                            }
                         }
                     }
                 }
+                self.sync_index_wizard(previous_keys != self.state.wizard_index_cols);
             }
             OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
                 if self.ids.ov_csv_table.0 != 0 {
@@ -1270,9 +1288,70 @@ impl Demo {
         }
     }
 
+    fn sync_index_wizard(&mut self, keys_changed: bool) {
+        let keys = crate::index_sql::keys(&self.state.wizard_index_cols);
+        let count = keys.as_ref().map_or(0, Vec::len);
+        self.state.wizard_index_key_sel = self.state.wizard_index_key_sel.min(count.saturating_sub(1));
+        if keys_changed {
+            self.ui.set_list_items(self.ids.ov_list, keys.as_ref().map(|keys| keys.iter().enumerate()
+                .map(|(i, key)| format!("{}. {}", i + 1, key.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>()).unwrap_or_default());
+            self.ui.set_list_selected(self.ids.ov_list, Some(self.state.wizard_index_key_sel));
+            self.ui.set_list_scroll_offset(self.ids.ov_list, self.state.wizard_index_list_scroll[0]);
+        }
+        self.ui.set_button_enabled(self.ids.ov_btn_add, keys.is_ok() && self.ui.list_selected(self.ids.ov_idx_available).is_some());
+        self.ui.set_button_enabled(self.ids.ov_idx_expression, keys.is_ok());
+        for id in [self.ids.ov_btn_del, self.ids.ov_idx_edit_key] { self.ui.set_button_enabled(id, count > 0); }
+        self.ui.set_button_enabled(self.ids.ov_btn_up, count > 0 && self.state.wizard_index_key_sel > 0);
+        self.ui.set_button_enabled(self.ids.ov_btn_down, self.state.wizard_index_key_sel + 1 < count);
+        let sql = self.state.index_wizard_sql();
+        if self.ui.text_area_value(self.ids.ov_idx_preview) != Some(sql.as_str()) {
+            self.ui.set_text_area_value(self.ids.ov_idx_preview, sql);
+            sql_syntax::apply(&mut self.ui, self.ids.ov_idx_preview, &self.theme);
+        }
+    }
+
+    fn edit_index_key(&mut self, id: WidgetId) -> Result<(), String> {
+        let mut keys = crate::index_sql::keys(&self.state.wizard_index_cols)?;
+        let mut selected = self.state.wizard_index_key_sel;
+        if id == self.ids.ov_btn_add {
+            let columns = self.state.index_wizard_columns()?;
+            keys.push(dbmod::quote_ident(columns.get(self.state.wizard_index_available_sel).ok_or("Select a table column")?));
+            selected = keys.len() - 1;
+        } else if id == self.ids.ov_idx_expression {
+            keys.push("NULL".into());
+            selected = keys.len() - 1;
+        } else if id == self.ids.ov_btn_del && selected < keys.len() {
+            keys.remove(selected);
+            selected = selected.min(keys.len().saturating_sub(1));
+        } else if id == self.ids.ov_btn_up && selected > 0 && selected < keys.len() {
+            keys.swap(selected, selected - 1); selected -= 1;
+        } else if id == self.ids.ov_btn_down && selected + 1 < keys.len() {
+            keys.swap(selected, selected + 1); selected += 1;
+        }
+        if id != self.ids.ov_idx_edit_key {
+            // A newline before each separator keeps trailing line comments from swallowing the next key.
+            let sql = keys.join("\n,\n");
+            let len = self.state.wizard_index_cols.chars().count();
+            self.ui.replace_text_area_range(self.ids.ov_idx_cols, 0..len, &sql);
+            self.state.wizard_index_cols = sql;
+        }
+        self.state.wizard_index_key_sel = selected;
+        self.sync_index_wizard(true);
+        self.ui.reveal_list_selection(self.ids.ov_list);
+        self.state.wizard_index_list_scroll[0] = self.ui.list_scroll_offset(self.ids.ov_list).unwrap_or(0.0);
+        if id == self.ids.ov_idx_edit_key || id == self.ids.ov_idx_expression {
+            if let Some(range) = crate::index_sql::key_ranges(&self.state.wizard_index_cols)?.get(selected) {
+                self.ui.select_text_area_range(self.ids.ov_idx_cols, range.clone());
+                self.ui.set_focus(Some(self.ids.ov_idx_cols));
+            }
+        }
+        self.state.wizard_index_edit_states[0] = self.ui.text_area_state(self.ids.ov_idx_cols);
+        Ok(())
+    }
+
     fn do_rebuild(&mut self) {
         let index_focused = (self.state.overlay == Some(OverlayKind::EditIndex)).then(||
-            [self.ids.ov_idx_cols, self.ids.ov_idx_where].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
+            [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
         ).flatten();
         let dock_tabs_view = self.ui.tabs_state(self.ids.dock_tabs);
         let log_revision = self.state.sql_log.revision();
@@ -1298,7 +1377,7 @@ impl Demo {
         self.ui = built.ui;
         self.scene = built.scene;
         if let Some(index) = index_focused {
-            self.ui.set_focus(Some([self.ids.ov_idx_cols, self.ids.ov_idx_where][index]));
+            self.ui.set_focus(Some([self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available][index]));
             self.ui.sync(&mut self.scene);
         }
         self.last_schema_names = self.state.schema_names.clone();
@@ -2174,6 +2253,15 @@ impl Demo {
                 Err(e) => self.set_error(e),
             }
             self.rebuild = true;
+            return true;
+        }
+        if self.state.overlay == Some(OverlayKind::EditIndex)
+            && [self.ids.ov_btn_add, self.ids.ov_btn_del, self.ids.ov_btn_up, self.ids.ov_btn_down,
+                self.ids.ov_idx_expression, self.ids.ov_idx_edit_key].contains(&id) {
+            match self.edit_index_key(id) {
+                Ok(()) => self.clear_error(),
+                Err(error) => { self.set_error(error); self.rebuild = true; }
+            }
             return true;
         }
         if id == self.ids.ov_btn_add {
@@ -5487,6 +5575,121 @@ mod interaction_tests {
     }
 
     #[test]
+    fn index_key_rows_share_sql_undo_preview_and_qualified_columns() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("ALTER TABLE analytics.customers ADD COLUMN \"列,名\" TEXT GENERATED ALWAYS AS (region) VIRTUAL").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.open_create_index_wizard();
+        demo.state.wizard_schema = "analytics".into();
+        demo.state.wizard_index_table = "customers".into();
+        demo.state.wizard_index_name = "ordered.\"index".into();
+        demo.do_rebuild();
+        assert_eq!(demo.state.index_wizard_columns().unwrap(), ["id", "region", "revenue", "列,名"]);
+        assert_eq!(demo.ui.button_enabled(demo.ids.ov_btn_del), Some(false));
+        demo.ui.set_list_selected(demo.ids.ov_idx_available, Some(3));
+        demo.handle_button(demo.ids.ov_btn_add);
+        assert_eq!(demo.state.wizard_index_cols, "\"列,名\"");
+        demo.handle_button(demo.ids.ov_idx_expression);
+        assert_eq!(demo.ui.text_area_selected_text(demo.ids.ov_idx_cols).as_deref(), Some("NULL"));
+        let expression = "coalesce(region, '空,;)') COLLATE NOCASE DESC -- keep ,";
+        demo.ui.paste_into_focused_text(expression);
+        demo.snapshot_inputs();
+        let before_move = demo.state.wizard_index_cols.clone();
+        demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+        demo.handle_button(demo.ids.ov_btn_up);
+        let moved = demo.state.wizard_index_cols.clone();
+        assert_eq!(crate::index_sql::keys(&moved).unwrap(), [expression, "\"列,名\""]);
+        assert_eq!(demo.ui.button_enabled(demo.ids.ov_btn_up), Some(false));
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.ov_idx_cols));
+        demo.ui.key_input(UiKey::Undo);
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.wizard_index_cols, before_move);
+        demo.ui.key_input(UiKey::Redo);
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.wizard_index_cols, moved);
+        demo.ui.set_list_selected(demo.ids.ov_list, Some(0));
+        demo.handle_button(demo.ids.ov_btn_down);
+        assert_eq!(demo.state.wizard_index_cols, before_move);
+        demo.ui.set_list_selected(demo.ids.ov_list, Some(0));
+        demo.handle_button(demo.ids.ov_btn_del);
+        assert_eq!(demo.state.wizard_index_cols, expression);
+        demo.ui.set_focus(Some(demo.ids.ov_idx_cols));
+        demo.ui.key_input(UiKey::Undo);
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.wizard_index_cols, before_move);
+        demo.handle_button(demo.ids.ov_idx_edit_key);
+        assert_eq!(demo.ui.text_area_selected_text(demo.ids.ov_idx_cols).as_deref(), Some("\"列,名\""));
+        demo.ui.set_text_area_value(demo.ids.ov_idx_where, "revenue > 100");
+        demo.ui.set_checked(demo.ids.ov_idx_unique, true);
+        demo.snapshot_inputs();
+        let preview = demo.ui.text_area_value(demo.ids.ov_idx_preview).unwrap().to_string();
+        assert_eq!(preview, demo.state.index_wizard_sql());
+        assert!(preview.starts_with("CREATE UNIQUE INDEX \"analytics\".\"ordered.\"\"index\" ON \"customers\""));
+        assert!(preview.ends_with("\n) WHERE revenue > 100"));
+        assert!(!demo.ui.replace_text_area_range(demo.ids.ov_idx_preview, 0..0, "DELETE"));
+        demo.ui.select_text_area_range(demo.ids.ov_idx_preview, 0..12);
+        demo.ui.set_focus(Some(demo.ids.ov_idx_preview));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.ov_idx_preview));
+        assert_eq!(demo.ui.text_area_selection(demo.ids.ov_idx_preview), Some(0..12));
+        assert!(!demo.state.dirty);
+        let objects = dbmod::list_schema(demo.state.conn.as_ref().unwrap()).unwrap();
+        assert!(!objects.iter().any(|o| o.name == "ordered.\"index"));
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        let conn = demo.state.conn.as_ref().unwrap();
+        let sql: String = conn.query_row("SELECT sql FROM analytics.sqlite_schema WHERE name=?1", ["ordered.\"index"], |row| row.get(0)).unwrap();
+        assert_eq!(crate::index_sql::definition(&sql).unwrap(), (before_move, "revenue > 100".into()));
+        let index: (i64, i64) = conn.query_row("SELECT count(*), max(desc) FROM pragma_index_xinfo(?1, 'analytics') WHERE key=1", ["ordered.\"index"], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(index, (2, 1));
+        for i in 0..20 {
+            conn.execute_batch(&format!("ALTER TABLE analytics.customers ADD COLUMN col{i}")).unwrap();
+        }
+        demo.state.refresh_schema().unwrap();
+        demo.state.open_create_index_wizard();
+        demo.state.wizard_schema = "analytics".into();
+        demo.state.wizard_index_table = "customers".into();
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.ov_idx_available));
+        demo.ui.key_input(UiKey::End);
+        let available_offset = demo.ui.list_scroll_offset(demo.ids.ov_idx_available).unwrap();
+        assert!(available_offset > 0.0);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.ov_idx_available));
+        assert_eq!(demo.ui.list_selected(demo.ids.ov_idx_available), Some(23));
+        assert_eq!(demo.ui.list_scroll_offset(demo.ids.ov_idx_available), Some(available_offset));
+        for _ in 0..8 { demo.handle_button(demo.ids.ov_btn_add); }
+        let keys_offset = demo.ui.list_scroll_offset(demo.ids.ov_list).unwrap();
+        assert!(keys_offset > 0.0);
+        demo.ui.set_focus(Some(demo.ids.ov_list));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.ov_list));
+        assert_eq!(demo.ui.list_selected(demo.ids.ov_list), Some(7));
+        assert_eq!(demo.ui.list_scroll_offset(demo.ids.ov_list), Some(keys_offset));
+        demo.state.open_create_index_wizard();
+        demo.do_rebuild();
+        let temp = demo.state.index_tables().iter().position(|pair| *pair == ("temp", "customers")).unwrap();
+        demo.ui.set_select_selected(demo.ids.ov_idx_table, Some(temp));
+        demo.snapshot_inputs();
+        assert!(demo.rebuild);
+        demo.do_rebuild();
+        assert_eq!(demo.state.index_wizard_columns().unwrap(), ["temp_value"]);
+        demo.handle_button(demo.ids.ov_btn_add);
+        assert_eq!(demo.state.wizard_index_cols, "\"temp_value\"");
+        demo.ui.set_text_area_value(demo.ids.ov_idx_cols, "coalesce(");
+        demo.snapshot_inputs();
+        assert_eq!(demo.ui.button_enabled(demo.ids.ov_btn_add), Some(false));
+        demo.handle_button(demo.ids.ov_btn_add);
+        assert_eq!(demo.state.wizard_index_cols, "coalesce(");
+    }
+
+    #[test]
     fn schema_wizard_selectors_keep_qualified_targets_types_and_scroll() {
         let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
         demo.state.new_memory_db().unwrap();
@@ -5587,10 +5790,11 @@ mod interaction_tests {
                     else { demo.state.open_create_table_wizard(); }
                     demo.state.wizard_schema = "analytics".into();
                     demo.do_rebuild();
-                    let phases: &[&str] = if width == 800 { &["top", "bottom"] } else { &["top"] };
+                    let phases: &[&str] = if width == 800 && index { &["top", "middle", "bottom"] }
+                        else if width == 800 { &["top", "bottom"] } else { &["top"] };
                     for phase in phases {
-                        if *phase == "bottom" {
-                            assert!(demo.ui.set_scroll_offset(demo.ids.ov_scroll, 0.0, 10000.0));
+                        if *phase != "top" {
+                            assert!(demo.ui.set_scroll_offset(demo.ids.ov_scroll, 0.0, if *phase == "middle" { 200.0 } else { 10000.0 }));
                             demo.ui.sync(&mut demo.scene);
                             let offset = demo.ui.scroll_offset(demo.ids.ov_scroll).unwrap();
                             assert!(offset.1 > 0.0);
@@ -5603,8 +5807,12 @@ mod interaction_tests {
                         let save = bounds(demo.ids.ov_btn_ok);
                         assert!(viewport.y + viewport.height <= save.y && save.y + save.height <= height as f32);
                         if *phase == "bottom" {
-                            let field = bounds(if index { demo.ids.ov_idx_where } else { demo.ids.ov_default });
+                            let field = bounds(if index { demo.ids.ov_idx_preview } else { demo.ids.ov_default });
                             assert!(field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height);
+                        }
+                        if *phase == "middle" {
+                            let field = bounds(demo.ids.ov_idx_cols);
+                            assert!(field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height, "{field:?} within {viewport:?}");
                         }
                         if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_WIZARD_QA_OUT") {
                             demo.scene.mark_full_dirty(width as f32, height as f32);

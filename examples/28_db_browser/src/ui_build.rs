@@ -184,6 +184,10 @@ pub struct BuiltUi {
     pub ov_btn_down: WidgetId,
     pub ov_btn_ok: WidgetId,
     pub ov_btn_cancel: WidgetId,
+    pub ov_idx_available: WidgetId,
+    pub ov_idx_expression: WidgetId,
+    pub ov_idx_edit_key: WidgetId,
+    pub ov_idx_preview: WidgetId,
     pub ov_idx_table: WidgetId,
     pub ov_idx_cols: WidgetId,
     pub ov_idx_where: WidgetId,
@@ -452,6 +456,10 @@ pub fn build_ui(
     let mut ov_btn_down = z;
     let mut ov_btn_ok = z;
     let mut ov_btn_cancel = z;
+    let mut ov_idx_available = z;
+    let mut ov_idx_expression = z;
+    let mut ov_idx_edit_key = z;
+    let mut ov_idx_preview = z;
     let mut ov_idx_table = z;
     let mut ov_idx_cols = z;
     let mut ov_idx_where = z;
@@ -907,7 +915,41 @@ pub fn build_ui(
                                         selector,
                                     );
                                 });
-                                c.text("Columns / expressions");
+                                let mut key_row = row;
+                                key_row.width = area_s.width;
+                                key_row.height = 148.0;
+                                let mut key_col = ColumnStyle::from_theme(&theme);
+                                key_col.width = (area_s.width - row.gap) / 2.0;
+                                key_col.height = key_row.height;
+                                key_col.padding = 0.0;
+                                key_col.gap = 4.0;
+                                key_col.background = None;
+                                let mut key_list = list_s;
+                                key_list.width = key_col.width;
+                                key_list.height = 120.0;
+                                c.row(key_row, |r| {
+                                    r.column(key_col, |c| {
+                                        c.text("Available table columns");
+                                        match state.index_wizard_columns() {
+                                            Ok(columns) => ov_idx_available = c.list(columns, key_list),
+                                            Err(error) => { c.text(format!("Columns unavailable: {error}")); }
+                                        }
+                                    });
+                                    r.column(key_col, |c| {
+                                        c.text("Ordered index keys");
+                                        let keys = crate::index_sql::keys(&state.wizard_index_cols).unwrap_or_default();
+                                        ov_list = c.list(keys.iter().enumerate().map(|(i, key)| format!("{}. {}", i + 1, key.split_whitespace().collect::<Vec<_>>().join(" "))), key_list);
+                                    });
+                                });
+                                c.row(row, |r| {
+                                    ov_btn_add = r.tool_button("Add column");
+                                    ov_idx_expression = r.tool_button("Add expression");
+                                    ov_btn_del = r.tool_button("Remove");
+                                    ov_btn_up = r.tool_button("Up");
+                                    ov_btn_down = r.tool_button("Down");
+                                    ov_idx_edit_key = r.tool_button("Edit key");
+                                });
+                                c.text("Columns / expressions · SQL");
                                 let mut sql_area = area_s;
                                 sql_area.height = 84.0;
                                 ov_idx_cols = c.text_area(&state.wizard_index_cols, "column or expression, …", sql_area);
@@ -915,6 +957,9 @@ pub fn build_ui(
                                 sql_area.height = 64.0;
                                 ov_idx_where = c.text_area(&state.wizard_index_where, "e.g. revenue > 0", sql_area);
                                 ov_idx_unique = c.switch_styled("Unique", state.wizard_index_unique, sw);
+                                c.text("SQL preview");
+                                sql_area.height = 80.0;
+                                ov_idx_preview = c.text_area(state.index_wizard_sql(), "", sql_area);
                             });
                         }
                         OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
@@ -1976,6 +2021,22 @@ pub fn build_ui(
 
     let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
     ui.set_accessible_name(browse_header_menu, "Browse column actions");
+    if state.overlay == Some(OverlayKind::EditIndex) {
+        ui.set_accessible_name(ov_idx_available, "Available table columns for index");
+        ui.set_accessible_name(ov_list, "Ordered index keys");
+        ui.set_accessible_name(ov_idx_preview, "Generated CREATE INDEX SQL preview");
+        ui.set_text_area_read_only(ov_idx_preview, true);
+        ui.set_list_selected(ov_idx_available, Some(state.wizard_index_available_sel));
+        ui.set_list_selected(ov_list, Some(state.wizard_index_key_sel));
+        let keys = crate::index_sql::keys(&state.wizard_index_cols);
+        let count = keys.as_ref().map_or(0, Vec::len);
+        ui.set_button_enabled(ov_btn_add, keys.is_ok() && ui.list_selected(ov_idx_available).is_some());
+        ui.set_button_enabled(ov_idx_expression, keys.is_ok());
+        for id in [ov_btn_del, ov_idx_edit_key] { ui.set_button_enabled(id, count > 0); }
+        ui.set_button_enabled(ov_btn_up, count > 0 && state.wizard_index_key_sel > 0);
+        ui.set_button_enabled(ov_btn_down, state.wizard_index_key_sel + 1 < count);
+        crate::sql_syntax::apply(&mut ui, ov_idx_preview, &theme);
+    }
     ui.set_accessible_name(ov_idx_cols, "Index columns and expressions");
     ui.set_accessible_name(ov_idx_where, "Partial index WHERE condition");
     if btn_sql_comment.0 != 0 {
@@ -2013,6 +2074,11 @@ pub fn build_ui(
     ui.set_text_area_read_only(log_area, true);
     ui.sync(&mut scene);
     ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
+    if state.overlay == Some(OverlayKind::EditIndex) {
+        for (index, list) in [ov_list, ov_idx_available].into_iter().enumerate() {
+            ui.set_list_scroll_offset(list, state.wizard_index_list_scroll[index]);
+        }
+    }
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
@@ -2022,7 +2088,7 @@ pub fn build_ui(
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
-    for (index, area) in [ov_idx_cols, ov_idx_where].into_iter().enumerate() {
+    for (index, area) in [ov_idx_cols, ov_idx_where, ov_idx_preview].into_iter().enumerate() {
         if let Some(editor) = &state.wizard_index_edit_states[index] { ui.restore_text_area_state(area, editor); }
         crate::sql_syntax::apply(&mut ui, area, &theme);
     }
@@ -2138,6 +2204,10 @@ pub fn build_ui(
         ov_btn_down,
         ov_btn_ok,
         ov_btn_cancel,
+        ov_idx_available,
+        ov_idx_expression,
+        ov_idx_edit_key,
+        ov_idx_preview,
         ov_idx_table,
         ov_idx_cols,
         ov_idx_where,

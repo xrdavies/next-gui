@@ -188,3 +188,5 @@ Table painting and sorting. Applications check `hit_widget` for occlusion first.
 `set_table_active_cell` moves the active cell within an existing selection while
 retaining its range/anchors; e28 uses it to retain an entire-column selection
 across rebuilds. These are synthetic widget contracts, not native input acceptance.
+
+List exposes `list_scroll_offset`, finite/clamped `set_list_scroll_offset` and `reveal_list_selection`. Hosts can restore selection plus viewport after rebuild; explicit reveal scrolls only enough to show the selected row and keeps focus. Keyboard list navigation uses the same reveal path.

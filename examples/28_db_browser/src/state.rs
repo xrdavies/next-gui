@@ -403,7 +403,10 @@ pub struct AppState {
     pub wizard_index_table: String,
     pub wizard_index_cols: String,
     pub wizard_index_where: String,
-    pub wizard_index_edit_states: [Option<next_gui_ui::TextAreaState>; 2],
+    pub wizard_index_edit_states: [Option<next_gui_ui::TextAreaState>; 3],
+    pub wizard_index_list_scroll: [f32; 2],
+    pub wizard_index_key_sel: usize,
+    pub wizard_index_available_sel: usize,
     pub wizard_index_unique: bool,
     pub wizard_index_original: Option<SelectedObject>,
 
@@ -664,7 +667,10 @@ impl AppState {
             wizard_index_table: String::new(),
             wizard_index_cols: "name".into(),
             wizard_index_where: String::new(),
-            wizard_index_edit_states: [None, None],
+            wizard_index_edit_states: [None, None, None],
+            wizard_index_list_scroll: [0.0; 2],
+            wizard_index_key_sel: 0,
+            wizard_index_available_sel: 0,
             wizard_index_unique: false,
             wizard_index_original: None,
             csv_path: String::new(),
@@ -1559,7 +1565,10 @@ impl AppState {
         self.wizard_index_table = table;
         self.wizard_index_cols = String::new();
         self.wizard_index_where.clear();
-        self.wizard_index_edit_states = [None, None];
+        self.wizard_index_edit_states = [None, None, None];
+        self.wizard_index_list_scroll = [0.0; 2];
+        self.wizard_index_key_sel = 0;
+        self.wizard_index_available_sel = 0;
         self.wizard_index_unique = false;
         self.wizard_index_original = None;
         self.overlay = Some(OverlayKind::EditIndex);
@@ -1597,7 +1606,10 @@ impl AppState {
         self.wizard_index_unique = unique;
         self.wizard_index_cols = columns;
         self.wizard_index_where = predicate;
-        self.wizard_index_edit_states = [None, None];
+        self.wizard_index_edit_states = [None, None, None];
+        self.wizard_index_list_scroll = [0.0; 2];
+        self.wizard_index_key_sel = 0;
+        self.wizard_index_available_sel = 0;
         self.overlay = Some(OverlayKind::EditIndex);
         Ok(())
     }
@@ -1659,6 +1671,15 @@ impl AppState {
         Ok(())
     }
 
+    pub fn index_wizard_columns(&self) -> Result<Vec<String>, String> {
+        db::table_column_names_in(self.conn.as_ref().ok_or("No database open")?, &self.wizard_schema, &self.wizard_index_table)
+    }
+
+    pub fn index_wizard_sql(&self) -> String {
+        db::create_index_ddl_in(&self.wizard_schema, self.wizard_index_name.trim(), &self.wizard_index_table,
+            &self.wizard_index_cols, self.wizard_index_unique, &self.wizard_index_where)
+    }
+
     pub fn apply_index_wizard(&mut self) -> Result<(), String> {
         self.guard_writable()?;
         let schema = self.wizard_schema.clone();
@@ -1674,8 +1695,7 @@ impl AppState {
             if let Some(orig) = self.wizard_index_original.as_ref() { db::drop_object(conn, ObjectKind::Index, &orig.schema, &orig.name)?; }
             db::create_index_in(conn, &schema, &name, &table, &cols, self.wizard_index_unique, &predicate)
         })?;
-        let where_sql = if predicate.is_empty() { String::new() } else { format!(" WHERE {predicate}") };
-        self.log_sql(format!("CREATE {}INDEX {} ON {}(\n{cols}\n){where_sql}", if self.wizard_index_unique { "UNIQUE " } else { "" }, db::qualified_name(&schema, &name), db::quote_ident(&table)));
+        self.log_sql(db::create_index_ddl_in(&schema, &name, &table, &cols, self.wizard_index_unique, &predicate));
         self.mark_dirty();
         self.overlay = None;
         self.refresh_schema()?;

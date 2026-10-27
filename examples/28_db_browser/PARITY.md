@@ -60,7 +60,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Action | Status | Notes |
 |--------|--------|-------|
 | Create Table… | partial | Main/temp/attached schema selection; basic column PK/NN/Unique/Default, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
-| Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing. Original ordered-key list controls remain. |
+| Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview. An explicit key-order selector remains. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; table definition changes/reordering require explicit SQL; expression/partial index definitions edit in the qualified wizard |
 | Delete Object… | done | confirm + DROP |
 | Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
@@ -160,7 +160,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Dialog | Status | Notes |
 |--------|--------|-------|
 | EditTableDialog (full wizard) | partial | Basic create plus safe native ALTER subset; arbitrary rebuild migrations excluded |
-| EditIndexDialog | partial | Qualified raw expression keys/unique/partial WHERE with live definition retention and atomic replacement; syntax-colored multiline key/WHERE fields retain focus, selection and undo; original available/ordered-key lists, row controls and preview remain. |
+| EditIndexDialog | partial | Qualified expression keys/unique/partial WHERE, live definition retention and atomic replacement; available/ordered lists, add/remove/move/expression/edit controls and read-only SQL preview. Multiline SQL, focus/selection/undo and list viewports survive rebuilding; dedicated key-order selector, available type presentation and native acceptance remain. |
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; malformed units/surrogates and unsupported UTF-32 BOMs are rejected before writing; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
@@ -179,7 +179,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | SQLCipher | partial | Core unlock/encrypted export tested; upstream compatibility controls/rekey/decrypt absent. |
 | Extensions | done | Load Extension… |
 | In-memory DB | done | Isolated connection, shared with worker by ownership transfer |
-| ATTACH DATABASE | partial | Live connection, namespace tree/definition/deletion and Browse data workflows preserve explicit database identity; file-backed attachments and their browse settings restore through projects. Structured creation/modification remains main-only. |
+| ATTACH DATABASE | partial | Live connection, namespace tree/definition/deletion and Browse data workflows preserve explicit database identity; file-backed attachments and their browse settings restore through projects. Basic structured table/index creation and safe modification cover all namespaces; full table rebuild/constraint migration remains. |
 
 ---
 
@@ -206,7 +206,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - CSV import and index/table changes use savepoints. New databases and Save As never truncate an existing file. File-dialog cancellation has no implicit `/tmp` output.
 - Project/prefs parsing uses serde JSON; project writes and database dumps publish their completed temporary file.
 - macOS Soft screenshots cover all main pages and major dialogs. OS pointer/keyboard/file-picker acceptance is blocked by desktop capture permissions. Native Metal startup alone is not visual acceptance.
-- DB4S XML, cloud sync, arbitrary constraint migrations, multi-table export and attached-schema structured modification remains compatibility work. Native IME acceptance requires desktop permissions.
+- DB4S XML, cloud sync, arbitrary constraint migrations, multi-table export and full attached-schema constraint/migration editing remain compatibility work. Native IME acceptance requires desktop permissions.
 
 ## Local workflow completion (2026-10-25)
 

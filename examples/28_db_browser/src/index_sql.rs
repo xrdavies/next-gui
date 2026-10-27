@@ -1,6 +1,62 @@
 //! Extract editable fragments from SQLite's stored CREATE INDEX, not arbitrary SQL validation.
 
 use crate::sql_syntax::{self, Kind};
+use std::ops::Range;
+
+/// Character ranges keep row actions aligned with the editable SQL and its undo history.
+pub fn key_ranges(sql: &str) -> Result<Vec<Range<usize>>, String> {
+    if sql.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let chars: Vec<_> = sql.chars().collect();
+    let mut code = chars.clone();
+    for (range, _) in sql_syntax::tokens(sql) {
+        code[range].fill(' ');
+    }
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    for (i, ch) in code.iter().enumerate() {
+        match *ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or("Unmatched closing parenthesis in index keys")?
+            }
+            ';' => return Err("Index keys cannot contain a statement separator".into()),
+            ',' if depth == 0 => {
+                ranges.push(start..i);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return Err("Complete the index expression before changing key rows".into());
+    }
+    ranges.push(start..chars.len());
+    for range in &mut ranges {
+        while range.start < range.end && chars[range.start].is_whitespace() {
+            range.start += 1;
+        }
+        while range.end > range.start && chars[range.end - 1].is_whitespace() {
+            range.end -= 1;
+        }
+        if range.start == range.end {
+            return Err("Index key cannot be empty".into());
+        }
+    }
+    Ok(ranges)
+}
+
+pub fn keys(sql: &str) -> Result<Vec<String>, String> {
+    let chars: Vec<_> = sql.chars().collect();
+    Ok(key_ranges(sql)?
+        .into_iter()
+        .map(|range| chars[range].iter().collect())
+        .collect())
+}
 
 pub fn definition(sql: &str) -> Result<(String, String), String> {
     let chars: Vec<_> = sql.chars().collect();
@@ -69,6 +125,23 @@ pub fn definition(sql: &str) -> Result<(String, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_rows_preserve_nested_quoted_and_commented_sql() {
+        let sql = "coalesce(\"列,名\", ',;)') DESC,\n`a``b` -- , )\n, [other,column] /* , ( */";
+        let expected = [
+            "coalesce(\"列,名\", ',;)') DESC",
+            "`a``b` -- , )",
+            "[other,column] /* , ( */",
+        ];
+        assert_eq!(keys(sql).unwrap(), expected);
+        assert_eq!(keys(&expected.join("\n,\n")).unwrap(), expected);
+        assert_eq!(key_ranges("  中文 , x ").unwrap(), [2..4, 7..8]);
+        assert!(keys(" \n").unwrap().is_empty());
+        for sql in ["x,", ",x", "x,,y", "f(x", "x)", "x; DELETE FROM t"] {
+            assert!(keys(sql).is_err(), "{sql}");
+        }
+    }
 
     #[test]
     fn stored_index_fragments_keep_nested_expressions_quotes_and_comments() {

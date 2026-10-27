@@ -4417,6 +4417,20 @@ impl Ui {
         }
     }
 
+    /// Vertical viewport offset of a list, for restoring a rebuilt UI.
+    pub fn list_scroll_offset(&self, id: WidgetId) -> Option<f32> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::List { scroll_y, .. }) => Some(*scroll_y),
+            _ => None,
+        }
+    }
+
+    /// Restore a list viewport, clamped to its rows. Rejects non-finite offsets.
+    pub fn set_list_scroll_offset(&mut self, id: WidgetId, y: f32) -> bool {
+        if !y.is_finite() || self.list_scroll_offset(id).is_none() { return false; }
+        self.set_any_scroll(id, 0.0, y)
+    }
+
     /// Replace list items; clamps selection.
     pub fn set_list_items(&mut self, id: WidgetId, items: impl IntoIterator<Item = impl Into<String>>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -5855,7 +5869,8 @@ impl Ui {
         changed || scroll_changed
     }
 
-    fn ensure_selected_visible_list(&mut self, id: WidgetId) {
+    /// Scroll just enough to reveal the selected list row, retaining focus and selection.
+    pub fn reveal_list_selection(&mut self, id: WidgetId) {
         let (sel, style, scroll_y) = match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::List {
                 selected,
@@ -5964,23 +5979,23 @@ impl Ui {
             UiKey::Down => {
                 let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
                 self.set_list_selected(id, Some(next));
-                self.ensure_selected_visible_list(id);
+                self.reveal_list_selection(id);
                 true
             }
             UiKey::Up => {
                 let next = cur.map(|i| i.saturating_sub(1)).unwrap_or(0);
                 self.set_list_selected(id, Some(next));
-                self.ensure_selected_visible_list(id);
+                self.reveal_list_selection(id);
                 true
             }
             UiKey::Home => {
                 self.set_list_selected(id, Some(0));
-                self.ensure_selected_visible_list(id);
+                self.reveal_list_selection(id);
                 true
             }
             UiKey::End => {
                 self.set_list_selected(id, Some(n - 1));
-                self.ensure_selected_visible_list(id);
+                self.reveal_list_selection(id);
                 true
             }
             _ => false,
@@ -20470,6 +20485,41 @@ mod tests {
         assert!(ui.ime_clear_preedit());
         ui.sync(&mut scene);
         assert!(!scene.get(ul).unwrap().visible);
+    }
+
+    #[test]
+    fn list_viewport_restores_reveals_and_rejects_invalid_offsets() {
+        let mut ui = Ui::new();
+        let mut list = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            list = c.list((0..100).map(|i| format!("Column {i}")),
+                ListStyle { height: 80.0, item_height: 20.0, padding: 4.0, ..ListStyle::default() });
+        });
+        ui.set_focus(Some(list));
+        ui.set_list_selected(list, Some(50));
+        ui.reveal_list_selection(list);
+        let offset = ui.list_scroll_offset(list).unwrap();
+        assert!(offset > 900.0);
+        assert_eq!(ui.focused(), Some(list));
+        assert_eq!(ui.list_selected(list), Some(50));
+        ui.reveal_list_selection(list);
+        assert_eq!(ui.list_scroll_offset(list), Some(offset));
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(!ui.set_list_scroll_offset(list, bad));
+            assert_eq!(ui.list_scroll_offset(list), Some(offset));
+        }
+        assert!(!ui.set_list_scroll_offset(WidgetId(0), 10.0));
+        assert_eq!(ui.list_scroll_offset(WidgetId(0)), None);
+        ui.reveal_list_selection(WidgetId(0));
+        assert!(ui.set_list_scroll_offset(list, 10000.0));
+        let maximum = ui.list_scroll_offset(list).unwrap();
+        assert!(maximum > offset && maximum < 10000.0);
+        assert!(ui.set_list_scroll_offset(list, -1.0));
+        assert_eq!(ui.list_scroll_offset(list), Some(0.0));
+        assert!(ui.set_list_scroll_offset(list, offset));
+        ui.set_list_items(list, ["a", "b"]);
+        assert!(!ui.set_list_scroll_offset(list, offset));
+        assert_eq!(ui.list_scroll_offset(list), Some(0.0));
     }
 
     #[test]

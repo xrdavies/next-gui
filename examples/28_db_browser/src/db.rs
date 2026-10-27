@@ -821,6 +821,12 @@ pub fn create_index_in(
     unique: bool,
     predicate: &str,
 ) -> Result<(), String> {
+    execute_single_statement(conn, &create_index_ddl_in(schema, name, table, columns, unique, predicate))
+}
+
+pub fn create_index_ddl_in(
+    schema: &str, name: &str, table: &str, columns: &str, unique: bool, predicate: &str,
+) -> String {
     let uniq = if unique { "UNIQUE " } else { "" };
     // SQLite takes the database from the index name; ON must use an unqualified table.
     let mut sql = format!(
@@ -830,7 +836,7 @@ pub fn create_index_in(
         columns.trim()
     );
     if !predicate.trim().is_empty() { sql.push_str(" WHERE "); sql.push_str(predicate.trim()); }
-    execute_single_statement(conn, &sql)
+    sql
 }
 
 /// Common pragmas for the Edit Pragmas tab.
