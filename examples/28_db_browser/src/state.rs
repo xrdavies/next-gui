@@ -1640,6 +1640,7 @@ impl AppState {
         self.wizard_key_scroll = (0.0, 0.0);
         self.wizard_key_list_scroll = 0.0;
         self.wizard_checks = crate::table_sql::table_checks(&sql)?;
+        self.wizard_checks.extend(crate::table_sql::inline_checks(&sql)?);
         self.wizard_foreign_keys = crate::table_sql::inline_foreign_keys(&sql)?;
         self.wizard_foreign_keys.extend(crate::table_sql::table_foreign_keys(&sql)?);
         self.wizard_foreign_key_sel = 0;
@@ -1771,6 +1772,21 @@ impl AppState {
             &self.wizard_cols, self.wizard_table_options.primary_key_conflict)
     }
 
+    pub fn store_wizard_checks(&mut self) {
+        self.wizard_table_options.checks = Some(self.wizard_checks.iter().filter(|check| check.column.is_none()).cloned().collect());
+        self.wizard_table_options.inline_checks = Some(self.wizard_checks.iter().filter(|check| check.column.is_some()).cloned().collect());
+    }
+
+    pub fn sync_wizard_check_fields(&mut self) -> bool {
+        let mut changed = false;
+        for column in &mut self.wizard_cols {
+            let expression = self.wizard_checks.iter().find(|check| check.column.as_ref().is_some_and(|owner| owner.eq_ignore_ascii_case(&column.name)))
+                .map(|check| check.expression.clone()).unwrap_or_default();
+            if expression != column.check_expression { column.check_expression = expression; changed = true; }
+        }
+        changed
+    }
+
     pub fn store_wizard_foreign_keys(&mut self) {
         self.wizard_table_options.foreign_keys = Some(self.wizard_foreign_keys.iter().filter(|key| !key.inline).cloned().collect());
         self.wizard_table_options.inline_foreign_keys = Some(self.wizard_foreign_keys.iter().filter(|key| key.inline).cloned().collect());
@@ -1790,6 +1806,7 @@ impl AppState {
     fn table_wizard_options(&self) -> Result<crate::table_sql::TableOptions, String> {
         let mut options = self.wizard_table_options.clone();
         if let Some(checks) = &options.checks { options.checks = Some(self.renamed_wizard_checks(checks)?); }
+        if let Some(checks) = &options.inline_checks { options.inline_checks = Some(self.renamed_wizard_checks(checks)?); }
         if let Some(keys) = &options.foreign_keys { options.foreign_keys = Some(self.renamed_wizard_foreign_keys(keys)?); }
         if let Some(keys) = &options.inline_foreign_keys { options.inline_foreign_keys = Some(self.renamed_wizard_foreign_keys(keys)?); }
         if let Some(keys) = &options.index_constraints { options.index_constraints = Some(self.renamed_wizard_index_constraints(keys)?); }
@@ -1829,10 +1846,10 @@ impl AppState {
         self.wizard_foreign_keys = keys;
         if self.wizard_table_options.foreign_keys.is_some() || self.wizard_table_options.inline_foreign_keys.is_some() { self.store_wizard_foreign_keys(); }
         self.wizard_checks = checks;
-        if self.wizard_table_options.checks.is_some() { self.wizard_table_options.checks = Some(self.wizard_checks.clone()); }
+        if self.wizard_table_options.checks.is_some() || self.wizard_table_options.inline_checks.is_some() { self.store_wizard_checks(); }
         self.wizard_constraint_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
         self.wizard_constraint_table = self.wizard_table_name.trim().to_string();
-        if changed { self.sync_wizard_foreign_key_fields(); }
+        if changed { self.sync_wizard_foreign_key_fields(); self.sync_wizard_check_fields(); }
         Ok(changed)
     }
 

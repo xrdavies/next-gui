@@ -29,6 +29,7 @@ pub struct TableOptions {
     pub strict: bool,
     pub primary_key_conflict: Option<ResolveType>,
     pub checks: Option<Vec<NamedCheck>>,
+    pub inline_checks: Option<Vec<NamedCheck>>,
     pub foreign_keys: Option<Vec<NamedForeignKey>>,
     pub inline_foreign_keys: Option<Vec<NamedForeignKey>>,
     pub index_constraints: Option<Vec<NamedIndexConstraint>>,
@@ -36,6 +37,7 @@ pub struct TableOptions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NamedCheck {
+    pub column: Option<String>,
     pub name: Option<String>,
     pub expression: String,
 }
@@ -109,6 +111,7 @@ fn table_options_of(command: &Cmd) -> Result<TableOptions, String> {
         strict: flags.contains(TabFlags::Strict),
         primary_key_conflict,
         checks: None,
+        inline_checks: None,
         foreign_keys: None,
         inline_foreign_keys: None,
         index_constraints: None,
@@ -172,6 +175,7 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
     if let Some(keys) = options.index_constraints { set_index_constraints(&mut command, &keys)?; }
     else { set_primary_key_conflict(&mut command, options.primary_key_conflict)?; }
     if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
+    if let Some(checks) = options.inline_checks { set_inline_checks(&mut command, &checks)?; }
     if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
     if let Some(keys) = options.inline_foreign_keys { set_inline_foreign_keys(&mut command, &keys)?; }
     Ok(emit(command))
@@ -192,7 +196,7 @@ pub fn table_checks(sql: &str) -> Result<Vec<NamedCheck>, String> {
     };
     Ok(constraints.into_iter().flatten().filter_map(|item| {
         if let TableConstraint::Check(expression) = item.constraint {
-            Some(NamedCheck { name: item.name.as_ref().map(identifier_text), expression: expression.to_string() })
+            Some(NamedCheck { column:None, name: item.name.as_ref().map(identifier_text), expression: expression.to_string() })
         } else { None }
     }).collect())
 }
@@ -204,13 +208,17 @@ pub fn rename_checks(checks: &[NamedCheck], table: &str, target: &str, renames: 
         let original = expression.to_string();
         rename_table_expression(expression, &identifier(table), Some(target), renames)?;
         let expression = expression.to_string();
-        if expression == original { return Ok(check.clone()); }
-        Ok(NamedCheck { name: check.name.clone(), expression })
+        let mut result = check.clone();
+        if expression != original { result.expression = expression; }
+        if let Some(owner) = &mut result.column {
+            let mut name = identifier(owner); rename_identifier(&mut name, renames); *owner = identifier_text(&name);
+        }
+        Ok(result)
     }).collect()
 }
 
 fn check_definition(check: &NamedCheck) -> Result<NamedTableConstraint, String> {
-    if check.expression.trim().is_empty() { return Err("A table CHECK requires an expression".into()); }
+    if check.expression.trim().is_empty() { return Err("A CHECK requires an expression".into()); }
     let name = check.name.as_ref().map(|name| format!("CONSTRAINT {} ", db::quote_ident(name))).unwrap_or_default();
     let sql = format!("CREATE TABLE __next_gui_check(v, {name}CHECK({}\n));", check.expression.trim());
     let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints: Some(mut constraints), flags }, .. }) = parse(&sql)? else {
@@ -223,7 +231,47 @@ fn check_definition(check: &NamedCheck) -> Result<NamedTableConstraint, String> 
 }
 
 fn set_table_checks(command: &mut Cmd, checks: &[NamedCheck]) -> Result<(), String> {
+    if checks.iter().any(|check| check.column.is_some()) { return Err("Column CHECKs require a column-constraint override".into()); }
     replace_table_constraints(command, checks.iter().map(check_definition).collect::<Result<Vec<_>, _>>()?, |constraint| matches!(constraint, TableConstraint::Check(_)))
+}
+
+pub fn inline_checks(sql: &str) -> Result<Vec<NamedCheck>, String> {
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, .. }, .. }) = parse(sql)? else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    Ok(columns.values().flat_map(|column| column.constraints.iter().filter_map(|item| {
+        let ColumnConstraint::Check(expression) = &item.constraint else { return None; };
+        Some(NamedCheck { column:Some(identifier_text(&column.col_name)), name:item.name.as_ref().map(identifier_text), expression:expression.to_string() })
+    })).collect())
+}
+
+pub fn checks_can_swap(a: &NamedCheck, b: &NamedCheck) -> bool {
+    match (&a.column, &b.column) { (None,None) => true, (Some(a),Some(b)) => a.eq_ignore_ascii_case(b), _ => false }
+}
+
+fn set_inline_checks(command: &mut Cmd, checks: &[NamedCheck]) -> Result<(), String> {
+    let replacements = checks.iter().map(|check| {
+        let owner = check.column.as_deref().filter(|owner| !owner.is_empty()).ok_or("A column CHECK requires its owner column")?;
+        let definition = check_definition(check)?;
+        let TableConstraint::Check(expression) = definition.constraint else { unreachable!() };
+        Ok((owner,NamedColumnConstraint { name:definition.name, constraint:ColumnConstraint::Check(expression) }))
+    }).collect::<Result<Vec<_>,String>>()?;
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, .. }, .. }) = command else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    for (owner,_) in &replacements {
+        if !columns.values().any(|column| column.col_name.eq(*owner)) { return Err(format!("Unknown column CHECK owner: {owner}")); }
+    }
+    for column in columns.values_mut() {
+        let mut replacements = replacements.iter().filter(|(owner,_)| column.col_name.eq(*owner)).map(|(_,item)| item.clone());
+        let mut result = Vec::new();
+        for item in std::mem::take(&mut column.constraints) {
+            if matches!(item.constraint,ColumnConstraint::Check(..)) { if let Some(item) = replacements.next() { result.push(item); } }
+            else { result.push(item); }
+        }
+        result.extend(replacements); column.constraints = result;
+    }
+    Ok(())
 }
 
 fn foreign_key_fields(item: &NamedTableConstraint) -> Option<NamedForeignKey> {
@@ -1025,7 +1073,7 @@ pub fn rebuild_definition(
                 item.col_type = replacement.col_type.clone();
             }
             if old.check_expression != col.check_expression {
-                // shortcut: this field edits the first column CHECK; expose every constraint in the advanced tab.
+                // Fields edits the first CHECK; Check Constraints can override every column declaration.
                 let position = item
                     .constraints
                     .iter()
@@ -1221,6 +1269,7 @@ pub fn rebuild_definition(
         if let Some(keys) = options.index_constraints { set_index_constraints(&mut command, &keys)?; }
         else { set_primary_key_conflict(&mut command, options.primary_key_conflict)?; }
         if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
+        if let Some(checks) = options.inline_checks { set_inline_checks(&mut command, &checks)?; }
         if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
         if let Some(keys) = options.inline_foreign_keys { set_inline_foreign_keys(&mut command, &keys)?; }
     }
@@ -1369,6 +1418,79 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn all_inline_checks_preserve_named_scopes_dependencies_and_pending_transactions() {
+        for schema in ["main","temp","aux.\"db"] {
+            let conn=Connection::open_in_memory().unwrap(); let table=db::qualified_name(schema,"records");
+            conn.execute_batch(&format!("ATTACH ':memory:' AS \"aux.\"\"db\"; PRAGMA foreign_keys=ON;
+                CREATE TABLE {table}(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    v INTEGER CONSTRAINT positive CHECK(v>0) NOT NULL CONSTRAINT ceiling CHECK(v<10),
+                    note TEXT CONSTRAINT note_check CHECK(length(note)>0) DEFAULT 'v CHECK',
+                    g INTEGER AS(v*2) STORED, CONSTRAINT table_check CHECK(g<40));
+                INSERT INTO {table}(id,v) VALUES(7,2),(11,4),(99,4); DELETE FROM {table} WHERE id=99;
+                CREATE TABLE {}(note TEXT); CREATE INDEX {} ON records(v); CREATE VIEW {} AS SELECT id,g FROM records;
+                CREATE TRIGGER {} AFTER INSERT ON records BEGIN INSERT INTO audit VALUES(new.note); END;
+                BEGIN; INSERT INTO {table}(id,v) VALUES(13,3);",
+                db::qualified_name(schema,"audit"),db::qualified_name(schema,"by_value"),db::qualified_name(schema,"visible"),db::qualified_name(schema,"audit_insert"))).unwrap();
+            let original:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='records'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            let mut checks=inline_checks(&original).unwrap(); assert_eq!(checks.len(),3);
+            assert_eq!(checks.iter().map(|check|check.column.as_deref().unwrap()).collect::<Vec<_>>(),vec!["v","v","note"]);
+            checks[0].name=Some("positive.\"约束".into()); checks[0].expression="records.v > 1 AND length('v')=1".into(); checks[1].expression="v < 20".into();
+            checks=rename_checks(&checks,"records","orders",&[("v","amount"),("note","memo")]).unwrap();
+            assert_eq!(checks[0].column.as_deref(),Some("amount")); assert!(checks[0].expression.contains("'v'"));
+            let mut options=table_options(&original).unwrap(); options.inline_checks=Some(checks);
+            let mut draft=db::table_column_defs_in(&conn,schema,"records").unwrap(); let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+            draft[1].name="amount".into(); draft[2].name="memo".into();
+            let memo = if schema == "temp" {
+                // SQLite rejects TEMP trigger references while renaming their referenced column.
+                assert!(db::recreate_table_columns_in(&conn,schema,"records","orders",&draft,&sources,Some(options.clone())).is_err());
+                assert_eq!(conn.query_row("SELECT sql FROM temp.sqlite_schema WHERE name='records'",[],|row|row.get::<_,String>(0)).unwrap(),original);
+                assert_eq!(conn.query_row("SELECT count(*) FROM temp.records",[],|row|row.get::<_,i64>(0)).unwrap(),3); assert!(!conn.is_autocommit());
+                draft[2].name="note".into(); options.inline_checks=Some(rename_checks(&inline_checks(&original).unwrap(),"records","orders",&[("v","amount")]).unwrap());
+                let checks=options.inline_checks.as_mut().unwrap(); checks[0].name=Some("positive.\"约束".into()); checks[0].expression="amount > 1 AND length('v')=1".into(); checks[1].expression="amount < 20".into();
+                "note"
+            } else { "memo" };
+            db::recreate_table_columns_in(&conn,schema,"records","orders",&draft,&sources,Some(options)).unwrap();
+            let target=db::qualified_name(schema,"orders");
+            let saved:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='orders'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            let checks=inline_checks(&saved).unwrap(); assert_eq!(checks.len(),3); assert_eq!(checks[0].name.as_deref(),Some("positive.\"约束"));
+            assert_eq!(checks[2].column.as_deref(),Some(memo)); assert_eq!(table_checks(&saved).unwrap().len(),1);
+            assert_eq!(conn.query_row(&format!("SELECT sum(rowid)+sum(id)+sum(g) FROM {target}"),[],|row|row.get::<_,i64>(0)).unwrap(),80);
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"audit")),[],|row|row.get::<_,i64>(0)).unwrap(),1);
+            for update in ["amount=1","amount=20","amount=NULL",&format!("{memo}=''"), "amount=21"] { assert!(conn.execute(&format!("UPDATE {target} SET {update}"),[]).is_err(),"{schema}/{update}"); }
+            conn.execute(&format!("UPDATE {target} SET amount=10 WHERE id=7"),[]).unwrap();
+            let draft=db::table_column_defs_in(&conn,schema,"orders").unwrap(); let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+            let mut options=table_options(&saved).unwrap(); options.inline_checks=Some(Vec::new());
+            db::recreate_table_columns_in(&conn,schema,"orders","orders",&draft,&sources,Some(options)).unwrap();
+            conn.execute(&format!("INSERT INTO {target}(amount,{memo}) VALUES(0,'')"),[]).unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT id FROM {target} WHERE amount=0"),[],|row|row.get::<_,i64>(0)).unwrap(),100);
+            assert!(conn.execute(&format!("INSERT INTO {target}(amount) VALUES(NULL)"),[]).is_err());
+            assert!(conn.execute(&format!("INSERT INTO {target}(amount) VALUES(20)"),[]).is_err());
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"visible")),[],|row|row.get::<_,i64>(0)).unwrap(),4);
+            assert!(!conn.is_autocommit()); conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='records'",db::quote_ident(schema)),[],|row|row.get::<_,String>(0)).unwrap(),original);
+        }
+    }
+
+    #[test]
+    fn inline_check_overrides_reject_invalid_owners_expressions_and_scope_atomically() {
+        let conn=Connection::open_in_memory().unwrap();conn.execute_batch("CREATE TABLE t(v INTEGER CHECK(v>0),note TEXT); INSERT INTO t VALUES(2,'kept'); BEGIN; INSERT INTO t VALUES(3,'pending');").unwrap();
+        let original:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
+        let draft=db::table_column_defs_in(&conn,"main","t").unwrap();let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+        for (owner,expression) in [(None,"v>0"),(Some(""),"v>0"),(Some("missing"),"v>0"),(Some("v"),""),(Some("v"),"v>5"),
+            (Some("v"),"v>?1"),(Some("v"),"abs(v)>"),(Some("v"),"v>0),CHECK(1"),(Some("v"),"v>0)); DELETE FROM t; --")] {
+            let check=NamedCheck {column:owner.map(str::to_string),name:Some("safe.\"名".into()),expression:expression.into()};
+            let options=TableOptions {inline_checks:Some(vec![check]),..Default::default()};
+            assert!(db::recreate_table_columns_in(&conn,"main","t","t",&draft,&sources,Some(options)).is_err(),"{owner:?}/{expression}");
+            assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|row|row.get::<_,i64>(0)).unwrap(),2); assert!(!conn.is_autocommit());
+            assert_eq!(conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get::<_,String>(0)).unwrap(),original);
+        }
+        let checks=inline_checks(&original).unwrap();
+        assert!(apply_table_options("CREATE TABLE created(v INTEGER)",TableOptions {checks:Some(checks.clone()),..Default::default()}).is_err());
+        let ddl=apply_table_options("CREATE TABLE created(v INTEGER)",TableOptions {inline_checks:Some(checks),..Default::default()}).unwrap();
+        db::execute_single_statement(&conn,&ddl).unwrap();assert!(conn.execute("INSERT INTO created VALUES(0)",[]).is_err());conn.execute("INSERT INTO created VALUES(1)",[]).unwrap();
+    }
 
     #[test]
     fn all_inline_foreign_keys_preserve_named_deferrals_dependencies_and_pending_violations() {
@@ -1583,15 +1705,15 @@ mod tests {
 
     #[test]
     fn check_identity_rewrites_preserve_literals_functions_types_and_unrelated_sessions() {
-        let check=NamedCheck { name:Some("a".into()), expression:"t.a < b AND abs(a)>0 AND CAST(a AS a)>0 AND a COLLATE a != 'a'".into() };
-        let unchanged=NamedCheck { name:None,expression:"length('kept') > 0 -- keep comment".into() };
+        let check=NamedCheck { column:None, name:Some("a".into()), expression:"t.a < b AND abs(a)>0 AND CAST(a AS a)>0 AND a COLLATE a != 'a'".into() };
+        let unchanged=NamedCheck { column:None, name:None,expression:"length('kept') > 0 -- keep comment".into() };
         let renamed=rename_checks(&[check.clone(),unchanged.clone()],"t","renamed",&[("a","b"),("b","a")]).unwrap();
         assert_eq!(renamed[0].name,check.name); assert_eq!(renamed[1],unchanged);
         let expression=&renamed[0].expression;
         assert!(expression.contains("\"renamed\".\"b\" < \"a\"") && expression.contains("abs (\"b\")") && expression.contains("AS a") && expression.contains("COLLATE a") && expression.contains("'a'"),"{expression}");
-        assert!(rename_checks(&[NamedCheck { name:None,expression:"a +".into() }],"t","renamed",&[("a","b")]).is_err());
+        assert!(rename_checks(&[NamedCheck { column:None, name:None,expression:"a +".into() }],"t","renamed",&[("a","b")]).is_err());
         assert_eq!(check.expression,"t.a < b AND abs(a)>0 AND CAST(a AS a)>0 AND a COLLATE a != 'a'");
-        let case = rename_checks(&[NamedCheck { name:None,expression:"t.a > 0".into() }],"t","T",&[("a","A")]).unwrap();
+        let case = rename_checks(&[NamedCheck { column:None, name:None,expression:"t.a > 0".into() }],"t","T",&[("a","A")]).unwrap();
         assert_eq!(case[0].expression,"\"T\".\"A\" > 0");
     }
 

@@ -188,6 +188,7 @@ pub struct BuiltUi {
     pub ov_check_name: WidgetId,
     pub ov_check_expr: WidgetId,
     pub ov_check_add: WidgetId,
+    pub ov_check_add_column: WidgetId,
     pub ov_check_del: WidgetId,
     pub ov_check_up: WidgetId,
     pub ov_check_down: WidgetId,
@@ -500,6 +501,7 @@ pub fn build_ui(
     let mut ov_check_name = z;
     let mut ov_check_expr = z;
     let mut ov_check_add = z;
+    let mut ov_check_add_column = z;
     let mut ov_check_del = z;
     let mut ov_check_up = z;
     let mut ov_check_down = z;
@@ -1062,9 +1064,11 @@ pub fn build_ui(
                             });
                             tabs.page("Check Constraints", |c| {
                                 ov_checks_scroll = c.scroll_area(scroll, |c| {
-                                    c.text(format!("Table CHECK constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.text(format!("CHECK constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.text(format!("Selected field: {}", state.wizard_cols.get(state.wizard_col_sel).map(|column|db::quote_ident(&column.name)).unwrap_or_else(||"(none)".into())));
                                     c.row(row, |r| {
-                                        ov_check_add = r.tool_button("Add");
+                                        ov_check_add = r.tool_button("Add table");
+                                        ov_check_add_column = r.tool_button("Add column");
                                         ov_check_del = r.tool_button("Remove");
                                         ov_check_up = r.tool_button("Up");
                                         ov_check_down = r.tool_button("Down");
@@ -1072,7 +1076,7 @@ pub fn build_ui(
                                     let mut checks_list = list_s;
                                     checks_list.width = area_s.width;
                                     checks_list.height = 120.0;
-                                    ov_checks_list = c.list(state.wizard_checks.iter().map(|check| format!("{} · {}", check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), checks_list);
+                                    ov_checks_list = c.list(state.wizard_checks.iter().map(|check| format!("{} · {} · {}", check.column.as_ref().map(|owner|format!("Column {}",db::quote_ident(owner))).unwrap_or_else(||"Table".into()), check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), checks_list);
                                     let check = state.wizard_checks.get(state.wizard_check_sel);
                                     c.row(row, |r| {
                                         r.text("Name");
@@ -2243,19 +2247,22 @@ pub fn build_ui(
     ui.set_text_area_read_only(ov_table_preview, true);
     ui.set_accessible_name(ov_table_tabs, "Table definition pages");
     ui.set_tabs_selected(ov_table_tabs, state.wizard_table_page);
-    ui.set_accessible_name(ov_checks_list, "Table CHECK constraints");
+    ui.set_accessible_name(ov_checks_list, "Table and column CHECK constraints");
     ui.set_list_selected(ov_checks_list, (!state.wizard_checks.is_empty()).then_some(state.wizard_check_sel));
     ui.set_list_scroll_offset(ov_checks_list, state.wizard_check_list_scroll);
-    ui.set_accessible_name(ov_check_name, "Table CHECK constraint name");
-    ui.set_accessible_name(ov_check_expr, "Table CHECK expression");
+    ui.set_accessible_name(ov_check_name, "CHECK constraint name");
+    ui.set_accessible_name(ov_check_expr, "CHECK expression");
     ui.set_text_area_read_only(ov_check_expr, state.wizard_checks.is_empty() || !state.table_wizard_names_valid());
     ui.set_accessible_name(ov_check_add, "Add table CHECK constraint");
-    ui.set_accessible_name(ov_check_del, "Remove table CHECK constraint");
-    ui.set_accessible_name(ov_check_up, "Move table CHECK up");
-    ui.set_accessible_name(ov_check_down, "Move table CHECK down");
+    ui.set_accessible_name(ov_check_add_column, "Add CHECK to selected column");
+    ui.set_button_enabled(ov_check_add_column, !state.wizard_cols.is_empty() && state.table_wizard_names_valid());
+    ui.set_accessible_name(ov_check_del, "Remove CHECK constraint");
+    ui.set_accessible_name(ov_check_up, "Move CHECK up");
+    ui.set_accessible_name(ov_check_down, "Move CHECK down");
     ui.set_button_enabled(ov_check_del, !state.wizard_checks.is_empty());
-    ui.set_button_enabled(ov_check_up, !state.wizard_checks.is_empty() && state.wizard_check_sel > 0);
-    ui.set_button_enabled(ov_check_down, state.wizard_check_sel + 1 < state.wizard_checks.len());
+    let check_can_swap = |target| state.wizard_checks.get(state.wizard_check_sel).zip(state.wizard_checks.get(target)).is_some_and(|(a,b)|crate::table_sql::checks_can_swap(a,b));
+    ui.set_button_enabled(ov_check_up, state.wizard_check_sel>0 && check_can_swap(state.wizard_check_sel.saturating_sub(1)));
+    ui.set_button_enabled(ov_check_down, check_can_swap(state.wizard_check_sel+1));
     ui.set_accessible_name(ov_keys_list, "Table index constraints");
     ui.set_list_selected(ov_keys_list, (!state.wizard_index_constraints.is_empty()).then_some(state.wizard_key_sel));
     ui.set_list_scroll_offset(ov_keys_list, state.wizard_key_list_scroll);
@@ -2498,6 +2505,7 @@ pub fn build_ui(
         ov_check_name,
         ov_check_expr,
         ov_check_add,
+        ov_check_add_column,
         ov_check_del,
         ov_check_up,
         ov_check_down,

@@ -309,6 +309,7 @@ struct BuiltUiIds {
     ov_check_name: WidgetId,
     ov_check_expr: WidgetId,
     ov_check_add: WidgetId,
+    ov_check_add_column: WidgetId,
     ov_check_del: WidgetId,
     ov_check_up: WidgetId,
     ov_check_down: WidgetId,
@@ -520,6 +521,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_check_name: b.ov_check_name,
             ov_check_expr: b.ov_check_expr,
             ov_check_add: b.ov_check_add,
+            ov_check_add_column: b.ov_check_add_column,
             ov_check_del: b.ov_check_del,
             ov_check_up: b.ov_check_up,
             ov_check_down: b.ov_check_down,
@@ -771,14 +773,25 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
+                "table-inline-checks" | "table-inline-checks-saved" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY,v INTEGER CONSTRAINT positive CHECK(v>0) NOT NULL CONSTRAINT ceiling CHECK(v<10),note TEXT CONSTRAINT note_check CHECK(length(note)>0),g INTEGER AS(v*2) STORED,CONSTRAINT table_check CHECK(g<40)); INSERT INTO records(id,v,note) VALUES(7,2,'first check'),(11,4,'second check');").unwrap();
+                    state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records" && object.kind==ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();
+                    state.wizard_checks[1].name=Some("positive_amount".into());state.wizard_checks[1].expression="v > 1\nAND v != 7".into();state.wizard_checks[2].expression="v < 20".into();state.store_wizard_checks();
+                    state.wizard_cols[1].name="amount".into();state.wizard_table_name="orders".into();state.sync_table_constraint_names().unwrap();
+                    state.wizard_col_sel=1;state.wizard_check_sel=1;state.wizard_table_page=3;state.wizard_check_scroll=(0.0,10000.0);
+                    if tab=="table-inline-checks-saved" {state.apply_table_wizard().unwrap();}
+                    MainTab::Structure
+                }
                 "table-checks" | "table-checks-saved" | "table-checks-renamed" | "table-checks-renamed-saved" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(v INTEGER CONSTRAINT positive CHECK(v>0),note TEXT,CONSTRAINT limit_value CHECK(v<10),CHECK(length(note)>0)); INSERT INTO records VALUES(2,'first'),(4,'second');").unwrap();
                     state.refresh_schema().unwrap();
                     let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records" && object.kind==ObjectKind::Table).unwrap();
                     state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap();
-                    state.wizard_checks[0]=table_sql::NamedCheck { name:Some("range_value".into()),expression:"v < 20\nAND v != 11".into() };
-                    state.wizard_table_options.checks=Some(state.wizard_checks.clone()); state.wizard_table_page=3;
+                    state.wizard_checks[0]=table_sql::NamedCheck { column:None, name:Some("range_value".into()),expression:"v < 20\nAND v != 11".into() };
+                    state.store_wizard_checks(); state.wizard_table_page=3;
                     state.wizard_check_scroll=(0.0,10000.0);
                     if tab.starts_with("table-checks-renamed") {
                         state.wizard_cols[0].name="amount".into(); state.wizard_table_name="checked.名".into();
@@ -833,7 +846,7 @@ impl Demo {
                     let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
                     state.select_schema_node(10_000 + row as u64);
                     state.open_modify_table_wizard().unwrap();
-                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None };
+                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, inline_checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None };
                     if tab == "table-optioned" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
@@ -1604,13 +1617,7 @@ impl Demo {
         match self.state.sync_table_constraint_names() {
             Ok(true) => {
                 self.refresh_table_index_controls();
-                if let Some(check) = self.state.wizard_checks.get(self.state.wizard_check_sel) {
-                    self.ui.set_text_area_value(self.ids.ov_check_expr, check.expression.clone());
-                    sql_syntax::apply(&mut self.ui, self.ids.ov_check_expr, &self.theme);
-                }
-                self.ui.set_list_items(self.ids.ov_checks_list, self.state.wizard_checks.iter().map(|check|
-                    format!("{} · {}", check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
-                self.ui.set_list_scroll_offset(self.ids.ov_checks_list, self.state.wizard_check_list_scroll);
+                self.refresh_table_check_controls();
                 self.refresh_table_foreign_key_controls();
             }
             Ok(false) => {}
@@ -1627,6 +1634,9 @@ impl Demo {
         }
         if self.state.table_wizard_names_valid() && self.state.wizard_table_options.inline_foreign_keys.is_some()
             && self.state.sync_wizard_foreign_key_fields() { self.refresh_table_foreign_key_controls(); }
+        if self.state.table_wizard_names_valid() && self.state.wizard_table_options.inline_checks.is_some()
+            && self.state.sync_wizard_check_fields() { self.refresh_table_check_controls(); }
+        self.ui.set_button_enabled(self.ids.ov_check_add_column, !self.state.wizard_cols.is_empty() && self.state.table_wizard_names_valid());
         self.ui.set_text_area_read_only(self.ids.ov_key_columns, self.state.wizard_index_constraints.is_empty() || !self.state.table_wizard_names_valid());
         self.ui.set_text_area_read_only(self.ids.ov_check_expr, self.state.wizard_checks.is_empty() || !self.state.table_wizard_names_valid());
         for area in [self.ids.ov_fk_columns, self.ids.ov_fk_clause] { self.ui.set_text_area_read_only(area, self.state.wizard_foreign_keys.is_empty() || !self.state.table_wizard_names_valid()); }
@@ -1716,6 +1726,28 @@ impl Demo {
         self.state.wizard_foreign_key_states[selected] = [self.ui.text_area_state(self.ids.ov_fk_columns), self.ui.text_area_state(self.ids.ov_fk_clause)];
     }
 
+    fn refresh_table_check_controls(&mut self) {
+        self.ui.set_list_items(self.ids.ov_checks_list, self.state.wizard_checks.iter().map(|check|
+            format!("{} · {} · {}", check.column.as_ref().map(|owner|format!("Column {}",dbmod::quote_ident(owner))).unwrap_or_else(||"Table".into()),
+                check.name.as_deref().unwrap_or("(unnamed)"),check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
+        self.ui.set_list_scroll_offset(self.ids.ov_checks_list,self.state.wizard_check_list_scroll);
+        if let Some(check) = self.state.wizard_checks.get(self.state.wizard_check_sel) {
+            if self.ui.text_area_value(self.ids.ov_check_expr) != Some(check.expression.as_str()) {
+                self.ui.set_text_area_value(self.ids.ov_check_expr,check.expression.clone()); sql_syntax::apply(&mut self.ui,self.ids.ov_check_expr,&self.theme);
+            }
+        }
+        if let Some(column) = self.state.wizard_cols.get(self.state.wizard_col_sel) {
+            if self.ui.text_area_value(self.ids.ov_check) != Some(column.check_expression.as_str()) {
+                // shortcut: cross-view CHECK edits reset linked history; share a document for wizard-wide Undo.
+                self.ui.set_text_area_value(self.ids.ov_check,column.check_expression.clone()); sql_syntax::apply(&mut self.ui,self.ids.ov_check,&self.theme);
+            }
+        }
+        let selected = self.state.wizard_check_sel;
+        let can_swap = |target| self.state.wizard_checks.get(selected).zip(self.state.wizard_checks.get(target)).is_some_and(|(a,b)|table_sql::checks_can_swap(a,b));
+        self.ui.set_button_enabled(self.ids.ov_check_up,selected>0 && can_swap(selected.saturating_sub(1)));
+        self.ui.set_button_enabled(self.ids.ov_check_down,can_swap(selected+1));
+    }
+
     fn flush_table_check(&mut self) {
         let selected = self.state.wizard_check_sel;
         let Some(check) = self.state.wizard_checks.get_mut(selected) else { return; };
@@ -1725,9 +1757,7 @@ impl Demo {
         }
         if let Some(expression) = self.ui.text_area_value(self.ids.ov_check_expr) { check.expression = expression.to_string(); }
         if *check != previous {
-            self.state.wizard_table_options.checks = Some(self.state.wizard_checks.clone());
-            self.ui.set_list_items(self.ids.ov_checks_list, self.state.wizard_checks.iter().map(|check| format!("{} · {}", check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
-            self.ui.set_list_scroll_offset(self.ids.ov_checks_list, self.state.wizard_check_list_scroll);
+            self.state.store_wizard_checks(); self.state.sync_wizard_check_fields(); self.refresh_table_check_controls();
         }
         self.state.wizard_check_states.resize(self.state.wizard_checks.len(), None);
         self.state.wizard_check_states[selected] = self.ui.text_area_state(self.ids.ov_check_expr);
@@ -1739,6 +1769,7 @@ impl Demo {
             return;
         }
         let previous_foreign_key = self.state.wizard_cols[sel].foreign_key_clause.clone();
+        let previous_check = self.state.wizard_cols[sel].check_expression.clone();
         if let Some(mode) = self.ui.select_selected(self.ids.ov_generation) {
             let previous = self.state.wizard_cols[sel].generated.as_ref().map_or(0, |generated| if generated.stored { 2 } else { 1 });
             if previous != mode {
@@ -1814,6 +1845,24 @@ impl Demo {
         }
         if let Some(value) = self.ui.autocomplete_value(self.ids.ov_collation) {
             self.state.wizard_cols[sel].collation = value.to_string();
+        }
+        if previous_check != self.state.wizard_cols[sel].check_expression {
+            let owner = self.state.wizard_constraint_columns.get(sel).cloned().unwrap_or_else(||self.state.wizard_cols[sel].name.clone());
+            let expression = self.state.wizard_cols[sel].check_expression.clone();
+            let index = self.state.wizard_checks.iter().position(|check|check.column.as_ref().is_some_and(|column|column.eq_ignore_ascii_case(&owner)));
+            match index {
+                Some(index) if expression.trim().is_empty() => {
+                    self.state.wizard_checks.remove(index); self.state.wizard_check_states.remove(index);
+                    if index < self.state.wizard_check_sel { self.state.wizard_check_sel -= 1; }
+                    self.state.wizard_check_sel = self.state.wizard_check_sel.min(self.state.wizard_checks.len().saturating_sub(1));
+                }
+                Some(index) => { self.state.wizard_checks[index].expression = expression; self.state.wizard_check_states[index] = None; }
+                None if !expression.trim().is_empty() => {
+                    self.state.wizard_checks.push(table_sql::NamedCheck { column:Some(owner),name:None,expression }); self.state.wizard_check_states.push(None);
+                }
+                None => {}
+            }
+            self.state.store_wizard_checks(); self.refresh_table_check_controls();
         }
         if previous_foreign_key != self.state.wizard_cols[sel].foreign_key_clause {
             let owner = self.state.wizard_constraint_columns.get(sel).cloned().unwrap_or_else(|| self.state.wizard_cols[sel].name.clone());
@@ -2954,23 +3003,29 @@ impl Demo {
             return true;
         }
         if self.state.overlay == Some(OverlayKind::EditTable)
-            && [self.ids.ov_check_add,self.ids.ov_check_del,self.ids.ov_check_up,self.ids.ov_check_down].contains(&id) {
+            && [self.ids.ov_check_add,self.ids.ov_check_add_column,self.ids.ov_check_del,self.ids.ov_check_up,self.ids.ov_check_down].contains(&id) {
             let selected = self.state.wizard_check_sel;
-            if id == self.ids.ov_check_add {
-                self.state.wizard_checks.push(table_sql::NamedCheck::default());
+            if id == self.ids.ov_check_add || id == self.ids.ov_check_add_column {
+                let column = if id == self.ids.ov_check_add_column {
+                    if !self.state.table_wizard_names_valid() { return true; }
+                    let Some(column) = self.state.wizard_cols.get(self.state.wizard_col_sel) else { return true; }; Some(column.name.clone())
+                } else { None };
+                self.state.wizard_checks.push(table_sql::NamedCheck { column,..Default::default() });
                 self.state.wizard_check_states.push(None);
                 self.state.wizard_check_sel = self.state.wizard_checks.len() - 1;
             } else if id == self.ids.ov_check_del && selected < self.state.wizard_checks.len() {
                 self.state.wizard_checks.remove(selected); self.state.wizard_check_states.remove(selected);
                 self.state.wizard_check_sel = selected.min(self.state.wizard_checks.len().saturating_sub(1));
-            } else if id == self.ids.ov_check_up && selected > 0 {
+            } else if id == self.ids.ov_check_up && selected > 0
+                && table_sql::checks_can_swap(&self.state.wizard_checks[selected],&self.state.wizard_checks[selected-1]) {
                 self.state.wizard_checks.swap(selected,selected-1); self.state.wizard_check_states.swap(selected,selected-1);
                 self.state.wizard_check_sel -= 1;
-            } else if id == self.ids.ov_check_down && selected + 1 < self.state.wizard_checks.len() {
+            } else if id == self.ids.ov_check_down && selected + 1 < self.state.wizard_checks.len()
+                && table_sql::checks_can_swap(&self.state.wizard_checks[selected],&self.state.wizard_checks[selected+1]) {
                 self.state.wizard_checks.swap(selected,selected+1); self.state.wizard_check_states.swap(selected,selected+1);
                 self.state.wizard_check_sel += 1;
             }
-            self.state.wizard_table_options.checks = Some(self.state.wizard_checks.clone());
+            self.state.store_wizard_checks(); self.state.sync_wizard_check_fields(); self.refresh_table_check_controls();
             self.rebuild = true;
             return true;
         }
@@ -3038,6 +3093,14 @@ impl Demo {
                     .min(self.state.wizard_cols.len() - 1);
                 let foreign_key_owner = self.state.wizard_constraint_columns[i].clone();
                 let removed = self.state.wizard_cols.remove(i);
+                for index in (0..self.state.wizard_checks.len()).rev() {
+                    if self.state.wizard_checks[index].column.as_ref().is_some_and(|owner|owner.eq_ignore_ascii_case(&foreign_key_owner)) {
+                        self.state.wizard_checks.remove(index); self.state.wizard_check_states.remove(index);
+                        if index < self.state.wizard_check_sel { self.state.wizard_check_sel -= 1; }
+                        self.state.store_wizard_checks();
+                    }
+                }
+                self.state.wizard_check_sel = self.state.wizard_check_sel.min(self.state.wizard_checks.len().saturating_sub(1));
                 for index in (0..self.state.wizard_foreign_keys.len()).rev() {
                     let key = &self.state.wizard_foreign_keys[index];
                     if key.inline && table_sql::inline_foreign_key_column(key).is_ok_and(|name|name.eq_ignore_ascii_case(&foreign_key_owner)) {
@@ -7060,7 +7123,7 @@ mod interaction_tests {
                 let row=state.schema.iter().position(|object|object.schema==schema && object.name=="records").unwrap();
                 state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap();
                 state.wizard_cols[0].name="amount".into(); state.wizard_table_name="changed.名".into();
-                if mode=="table" { state.wizard_table_options.checks=Some(state.wizard_checks.clone()); }
+                if mode=="table" { state.store_wizard_checks(); }
                 if mode=="column" { state.wizard_cols[0].check_expression="\"changed.名\".amount>1".into(); }
                 let preview=state.table_wizard_sql().unwrap();
                 state.apply_table_wizard().unwrap();
@@ -7088,7 +7151,7 @@ mod interaction_tests {
             state.refresh_schema().unwrap();
             let row=state.schema.iter().position(|object|object.schema==schema && object.name=="records" && object.kind==ObjectKind::Table).unwrap();
             state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap();
-            state.wizard_checks[0].expression="a+1<b".into(); state.wizard_table_options.checks=Some(state.wizard_checks.clone());
+            state.wizard_checks[0].expression="a+1<b".into(); state.store_wizard_checks();
             state.wizard_cols[0].name="b".into(); state.wizard_cols[1].name="a".into(); state.wizard_table_name="swapped".into();
             let preview=state.table_wizard_sql().unwrap();
             state.apply_table_wizard().unwrap();
@@ -7110,7 +7173,7 @@ mod interaction_tests {
             let row=demo.state.schema.iter().position(|object|object.name=="records" && object.kind==ObjectKind::Table).unwrap();
             demo.state.select_schema_node(10_000+row as u64); demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_table_page=3; demo.do_rebuild();
             assert_eq!(demo.ui.tabs_selected(demo.ids.ov_table_tabs),Some(3));
-            assert_eq!(demo.ui.accessible_name(demo.ids.ov_check_expr).as_deref(),Some("Table CHECK expression"));
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_check_expr).as_deref(),Some("CHECK expression"));
             assert_eq!(demo.ui.text_input_value(demo.ids.ov_check_name),Some("limit_value"));
             let original=demo.ui.text_area_value(demo.ids.ov_check_expr).unwrap().to_string();
             let expression="v < 20\nAND v != 11";
@@ -7159,7 +7222,7 @@ mod interaction_tests {
             }
             assert!(demo.state.conn.as_ref().unwrap().execute("UPDATE records SET v=13",[]).is_err());
             assert!(demo.state.conn.as_ref().unwrap().execute("UPDATE records SET v=0",[]).is_err());
-            demo.state.open_modify_table_wizard().unwrap(); assert_eq!(demo.state.wizard_checks.len(),3);
+            demo.state.open_modify_table_wizard().unwrap(); assert_eq!(demo.state.wizard_checks.len(),4);
             demo.state.wizard_table_page=3; demo.win_w=800; demo.win_h=600; demo.do_rebuild();
             demo.ui.set_scroll_offset(demo.ids.ov_checks_scroll,0.0,10000.0); demo.ui.sync(&mut demo.scene);
             let remembered=demo.ui.scroll_offset(demo.ids.ov_checks_scroll).unwrap(); assert!(remembered.1>0.0);
@@ -7327,6 +7390,91 @@ mod interaction_tests {
             assert_eq!(demo.ui.text_area_value(demo.ids.edit_value),Some("8"));
             demo.state.browse_mut().sel_col=Some(0); demo.state.sync_edit_cell_from_selection(); demo.do_rebuild();
             assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(true));
+        }
+    }
+
+    #[test]
+    fn inline_check_page_edits_all_named_checks_and_syncs_fields_and_column_removal() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer); demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY,v INTEGER CONSTRAINT positive CHECK(v>0) NOT NULL CONSTRAINT ceiling CHECK(v<10),note TEXT CONSTRAINT note_check CHECK(length(note)>0),g INTEGER AS(v*2) STORED,CONSTRAINT table_check CHECK(g<40)); INSERT INTO records(id,v,note) VALUES(7,2,'kept'),(11,4,'pending');").unwrap();
+            demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap();
+            demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();
+            assert_eq!(demo.state.wizard_checks.len(),4);demo.state.wizard_col_sel=1;demo.state.wizard_check_sel=1;demo.state.wizard_table_page=3;demo.do_rebuild();
+            assert_eq!(demo.ui.text_input_value(demo.ids.ov_check_name),Some("positive"));assert_eq!(demo.ui.accessible_name(demo.ids.ov_check_expr).as_deref(),Some("CHECK expression"));
+            assert_eq!(demo.ui.button_enabled(demo.ids.ov_check_up),Some(false));demo.handle_button(demo.ids.ov_check_up);assert_eq!(demo.state.wizard_check_sel,1);
+            let original=demo.ui.text_area_value(demo.ids.ov_check_expr).unwrap().to_string();
+            let expression="records.v > 1\nAND length('v')=1";
+            demo.ui.set_text_input(demo.ids.ov_check_name,"positive.\"约束");demo.ui.set_focus(Some(demo.ids.ov_check_expr));demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text(expression);demo.snapshot_inputs();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(expression));
+            demo.ui.set_list_selected(demo.ids.ov_checks_list,Some(2));demo.snapshot_inputs();demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_check_expr));demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text("v < 20");demo.snapshot_inputs();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(expression));
+            demo.ui.set_list_selected(demo.ids.ov_checks_list,Some(1));demo.snapshot_inputs();demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_check_expr));demo.ui.key_input(UiKey::Undo);assert_eq!(demo.ui.text_area_value(demo.ids.ov_check_expr),Some(original.as_str()));
+            demo.ui.key_input(UiKey::Redo);demo.snapshot_inputs();
+            demo.ui.set_scroll_offset(demo.ids.ov_checks_scroll,0.0,10000.0);demo.ui.select_text_area_range(demo.ids.ov_check_expr,0..0);demo.ui.ime_preedit("中文",Some((3,6)));demo.ui.sync(&mut demo.scene);
+            let candidate=demo.ui.ime_cursor_area(&demo.scene).unwrap();demo.snapshot_inputs();demo.do_rebuild();
+            assert_eq!(demo.ui.ime_cursor_area(&demo.scene),Some(candidate));assert!(demo.ui.ime_commit("-- 中文\n"));demo.ui.key_input(UiKey::Undo);demo.snapshot_inputs();
+            demo.handle_button(demo.ids.ov_check_down);demo.do_rebuild();assert!(demo.ui.text_area_value(demo.ids.ov_check).unwrap().contains("< 20"));
+            assert_eq!(demo.ui.button_enabled(demo.ids.ov_check_down),Some(false));demo.handle_button(demo.ids.ov_check_up);demo.do_rebuild();
+            demo.ui.set_tabs_selected(demo.ids.ov_table_tabs,0);demo.snapshot_inputs();demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_check,"v > 1 AND v != 7");demo.snapshot_inputs();
+            assert_eq!(demo.state.wizard_checks[1].expression,"v > 1 AND v != 7");assert_eq!(demo.state.wizard_checks[1].name.as_deref(),Some("positive.\"约束"));
+            demo.ui.set_text_input(demo.ids.ov_col_name,"amount");demo.ui.set_text_input(demo.ids.ov_name,"orders");demo.snapshot_inputs();
+            assert!(demo.state.wizard_checks[1].expression.contains("\"amount\""));assert_eq!(demo.state.wizard_checks[2].column.as_deref(),Some("amount"));
+            demo.ui.set_tabs_selected(demo.ids.ov_table_tabs,3);demo.snapshot_inputs();demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_check_expr,"amount +");demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_some());demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check_expr),Some("amount +"));assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"records").unwrap(),2);
+            demo.ui.set_text_area_value(demo.ids.ov_check_expr,"amount > 1 AND amount != 7");demo.snapshot_inputs();demo.clear_error();
+            demo.handle_button(demo.ids.ov_check_add_column);demo.do_rebuild();assert_eq!(demo.state.wizard_checks.last().unwrap().column.as_deref(),Some("amount"));
+            demo.ui.set_text_input(demo.ids.ov_check_name,"not_thirteen");demo.ui.set_text_area_value(demo.ids.ov_check_expr,"amount != 13");demo.snapshot_inputs();
+            for phase in ["draft","saved"] {
+                if phase=="saved" {demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);demo.do_rebuild();}
+                else {demo.ui.set_scroll_offset(demo.ids.ov_checks_scroll,0.0,10000.0);demo.ui.sync(&mut demo.scene);}
+                if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_INLINE_CHECK_QA_OUT") {
+                    demo.scene.mark_full_dirty(1400.0,1000.0);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);
+                    let mut soft=SoftRenderer::new(1400,1000,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
+                    if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear) {
+                        gpu.render(&commands,&dirty);let a=soft.frame_pixels().unwrap().0;let b=gpu.frame_pixels().unwrap().0;write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"),b,1400,1000).unwrap();
+                        let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}/{phase}: {delta}");eprintln!("Inline CHECK {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else {eprintln!("Inline CHECK GPU comparison not_run: adapter unavailable");}
+                }
+            }
+            let conn=demo.state.conn.as_ref().unwrap();
+            for update in ["amount=1","amount=7","amount=13","amount=20","note=''","amount=NULL"] {assert!(conn.execute(&format!("UPDATE orders SET {update}"),[]).is_err(),"{update}");}
+            conn.execute("UPDATE orders SET amount=10 WHERE id=7",[]).unwrap();
+            demo.state.open_modify_table_wizard().unwrap();assert_eq!(demo.state.wizard_checks.len(),5);demo.state.wizard_col_sel=1;demo.state.wizard_table_page=0;demo.do_rebuild();
+            let remaining=demo.state.wizard_checks.iter().find(|check|check.name.as_deref()==Some("not_thirteen")).unwrap().expression.clone();
+            demo.ui.set_text_area_value(demo.ids.ov_check,"");demo.snapshot_inputs();assert_eq!(demo.state.wizard_check_sel,0);assert!(demo.ui.text_area_value(demo.ids.ov_check).unwrap().contains("< 20"));
+            demo.ui.set_tabs_selected(demo.ids.ov_table_tabs,3);demo.ui.set_list_selected(demo.ids.ov_checks_list,Some(1));demo.snapshot_inputs();demo.do_rebuild();
+            demo.handle_button(demo.ids.ov_check_del);demo.do_rebuild();assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(remaining.as_str()));
+            demo.ui.set_tabs_selected(demo.ids.ov_table_tabs,0);demo.snapshot_inputs();demo.do_rebuild();demo.ui.set_text_area_value(demo.ids.ov_check,"");demo.snapshot_inputs();assert_eq!(demo.state.wizard_checks.len(),2);
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(2));demo.snapshot_inputs();demo.do_rebuild();demo.ui.set_text_input(demo.ids.ov_col_name,"id");demo.snapshot_inputs();assert!(!demo.state.table_wizard_names_valid());
+            demo.handle_button(demo.ids.ov_btn_del);demo.do_rebuild();assert_eq!(demo.state.wizard_checks.len(),1);assert!(demo.state.wizard_checks[0].column.is_none());
+            demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            let conn=demo.state.conn.as_ref().unwrap();conn.execute("UPDATE orders SET amount=0 WHERE id=7",[]).unwrap();assert!(conn.execute("UPDATE orders SET amount=20",[]).is_err());
+            demo.state.open_create_table_wizard();demo.state.wizard_col_sel=1;demo.state.wizard_table_page=3;demo.do_rebuild();demo.handle_button(demo.ids.ov_check_add_column);demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_check_expr,"length(name)>0");demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            assert!(demo.state.conn.as_ref().unwrap().execute("INSERT INTO new_table VALUES(1,'')",[]).is_err());demo.state.conn.as_ref().unwrap().execute("INSERT INTO new_table VALUES(1,'valid')",[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn direct_inline_check_previews_and_saves_resolve_swapped_owners_and_expressions() {
+        for schema in ["main","temp","aux.\"db"] {
+            let mut state=AppState::new_with_demo();state.new_memory_db().unwrap();let table=dbmod::qualified_name(schema,"records");
+            state.conn.as_ref().unwrap().execute_batch(&format!("ATTACH ':memory:' AS \"aux.\"\"db\"; CREATE TABLE {table}(a INTEGER CONSTRAINT ordered CHECK(records.a < b) CHECK(a>0),b INTEGER CHECK(b<99)); INSERT INTO {table}(rowid,a,b) VALUES(7,2,6);")).unwrap();
+            state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema==schema && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();
+            state.wizard_checks[0].expression="records.a + 1 < b AND 'a' != 'b'".into();state.store_wizard_checks();
+            state.wizard_cols[0].name="b".into();state.wizard_cols[1].name="a".into();state.wizard_table_name="swapped.\"名".into();
+            let preview=state.table_wizard_sql().unwrap();state.apply_table_wizard().unwrap();let conn=state.conn.as_ref().unwrap();
+            let saved:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name=?1",dbmod::quote_ident(schema)),["swapped.\"名"],|row|row.get(0)).unwrap();
+            assert_eq!(table_sql::inline_checks(&preview).unwrap(),table_sql::inline_checks(&saved).unwrap());let checks=table_sql::inline_checks(&saved).unwrap();
+            assert_eq!(checks[0].column.as_deref(),Some("b"));assert_eq!(checks[2].column.as_deref(),Some("a"));assert!(checks[0].expression.contains("'a'"));
+            let target=dbmod::qualified_name(schema,"swapped.\"名");assert_eq!(conn.query_row(&format!("SELECT rowid,b,a FROM {target}"),[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?,row.get::<_,i64>(2)?))).unwrap(),(7,2,6));
+            assert!(conn.execute(&format!("UPDATE {target} SET b=6"),[]).is_err());assert!(conn.execute(&format!("UPDATE {target} SET a=99"),[]).is_err());
         }
     }
 
@@ -7817,7 +7965,7 @@ mod interaction_tests {
                 }
             }
             let conn = demo.state.conn.as_ref().unwrap();
-            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None });
+            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, inline_checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None });
             assert!(conn.prepare("SELECT rowid FROM records").is_err());
             assert_eq!(conn.query_row("SELECT amount FROM records WHERE code='second'",[],|r|r.get::<_,String>(0)).unwrap(),"not an integer");
             demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
@@ -7837,7 +7985,7 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
             let conn = demo.state.conn.as_ref().unwrap();
-            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None });
+            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, inline_checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None });
             assert!(conn.execute("INSERT INTO created VALUES('bad','text')",[]).is_err());
             conn.execute("INSERT INTO created VALUES(1,'valid')",[]).unwrap();
         }

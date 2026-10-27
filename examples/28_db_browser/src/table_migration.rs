@@ -468,7 +468,7 @@ mod tests {
                 BEGIN; INSERT INTO {table}(id,v) VALUES(8,4);")).unwrap();
             let mut draft=db::table_column_defs_in(&conn,schema,"records").unwrap();
             draft[1].name="amount".into(); draft[1].check_expression="\"changed.名\".amount > 1".into();
-            let options=table_sql::TableOptions { checks:Some(vec![table_sql::NamedCheck { name:Some("range".into()),expression:"\"changed.名\".amount < 20".into() }]),..Default::default() };
+            let options=table_sql::TableOptions { checks:Some(vec![table_sql::NamedCheck { column:None, name:Some("range".into()),expression:"\"changed.名\".amount < 20".into() }]),..Default::default() };
             db::recreate_table_columns_in(&conn,schema,"records","changed.名",&draft,&[Some("id".into()),Some("v".into())],Some(options)).unwrap();
             let changed=db::qualified_name(schema,"changed.名");
             assert_eq!(count(&conn,&format!("SELECT count(*) FROM {changed} WHERE (id=7 AND amount=2) OR (id=8 AND amount=4)")),2);
@@ -504,7 +504,7 @@ mod tests {
             assert_eq!(original[0].name.as_deref(),Some("limit.\"名")); assert!(original[1].name.is_none());
             let draft=db::table_column_defs_in(&conn,schema,"checked").unwrap();
             let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
-            let mut checks=vec![original[1].clone(),table_sql::NamedCheck { name:Some("new.\"约束".into()),expression:"v < 3".into() },table_sql::NamedCheck { name:None,expression:"g = v * 2 -- expression comment".into() }];
+            let mut checks=vec![original[1].clone(),table_sql::NamedCheck { column:None, name:Some("new.\"约束".into()),expression:"v < 3".into() },table_sql::NamedCheck { column:None, name:None,expression:"g = v * 2 -- expression comment".into() }];
             let mut options=db::table_options_in(&conn,schema,"checked").unwrap(); options.checks=Some(checks.clone());
             assert!(db::recreate_table_columns_in(&conn,schema,"checked","checked",&draft,&sources,Some(options.clone())).is_err());
             assert_eq!(table_sql::table_checks(&sql(&conn)).unwrap(),original);
@@ -530,7 +530,7 @@ mod tests {
             assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),0);
             let columns=[ColDef::new("v","INTEGER")];
             let sql=table_sql::apply_table_options(&db::create_table_ddl_in(schema,"created",&columns),table_sql::TableOptions {
-                checks:Some(vec![table_sql::NamedCheck { name:Some("positive".into()),expression:"v > 0".into() },table_sql::NamedCheck { name:None,expression:"v < 5".into() }]),..Default::default()
+                checks:Some(vec![table_sql::NamedCheck { column:None, name:Some("positive".into()),expression:"v > 0".into() },table_sql::NamedCheck { column:None, name:None,expression:"v < 5".into() }]),..Default::default()
             }).unwrap();
             db::execute_single_statement(&conn,&sql).unwrap();
             let created=db::qualified_name(schema,"created");
@@ -544,7 +544,7 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(v INTEGER CHECK(v>0),CONSTRAINT old CHECK(v<10)); INSERT INTO t VALUES(2); BEGIN; INSERT INTO t VALUES(3);").unwrap();
         let draft=db::table_column_defs_in(&conn,"main","t").unwrap();
         for expression in ["","-- empty","v) , injected INTEGER --","v) , CHECK(1) --","v) , UNIQUE(v) --","v)); PRAGMA foreign_keys=OFF; --","?1","(SELECT v)","missing>0"] {
-            let options=table_sql::TableOptions { checks:Some(vec![table_sql::NamedCheck { name:Some("safe.\"名".into()),expression:expression.into() }]),..Default::default() };
+            let options=table_sql::TableOptions { checks:Some(vec![table_sql::NamedCheck { column:None, name:Some("safe.\"名".into()),expression:expression.into() }]),..Default::default() };
             assert!(db::recreate_table_columns_in(&conn,"main","t","t",&draft,&[Some("v".into())],Some(options)).is_err(),"{expression}");
             assert_eq!(count(&conn,"SELECT count(*) FROM t WHERE v IN (2,3)"),2);
             let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
@@ -752,6 +752,7 @@ mod tests {
                 without_rowid: false,
                 primary_key_conflict: None,
                 checks: None,
+                inline_checks: None,
                 foreign_keys: None,
                 inline_foreign_keys: None,
                 index_constraints: None,
@@ -875,6 +876,7 @@ mod tests {
             without_rowid: false,
             primary_key_conflict: None,
             checks: None,
+            inline_checks: None,
             foreign_keys: None,
             inline_foreign_keys: None,
             index_constraints: None,
@@ -884,6 +886,7 @@ mod tests {
             without_rowid: true,
             primary_key_conflict: None,
             checks: None,
+            inline_checks: None,
             foreign_keys: None,
             inline_foreign_keys: None,
             index_constraints: None,

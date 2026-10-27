@@ -1482,9 +1482,12 @@ pub fn recreate_table_columns_in(
         if let Some(checks) = options.as_mut().and_then(|options| options.checks.as_mut()) {
             *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
         }
+        if let Some(checks) = options.as_mut().and_then(|options| options.inline_checks.as_mut()) {
+            *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
+        }
         for column in &mut draft {
             if !column.check_expression.trim().is_empty() {
-                let check = crate::table_sql::NamedCheck { name: None, expression: column.check_expression.clone() };
+                let check = crate::table_sql::NamedCheck { column:None, name: None, expression: column.check_expression.clone() };
                 column.check_expression = crate::table_sql::rename_checks(&[check], new_name, old_name, &[])?.remove(0).expression;
             }
         }
