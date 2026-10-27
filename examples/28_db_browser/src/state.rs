@@ -677,6 +677,7 @@ impl AppState {
                     name: "id".into(),
                     type_name: "INTEGER".into(),
                     pk: true,
+                    auto_increment: false,
                     notnull: false,
                     unique: false,
                     default_value: String::new(),
@@ -1534,6 +1535,7 @@ impl AppState {
                 name: "id".into(),
                 type_name: "INTEGER".into(),
                 pk: true,
+                auto_increment: false,
                 notnull: false,
                 unique: false,
                 default_value: String::new(),
@@ -1645,6 +1647,7 @@ impl AppState {
         let name = self.wizard_table_name.trim().to_string();
         if name.is_empty() { return Err("Table name required".into()); }
         if self.wizard_cols.is_empty() { return Err("Add at least one column".into()); }
+        crate::table_sql::validate_primary_key(&self.wizard_cols)?;
         if self.wizard_cols.iter().any(|c| c.name.trim().is_empty()) { return Err("Column name required".into()); }
         let original = self.wizard_table_original.clone();
         let renames: Vec<_> = self.wizard_cols.iter().zip(&self.wizard_col_sources)
@@ -5368,6 +5371,7 @@ mod chart_default_tests {
                 name: "id".into(),
                 type_name: "INTEGER".into(),
                 pk: true,
+                auto_increment: false,
                 notnull: false,
                 unique: false,
                 default_value: String::new(),

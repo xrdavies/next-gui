@@ -296,6 +296,7 @@ struct BuiltUiIds {
     ov_col_name: WidgetId,
     ov_col_type: WidgetId,
     ov_pk: WidgetId,
+    ov_ai: WidgetId,
     ov_nn: WidgetId,
     ov_unique: WidgetId,
     ov_default: WidgetId,
@@ -469,6 +470,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_col_name: b.ov_col_name,
             ov_col_type: b.ov_col_type,
             ov_pk: b.ov_pk,
+            ov_ai: b.ov_ai,
             ov_nn: b.ov_nn,
             ov_unique: b.ov_unique,
             ov_default: b.ov_default,
@@ -627,6 +629,22 @@ impl Demo {
                     state.wizard_col_sel = 1;
                     if tab == "table-keyed" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
+                }
+                "table-ai" | "table-auto" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id TEXT,code TEXT PRIMARY KEY,note TEXT); INSERT INTO records(rowid,id,code,note) VALUES(7,NULL,'first','assigned ID'),(9,'2','second','kept ID');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[0].pk = true;
+                    state.wizard_cols[0].auto_increment = true;
+                    state.wizard_cols[0].type_name = "INTEGER".into();
+                    state.wizard_cols[1].pk = false;
+                    if tab == "table-auto" {
+                        state.apply_table_wizard().unwrap();
+                        MainTab::Browse
+                    } else { MainTab::Structure }
                 }
                 "index" => {
                     state.open_create_index_wizard();
@@ -1318,6 +1336,8 @@ impl Demo {
         if sel >= self.state.wizard_cols.len() {
             return;
         }
+        let previous_pk = self.state.wizard_cols[sel].pk;
+        let previous_ai = self.state.wizard_cols[sel].auto_increment;
         if self.ids.ov_col_name.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.ov_col_name) {
                 self.state.wizard_cols[sel].name = v.to_string();
@@ -1333,6 +1353,23 @@ impl Demo {
                 self.state.wizard_cols[sel].pk = on;
             }
         }
+        if let Some(on) = self.ui.is_checked(self.ids.ov_ai) {
+            self.state.wizard_cols[sel].auto_increment = on;
+        }
+        if self.state.wizard_cols[sel].auto_increment && !previous_ai {
+            for (index, column) in self.state.wizard_cols.iter_mut().enumerate() {
+                column.pk = index == sel;
+                column.auto_increment = index == sel;
+            }
+            self.state.wizard_cols[sel].type_name = "INTEGER".into();
+            self.ui.set_checked(self.ids.ov_pk, true);
+            self.ui.set_autocomplete_value(self.ids.ov_col_type, "INTEGER");
+        } else if self.state.wizard_cols[sel].pk != previous_pk {
+            for (index, column) in self.state.wizard_cols.iter_mut().enumerate() {
+                if index != sel || !column.pk { column.auto_increment = false; }
+            }
+            self.ui.set_checked(self.ids.ov_ai, self.state.wizard_cols[sel].auto_increment);
+        }
         if self.ids.ov_nn.0 != 0 {
             if let Some(on) = self.ui.is_checked(self.ids.ov_nn) {
                 self.state.wizard_cols[sel].notnull = on;
@@ -1347,6 +1384,12 @@ impl Demo {
             if let Some(v) = self.ui.text_input_value(self.ids.ov_default) {
                 self.state.wizard_cols[sel].default_value = v.to_string();
             }
+        }
+        if previous_pk != self.state.wizard_cols[sel].pk || previous_ai != self.state.wizard_cols[sel].auto_increment {
+            self.ui.set_list_items(self.ids.ov_list, self.state.wizard_cols.iter().enumerate().map(|(index, column)| {
+                format!("{}. {} {}{}{}", index + 1, column.name, column.type_name,
+                    if column.pk { " PK" } else { "" }, if column.auto_increment { " AI" } else { "" })
+            }).collect::<Vec<_>>());
         }
     }
 
@@ -6204,6 +6247,86 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn table_wizard_autoincrement_controls_match_type_and_key_rules_and_save() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id TEXT,code TEXT PRIMARY KEY,note TEXT); INSERT INTO records(rowid,id,code,note) VALUES(7,NULL,'first','assigned ID'),(9,'2','second','kept ID');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000 + row as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_ai), Some(false));
+            demo.ui.set_checked(demo.ids.ov_ai, true);
+            demo.snapshot_inputs();
+            assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type), Some("INTEGER"));
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_pk), Some(true));
+            assert!(demo.state.wizard_cols[0].auto_increment && demo.state.wizard_cols[0].pk);
+            assert!(!demo.state.wizard_cols[1].pk);
+            demo.ui.set_checked(demo.ids.ov_pk, false);
+            demo.snapshot_inputs();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_ai), Some(false));
+            demo.ui.set_checked(demo.ids.ov_ai, true);
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            for phase in ["draft", "saved"] {
+                if phase == "saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                    assert!(demo.state.overlay.is_none());
+                    demo.state.tab = MainTab::Browse;
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_AI_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Autoincrement {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Autoincrement GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(conn.query_row("SELECT id FROM records WHERE code='first'", [], |r| r.get::<_,i64>(0)).unwrap(), 3);
+            assert_eq!(conn.query_row("SELECT id FROM records WHERE code='second'", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
+            conn.execute_batch("INSERT INTO records DEFAULT VALUES; DELETE FROM records WHERE id=4;").unwrap();
+            conn.execute("INSERT INTO records DEFAULT VALUES", []).unwrap();
+            assert_eq!(conn.query_row("SELECT max(id) FROM records", [], |r| r.get::<_,i64>(0)).unwrap(), 5);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_ai), Some(true));
+            demo.ui.set_checked(demo.ids.ov_ai, false);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+            let columns = dbmod::table_column_defs_in(demo.state.conn.as_ref().unwrap(), "main", "records").unwrap();
+            assert!(columns[0].pk && !columns[0].auto_increment);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            demo.ui.set_checked(demo.ids.ov_ai, true);
+            demo.ui.set_list_selected(demo.ids.ov_list, Some(1));
+            demo.snapshot_inputs();
+            demo.do_rebuild();
+            demo.ui.set_checked(demo.ids.ov_pk, true);
+            demo.snapshot_inputs();
+            assert!(!demo.state.wizard_cols[0].auto_increment);
+            assert!(demo.state.wizard_cols[0].pk && demo.state.wizard_cols[1].pk);
         }
     }
 

@@ -175,6 +175,7 @@ pub struct BuiltUi {
     pub ov_col_name: WidgetId,
     pub ov_col_type: WidgetId,
     pub ov_pk: WidgetId,
+    pub ov_ai: WidgetId,
     pub ov_nn: WidgetId,
     pub ov_unique: WidgetId,
     pub ov_default: WidgetId,
@@ -448,6 +449,7 @@ pub fn build_ui(
     let mut ov_col_name = z;
     let mut ov_col_type = z;
     let mut ov_pk = z;
+    let mut ov_ai = z;
     let mut ov_nn = z;
     let mut ov_unique = z;
     let mut ov_default = z;
@@ -838,11 +840,12 @@ pub fn build_ui(
                                     .enumerate()
                                     .map(|(i, col)| {
                                         format!(
-                                            "{}. {} {}{}",
+                                            "{}. {} {}{}{}",
                                             i + 1,
                                             col.name,
                                             col.type_name,
-                                            if col.pk { " PK" } else { "" }
+                                            if col.pk { " PK" } else { "" },
+                                            if col.auto_increment { " AI" } else { "" }
                                         )
                                     })
                                     .collect();
@@ -873,6 +876,9 @@ pub fn build_ui(
                                 });
                                 c.row(row, |r| {
                                     ov_pk = r.switch_styled("PK", coldef.map(|c| c.pk).unwrap_or(false), sw);
+                                    r.tooltip("Autoincrement: one INTEGER primary key", |r| {
+                                        ov_ai = r.switch_styled("AI", coldef.map(|c| c.auto_increment).unwrap_or(false), sw);
+                                    });
                                     ov_nn = r.switch_styled("Not Null", coldef.map(|c| c.notnull).unwrap_or(false), sw);
                                     ov_unique = r.switch_styled("Unique", coldef.map(|c| c.unique).unwrap_or(false), sw);
                                 });
@@ -2028,6 +2034,7 @@ pub fn build_ui(
     let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
     ui.set_accessible_name(browse_header_menu, "Browse column actions");
     ui.set_accessible_name(ov_col_type, "Column declared type (editable)");
+    ui.set_accessible_name(ov_ai, "Column autoincrement");
     if state.overlay == Some(OverlayKind::EditIndex) {
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");
@@ -2203,6 +2210,7 @@ pub fn build_ui(
         ov_col_name,
         ov_col_type,
         ov_pk,
+        ov_ai,
         ov_nn,
         ov_unique,
         ov_default,

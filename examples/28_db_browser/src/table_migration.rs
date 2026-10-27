@@ -235,6 +235,7 @@ pub fn rebuild(
                 .map(|(column, _)| db::quote_ident(&column.name))
                 .collect();
             let mut from = columns.clone();
+            let mut copy_order = String::new();
             let new_primary = integer_primary_key(conn, schema, &temporary)?;
             let old_primary = integer_primary_key(conn, schema, table)?;
             if new_primary.is_some()
@@ -272,22 +273,30 @@ pub fn rebuild(
                     columns.insert(0, db::quote_ident(&primary));
                     from.insert(0, db::quote_ident(&source));
                 } else if retained && old_primary.as_ref() != Some(&primary) {
-                    let has_null: bool = conn
-                        .query_row(
-                            &format!(
-                                "SELECT EXISTS(SELECT 1 FROM {} WHERE {} IS NULL)",
-                                db::qualified_name(schema, table),
-                                db::quote_ident(&primary)
-                            ),
-                            [],
-                            |row| row.get(0),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    if has_null {
-                        return Err(
-                            "Fill NULL primary keys before converting to an INTEGER rowid key"
-                                .into(),
-                        );
+                    if draft
+                        .iter()
+                        .any(|column| column.name == primary && column.auto_increment)
+                    {
+                        // Existing IDs must precede NULLs so automatic allocation cannot collide with them.
+                        copy_order = format!(" ORDER BY {} IS NULL", db::quote_ident(&primary));
+                    } else {
+                        let has_null: bool = conn
+                            .query_row(
+                                &format!(
+                                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} IS NULL)",
+                                    db::qualified_name(schema, table),
+                                    db::quote_ident(&primary)
+                                ),
+                                [],
+                                |row| row.get(0),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        if has_null {
+                            return Err(
+                                "Fill NULL primary keys before converting to an INTEGER rowid key"
+                                    .into(),
+                            );
+                        }
                     }
                 }
             }
@@ -304,11 +313,12 @@ pub fn rebuild(
             db::execute_single_statement(
                 conn,
                 &format!(
-                    "INSERT OR ABORT INTO {} ({}) SELECT {} FROM {}",
+                    "INSERT OR ABORT INTO {} ({}) SELECT {} FROM {}{}",
                     db::qualified_name(schema, &temporary),
                     columns.join(","),
                     from.join(","),
-                    db::qualified_name(schema, table)
+                    db::qualified_name(schema, table),
+                    copy_order
                 ),
             )?;
             let after: i64 = conn
@@ -385,6 +395,122 @@ pub fn rebuild(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autoincrement_edits_preserve_ids_assign_nulls_and_track_sequence_in_every_schema() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\"; PRAGMA foreign_keys=ON;")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            conn.execute_batch(&format!("CREATE TABLE {table}(id TEXT,code TEXT PRIMARY KEY); INSERT INTO {table}(rowid,id,code) VALUES(7,NULL,'first'),(9,'2','second'),(11,NULL,'third'); BEGIN;")).unwrap();
+            let mut draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            draft[0].type_name = "INTEGER".into();
+            draft[0].pk = true;
+            draft[0].auto_increment = true;
+            draft[1].pk = false;
+            let sources = [Some("id".into()), Some("code".into())];
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert!(db::table_column_defs_in(&conn, schema, "t").unwrap()[0].auto_increment);
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT id FROM {table} WHERE code='second'")
+                ),
+                2
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {table} WHERE id>2 AND code IN('first','third')"
+                    )
+                ),
+                2
+            );
+            conn.execute_batch(&format!(
+                "INSERT INTO {table} VALUES(100,'removed'); DELETE FROM {table} WHERE id=100;"
+            ))
+            .unwrap();
+            draft[1].default_value = "'new'".into();
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            conn.execute(&format!("INSERT INTO {table} DEFAULT VALUES"), [])
+                .unwrap();
+            assert_eq!(count(&conn, &format!("SELECT max(id) FROM {table}")), 101);
+            draft[0].auto_increment = false;
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            assert!(!db::table_column_defs_in(&conn, schema, "t").unwrap()[0].auto_increment);
+            assert!(db::table_column_defs_in(&conn, schema, "t").unwrap()[0].pk);
+            assert_eq!(sequence(&conn, schema, "t").unwrap(), None);
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE id IS NULL")
+                ),
+                2
+            );
+            assert!(!db::table_column_defs_in(&conn, schema, "t").unwrap()[0].auto_increment);
+            let created = [
+                ColDef {
+                    pk: true,
+                    auto_increment: true,
+                    ..ColDef::new("id", "INTEGER")
+                },
+                ColDef::new("v", "TEXT"),
+            ];
+            db::execute_single_statement(
+                &conn,
+                &db::create_table_ddl_in(schema, "created", &created),
+            )
+            .unwrap();
+            assert!(db::table_column_defs_in(&conn, schema, "created").unwrap()[0].auto_increment);
+        }
+    }
+
+    #[test]
+    fn invalid_autoincrement_types_values_and_key_combinations_roll_back() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE t(id TEXT,v TEXT); INSERT INTO t VALUES('not an integer','kept'); BEGIN;",
+        )
+        .unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        let sources = [Some("id".into()), Some("v".into())];
+        draft[0].pk = true;
+        draft[0].auto_increment = true;
+        assert!(apply(&conn, "main", "t", &draft, &sources).is_err());
+        draft[0].type_name = "INTEGER".into();
+        assert!(apply(&conn, "main", "t", &draft, &sources).is_err());
+        draft[1].pk = true;
+        assert!(apply(&conn, "main", "t", &draft, &sources)
+            .unwrap_err()
+            .contains("Autoincrement"));
+        draft[0].pk = false;
+        assert!(apply(&conn, "main", "t", &draft, &sources).is_err());
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM t WHERE id='not an integer' AND v='kept'"
+            ),
+            1
+        );
+        assert!(!conn.is_autocommit());
+        assert!(!db::table_columns(&conn, "t").unwrap()[0].pk);
+        conn.execute_batch("ROLLBACK").unwrap();
+        conn.execute_batch("CREATE TABLE exhausted(id TEXT); INSERT INTO exhausted VALUES('9223372036854775807'),(NULL); BEGIN;").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "exhausted").unwrap();
+        draft[0].pk = true;
+        draft[0].auto_increment = true;
+        draft[0].type_name = "INTEGER".into();
+        assert!(apply(&conn, "main", "exhausted", &draft, &[Some("id".into())]).is_err());
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM exhausted WHERE id IS NULL"),
+            1
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM exhausted"), 2);
+        conn.execute_batch("ROLLBACK").unwrap();
+    }
 
     #[test]
     fn primary_key_membership_changes_preserve_rows_and_other_constraints() {
@@ -493,6 +619,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT,v TEXT UNIQUE); INSERT INTO t VALUES(1,'kept'),(100,'removed'); DELETE FROM t WHERE id=100; BEGIN;").unwrap();
         let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
         draft[0].pk = false;
+        draft[0].auto_increment = false;
         draft.push(ColDef {
             pk: true,
             ..ColDef::new("new_id", "INTEGER")

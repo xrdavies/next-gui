@@ -88,9 +88,12 @@ pub fn column_definition(
     {
         return Err("A column field cannot add columns or table constraints".into());
     }
-    let mut actual = [0; 4];
+    let mut actual = [0; 5];
     let definition = columns.into_values().next().unwrap();
     for value in &definition.constraints {
+        if let ColumnConstraint::PrimaryKey { auto_increment, .. } = value.constraint {
+            actual[4] += auto_increment as usize;
+        }
         actual[match value.constraint {
             ColumnConstraint::PrimaryKey { .. } => 0,
             ColumnConstraint::NotNull { nullable: false, .. } => 1,
@@ -104,11 +107,23 @@ pub fn column_definition(
         column.notnull as usize,
         column.unique as usize,
         (!column.default_value.trim().is_empty()) as usize,
+        column.auto_increment as usize,
     ];
     if actual != expected {
         return Err("A type/default field cannot change other column constraints".into());
     }
     Ok(definition)
+}
+
+pub fn validate_primary_key(columns: &[ColDef]) -> Result<(), String> {
+    let key_count = columns.iter().filter(|column| column.pk).count();
+    if columns
+        .iter()
+        .any(|column| column.auto_increment && (!column.pk || key_count != 1))
+    {
+        return Err("Autoincrement requires one INTEGER primary-key column".into());
+    }
+    Ok(())
 }
 
 pub fn rebuild_definition(
@@ -317,6 +332,20 @@ pub fn rebuild_definition(
     }
     if constraints.as_ref().is_some_and(Vec::is_empty) {
         *constraints = None;
+    }
+    for column in columns.values_mut() {
+        for item in &mut column.constraints {
+            if let ColumnConstraint::PrimaryKey { auto_increment, .. } = &mut item.constraint {
+                *auto_increment = draft
+                    .iter()
+                    .any(|col| col.auto_increment && column.col_name.eq(col.name.as_str()));
+            }
+        }
+    }
+    for item in constraints.iter_mut().flatten() {
+        if let TableConstraint::PrimaryKey { auto_increment, .. } = &mut item.constraint {
+            *auto_increment = draft.iter().any(|col| col.auto_increment);
+        }
     }
     *temporary = false;
     *if_not_exists = false;
