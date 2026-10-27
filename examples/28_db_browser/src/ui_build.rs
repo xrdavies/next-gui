@@ -182,6 +182,15 @@ pub struct BuiltUi {
     pub ov_generated: WidgetId,
     pub ov_generation: WidgetId,
     pub ov_table_preview: WidgetId,
+    pub ov_table_tabs: WidgetId,
+    pub ov_checks_scroll: WidgetId,
+    pub ov_checks_list: WidgetId,
+    pub ov_check_name: WidgetId,
+    pub ov_check_expr: WidgetId,
+    pub ov_check_add: WidgetId,
+    pub ov_check_del: WidgetId,
+    pub ov_check_up: WidgetId,
+    pub ov_check_down: WidgetId,
     pub ov_without_rowid: WidgetId,
     pub ov_strict: WidgetId,
     pub ov_pk_conflict: WidgetId,
@@ -466,6 +475,15 @@ pub fn build_ui(
     let mut ov_generated = z;
     let mut ov_generation = z;
     let mut ov_table_preview = z;
+    let mut ov_table_tabs = z;
+    let mut ov_checks_scroll = z;
+    let mut ov_checks_list = z;
+    let mut ov_check_name = z;
+    let mut ov_check_expr = z;
+    let mut ov_check_add = z;
+    let mut ov_check_del = z;
+    let mut ov_check_up = z;
+    let mut ov_check_down = z;
     let mut ov_without_rowid = z;
     let mut ov_strict = z;
     let mut ov_pk_conflict = z;
@@ -839,6 +857,16 @@ pub fn build_ui(
                             scroll.height = (ov_col.height - preview_height - 48.0).max(100.0);
                             scroll.padding = 0.0;
                             scroll.background = None;
+                            let mut table_tabs = TabsStyle::from_theme(&theme);
+                            table_tabs.width = scroll.width;
+                            table_tabs.height = scroll.height;
+                            table_tabs.strip_height = 28.0;
+                            table_tabs.padding = 0.0;
+                            table_tabs.gap = 0.0;
+                            table_tabs.content_bg = theme.colors.content_bg;
+                            scroll.height = (table_tabs.height - table_tabs.strip_height).max(80.0);
+                            ov_table_tabs = c.tabs(table_tabs, |tabs| {
+                            tabs.page("Fields", |c| {
                             ov_scroll = c.scroll_area(scroll, |c| {
                                 c.row(row, |r| {
                                     r.text("Database schema");
@@ -948,6 +976,32 @@ pub fn build_ui(
                                 });
                                 ov_generated = c.text_area(coldef.and_then(|column| column.generated.as_ref()).map_or("", |generated| generated.expression.as_str()),
                                     "Generated expression, e.g. price * quantity", check_style);
+                            });
+                            });
+                            tabs.page("Check Constraints", |c| {
+                                ov_checks_scroll = c.scroll_area(scroll, |c| {
+                                    c.text(format!("Table CHECK constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.row(row, |r| {
+                                        ov_check_add = r.tool_button("Add");
+                                        ov_check_del = r.tool_button("Remove");
+                                        ov_check_up = r.tool_button("Up");
+                                        ov_check_down = r.tool_button("Down");
+                                    });
+                                    let mut checks_list = list_s;
+                                    checks_list.width = area_s.width;
+                                    checks_list.height = 120.0;
+                                    ov_checks_list = c.list(state.wizard_checks.iter().map(|check| format!("{} · {}", check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), checks_list);
+                                    let check = state.wizard_checks.get(state.wizard_check_sel);
+                                    c.row(row, |r| {
+                                        r.text("Name");
+                                        ov_check_name = r.text_input_styled(check.and_then(|check| check.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
+                                    });
+                                    c.text("CHECK expression · SQL");
+                                    let mut expression = area_s;
+                                    expression.height = scroll.height.min(100.0);
+                                    ov_check_expr = c.text_area(check.map_or("", |check| check.expression.as_str()), "e.g. amount > 0 AND amount < 100", expression);
+                                });
+                            });
                             });
                             c.text("SQL preview");
                             let mut preview_style = area_s;
@@ -2105,6 +2159,22 @@ pub fn build_ui(
     ui.set_accessible_name(ov_generated, "Generated column expression");
     ui.set_accessible_name(ov_table_preview, "Generated CREATE TABLE SQL preview");
     ui.set_text_area_read_only(ov_table_preview, true);
+    ui.set_accessible_name(ov_table_tabs, "Table definition pages");
+    ui.set_tabs_selected(ov_table_tabs, state.wizard_table_page);
+    ui.set_accessible_name(ov_checks_list, "Table CHECK constraints");
+    ui.set_list_selected(ov_checks_list, (!state.wizard_checks.is_empty()).then_some(state.wizard_check_sel));
+    ui.set_list_scroll_offset(ov_checks_list, state.wizard_check_list_scroll);
+    ui.set_accessible_name(ov_check_name, "Table CHECK constraint name");
+    ui.set_accessible_name(ov_check_expr, "Table CHECK expression");
+    ui.set_text_area_read_only(ov_check_expr, state.wizard_checks.is_empty());
+    ui.set_accessible_name(ov_check_add, "Add table CHECK constraint");
+    ui.set_accessible_name(ov_check_del, "Remove table CHECK constraint");
+    ui.set_accessible_name(ov_check_up, "Move table CHECK up");
+    ui.set_accessible_name(ov_check_down, "Move table CHECK down");
+    ui.set_button_enabled(ov_check_del, !state.wizard_checks.is_empty());
+    ui.set_button_enabled(ov_check_up, !state.wizard_checks.is_empty() && state.wizard_check_sel > 0);
+    ui.set_button_enabled(ov_check_down, state.wizard_check_sel + 1 < state.wizard_checks.len());
+    ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_area_read_only(edit_value, generated_cell);
     ui.set_button_enabled(btn_edit_cell, !generated_cell);
@@ -2191,6 +2261,8 @@ pub fn build_ui(
     }
     if let Some(editor) = &state.wizard_table_preview_state { ui.restore_text_area_state(ov_table_preview, editor); }
     crate::sql_syntax::apply(&mut ui, ov_table_preview, &theme);
+    if let Some(Some(editor)) = state.wizard_check_states.get(state.wizard_check_sel) { ui.restore_text_area_state(ov_check_expr, editor); }
+    crate::sql_syntax::apply(&mut ui, ov_check_expr, &theme);
     if !state.sql_log_view.as_ref().is_some_and(|view| ui.restore_text_area_state(log_area, view)) {
         let len = ui.text_area_value(log_area).map_or(0, |s| s.chars().count());
         ui.select_text_area_range(log_area, len..len);
@@ -2301,6 +2373,15 @@ pub fn build_ui(
         ov_generated,
         ov_generation,
         ov_table_preview,
+        ov_table_tabs,
+        ov_checks_scroll,
+        ov_checks_list,
+        ov_check_name,
+        ov_check_expr,
+        ov_check_add,
+        ov_check_del,
+        ov_check_up,
+        ov_check_down,
         ov_without_rowid,
         ov_strict,
         ov_pk_conflict,

@@ -401,6 +401,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn named_table_checks_edit_clear_and_create_without_losing_other_constraints_or_pending_data() {
+        for schema in ["main","temp","aux.\"db"] {
+            let conn=Connection::open_in_memory().unwrap();
+            let table=db::qualified_name(schema,"checked");
+            let audit=db::qualified_name(schema,"audit");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {}(id INTEGER PRIMARY KEY); INSERT INTO {} VALUES(1);
+                CREATE TABLE {table}(id INTEGER PRIMARY KEY AUTOINCREMENT,v INTEGER CONSTRAINT inline_check CHECK(v>0),p REFERENCES parent(id),g INTEGER AS(v*2) STORED,
+                    CONSTRAINT \"limit.\"\"名\" CHECK(v<20),CHECK(id>0),UNIQUE(v,g));
+                CREATE TABLE {audit}(v); CREATE INDEX {} ON checked(g);
+                CREATE VIEW {} AS SELECT id,v,g FROM checked;
+                CREATE TRIGGER {} AFTER UPDATE OF v ON {table} BEGIN INSERT INTO audit VALUES(new.g); END;
+                INSERT INTO {table}(id,v,p) VALUES(7,2,1),(11,4,1),(99,6,1); DELETE FROM {table} WHERE id=99;
+                BEGIN; INSERT INTO {audit} VALUES('pending');",db::qualified_name(schema,"parent"),db::qualified_name(schema,"parent"),db::qualified_name(schema,"ix"),db::qualified_name(schema,"viewed"),db::qualified_name(schema,"tr"))).unwrap();
+            let sql=|conn:&Connection| conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='checked'",db::quote_ident(schema)),[],|row|row.get::<_,String>(0)).unwrap();
+            let original=table_sql::table_checks(&sql(&conn)).unwrap();
+            assert_eq!(original[0].name.as_deref(),Some("limit.\"名")); assert!(original[1].name.is_none());
+            let draft=db::table_column_defs_in(&conn,schema,"checked").unwrap();
+            let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+            let mut checks=vec![original[1].clone(),table_sql::NamedCheck { name:Some("new.\"约束".into()),expression:"v < 3".into() },table_sql::NamedCheck { name:None,expression:"g = v * 2 -- expression comment".into() }];
+            let mut options=db::table_options_in(&conn,schema,"checked").unwrap(); options.checks=Some(checks.clone());
+            assert!(db::recreate_table_columns_in(&conn,schema,"checked","checked",&draft,&sources,Some(options.clone())).is_err());
+            assert_eq!(table_sql::table_checks(&sql(&conn)).unwrap(),original);
+            checks[1].expression="v < 10".into(); options.checks=Some(checks);
+            db::recreate_table_columns_in(&conn,schema,"checked","checked",&draft,&sources,Some(options.clone())).unwrap();
+            let checks=table_sql::table_checks(&sql(&conn)).unwrap(); assert_eq!(checks.len(),3); assert_eq!(checks[1].name.as_deref(),Some("new.\"约束"));
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE (rowid=7 AND v=2 AND g=4) OR (rowid=11 AND v=4 AND g=8)")),2);
+            assert_eq!(sequence(&conn,schema,"checked").unwrap(),Some(99));
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),1);
+            assert!(conn.execute(&format!("UPDATE {table} SET v=11 WHERE id=7"),[]).is_err());
+            assert!(conn.execute(&format!("UPDATE {table} SET v=0 WHERE id=7"),[]).is_err());
+            assert!(conn.execute(&format!("UPDATE {table} SET p=999 WHERE id=7"),[]).is_err());
+            conn.execute(&format!("UPDATE {table} SET v=5 WHERE id=7"),[]).unwrap();
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),2);
+            options.checks=Some(Vec::new());
+            db::recreate_table_columns_in(&conn,schema,"checked","checked",&draft,&sources,Some(options)).unwrap();
+            assert!(table_sql::table_checks(&sql(&conn)).unwrap().is_empty());
+            conn.execute(&format!("UPDATE {table} SET v=11 WHERE id=7"),[]).unwrap();
+            assert!(conn.execute(&format!("UPDATE {table} SET v=0 WHERE id=7"),[]).is_err());
+            assert!(foreign_key_violations(&conn,schema).unwrap().is_empty());
+            assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap()); assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap(); assert_eq!(table_sql::table_checks(&sql(&conn)).unwrap(),original);
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {audit}")),0);
+            let columns=[ColDef::new("v","INTEGER")];
+            let sql=table_sql::apply_table_options(&db::create_table_ddl_in(schema,"created",&columns),table_sql::TableOptions {
+                checks:Some(vec![table_sql::NamedCheck { name:Some("positive".into()),expression:"v > 0".into() },table_sql::NamedCheck { name:None,expression:"v < 5".into() }]),..Default::default()
+            }).unwrap();
+            db::execute_single_statement(&conn,&sql).unwrap();
+            let created=db::qualified_name(schema,"created");
+            assert!(conn.execute(&format!("INSERT INTO {created} VALUES(0),(8)"),[]).is_err()); conn.execute(&format!("INSERT INTO {created} VALUES(3),(NULL)"),[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn table_check_fields_reject_constraint_and_statement_injection_atomically() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(v INTEGER CHECK(v>0),CONSTRAINT old CHECK(v<10)); INSERT INTO t VALUES(2); BEGIN; INSERT INTO t VALUES(3);").unwrap();
+        let draft=db::table_column_defs_in(&conn,"main","t").unwrap();
+        for expression in ["","-- empty","v) , injected INTEGER --","v) , CHECK(1) --","v) , UNIQUE(v) --","v)); PRAGMA foreign_keys=OFF; --","?1","(SELECT v)","missing>0"] {
+            let options=table_sql::TableOptions { checks:Some(vec![table_sql::NamedCheck { name:Some("safe.\"名".into()),expression:expression.into() }]),..Default::default() };
+            assert!(db::recreate_table_columns_in(&conn,"main","t","t",&draft,&[Some("v".into())],Some(options)).is_err(),"{expression}");
+            assert_eq!(count(&conn,"SELECT count(*) FROM t WHERE v IN (2,3)"),2);
+            let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
+            assert_eq!(table_sql::table_checks(&sql).unwrap()[0].name.as_deref(),Some("old"));
+            assert_eq!(db::table_column_names(&conn,"t").unwrap(),["v"]);
+            assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap()); assert!(!conn.is_autocommit());
+        }
+    }
+
+    #[test]
     fn primary_key_conflict_actions_match_sqlite_statement_and_transaction_semantics() {
         for (_, action) in table_sql::PRIMARY_KEY_CONFLICTS {
             let conn = Connection::open_in_memory().unwrap();
@@ -417,7 +487,7 @@ mod tests {
                 "t",
                 &draft,
                 &[Some("k".into()), Some("v".into())],
-                Some(options),
+                Some(options.clone()),
             )
             .unwrap();
             assert_eq!(db::table_options_in(&conn, "main", "t").unwrap(), options);
@@ -493,7 +563,7 @@ mod tests {
                     "t",
                     &draft,
                     &sources,
-                    Some(options),
+                    Some(options.clone()),
                 )
                 .unwrap();
                 assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
@@ -559,7 +629,7 @@ mod tests {
                 "t",
                 &draft,
                 &[Some("id".into()), Some("desired".into())],
-                Some(options)
+                Some(options.clone())
             )
             .is_err());
             assert!(
@@ -597,8 +667,9 @@ mod tests {
                 strict: true,
                 without_rowid: false,
                 primary_key_conflict: None,
+            checks: None,
             };
-            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
+            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options.clone()))
                 .unwrap();
             assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
             assert_eq!(
@@ -616,7 +687,7 @@ mod tests {
                 .is_err());
             draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
             options.without_rowid = true;
-            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
+            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options.clone()))
                 .unwrap();
             assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
             assert!(conn.prepare(&format!("SELECT rowid FROM {table}")).is_err());
@@ -650,7 +721,7 @@ mod tests {
             draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
             assert!(draft[0].notnull && draft[1].notnull);
             options = table_sql::TableOptions::default();
-            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options))
+            db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options.clone()))
                 .unwrap();
             assert_eq!(db::table_options_in(&conn, schema, "t").unwrap(), options);
             assert!(conn.prepare(&format!("SELECT rowid FROM {table}")).is_ok());
@@ -716,18 +787,20 @@ mod tests {
             strict: true,
             without_rowid: false,
             primary_key_conflict: None,
+            checks: None,
         };
         let without_rowid = table_sql::TableOptions {
             strict: false,
             without_rowid: true,
             primary_key_conflict: None,
+            checks: None,
         };
         for (name, options) in [
-            ("t", strict),
-            ("t", without_rowid),
-            ("no_key", without_rowid),
-            ("ai", without_rowid),
-            ("unsupported", strict),
+            ("t", strict.clone()),
+            ("t", without_rowid.clone()),
+            ("no_key", without_rowid.clone()),
+            ("ai", without_rowid.clone()),
+            ("unsupported", strict.clone()),
         ] {
             let draft = db::table_column_defs_in(&conn, "main", name).unwrap();
             let sources: Vec<_> = draft.iter().map(|col| Some(col.name.clone())).collect();
@@ -739,7 +812,7 @@ mod tests {
                     name,
                     &draft,
                     &sources,
-                    Some(options)
+                    Some(options.clone())
                 )
                 .is_err(),
                 "{name}/{options:?}"

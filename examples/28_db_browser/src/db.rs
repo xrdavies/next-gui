@@ -1476,7 +1476,7 @@ pub fn recreate_table_columns_in(
         return Err("Column identities do not match the table draft; reopen Modify Table".into());
     }
     crate::table_sql::validate_primary_key(cols)?;
-    let mut rebuild = match options { Some(options) => table_options_in(conn, schema, old_name)? != options, None => false };
+    let mut rebuild = match &options { Some(options) => table_options_in(conn, schema, old_name)? != *options, None => false };
     for (index, (col, source)) in cols.iter().zip(sources).enumerate() {
         if cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&col.name)) {
             return Err(format!("Duplicate column name: {}", col.name));

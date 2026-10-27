@@ -23,11 +23,19 @@ impl<T: ToTokens> std::fmt::Display for SqlFragment<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TableOptions {
     pub without_rowid: bool,
     pub strict: bool,
     pub primary_key_conflict: Option<ResolveType>,
+    // shortcut: edited CHECK SQL uses draft identifiers; bind identities when adding automatic constraint rename callbacks.
+    pub checks: Option<Vec<NamedCheck>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NamedCheck {
+    pub name: Option<String>,
+    pub expression: String,
 }
 
 pub const PRIMARY_KEY_CONFLICTS: [(&str, Option<ResolveType>); 6] = [
@@ -79,6 +87,7 @@ fn table_options_of(command: &Cmd) -> Result<TableOptions, String> {
         without_rowid: flags.contains(TabFlags::WithoutRowid),
         strict: flags.contains(TabFlags::Strict),
         primary_key_conflict,
+        checks: None,
     })
 }
 
@@ -137,7 +146,57 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
     flags.set(TabFlags::WithoutRowid, options.without_rowid);
     flags.set(TabFlags::Strict, options.strict);
     set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
+    if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
     Ok(emit(command))
+}
+
+fn identifier_text(name: &Name) -> String {
+    let value = name.0.as_ref();
+    match value.as_bytes().first() {
+        Some(b'[') => value[1..value.len() - 1].to_string(),
+        Some(quote @ (b'\'' | b'"' | b'`')) => value[1..value.len() - 1].replace(&format!("{0}{0}", *quote as char), &(*quote as char).to_string()),
+        _ => value.to_string(),
+    }
+}
+
+pub fn table_checks(sql: &str) -> Result<Vec<NamedCheck>, String> {
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { constraints, .. }, .. }) = parse(sql)? else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    Ok(constraints.into_iter().flatten().filter_map(|item| {
+        if let TableConstraint::Check(expression) = item.constraint {
+            Some(NamedCheck { name: item.name.as_ref().map(identifier_text), expression: expression.to_string() })
+        } else { None }
+    }).collect())
+}
+
+fn check_definition(check: &NamedCheck) -> Result<NamedTableConstraint, String> {
+    if check.expression.trim().is_empty() { return Err("A table CHECK requires an expression".into()); }
+    let name = check.name.as_ref().map(|name| format!("CONSTRAINT {} ", db::quote_ident(name))).unwrap_or_default();
+    let sql = format!("CREATE TABLE __next_gui_check(v, {name}CHECK({}\n));", check.expression.trim());
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints: Some(mut constraints), flags }, .. }) = parse(&sql)? else {
+        return Err("A CHECK field requires one expression".into());
+    };
+    if columns.len() != 1 || constraints.len() != 1 || !flags.is_empty() || !matches!(constraints[0].constraint, TableConstraint::Check(_)) {
+        return Err("A CHECK field cannot add columns, other constraints or table options".into());
+    }
+    Ok(constraints.remove(0))
+}
+
+fn set_table_checks(command: &mut Cmd, checks: &[NamedCheck]) -> Result<(), String> {
+    let replacements = checks.iter().map(check_definition).collect::<Result<Vec<_>, _>>()?;
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { constraints, .. }, .. }) = command else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    let mut replacements = replacements.into_iter();
+    let items = constraints.get_or_insert_with(Vec::new);
+    items.retain_mut(|item| {
+        if !matches!(item.constraint, TableConstraint::Check(_)) { return true; }
+        if let Some(replacement) = replacements.next() { *item = replacement; true } else { false }
+    });
+    items.extend(replacements);
+    if items.is_empty() { *constraints = None; }
+    Ok(())
 }
 
 fn parse(sql: &str) -> Result<Cmd, String> {
@@ -464,7 +523,7 @@ pub fn rebuild_definition(
     else {
         return Err("Modify Table requires an ordinary CREATE TABLE definition".into());
     };
-    if let Some(options) = options {
+    if let Some(options) = &options {
         flags.set(TabFlags::WithoutRowid, options.without_rowid);
         flags.set(TabFlags::Strict, options.strict);
     }
@@ -724,6 +783,7 @@ pub fn rebuild_definition(
     *tbl_name = qualified(schema, temporary_name);
     if let Some(options) = options {
         set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
+        if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
     }
     Ok(emit(command))
 }
@@ -810,16 +870,7 @@ pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<
             .rev()
             .find_map(|item| {
                 if let ColumnConstraint::Collate { collation_name } = &item.constraint {
-                    let value = collation_name.0.as_ref();
-                    let name = match value.as_bytes().first() {
-                        Some(b'[') => value[1..value.len() - 1].to_string(),
-                        Some(quote @ (b'\'' | b'"' | b'`')) => value[1..value.len() - 1].replace(
-                            &format!("{0}{0}", *quote as char),
-                            &(*quote as char).to_string(),
-                        ),
-                        _ => value.to_string(),
-                    };
-                    Some(name)
+                    Some(identifier_text(collation_name))
                 } else {
                     None
                 }
@@ -904,7 +955,7 @@ mod tests {
                 let target="renamed.\"表";
                 let renamed=preview_renames(&sql,target,&[("a","b"),("b","a"),("abs","magnitude"),("g","calculated")]).unwrap();
                 let options=table_options(&sql).unwrap();
-                let preview=format_table_preview(&rebuild_definition(&renamed,schema,target,&original,&draft,&sources,Some(options)).unwrap()).unwrap();
+                let preview=format_table_preview(&rebuild_definition(&renamed,schema,target,&original,&draft,&sources,Some(options.clone())).unwrap()).unwrap();
                 assert!(preview.contains("\n    ") && preview.contains("\n)"));
                 db::recreate_table_columns_in(&conn,schema,"t",target,&draft,&sources,Some(options)).unwrap_or_else(|error|panic!("{schema}: {error}"));
                 let saved:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name=?1",db::quote_ident(schema)),[target],|row|row.get(0)).unwrap();
