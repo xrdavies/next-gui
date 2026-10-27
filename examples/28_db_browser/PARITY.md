@@ -506,3 +506,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Namespace Plot checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-1ca20533cf37.md): explicit main/temp/attached table/view selection, generated/quoted columns, local project schema restoration and stale-sample clearing now pass 393 tests and strict checks. Source and Plot controls fit in two rows at narrow widths; both-theme Soft/native Metal static captures inspected. Sampling remains at most 64 source rows. F01 tracks clipped narrow captions; original current-model binding, full axes/series/interaction/export, structured namespace wizards and native input acceptance remain unfinished.
+
+
+## Readable Chart caption checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-14a98a98cdb1.md): shared Chart wraps bounded captions with grapheme-safe ellipsis, keeps chart bodies below them and exposes full accessible text; e28 adds its existing tooltip. F01 verified. 395 tests/strict checks, four theme/size chart Metal readback deltas of 2, native CJK Plot and all fourteen Office static captures pass. Full Plot/DB4S, typography polish and native input acceptance remain unfinished.

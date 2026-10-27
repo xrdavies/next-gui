@@ -14,7 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R-20261027-1ca20533cf37-F01 | open | P2 | grok | shared / e28 | existing Chart title | Ui::paint_chart | Qualified Plot captions clip at narrow width; bounded readable presentation remains | [F01](R-20261027-1ca20533cf37.md#r-20261027-1ca20533cf37-f01) | — | — |
+| R-20261027-1ca20533cf37-F01 | verified | P2 | grok | shared / e28 | existing Chart title | Ui::paint_chart | Bounded Unicode caption wrapping/ellipsis, full accessible text and e28 tooltip verified; Soft/Metal and native Office inspected | [F01](R-20261027-1ca20533cf37.md#r-20261027-1ca20533cf37-f01) | 14a98a98cdb1 | 14a98a98cdb1 |
 | R-20261027-9ce12cc31802-F01 | verified | P2 | grok | shared / e28 | existing branch | Tree navigation sessions | Focus, schema-keyed expansion, group selection, viewport and ancestor reveal survive browser rebuilds | [F01](R-20261027-9ce12cc31802.md#r-20261027-9ce12cc31802-f01) | 9ce12cc31802 | 9ce12cc31802 |
 | R-20261027-443ef848a739-F01 | verified | P1 | grok | e28 / all | existing branch | Main-only data helpers | Explicit main identity prevents temp shadowing in browse/edit/insert/delete/ALTER/export | [F01](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f01) | 443ef848a739 | 443ef848a739 |
 | R-20261027-443ef848a739-F02 | in_progress | P2 | grok | e28 / all | incomplete parity | Schema workflows | Tree/selection/project context/qualified DROP verified; Tree sessions verified at 9ce12cc; attached Browse/data/projects verified at 9013909; Plot identity verified at 1ca2053; wizards and details/context remain | [F02](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f02) | — | — |
@@ -81,6 +81,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `c4ab7bb..14a98a98cdb1` | Codex | issues — F01 verified: 395 tests/strict checks, bounded Unicode captions, four chart Metal deltas 2 and native e28/fourteen Office static inspection; full/native parity remain | [Report](R-20261027-14a98a98cdb1.md) |
 | 2026-10-27 | `dc03314..1ca20533cf37` | Codex | issues — 393 tests/strict checks, qualified Plot/project identity and both-theme/native static frames verified; narrow caption/full/native parity remain | [Report](R-20261027-1ca20533cf37.md) |
 | 2026-10-27 | `60b0c30..901390905c25` | Codex | pass for namespace Browse — 391 tests/strict checks, typed operations/projects/FK/isolation and both-theme wide/narrow/native static inspection; full/native parity remain | [Report](R-20261027-901390905c25.md) |
 | 2026-10-27 | `c4b1035..41db9f2e6d78` | Codex | pass for qualified helpers — 385 tests/strict checks, namespace data isolation/atomicity/export/FK; attached UI/full/native parity remain | [Report](R-20261027-41db9f2e6d78.md) |
