@@ -14,13 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-27 | `c4b1035..41db9f2e6d78` | Codex | pass for qualified helpers — 385 tests/strict checks, namespace data isolation/atomicity/export/FK; attached UI/full/native parity remain | [Report](R-20261027-41db9f2e6d78.md) |
-| 2026-10-27 | `a1a75f7..9ce12cc31802` | Codex | pass for Tree sessions — 383 tests/strict checks, focus/scroll/expand/identity regressions, e28 and 14 Office native static inspection; full/native parity remain | [Report](R-20261027-9ce12cc31802.md) |
 | R-20261027-9ce12cc31802-F01 | verified | P2 | grok | shared / e28 | existing branch | Tree navigation sessions | Focus, schema-keyed expansion, group selection, viewport and ancestor reveal survive browser rebuilds | [F01](R-20261027-9ce12cc31802.md#r-20261027-9ce12cc31802-f01) | 9ce12cc31802 | 9ce12cc31802 |
-| 2026-10-27 | `3f65f21..443ef848a739` | Codex | issues — 381 tests/strict checks, namespace identity/main safety, both-theme tree/DDL delta 1 and native static inspection; full namespace/native parity remain | [Report](R-20261027-443ef848a739.md) |
 | R-20261027-443ef848a739-F01 | verified | P1 | grok | e28 / all | existing branch | Main-only data helpers | Explicit main identity prevents temp shadowing in browse/edit/insert/delete/ALTER/export | [F01](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f01) | 443ef848a739 | 443ef848a739 |
-| R-20261027-443ef848a739-F02 | in_progress | P2 | grok | e28 / all | incomplete parity | Schema workflows | Tree/selection/project context/qualified DROP verified; Tree sessions verified at 9ce12cc; attached browse/plot/wizards and details/context remain | [F02](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f02) | — | — |
-| 2026-10-27 | `a336bf8..9b2aa4774163` | Codex | pass for DDL selection — 377 tests/strict checks, Keep/Discard/Cancel and Soft/native static modal inspected; full/native parity remain | [Report](R-20261027-9b2aa4774163.md) |
+| R-20261027-443ef848a739-F02 | in_progress | P2 | grok | e28 / all | incomplete parity | Schema workflows | Tree/selection/project context/qualified DROP verified; Tree sessions verified at 9ce12cc; attached Browse/data/projects verified at 9013909; plot/wizards and details/context remain | [F02](R-20261027-443ef848a739.md#r-20261027-443ef848a739-f02) | — | — |
 | R-20261027-9b2aa4774163-F01 | verified | P1 | grok | e28 / all | existing branch | Structure selection | Keep/discard/cancel protects edited DDL without touching other SQL/project or pending database edits | [F01](R-20261027-9b2aa4774163.md#r-20261027-9b2aa4774163-f01) | 9b2aa4774163 | 9b2aa4774163 |
 | R-20261027-f4d258fe1169-F01 | verified | P2 | grok | shared / e28 | incomplete parity | Word editing | Platform word shortcuts, Unicode identifier boundaries, selection/Undo/session and read-only/IME guards verified | [F01](R-20261027-f4d258fe1169.md#r-20261027-f4d258fe1169-f01) | f4d258fe1169 | f4d258fe1169 |
 | R-20261027-4511f2bc5257-F01 | verified | P2 | grok | e28 / all | 605b048 | Catalog columns | Schema-qualified PRAGMA keeps real/generated/attached/temp/quoted columns available despite same-named user tables | [F01](R-20261027-4511f2bc5257.md#r-20261027-4511f2bc5257-f01) | 4511f2bc5257 | 4511f2bc5257 |
@@ -79,10 +75,16 @@ the first entries. Keep the status in this index and its report synchronized.
 | R-20261018-7c9427cf6006-F01 | verified | P2 | codex | macOS / portable QA | 02f5656 and e22–e25 additions | UI raster tests; e21–e25 QA writers | QA images used Linux-only /workspace path | [F01](R-20261018-7c9427cf6006.md#r-20261018-7c9427cf6006-f01) | 2eded00e6748 | 847b4c4d1a1d |
 
 
+
 ## Review runs
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `60b0c30..901390905c25` | Codex | pass for namespace Browse — 391 tests/strict checks, typed operations/projects/FK/isolation and both-theme wide/narrow/native static inspection; full/native parity remain | [Report](R-20261027-901390905c25.md) |
+| 2026-10-27 | `c4b1035..41db9f2e6d78` | Codex | pass for qualified helpers — 385 tests/strict checks, namespace data isolation/atomicity/export/FK; attached UI/full/native parity remain | [Report](R-20261027-41db9f2e6d78.md) |
+| 2026-10-27 | `a1a75f7..9ce12cc31802` | Codex | pass for Tree sessions — 383 tests/strict checks, focus/scroll/expand/identity regressions, e28 and 14 Office native static inspection; full/native parity remain | [Report](R-20261027-9ce12cc31802.md) |
+| 2026-10-27 | `3f65f21..443ef848a739` | Codex | issues — 381 tests/strict checks, namespace identity/main safety, both-theme tree/DDL delta 1 and native static inspection; full namespace/native parity remain | [Report](R-20261027-443ef848a739.md) |
+| 2026-10-27 | `a336bf8..9b2aa4774163` | Codex | pass for DDL selection — 377 tests/strict checks, Keep/Discard/Cancel and Soft/native static modal inspected; full/native parity remain | [Report](R-20261027-9b2aa4774163.md) |
 | 2026-10-27 | `eddcafd..f4d258fe1169` | Codex | pass for word editing — 376 tests/strict checks, Unicode word/selection/Undo/session/IME guards and Soft/native static selection inspected; full/native parity remain | [Report](R-20261027-f4d258fe1169.md) |
 | 2026-10-27 | `0170054..4511f2bc5257` | Codex | pass for column metadata — 372 tests/strict checks; shadowing baseline fixed across quoted/generated/temp/attached columns; completion Metal delta 1; full/native parity remain | [Report](R-20261027-4511f2bc5257.md) |
 | 2026-10-27 | `615b893..6ee1edbad2a0` | Codex | issues — F03 verified: 371 tests/strict checks, overload/long-text/session behavior, Metal delta 1/2 and native e28/14 Office static inspection pass; full/native parity remain | [Report](R-20261027-6ee1edbad2a0.md) |

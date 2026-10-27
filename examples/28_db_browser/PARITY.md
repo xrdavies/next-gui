@@ -496,3 +496,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Word editing checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-f4d258fe1169.md): shared TextArea word movement/selection/deletion is mapped to Option on macOS and Ctrl on Windows/Linux in SQL/Find. Unicode/underscore identifiers, punctuation, whitespace and grapheme clusters at word boundaries are handled. Selected deletion is one undoable edit; editor sessions, read-only and IME preedit guards pass. Reproduced caret 25-vs-16 baseline now passes. 376 tests and strict checks pass; Soft/native static word selection inspected. Full character/pointer/vertical grapheme handling, native input and complete editor/DB4S parity remain unfinished.
+
+
+## Namespace Browse checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-901390905c25.md): main/temp/attached identity now reaches selectors/tabs, record navigation, counts/filter/order, typed edit/insert/delete, cut/paste, same-database FK navigation, conditional formats, SQL copies and full filtered export. Per-database/table settings and file-backed attachments round-trip/preflight through native XML plus the local extension. Legacy JSON defaults to main; missing temporary targets reopen empty with a notice, and Save As clears disconnected views. 391 tests/strict checks and both-theme wide/narrow/conditional/native static captures pass. Exact original fallback behavior, namespace Plot/structured wizards, advanced settings and native input acceptance remain unfinished; F02 stays in_progress.
