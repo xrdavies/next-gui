@@ -2652,6 +2652,7 @@ impl AppState {
     }
 
     pub fn navigate_fk(&mut self) -> Result<(), String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let table = self
             .browse()
             .table
@@ -2684,25 +2685,30 @@ impl AppState {
                         db::quote_ident(&table)
                     ),
                     [rowid],
-                    |row| row.get::<_, rusqlite::types::Value>(0),
+                    |row| row.get_ref(0).map(db::CellValue::from),
                 )
                 .map_err(|e| e.to_string())?;
-            if value == rusqlite::types::Value::Null {
+            if value == db::CellValue::Null {
                 return Err("NULL foreign key has no parent row".into());
             }
             parts.push(format!(
                 "{} = {}",
                 db::quote_ident(&key.to_col),
-                db::sql_literal((&value).into())
+                db::sql_literal(value.as_ref())
             ));
         }
         let filter = parts.join(" AND ");
+        let old_index = self.browse_tab_idx;
         self.browse_tabs
             .push(BrowseTabState::new(Some(fk.to_table.clone())));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
         self.browse_mut().filter = filter;
+        if let Err(e) = self.refresh_browse() {
+            self.browse_tabs.pop();
+            self.browse_tab_idx = old_index;
+            return Err(e);
+        }
         self.tab = MainTab::Browse;
-        self.refresh_browse()?;
         self.status_msg = format!("FK → {}", fk.to_table);
         Ok(())
     }
@@ -3646,6 +3652,23 @@ mod chart_default_tests {
         state.close_browse_tab().unwrap();
         assert_eq!(state.browse_tabs.len(), 1);
         assert!(state.browse().table.is_none());
+    }
+
+    #[test]
+    fn foreign_key_navigation_preserves_non_utf8_text_keys() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(k TEXT PRIMARY KEY);
+            CREATE TABLE child(k REFERENCES parent(k));
+            INSERT INTO parent VALUES(CAST(X'FF' AS TEXT)); INSERT INTO child SELECT k FROM parent;").unwrap();
+        state.refresh_schema().unwrap();
+        state.browse_mut().table = Some("child".into());
+        state.refresh_browse().unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        state.edit_col = "k".into();
+        state.navigate_fk().unwrap();
+        assert_eq!(state.browse().table.as_deref(), Some("parent"));
+        assert_eq!(state.browse().result.as_ref().unwrap().values, vec![vec![db::CellValue::Text(vec![255])]]);
     }
 
     #[test]
