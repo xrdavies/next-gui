@@ -568,7 +568,12 @@ impl Scene {
     /// Hit-test: top-most visible node under (x,y), excluding invisible root fill.
     /// Honors ancestor [`Node::clip`] rectangles (ScrollArea viewports).
     pub fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
-        self.hit_test_node(self.root, x, y, None)
+        self.hit_test_excluding(x, y, &[])
+    }
+
+    /// Hit-test while skipping these nodes and their descendants, for passive overlays.
+    pub fn hit_test_excluding(&self, x: f32, y: f32, excluded: &[NodeId]) -> Option<NodeId> {
+        self.hit_test_node(self.root, x, y, None, excluded)
     }
 
     fn hit_test_node(
@@ -577,7 +582,9 @@ impl Scene {
         x: f32,
         y: f32,
         parent_clip: Option<Rect>,
+        excluded: &[NodeId],
     ) -> Option<NodeId> {
+        if excluded.contains(&id) { return None; }
         let node = self.nodes.get(&id)?;
         let clip = match (parent_clip, node.clip) {
             (Some(a), Some(b)) => {
@@ -598,7 +605,7 @@ impl Scene {
         }
         // Children front-to-back (reverse paint order)
         for child_id in node.children.iter().rev() {
-            if let Some(hit) = self.hit_test_node(*child_id, x, y, clip) {
+            if let Some(hit) = self.hit_test_node(*child_id, x, y, clip, excluded) {
                 return Some(hit);
             }
         }
@@ -663,5 +670,9 @@ mod tests {
         assert_eq!(scene.hit_test(60.0, 60.0), Some(b));
         assert_eq!(scene.hit_test(10.0, 10.0), Some(a));
         assert_eq!(scene.hit_test(200.0, 200.0), None);
+        let label = scene.insert(b, Rect::new(55.0, 55.0, 20.0, 20.0), Color::rgb(1, 1, 1)).unwrap();
+        assert_eq!(scene.hit_test(60.0, 60.0), Some(label));
+        assert_eq!(scene.hit_test_excluding(60.0, 60.0, &[b]), Some(a));
+        assert_eq!(scene.hit_test_excluding(60.0, 60.0, &[a, b]), None);
     }
 }

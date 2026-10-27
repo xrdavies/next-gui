@@ -1,6 +1,7 @@
 //! Cached SQLite metadata and lexical completion context; never executes editor SQL.
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::OnceLock;
 
@@ -42,6 +43,7 @@ struct Entry {
 #[derive(Debug, Clone)]
 pub struct Catalog {
     entries: Vec<Entry>,
+    functions: BTreeMap<String, Vec<i32>>,
     pub warning: Option<String>,
 }
 
@@ -49,6 +51,7 @@ impl Default for Catalog {
     fn default() -> Self {
         let mut catalog = Self {
             entries: Vec::new(),
+            functions: BTreeMap::new(),
             warning: None,
         };
         // SQLite owns each non-NUL-terminated keyword slice for the library lifetime.
@@ -72,10 +75,10 @@ impl Default for Catalog {
         for word in sql_syntax::EXTRA_KEYWORDS {
             catalog.add(vec![(*word).to_owned()], Category::Keyword);
         }
-        static BUILTINS: OnceLock<Result<Vec<String>, String>> = OnceLock::new();
+        static BUILTINS: OnceLock<Result<Vec<(String, i32)>, String>> = OnceLock::new();
         match BUILTINS.get_or_init(|| {
             Connection::open_in_memory()
-                .and_then(|conn| function_names(&conn))
+                .and_then(|conn| function_signatures(&conn))
                 .map_err(|e| e.to_string())
         }) {
             Ok(names) => catalog.add_functions(names),
@@ -98,7 +101,19 @@ impl Catalog {
         catalog
     }
 
-    fn add_functions(&mut self, names: &[String]) {
+    fn add_functions(&mut self, signatures: &[(String, i32)]) {
+        self.functions.clear();
+        for (name, arity) in signatures {
+            self.functions
+                .entry(name.to_ascii_lowercase())
+                .or_default()
+                .push(*arity);
+        }
+        for arities in self.functions.values_mut() {
+            arities.sort();
+            arities.dedup();
+        }
+        let names = self.functions.keys().cloned().collect::<Vec<_>>();
         for name in names {
             for name in [name.to_ascii_lowercase(), name.to_ascii_uppercase()] {
                 self.add(vec![name], Category::Function);
@@ -107,7 +122,7 @@ impl Catalog {
     }
 
     fn read(&mut self, conn: &Connection) -> rusqlite::Result<()> {
-        let functions = function_names(conn)?;
+        let functions = function_signatures(conn)?;
         self.entries
             .retain(|entry| entry.category != Category::Function);
         self.add_functions(&functions);
@@ -213,12 +228,43 @@ impl Catalog {
         items.dedup();
         Some((context.range, items))
     }
+
+    pub fn calltip(&self, sql: &str, caret: usize) -> Option<(usize, String)> {
+        let context =
+            crate::sql_calltip::context(sql, caret, |name| self.functions.contains_key(name))?;
+        let arities = self.functions.get(&context.name)?;
+        let signatures = arities
+            .iter()
+            .map(|&arity| {
+                let args = if arity < 0 {
+                    "arg1, …".to_owned()
+                } else {
+                    (1..=arity)
+                        .map(|i| format!("arg{i}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!("{}({args})", context.name)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let status = if arities.iter().all(|&n| n == 0) {
+            "No arguments".to_owned()
+        } else {
+            format!("Argument {}", context.argument + 1)
+        };
+        Some((context.anchor, format!("{signatures}\n{status}")))
+    }
 }
 
-fn function_names(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT DISTINCT name FROM pragma_function_list ORDER BY name")?;
-    let rows = stmt.query_map([], |r| r.get(0))?;
-    rows.collect()
+fn function_signatures(conn: &Connection) -> rusqlite::Result<Vec<(String, i32)>> {
+    // PRAGMA cannot be shadowed by a user table named pragma_function_list.
+    let mut stmt = conn.prepare("PRAGMA function_list")?;
+    let rows = stmt.query_map([], |r| Ok((r.get("name")?, r.get("narg")?)))?;
+    let mut functions = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    functions.sort();
+    functions.dedup();
+    Ok(functions)
 }
 
 fn identifier_text(name: &str, quote: Option<char>) -> String {
@@ -355,6 +401,43 @@ mod tests {
         c.suggest(sql, sql.chars().count(), true, true)
             .map(|(_, v)| v.into_iter().map(|i| i.text).collect())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn user_tables_cannot_shadow_function_metadata() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE pragma_function_list(name, narg); INSERT INTO pragma_function_list VALUES('fake_metadata_function', 2147483647)").unwrap();
+        let c = Catalog::load(&conn);
+        assert_eq!(suggestions(&c, "low"), ["lower"]);
+        assert!(suggestions(&c, "fake_metadata_").is_empty());
+    }
+
+    #[test]
+    fn cached_calltips_include_overloads_variadic_zero_and_connection_specific_functions() {
+        let conn = Connection::open_in_memory().unwrap();
+        for arity in [0, 2] {
+            conn.create_scalar_function(
+                "custom_hint",
+                arity,
+                rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+                |_| Ok(1),
+            )
+            .unwrap();
+        }
+        let c = Catalog::load(&conn);
+        drop(conn);
+        let hint = |sql: &str| c.calltip(sql, sql.chars().count()).unwrap().1;
+        assert_eq!(
+            hint("custom_hint("),
+            "custom_hint()\ncustom_hint(arg1, arg2)\nArgument 1"
+        );
+        assert_eq!(hint("random("), "random()\nNo arguments");
+        assert_eq!(hint("coalesce(1,"), "coalesce(arg1, …)\nArgument 2");
+        let overloads = hint("substr('x', 1,");
+        assert!(overloads.contains("substr(arg1, arg2)\nsubstr(arg1, arg2, arg3)"));
+        assert!(overloads.ends_with("Argument 3"));
+        assert!(Catalog::default().calltip("custom_hint(", 12).is_none());
+        assert!(c.calltip("unknown(", 8).is_none());
     }
 
     #[test]

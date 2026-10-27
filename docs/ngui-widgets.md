@@ -117,6 +117,14 @@ after editing or finding text. Both renderers use the same selection alpha mask.
   dismisses. Other input continues to the editor; refresh suggestions after edits.
   Composition/read-only/foreign popups reject opening, and stale focus/document/
   caret state prevents insertion. Lists are transient across widget rebuilds.
+- `set_text_area_hint(id, anchor, text)` / `text_area_hint(id)`: passive hints at
+  a scalar anchor, with wrapped text bounded to the viewport and editor-sized
+  type. They retain editor focus and let pointer/wheel input reach underlying
+  controls. Refresh after edits; empty text clears. Escape suppresses the same
+  anchor/prefix through argument edits and matching TextArea session restoration.
+  Stale documents/selections, composition, read-only state, focus loss, offscreen
+  anchors and open menus hide them. The shared Tooltip painter also wraps normal
+  tooltips, flips above when needed and removes a previous host's tip.
 - Map platform chords to `UiKey::Undo`, `Redo`, `SelectLeft`, `SelectRight`,
   `SelectUp`, `SelectDown`, `SelectHome`, `SelectEnd`. Existing exhaustive matches
   on `UiKey` must handle these variants. `focused_text_for_copy` now returns only
@@ -125,7 +133,7 @@ after editing or finding text. Both renderers use the same selection alpha mask.
 History stores up to 100 snapshots / 8 MiB per undo or redo stack, retaining one
 oversized edit. Snapshots share immutable text across rebuilds. Glyph layout still
 processes the complete document; masks and selection nodes cover the viewport.
-Apps supply token colors and completion candidates; TextArea has no built-in
+Apps supply token colors, completion candidates and hint text; TextArea has no built-in
 language lexer or semantic catalog. Grapheme-cluster navigation, word selection, horizontal scrolling
 and text-specific draggable scrollbar thumbs are not provided.
 

@@ -16,6 +16,7 @@ mod sql_search;
 mod sql_editor;
 mod sql_syntax;
 mod sql_completion;
+mod sql_calltip;
 mod state;
 mod ui_build;
 
@@ -528,7 +529,7 @@ impl Demo {
             state.tab = match tab.to_ascii_lowercase().as_str() {
                 "browse" | "header-menu" => MainTab::Browse,
                 "pragmas" => MainTab::Pragmas,
-                "sql" | "execute" | "sql-long" => MainTab::ExecuteSql,
+                "sql" | "execute" | "sql-long" | "sql-calltip" => MainTab::ExecuteSql,
                 "wizard" | "table" => {
                     state.open_create_table_wizard();
                     MainTab::Structure
@@ -678,12 +679,26 @@ impl Demo {
             state.find_text = "中文 match 40".into();
             state.replace_text = "東京".into();
         }
+        let qa_calltip = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("sql-calltip");
+        if qa_calltip {
+            state.sql_result = None;
+            state.sql_tabs[0] = format!("{}SELECT coalesce(\n    substr('中文 SQL editor', 1,", "-- Function argument hints\n".repeat(24));
+        }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
             built.ui.find_in_text_area(built.sql_area, &state.find_text);
             built.ui.set_focus(Some(built.sql_area));
+            built.ui.sync(&mut built.scene);
+        }
+        if qa_calltip {
+            let caret = state.sql_editor().chars().count();
+            built.ui.set_focus(Some(built.sql_area));
+            built.ui.select_text_area_range(built.sql_area, caret..caret);
+            if let Some((anchor, text)) = state.sql_completion.calltip(state.sql_editor(), caret) {
+                built.ui.set_text_area_hint(built.sql_area, anchor, text);
+            }
             built.ui.sync(&mut built.scene);
         }
         let clear = clear_color(&theme);
@@ -1173,6 +1188,7 @@ impl Demo {
         }
         if sql_focused {
             self.ui.set_focus(Some(self.ids.sql_area));
+            self.update_sql_hint();
             self.ui.sync(&mut self.scene);
         }
         if log_focused && self.ids.log_area.0 != 0 {
@@ -2064,6 +2080,17 @@ impl Demo {
         self.rebuild = true;
     }
 
+    fn update_sql_hint(&mut self) {
+        let area = self.ids.sql_area;
+        let hint = if self.state.tab == MainTab::ExecuteSql && !self.state.confirm_open
+            && matches!(self.state.overlay, None | Some(OverlayKind::FindReplace)) && self.ui.focused() == Some(area) {
+            self.ui.text_area_caret(area).and_then(|caret| self.state.sql_completion.calltip(
+                self.ui.text_area_value(area).unwrap_or_default(), caret))
+        } else { None };
+        if let Some((anchor, text)) = hint { self.ui.set_text_area_hint(area, anchor, text); }
+        else { self.ui.set_text_area_hint(area, 0, ""); }
+    }
+
     fn handle_sql_completion_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
         if modifiers.commandish() && !modifiers.shift && !modifiers.alt
             && matches!(key, KeyCode::Space | KeyCode::Char(' '))
@@ -2072,7 +2099,10 @@ impl Demo {
             self.show_sql_completions(true);
             return true;
         }
-        if !self.ui.text_area_completions_open(self.ids.sql_area) { return false; }
+        if !self.ui.text_area_completions_open(self.ids.sql_area) {
+            return key == KeyCode::Escape && self.ui.text_area_hint(self.ids.sql_area).is_some()
+                && self.ui.key_input(UiKey::Escape);
+        }
         if !modifiers.commandish() && !modifiers.alt
             && matches!(key, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End | KeyCode::Enter | KeyCode::Tab | KeyCode::Escape)
         {
@@ -2997,6 +3027,7 @@ impl Demo {
             self.do_rebuild();
         } else {
             sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
+            self.update_sql_hint();
             self.ui.sync(&mut self.scene);
             self.needs_paint = true;
         }
@@ -4301,6 +4332,94 @@ mod interaction_tests {
         demo.state.close_db();
         let (_, candidates) = demo.state.sql_completion.suggest("completion_peo", 14, true, true).unwrap();
         assert!(candidates.is_empty(), "closed databases must not leak old schema names");
+    }
+
+    #[test]
+    fn sql_calltip_escape_rebuild_find_ime_and_undo_keep_the_editor_session() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        let before = (demo.state.conn.as_ref().unwrap().total_changes(), demo.state.conn.as_ref().unwrap().is_autocommit());
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = "SELECT coalesce(substr('中文', 1,".into();
+        demo.do_rebuild();
+        let area = demo.ids.sql_area;
+        demo.ui.set_focus(Some(area));
+        let end = demo.state.sql_editor().chars().count();
+        demo.ui.select_text_area_range(area, end..end);
+        demo.update_sql_hint();
+        assert!(demo.ui.text_area_hint(area).unwrap().contains("Argument 3"));
+        assert!(demo.handle_sql_completion_key(KeyCode::Escape, Modifiers::default()));
+        demo.input_key_with_sql_completions(UiKey::Char(' '));
+        demo.update_sql_hint();
+        assert_eq!(demo.ui.text_area_hint(area), None);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_hint(demo.ids.sql_area), None);
+        demo.input_key_with_sql_completions(UiKey::Char(')'));
+        demo.update_sql_hint();
+        assert_eq!(demo.ui.text_area_hint(demo.ids.sql_area), Some("coalesce(arg1, …)\nArgument 1"));
+        demo.input_key_with_sql_completions(UiKey::Undo);
+        demo.update_sql_hint();
+        assert!(demo.ui.text_area_hint(demo.ids.sql_area).unwrap().contains("Argument 3"));
+        demo.ui.ime_preedit("中文", None);
+        demo.update_sql_hint();
+        assert_eq!(demo.ui.text_area_hint(demo.ids.sql_area), None);
+        demo.ui.ime_clear_preedit();
+        demo.state.overlay = Some(OverlayKind::FindReplace);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        demo.update_sql_hint();
+        assert!(demo.handle_sql_completion_key(KeyCode::Escape, Modifiers::default()));
+        assert_eq!(demo.state.overlay, Some(OverlayKind::FindReplace));
+        assert_eq!(demo.ui.focused(), Some(demo.ids.sql_area));
+        assert!(demo.state.sql_result.is_none());
+        assert_eq!((demo.state.conn.as_ref().unwrap().total_changes(), demo.state.conn.as_ref().unwrap().is_autocommit()), before);
+    }
+
+    #[test]
+    fn sql_calltip_dark_light_and_metal_readback() {
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+            demo.state.new_memory_db().unwrap();
+            demo.state.tab = MainTab::ExecuteSql;
+            demo.theme = theme;
+            demo.state.sql_tabs[0] = format!("{}SELECT coalesce(\n    substr('中文 SQL editor', 1,", "-- Function argument hints\n".repeat(24));
+            demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.sql_area));
+            let end = demo.state.sql_editor().chars().count();
+            demo.ui.select_text_area_range(demo.ids.sql_area, end..end);
+            demo.update_sql_hint();
+            demo.ui.sync(&mut demo.scene);
+            assert!(demo.ui.text_area_hint(demo.ids.sql_area).unwrap().contains("Argument 3"));
+            let style = demo.ui.tooltip_style();
+            let panel = demo.scene.iter_paint_order().into_iter().rev().find(|n|
+                n.visible && n.fill == style.bg && n.bounds.width > 100.0 && n.bounds.height > 25.0
+            ).unwrap().bounds;
+            assert!(panel.x >= 0.0 && panel.y >= 0.0 && panel.x + panel.width <= 1400.0 && panel.y + panel.height <= 860.0);
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let commands = encode_scene(&demo.scene, &dirty);
+            let clear = clear_color(&demo.theme);
+            let mut soft = SoftRenderer::new(1400, 860, clear);
+            soft.render(&commands, &dirty);
+            if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_CALLTIP_QA_OUT") {
+                write_ppm(&format!("{prefix}-{name}.ppm"), soft.frame_pixels().unwrap().0, 1400, 860).unwrap();
+            }
+            let Ok(mut gpu) = GpuRenderer::try_new(1400, 860, clear) else {
+                eprintln!("calltip {name} GPU comparison not_run: adapter unavailable");
+                continue;
+            };
+            gpu.render(&commands, &dirty);
+            let soft_pixels = soft.frame_pixels().unwrap().0;
+            let gpu_pixels = gpu.frame_pixels().unwrap().0;
+            let max_delta = ((panel.y.ceil() as usize + 2)..(panel.y + panel.height).floor() as usize - 2).flat_map(|y|
+                ((panel.x.ceil() as usize + 2)..(panel.x + panel.width).floor() as usize - 2).map(move |x| y * 1400 + x)
+            ).flat_map(|i| [0, 8, 16].map(|shift|
+                (((soft_pixels[i] >> shift) & 255) as i32 - ((gpu_pixels[i] >> shift) & 255) as i32).abs()
+            )).max().unwrap();
+            assert!(max_delta <= 2, "calltip {name} channel delta {max_delta}");
+            eprintln!("calltip {name} Soft/Metal actual readback max channel delta {max_delta}");
+        }
     }
 
     #[test]

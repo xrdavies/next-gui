@@ -26,6 +26,8 @@ mod office_p2;
 mod theme;
 mod text_area;
 mod text_completion;
+mod text_area_hint;
+use text_area_hint::TextAreaHint;
 pub use text_completion::TextAreaCompletionItem;
 use text_completion::TextAreaCompletion;
 mod tabs;
@@ -1103,7 +1105,7 @@ pub struct TooltipStyle {
     pub size: f32,
     /// Padding inside tip.
     pub padding: f32,
-    /// Max tip width (text not wrapped in MVP; used as measure bias).
+    /// Maximum tip width, including padding; text wraps within the viewport.
     pub max_width: f32,
     /// Tip text color.
     pub fg: Color,
@@ -2260,6 +2262,7 @@ pub struct Ui {
     open_popup: Option<WidgetId>,
     popup_menu_row: Option<usize>,
     text_completion: Option<TextAreaCompletion>,
+    text_area_hint: Option<TextAreaHint>,
     /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
     pending_menu_action: Option<(WidgetId, u64)>,
     /// Last keyboard-activated Button; drained by [`Ui::take_button_activate`].
@@ -2415,6 +2418,7 @@ impl Ui {
             open_popup: None,
             popup_menu_row: None,
             text_completion: None,
+            text_area_hint: None,
             pending_menu_action: None,
             pending_button_activate: None,
             pending_button_group_change: None,
@@ -3104,7 +3108,8 @@ impl Ui {
 
     /// Hit-test widgets using the scene graph.
     pub fn hit_widget(&self, scene: &Scene, x: f32, y: f32) -> Option<WidgetId> {
-        let node = scene.hit_test(x, y)?;
+        let ignored = self.text_area_hint.as_ref().and_then(|h| self.widgets.get(&h.popup)).map_or(&[][..], |w| w.aux.as_slice());
+        let node = scene.hit_test_excluding(x, y, ignored)?;
         if let Some(wid) = self.widget_from_node(node) {
             return Some(wid);
         }
@@ -3131,6 +3136,7 @@ impl Ui {
     /// Begin a pointer press with primary (`secondary = false`) or secondary
     /// / right button (`secondary = true`, opens [`Kind::ContextMenu`]).
     pub fn pointer_press(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool) -> bool {
+        self.pointer_text_area_hint(scene, x, y);
         // Open popup hit first (overlay sits above everything).
         if let Some(pid) = self.open_popup {
             if self.popup_contains(scene, pid, x, y) {
@@ -4029,13 +4035,8 @@ impl Ui {
     pub fn ime_cursor_area(&self, scene: &Scene) -> Option<(f32, f32, f32, f32)> {
         let id = self.focus?;
         let w = self.widgets.get(&id)?;
-        if let Kind::TextArea { value, caret, preedit, preedit_cursor, scroll_y, style, edit, line_numbers, .. } = &w.kind {
-            let bounds = w.node.and_then(|n| scene.get(n).map(|n| n.bounds))?;
-            let (display, caret) = text_area::display_text(value, *caret, edit, preedit, *preedit_cursor);
-            let gutter = self.text_area_gutter_width(&display, *style, *line_numbers, bounds.width);
-            let layout = self.font.layout(&display, style.size, Some((bounds.width - style.padding_x * 2.0 - gutter).max(1.0)));
-            let (x, y) = layout.caret_top_left(&display, caret, self.font.metrics(style.size).ascent);
-            return Some(((bounds.x + style.padding_x + gutter + x).floor(), (bounds.y + style.padding_y - scroll_y + y).floor(), 2.0, self.font.metrics(style.size).ascent.ceil()));
+        if matches!(w.kind, Kind::TextArea { .. }) {
+            return self.text_area_position_area(scene, id, None);
         }
         let Kind::TextInput {
             value,
@@ -4774,6 +4775,7 @@ impl Ui {
     /// Deliver a key to the focused widget. Returns true if handled.
     pub fn key_input(&mut self, key: UiKey) -> bool {
         if let Some(handled) = self.key_text_completion(key) { return handled; }
+        if key == UiKey::Escape && self.dismiss_text_area_hint() { return true; }
         if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
             if let Some(id) = self.open_popup {
                 match self.widgets.get(&id).map(|w| &w.kind) {
@@ -16231,73 +16233,54 @@ impl Ui {
     }
 
     fn paint_tooltip_overlay(&mut self, scene: &mut Scene) {
-        let Some(id) = self.tooltip_hover else {
-            // Hide tooltip aux on all tooltip widgets.
-            for wid in self.widgets.keys().copied().collect::<Vec<_>>() {
-                if matches!(
-                    self.widgets.get(&wid).map(|w| &w.kind),
-                    Some(Kind::Tooltip { .. })
-                ) {
-                    self.hide_popup_aux_mut(scene, wid);
-                }
-            }
-            return;
+        let hint = self.text_area_hint_anchor(scene);
+        let active = if self.open_popup.is_some() { None } else {
+            hint.map(|(id, _)| id).or(self.tooltip_hover)
         };
+        for id in self.widgets.keys().copied().collect::<Vec<_>>() {
+            if Some(id) != active && matches!(self.widgets[&id].kind, Kind::Tooltip { .. }) {
+                self.hide_popup_aux_mut(scene, id);
+            }
+        }
+        let Some(id) = active else { return; };
         let (text, style, host_bounds) = match self.widgets.get(&id) {
-            Some(Widget {
-                kind: Kind::Tooltip { text, style, .. },
-                node,
-                ..
-            }) => {
-                let b = node
-                    .and_then(|n| scene.get(n).map(|n| n.bounds))
-                    .unwrap_or_else(Rect::empty);
-                (text.clone(), *style, b)
+            Some(Widget { kind: Kind::Tooltip { text, style, .. }, node, .. }) => {
+                let bounds = hint.map(|(_, b)| b).or_else(|| node.and_then(|n| scene.get(n).map(|n| n.bounds))).unwrap_or_else(Rect::empty);
+                (text.clone(), *style, bounds)
             }
             _ => return,
         };
-        if text.is_empty() || host_bounds.is_empty() {
+        let (vw, vh) = self.viewport;
+        if text.is_empty() || host_bounds.is_empty() || vw < 1.0 || vh < 1.0 {
+            self.hide_popup_aux_mut(scene, id);
             return;
         }
-        let (tw, th) = self.font.measure_line(&text, style.size);
-        let tip_w = (tw + style.padding * 2.0).min(style.max_width.max(tw + style.padding * 2.0));
-        let tip_h = th + style.padding * 2.0;
-        let mut tip_x = host_bounds.x;
-        let tip_y = host_bounds.y + host_bounds.height + style.gap;
-        let (vw, _) = self.viewport;
-        if tip_x + tip_w > vw {
-            tip_x = (vw - tip_w).max(0.0);
-        }
-        let tip = Rect::new(tip_x, tip_y, tip_w, tip_h);
+        let padding = style.padding.max(0.0).min(vw * 0.25).min(vh * 0.25);
+        let width = style.max_width.max(1.0).min(vw);
+        let wrap = (width - padding * 2.0).max(1.0);
+        let layout = self.font.layout(&text, style.size, Some(wrap));
+        let tip_w = (layout.width + padding * 2.0).min(width);
+        let tip_h = (layout.height + padding * 2.0).min(vh);
+        let x = host_bounds.x.clamp(0.0, (vw - tip_w).max(0.0));
+        let below = host_bounds.y + host_bounds.height + style.gap;
+        let y = if below + tip_h <= vh { below } else { host_bounds.y - style.gap - tip_h }
+            .clamp(0.0, (vh - tip_h).max(0.0));
+        let tip = Rect::new(x, y, tip_w, tip_h);
         self.ensure_overlay_aux(scene, id, 2);
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if aux.len() < 2 {
-            return;
-        }
-        let bg = aux[0];
-        let label = aux[1];
+        let aux = &self.widgets[&id].aux;
+        let (bg, label) = (aux[0], aux[1]);
         scene.set_bounds(bg, tip);
         scene.set_fill(bg, style.bg);
         scene.set_mask(bg, None);
         scene.set_visible(bg, true);
         self.apply_corner_radius(scene, bg, false);
-        let (_, mask) = self.font.rasterize_text(&text, style.size, None);
-        scene.set_bounds(
-            label,
-            Rect::new(
-                tip.x + style.padding,
-                tip.y + style.padding,
-                mask.width as f32,
-                mask.height as f32,
-            ),
-        );
+        let (_, mask) = self.font.rasterize_text(&text, style.size, Some(wrap));
+        scene.set_bounds(label, Rect::new(tip.x + padding, tip.y + padding, mask.width as f32, mask.height as f32));
+        scene.set_clip(label, Some(Rect::new(tip.x + padding, tip.y + padding, (tip.width - padding * 2.0).max(0.0), (tip.height - padding * 2.0).max(0.0))));
         scene.set_fill(label, style.fg);
         scene.set_mask(label, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
         scene.set_visible(label, true);
-        // Raise overlay host above content.
-        if let Some(h) = self.overlay_host {
-            scene.raise(h);
-        }
+        if let Some(host) = self.overlay_host { scene.raise(host); }
     }
 
     fn paint_modal_popup(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -19976,6 +19959,26 @@ fn composed_text(value: &str, caret: usize, preedit: &str, cursor: Option<(usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_tooltip_hosts_hides_the_previous_overlay() {
+        let mut ui = Ui::new();
+        ui.set_viewport(300.0, 160.0);
+        let mut tips = Vec::new();
+        ui.row(RowStyle::default(), |r| {
+            for text in ["First tip", "Second tip"] {
+                tips.push(r.tooltip(text, |t| { t.button(text); }));
+            }
+        });
+        let mut scene = Scene::new();
+        ui.sync(&mut scene);
+        for &id in &tips {
+            ui.tooltip_hover = Some(id);
+            ui.paint_tooltip_overlay(&mut scene);
+        }
+        assert!(ui.widgets[&tips[0]].aux.iter().all(|&n| !scene.get(n).unwrap().visible));
+        assert!(ui.widgets[&tips[1]].aux.iter().all(|&n| scene.get(n).unwrap().visible));
+    }
 
     #[test]
     fn build_column_and_hit_button() {
