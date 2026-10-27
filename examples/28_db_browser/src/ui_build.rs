@@ -2166,7 +2166,7 @@ pub fn build_ui(
     ui.set_list_scroll_offset(ov_checks_list, state.wizard_check_list_scroll);
     ui.set_accessible_name(ov_check_name, "Table CHECK constraint name");
     ui.set_accessible_name(ov_check_expr, "Table CHECK expression");
-    ui.set_text_area_read_only(ov_check_expr, state.wizard_checks.is_empty());
+    ui.set_text_area_read_only(ov_check_expr, state.wizard_checks.is_empty() || !state.table_wizard_names_valid());
     ui.set_accessible_name(ov_check_add, "Add table CHECK constraint");
     ui.set_accessible_name(ov_check_del, "Remove table CHECK constraint");
     ui.set_accessible_name(ov_check_up, "Move table CHECK up");

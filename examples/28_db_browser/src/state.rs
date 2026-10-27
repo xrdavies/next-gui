@@ -415,6 +415,8 @@ pub struct AppState {
     pub wizard_table_preview_state: Option<next_gui_ui::TextAreaState>,
     pub wizard_table_page: usize,
     pub wizard_checks: Vec<crate::table_sql::NamedCheck>,
+    pub wizard_check_columns: Vec<String>,
+    pub wizard_check_table: String,
     pub wizard_check_sel: usize,
     pub wizard_check_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub wizard_check_scroll: (f32, f32),
@@ -702,6 +704,8 @@ impl AppState {
             wizard_table_preview_state: None,
             wizard_table_page: 0,
             wizard_checks: Vec::new(),
+            wizard_check_columns: Vec::new(),
+            wizard_check_table: String::new(),
             wizard_check_sel: 0,
             wizard_check_states: Vec::new(),
             wizard_check_scroll: (0.0, 0.0),
@@ -1572,6 +1576,8 @@ impl AppState {
         self.wizard_table_preview_state = None;
         self.wizard_table_page = 0;
         self.wizard_checks.clear();
+        self.wizard_check_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
+        self.wizard_check_table = self.wizard_table_name.clone();
         self.wizard_check_sel = 0;
         self.wizard_check_states.clear();
         self.wizard_check_scroll = (0.0, 0.0);
@@ -1599,6 +1605,8 @@ impl AppState {
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", db::quote_ident(&sel.schema)), [&sel.name], |row| row.get(0)).map_err(|error| error.to_string())?;
         self.wizard_checks = crate::table_sql::table_checks(&sql)?;
+        self.wizard_check_columns = cols.iter().map(|column| column.name.clone()).collect();
+        self.wizard_check_table = sel.name.clone();
         self.wizard_check_sel = 0;
         self.wizard_check_states = vec![None; self.wizard_checks.len()];
         self.wizard_check_scroll = (0.0, 0.0);
@@ -1685,6 +1693,44 @@ impl AppState {
         }
     }
 
+    pub fn table_wizard_names_valid(&self) -> bool {
+        !self.wizard_table_name.trim().is_empty() && self.wizard_cols.iter().enumerate().all(|(index, column)|
+            !column.name.trim().is_empty() && !self.wizard_cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&column.name)))
+    }
+
+    fn renamed_wizard_checks(&self, checks: &[crate::table_sql::NamedCheck]) -> Result<Vec<crate::table_sql::NamedCheck>, String> {
+        if checks.is_empty() { return Ok(Vec::new()); }
+        if self.wizard_check_columns.len() != self.wizard_cols.len() { return Err("CHECK column identities do not match the table draft".into()); }
+        let renames: Vec<_> = self.wizard_check_columns.iter().zip(&self.wizard_cols)
+            .filter(|(old, column)| **old != column.name).map(|(old, column)| (old.as_str(), column.name.as_str())).collect();
+        if renames.is_empty() && self.wizard_check_table == self.wizard_table_name.trim() { return Ok(checks.to_vec()); }
+        crate::table_sql::rename_checks(checks, &self.wizard_check_table, self.wizard_table_name.trim(), &renames)
+    }
+
+    fn table_wizard_options(&self) -> Result<crate::table_sql::TableOptions, String> {
+        let mut options = self.wizard_table_options.clone();
+        if let Some(checks) = &options.checks { options.checks = Some(self.renamed_wizard_checks(checks)?); }
+        Ok(options)
+    }
+
+    pub fn sync_table_check_names(&mut self) -> Result<bool, String> {
+        // Keep the last unambiguous identities while names are empty or temporarily duplicated.
+        if !self.table_wizard_names_valid() { return Ok(false); }
+        let checks = self.renamed_wizard_checks(&self.wizard_checks)?;
+        let changed = checks != self.wizard_checks;
+        for (index, (old, new)) in self.wizard_checks.iter().zip(&checks).enumerate() {
+            if old.expression != new.expression {
+                // shortcut: reference renames reset CHECK history; transform past edits when adding wizard-wide Undo.
+                if let Some(session) = self.wizard_check_states.get_mut(index) { *session = None; }
+            }
+        }
+        self.wizard_checks = checks;
+        if self.wizard_table_options.checks.is_some() { self.wizard_table_options.checks = Some(self.wizard_checks.clone()); }
+        self.wizard_check_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
+        self.wizard_check_table = self.wizard_table_name.trim().to_string();
+        Ok(changed)
+    }
+
     pub fn table_wizard_sql(&self) -> Result<String, String> {
         let name = self.wizard_table_name.trim();
         if name.is_empty() { return Err("Table name required".into()); }
@@ -1698,7 +1744,7 @@ impl AppState {
         crate::table_sql::validate_primary_key(&self.wizard_cols)?;
         let Some(original) = &self.wizard_table_original else {
             for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
-            return crate::table_sql::apply_table_options(&db::create_table_ddl_in(&self.wizard_schema, name, &self.wizard_cols), self.wizard_table_options.clone())
+            return crate::table_sql::apply_table_options(&db::create_table_ddl_in(&self.wizard_schema, name, &self.wizard_cols), self.table_wizard_options()?)
                 .and_then(|sql| crate::table_sql::format_table_preview(&sql));
         };
         if original.schema != self.wizard_schema { return Err("Moving a table between databases requires an explicit SQL migration".into()); }
@@ -1708,9 +1754,13 @@ impl AppState {
         let renames: Vec<_> = self.wizard_cols.iter().zip(&self.wizard_col_sources).filter_map(|(column, source)|
             source.as_ref().filter(|source| **source != column.name).map(|source| (source.as_str(), column.name.as_str()))).collect();
         let sql = crate::table_sql::preview_renames(sql, name, &renames)?;
-        crate::table_sql::rebuild_definition(&sql, &self.wizard_schema, name, &self.wizard_original_cols,
-            &self.wizard_cols, &self.wizard_col_sources, Some(self.wizard_table_options.clone()))
-            .and_then(|sql| crate::table_sql::format_table_preview(&sql))
+        let options = self.table_wizard_options()?;
+        let needs_rebuild = crate::table_sql::requires_rebuild(&self.wizard_original_cols, &self.wizard_cols,
+            &self.wizard_col_sources, &crate::table_sql::table_options(&sql)?, Some(&options));
+        let sql = crate::table_sql::rebuild_definition(&sql, &self.wizard_schema, name, &self.wizard_original_cols,
+            &self.wizard_cols, &self.wizard_col_sources, Some(options))?;
+        let sql = if needs_rebuild { crate::table_sql::unqualify_local_checks(&sql, name)? } else { sql };
+        crate::table_sql::format_table_preview(&sql)
     }
 
     pub fn apply_table_wizard(&mut self) -> Result<(), String> {
@@ -1732,11 +1782,11 @@ impl AppState {
         let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         if let Some(orig) = original.as_ref() {
-            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources, Some(self.wizard_table_options.clone()))?;
+            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources, Some(self.table_wizard_options()?))?;
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
             for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
-            let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &self.wizard_cols), self.wizard_table_options.clone())?;
+            let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &self.wizard_cols), self.table_wizard_options()?)?;
             db::execute_single_statement(conn, &ddl)?;
             self.log_sql(ddl);
         }

@@ -1468,6 +1468,20 @@ pub fn recreate_table_columns_in(
     sources: &[Option<String>],
     options: Option<crate::table_sql::TableOptions>,
 ) -> Result<(), String> {
+    let mut options = options;
+    let mut draft = cols.to_vec();
+    if old_name != new_name {
+        if let Some(checks) = options.as_mut().and_then(|options| options.checks.as_mut()) {
+            *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
+        }
+        for column in &mut draft {
+            if !column.check_expression.trim().is_empty() {
+                let check = crate::table_sql::NamedCheck { name: None, expression: column.check_expression.clone() };
+                column.check_expression = crate::table_sql::rename_checks(&[check], new_name, old_name, &[])?.remove(0).expression;
+            }
+        }
+    }
+    let cols = draft.as_slice();
     let existing = table_column_defs_in(conn, schema, old_name)?;
     if existing.is_empty() {
         return Err(format!("Table {} has no editable columns", qualified_name(schema, old_name)));
@@ -1476,7 +1490,8 @@ pub fn recreate_table_columns_in(
         return Err("Column identities do not match the table draft; reopen Modify Table".into());
     }
     crate::table_sql::validate_primary_key(cols)?;
-    let mut rebuild = match &options { Some(options) => table_options_in(conn, schema, old_name)? != *options, None => false };
+    let old_options = table_options_in(conn, schema, old_name)?;
+    let rebuild = crate::table_sql::requires_rebuild(&existing, cols, sources, &old_options, options.as_ref());
     for (index, (col, source)) in cols.iter().zip(sources).enumerate() {
         if cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&col.name)) {
             return Err(format!("Duplicate column name: {}", col.name));
@@ -1487,12 +1502,8 @@ pub fn recreate_table_columns_in(
             }
             let old = existing.iter().find(|c| c.name == *source).ok_or_else(|| format!("Original column no longer exists: {source}"))?;
             crate::table_sql::column_definition(col, Some(old))?;
-            rebuild |= old.pk != col.pk || old.auto_increment != col.auto_increment || !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
-                || old.default_value != col.default_value || old.unique != col.unique || !old.collation.eq_ignore_ascii_case(&col.collation)
-                || old.check_expression != col.check_expression || old.foreign_key_clause != col.foreign_key_clause || old.generated != col.generated;
         } else {
             crate::table_sql::column_definition(col, None)?;
-            rebuild |= col.pk || col.unique || !col.default_value.trim().is_empty() || !col.collation.is_empty() || !col.check_expression.trim().is_empty() || !col.foreign_key_clause.trim().is_empty() || col.generated.is_some();
         }
     }
     let added: Vec<_> = cols
@@ -1521,13 +1532,6 @@ pub fn recreate_table_columns_in(
             }
         }
     }
-    let retained: Vec<_> = existing
-        .iter()
-        .filter(|c| sources.iter().any(|source| source.as_ref() == Some(&c.name)))
-        .map(|c| &c.name)
-        .collect();
-    let requested: Vec<_> = sources.iter().filter_map(Option::as_ref).collect();
-    rebuild |= retained != requested || sources.iter().skip_while(|source| source.is_some()).any(Option::is_some);
     let mut reserved = table_column_names_in(conn, schema, old_name)?;
     reserved.extend(cols.iter().map(|col| col.name.clone()));
     let mut renames = Vec::new();

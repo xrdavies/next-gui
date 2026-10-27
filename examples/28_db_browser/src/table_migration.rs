@@ -163,8 +163,8 @@ pub fn rebuild(
         }
         number += 1;
     };
-    let definition =
-        table_sql::rebuild_definition(&sql, schema, &temporary, original, draft, sources, options)?;
+    let definition = table_sql::unqualify_local_checks(
+        &table_sql::rebuild_definition(&sql, schema, &temporary, original, draft, sources, options)?, table)?;
     let mut stmt = conn.prepare(&format!("SELECT sql FROM {}.sqlite_schema WHERE tbl_name=?1 AND type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type,name", db::quote_ident(schema))).map_err(|error| error.to_string())?;
     let mut dependencies = stmt
         .query_map([table], |row| row.get::<_, String>(0))
@@ -399,6 +399,33 @@ pub fn rebuild(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualified_local_checks_survive_temporary_rebuild_and_final_table_renames() {
+        for schema in ["main","temp","aux.\"db"] {
+            let conn=Connection::open_in_memory().unwrap();
+            let table=db::qualified_name(schema,"records");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {table}(id INTEGER PRIMARY KEY AUTOINCREMENT,v INTEGER CONSTRAINT positive CHECK(records.v>0),CHECK(records.v<10));
+                INSERT INTO {table}(id,v) VALUES(7,2),(99,3); DELETE FROM {table} WHERE id=99;
+                BEGIN; INSERT INTO {table}(id,v) VALUES(8,4);")).unwrap();
+            let mut draft=db::table_column_defs_in(&conn,schema,"records").unwrap();
+            draft[1].name="amount".into(); draft[1].check_expression="\"changed.名\".amount > 1".into();
+            let options=table_sql::TableOptions { checks:Some(vec![table_sql::NamedCheck { name:Some("range".into()),expression:"\"changed.名\".amount < 20".into() }]),..Default::default() };
+            db::recreate_table_columns_in(&conn,schema,"records","changed.名",&draft,&[Some("id".into()),Some("v".into())],Some(options)).unwrap();
+            let changed=db::qualified_name(schema,"changed.名");
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {changed} WHERE (id=7 AND amount=2) OR (id=8 AND amount=4)")),2);
+            assert_eq!(sequence(&conn,schema,"changed.名").unwrap(),Some(99));
+            assert!(conn.execute(&format!("UPDATE {changed} SET amount=1"),[]).is_err());
+            assert!(conn.execute(&format!("UPDATE {changed} SET amount=20"),[]).is_err());
+            conn.execute(&format!("UPDATE {changed} SET amount=6 WHERE id=7"),[]).unwrap();
+            assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap());
+            assert!(!conn.db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE).unwrap()); assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table} WHERE id=7 AND v=2")),1);
+            assert!(conn.execute(&format!("UPDATE {table} SET v=0"),[]).is_err());
+        }
+    }
 
     #[test]
     fn named_table_checks_edit_clear_and_create_without_losing_other_constraints_or_pending_data() {

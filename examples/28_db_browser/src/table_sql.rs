@@ -28,7 +28,6 @@ pub struct TableOptions {
     pub without_rowid: bool,
     pub strict: bool,
     pub primary_key_conflict: Option<ResolveType>,
-    // shortcut: edited CHECK SQL uses draft identifiers; bind identities when adding automatic constraint rename callbacks.
     pub checks: Option<Vec<NamedCheck>>,
 }
 
@@ -168,6 +167,17 @@ pub fn table_checks(sql: &str) -> Result<Vec<NamedCheck>, String> {
             Some(NamedCheck { name: item.name.as_ref().map(identifier_text), expression: expression.to_string() })
         } else { None }
     }).collect())
+}
+
+pub fn rename_checks(checks: &[NamedCheck], table: &str, target: &str, renames: &[(&str, &str)]) -> Result<Vec<NamedCheck>, String> {
+    checks.iter().map(|check| {
+        let mut definition = check_definition(check)?;
+        let TableConstraint::Check(expression) = &mut definition.constraint else { unreachable!() };
+        let original = expression.clone();
+        rename_table_expression(expression, &identifier(table), Some(target), renames)?;
+        if *expression == original { return Ok(check.clone()); }
+        Ok(NamedCheck { name: check.name.clone(), expression: expression.to_string() })
+    }).collect()
 }
 
 fn check_definition(check: &NamedCheck) -> Result<NamedTableConstraint, String> {
@@ -316,7 +326,7 @@ fn rename_identifier(name: &mut Name, renames: &[(&str, &str)]) {
     }
 }
 
-fn rename_table_expression(expr: &mut Expr, table: &Name, target: &str, renames: &[(&str, &str)]) -> Result<(), String> {
+fn rename_table_expression(expr: &mut Expr, table: &Name, target: Option<&str>, renames: &[(&str, &str)]) -> Result<(), String> {
     match expr {
         Expr::Name(name) => rename_identifier(name, renames),
         Expr::Id(name) => {
@@ -325,7 +335,11 @@ fn rename_table_expression(expr: &mut Expr, table: &Name, target: &str, renames:
             }
         }
         Expr::Qualified(owner, name) | Expr::DoublyQualified(_, owner, name) => {
-            if (*owner).eq(table) { rename_identifier(name, renames); *owner = identifier(target); }
+            if (*owner).eq(table) {
+                rename_identifier(name, renames);
+                if let Some(target) = target { *owner = identifier(target); }
+                else { *expr = Expr::Name(name.clone()); }
+            }
         }
         Expr::Between { lhs, start, end, .. } => {
             for value in [lhs, start, end] { rename_table_expression(value, table, target, renames)?; }
@@ -381,7 +395,7 @@ pub fn preview_renames(sql: &str, target: &str, renames: &[(&str, &str)]) -> Res
         rename_identifier(&mut column.col_name, renames);
         for item in &mut column.constraints {
             match &mut item.constraint {
-                ColumnConstraint::Check(expr) | ColumnConstraint::Generated { expr, .. } => rename_table_expression(expr, &original_table, target, renames)?,
+                ColumnConstraint::Check(expr) | ColumnConstraint::Generated { expr, .. } => rename_table_expression(expr, &original_table, Some(target), renames)?,
                 ColumnConstraint::ForeignKey { clause, .. } => rename_foreign_key(clause),
                 _ => {}
             }
@@ -390,9 +404,9 @@ pub fn preview_renames(sql: &str, target: &str, renames: &[(&str, &str)]) -> Res
     for item in constraints.iter_mut().flatten() {
         match &mut item.constraint {
             TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => {
-                for column in columns { rename_table_expression(&mut column.expr, &original_table, target, renames)?; }
+                for column in columns { rename_table_expression(&mut column.expr, &original_table, Some(target), renames)?; }
             }
-            TableConstraint::Check(expr) => rename_table_expression(expr, &original_table, target, renames)?,
+            TableConstraint::Check(expr) => rename_table_expression(expr, &original_table, Some(target), renames)?,
             TableConstraint::ForeignKey { columns, clause, .. } => {
                 for column in columns { rename_identifier(&mut column.col_name, renames); }
                 rename_foreign_key(clause);
@@ -497,6 +511,40 @@ pub fn validate_primary_key(columns: &[ColDef]) -> Result<(), String> {
         return Err("Autoincrement requires one INTEGER primary-key column".into());
     }
     Ok(())
+}
+
+pub fn requires_rebuild(original: &[ColDef], draft: &[ColDef], sources: &[Option<String>], old_options: &TableOptions, options: Option<&TableOptions>) -> bool {
+    if options.is_some_and(|options| options != old_options) { return true; }
+    for (column, source) in draft.iter().zip(sources) {
+        if let Some(source) = source {
+            let Some(old) = original.iter().find(|old| old.name == *source) else { return true; };
+            if old.pk != column.pk || old.auto_increment != column.auto_increment || !old.type_name.eq_ignore_ascii_case(&column.type_name)
+                || old.notnull != column.notnull || old.default_value != column.default_value || old.unique != column.unique
+                || !old.collation.eq_ignore_ascii_case(&column.collation) || old.check_expression != column.check_expression
+                || old.foreign_key_clause != column.foreign_key_clause || old.generated != column.generated { return true; }
+        } else if column.pk || column.unique || !column.default_value.trim().is_empty() || !column.collation.is_empty()
+            || !column.check_expression.trim().is_empty() || !column.foreign_key_clause.trim().is_empty() || column.generated.is_some() { return true; }
+    }
+    let retained: Vec<_> = original.iter().filter(|column| sources.iter().any(|source| source.as_ref() == Some(&column.name))).map(|column| &column.name).collect();
+    let requested: Vec<_> = sources.iter().filter_map(Option::as_ref).collect();
+    retained != requested || sources.iter().skip_while(|source| source.is_some()).any(Option::is_some)
+}
+
+pub fn unqualify_local_checks(sql: &str, table: &str) -> Result<String, String> {
+    let mut command = parse(sql)?;
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints, .. }, .. }) = &mut command else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    // CHECK identifiers are local to this table; a prefix cannot survive the legacy temporary-table rename.
+    for column in columns.values_mut() {
+        for item in &mut column.constraints {
+            if let ColumnConstraint::Check(expression) = &mut item.constraint { rename_table_expression(expression, &identifier(table), None, &[])?; }
+        }
+    }
+    for item in constraints.iter_mut().flatten() {
+        if let TableConstraint::Check(expression) = &mut item.constraint { rename_table_expression(expression, &identifier(table), None, &[])?; }
+    }
+    Ok(emit(command))
 }
 
 pub fn rebuild_definition(
@@ -931,6 +979,18 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn check_identity_rewrites_preserve_literals_functions_types_and_unrelated_sessions() {
+        let check=NamedCheck { name:Some("a".into()), expression:"t.a < b AND abs(a)>0 AND CAST(a AS a)>0 AND a COLLATE a != 'a'".into() };
+        let unchanged=NamedCheck { name:None,expression:"length('kept') > 0 -- keep comment".into() };
+        let renamed=rename_checks(&[check.clone(),unchanged.clone()],"t","renamed",&[("a","b"),("b","a")]).unwrap();
+        assert_eq!(renamed[0].name,check.name); assert_eq!(renamed[1],unchanged);
+        let expression=&renamed[0].expression;
+        assert!(expression.contains("\"renamed\".\"b\" < \"a\"") && expression.contains("abs (\"b\")") && expression.contains("AS a") && expression.contains("COLLATE a") && expression.contains("'a'"),"{expression}");
+        assert!(rename_checks(&[NamedCheck { name:None,expression:"a +".into() }],"t","renamed",&[("a","b")]).is_err());
+        assert_eq!(check.expression,"t.a < b AND abs(a)>0 AND CAST(a AS a)>0 AND a COLLATE a != 'a'");
+    }
 
     #[test]
     fn table_preview_matches_saved_renames_without_rewriting_literals_functions_or_other_tables() {
