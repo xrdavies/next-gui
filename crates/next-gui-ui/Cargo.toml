@@ -9,6 +9,7 @@ description = "Compact declarative UI API for next-gui (retained sync to scene)"
 next-gui-scene = { workspace = true }
 next-gui-layout = { workspace = true }
 next-gui-text = { workspace = true }
+unicode-segmentation = "1.13"
 
 [dev-dependencies]
 next-gui-render = { workspace = true }

@@ -85,6 +85,20 @@ impl Backend {
 }
 
 fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
+    let word_modifier = if cfg!(target_os = "macos") {
+        modifiers.alt && !modifiers.ctrl && !modifiers.meta
+    } else {
+        modifiers.ctrl && !modifiers.alt && !modifiers.meta
+    };
+    if word_modifier {
+        match key {
+            KeyCode::Left => return Some(if modifiers.shift { UiKey::SelectWordLeft } else { UiKey::WordLeft }),
+            KeyCode::Right => return Some(if modifiers.shift { UiKey::SelectWordRight } else { UiKey::WordRight }),
+            KeyCode::Backspace => return Some(UiKey::DeleteWordLeft),
+            KeyCode::Delete => return Some(UiKey::DeleteWordRight),
+            _ => {}
+        }
+    }
     if modifiers.commandish() {
         return match key {
             KeyCode::Char('a' | 'A') => Some(UiKey::SelectAll),
@@ -530,7 +544,7 @@ impl Demo {
             state.tab = match tab.to_ascii_lowercase().as_str() {
                 "browse" | "header-menu" => MainTab::Browse,
                 "pragmas" => MainTab::Pragmas,
-                "sql" | "execute" | "sql-long" | "sql-calltip" => MainTab::ExecuteSql,
+                "sql" | "execute" | "sql-long" | "sql-calltip" | "sql-word" => MainTab::ExecuteSql,
                 "wizard" | "table" => {
                     state.open_create_table_wizard();
                     MainTab::Structure
@@ -681,6 +695,11 @@ impl Demo {
             state.replace_text = "東京".into();
         }
         let qa_calltip = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("sql-calltip");
+        let qa_word = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("sql-word");
+        if qa_word {
+            state.sql_result = None;
+            state.sql_tabs[0] = "SELECT 中文_name, other_name".into();
+        }
         if qa_calltip {
             state.sql_result = None;
             state.sql_tabs[0] = format!("{}SELECT coalesce(\n    substr('中文 SQL editor', 1,", "-- Function argument hints\n".repeat(24));
@@ -691,6 +710,14 @@ impl Demo {
             built.ui.select_text_area_range(built.sql_area, 0..0);
             built.ui.find_in_text_area(built.sql_area, &state.find_text);
             built.ui.set_focus(Some(built.sql_area));
+            built.ui.sync(&mut built.scene);
+        }
+        if qa_word {
+            let caret = state.sql_editor().chars().count();
+            built.ui.set_focus(Some(built.sql_area));
+            built.ui.select_text_area_range(built.sql_area, caret..caret);
+            built.ui.key_input(UiKey::WordLeft);
+            built.ui.key_input(UiKey::SelectWordRight);
             built.ui.sync(&mut built.scene);
         }
         if qa_calltip {
@@ -2138,7 +2165,7 @@ impl Demo {
     fn input_key_with_sql_completions(&mut self, key: UiKey) -> bool {
         let was_open = self.ui.text_area_completions_open(self.ids.sql_area);
         let handled = self.ui.key_input(key);
-        if handled && matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete) {
+        if handled && matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete | UiKey::DeleteWordLeft | UiKey::DeleteWordRight) {
             self.show_sql_completions(was_open);
         }
         handled
@@ -4992,6 +5019,43 @@ mod interaction_tests {
         demo.do_rebuild();
         assert_eq!(demo.ui.list_selected(demo.ids.ov_list), Some(1));
         assert_eq!(demo.ui.text_input_value(demo.ids.ov_col_name), Some("name"));
+    }
+
+    #[test]
+    fn sql_editor_word_shortcuts_move_to_identifier_boundaries() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.tab = MainTab::ExecuteSql;
+        let sql = "SELECT 中文_name, other_name";
+        demo.state.sql_tabs[0] = sql.into();
+        demo.do_rebuild();
+        let area = demo.ids.sql_area;
+        demo.ui.set_focus(Some(area));
+        let end = sql.chars().count();
+        let start = sql[..sql.find("other_name").unwrap()].chars().count();
+        demo.ui.select_text_area_range(area, end..end);
+        let word = if cfg!(target_os = "macos") { Modifiers { alt: true, ..Modifiers::default() } }
+            else { Modifiers { ctrl: true, ..Modifiers::default() } };
+        demo.ui.key_input(map_key(KeyCode::Left, word).unwrap());
+        assert_eq!(demo.ui.text_area_caret(area), Some(start));
+        demo.ui.key_input(map_key(KeyCode::Right, Modifiers { shift: true, ..word }).unwrap());
+        assert_eq!(demo.ui.text_area_selected_text(area).as_deref(), Some("other_name"));
+        if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_WORD_QA_OUT") {
+            demo.ui.sync(&mut demo.scene);
+            demo.scene.mark_full_dirty(1200.0, 800.0);
+            let dirty = demo.scene.take_dirty();
+            let mut renderer = SoftRenderer::new(1200, 800, clear_color(&demo.theme));
+            renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&path, renderer.frame_pixels().unwrap().0, 1200, 800).unwrap();
+        }
+        demo.input_key_with_sql_completions(map_key(KeyCode::Backspace, word).unwrap());
+        assert_eq!(demo.ui.text_area_value(area), Some("SELECT 中文_name, "));
+        demo.ui.key_input(UiKey::Undo);
+        assert_eq!(demo.ui.text_area_value(area), Some(sql));
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some(sql));
+        assert_eq!(demo.ui.text_area_selected_text(demo.ids.sql_area).as_deref(), Some("other_name"));
+        assert!(demo.state.sql_result.is_none());
     }
 
     #[test]

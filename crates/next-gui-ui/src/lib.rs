@@ -2377,6 +2377,18 @@ pub enum UiKey {
     SelectLeft,
     /// Extend selection right.
     SelectRight,
+    /// Move to the previous TextArea word start (alphanumeric/underscore runs).
+    WordLeft,
+    /// Move to the next TextArea word start, skipping trailing whitespace.
+    WordRight,
+    /// Extend TextArea selection to the previous word start.
+    SelectWordLeft,
+    /// Extend TextArea selection to the next word start.
+    SelectWordRight,
+    /// Delete the selection or TextArea text back to the previous word start.
+    DeleteWordLeft,
+    /// Delete the selection or TextArea text through the next word start.
+    DeleteWordRight,
     /// Extend selection up one visual line.
     SelectUp,
     /// Extend selection down one visual line.

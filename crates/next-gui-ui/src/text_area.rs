@@ -1,5 +1,6 @@
 use super::*;
 use std::ops::Range;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct TextAreaEdit {
@@ -42,6 +43,35 @@ fn byte_offset(value: &str, index: usize) -> usize {
         .char_indices()
         .nth(index)
         .map_or(value.len(), |(i, _)| i)
+}
+
+// Scintilla character classes, with grapheme clusters kept intact at word boundaries.
+// shortcut: scan clusters per word command; cache boundaries if large-document profiling requires it.
+fn word_boundary(value: &str, index: usize, forward: bool) -> usize {
+    let mut offset = 0;
+    let units = value.graphemes(true).map(|grapheme| {
+        let start = offset;
+        offset += grapheme.chars().count();
+        let c = grapheme.chars().next().unwrap();
+        let class = if c.is_whitespace() { 0 } else if c.is_alphanumeric() || c == '_' { 1 } else { 2 };
+        (start, offset, class)
+    }).collect::<Vec<_>>();
+    if forward {
+        let mut i = units.partition_point(|(_, end, _)| *end <= index);
+        if let Some((_, _, class)) = units.get(i).copied() {
+            while i < units.len() && units[i].2 == class { i += 1; }
+            while i < units.len() && units[i].2 == 0 { i += 1; }
+        }
+        units.get(i).map_or(offset, |u| u.0)
+    } else {
+        let mut i = units.partition_point(|(start, _, _)| *start < index);
+        while i > 0 && units[i - 1].2 == 0 { i -= 1; }
+        if i > 0 {
+            let class = units[i - 1].2;
+            while i > 0 && units[i - 1].2 == class { i -= 1; }
+        }
+        units.get(i).map_or(0, |u| u.0)
+    }
 }
 
 fn remember(history: &mut Vec<EditSnapshot>, snapshot: EditSnapshot) {
@@ -434,10 +464,13 @@ impl Ui {
 
     pub(super) fn key_text_area(&mut self, id: WidgetId, key: UiKey) -> bool {
         if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { read_only: true, .. }))
-            && matches!(key, UiKey::Char(_) | UiKey::Enter | UiKey::Backspace | UiKey::Delete | UiKey::Undo | UiKey::Redo)
+            && matches!(key, UiKey::Char(_) | UiKey::Enter | UiKey::Backspace | UiKey::Delete | UiKey::DeleteWordLeft | UiKey::DeleteWordRight | UiKey::Undo | UiKey::Redo)
         {
             return true;
         }
+        if matches!(key, UiKey::WordLeft | UiKey::WordRight | UiKey::SelectWordLeft | UiKey::SelectWordRight | UiKey::DeleteWordLeft | UiKey::DeleteWordRight)
+            && matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { preedit, .. }) if !preedit.is_empty())
+        { return true; }
         if let UiKey::Char(c) = key {
             return self.replace_text_area_selection(id, &c.to_string());
         }
@@ -489,6 +522,8 @@ impl Ui {
             key,
             UiKey::SelectLeft
                 | UiKey::SelectRight
+                | UiKey::SelectWordLeft
+                | UiKey::SelectWordRight
                 | UiKey::SelectUp
                 | UiKey::SelectDown
                 | UiKey::SelectHome
@@ -498,12 +533,13 @@ impl Ui {
         );
         let target = match key {
             UiKey::SelectAll => return self.select_text_area_range(id, 0..len),
-            UiKey::Backspace | UiKey::Delete => {
+            UiKey::Backspace | UiKey::Delete | UiKey::DeleteWordLeft | UiKey::DeleteWordRight => {
                 if range.is_empty() {
-                    let range = if key == UiKey::Backspace {
-                        old.saturating_sub(1)..old
-                    } else {
-                        old..(old + 1).min(len)
+                    let range = match key {
+                        UiKey::Backspace => old.saturating_sub(1)..old,
+                        UiKey::DeleteWordLeft => word_boundary(value, old, false)..old,
+                        UiKey::DeleteWordRight => old..word_boundary(value, old, true),
+                        _ => old..(old + 1).min(len),
                     };
                     self.select_text_area_range(id, range);
                 }
@@ -551,6 +587,8 @@ impl Ui {
             UiKey::Right if !range.is_empty() => range.end,
             UiKey::Left | UiKey::SelectLeft => old.saturating_sub(1),
             UiKey::Right | UiKey::SelectRight => (old + 1).min(len),
+            UiKey::WordLeft | UiKey::SelectWordLeft => word_boundary(value, old, false),
+            UiKey::WordRight | UiKey::SelectWordRight => word_boundary(value, old, true),
             UiKey::Up | UiKey::SelectUp => {
                 nearest_on_row(&points, target_x, (y - layout.line_height).max(0.0))
             }
@@ -856,6 +894,84 @@ mod tests {
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         (ui, scene, area)
+    }
+
+    #[test]
+    fn word_navigation_groups_identifiers_punctuation_and_complete_graphemes() {
+        let text = "SELECT 中文_name, cafe\u{301} + 👩‍👩‍👧‍👦\r\n  next";
+        let starts = ["SELECT", "中文_name", ",", "cafe", "+", "👩‍👩‍👧‍👦", "next"]
+            .map(|token| text[..text.find(token).unwrap()].chars().count());
+        let end = text.chars().count();
+        let (mut ui, _, area) = editor(text);
+        ui.select_text_area_range(area, 0..0);
+        for expected in starts.into_iter().skip(1).chain([end, end]) {
+            assert!(ui.key_input(UiKey::WordRight));
+            assert_eq!(ui.text_area_caret(area), Some(expected));
+        }
+        for expected in starts.into_iter().rev().chain([0]) {
+            assert!(ui.key_input(UiKey::WordLeft));
+            assert_eq!(ui.text_area_caret(area), Some(expected));
+        }
+        ui.key_input(UiKey::WordRight);
+        ui.key_input(UiKey::SelectWordRight);
+        assert_eq!(ui.text_area_selected_text(area).as_deref(), Some("中文_name"));
+        ui.key_input(UiKey::SelectWordLeft);
+        assert_eq!(ui.text_area_selection(area), Some(starts[1]..starts[1]));
+        assert_eq!(ui.text_area_value(area), Some(text));
+        let (mut empty, _, area) = editor("");
+        for key in [UiKey::WordLeft, UiKey::WordRight, UiKey::DeleteWordLeft, UiKey::DeleteWordRight] {
+            assert!(empty.key_input(key));
+            assert_eq!(empty.text_area_value(area), Some(""));
+        }
+    }
+
+    #[test]
+    fn word_deletions_preserve_other_text_and_restore_their_editing_session() {
+        let text = "one cafe\u{301} 👩‍💻 two";
+        let (mut ui, _, area) = editor(text);
+        let end = text.chars().count();
+        ui.select_text_area_range(area, end..end);
+        ui.key_input(UiKey::DeleteWordLeft);
+        assert_eq!(ui.text_area_value(area), Some("one cafe\u{301} 👩‍💻 "));
+        let state = ui.text_area_state(area).unwrap();
+        let (mut rebuilt, _, other) = editor("one cafe\u{301} 👩‍💻 ");
+        rebuilt.restore_text_area_state(other, &state);
+        rebuilt.key_input(UiKey::Undo);
+        assert_eq!(rebuilt.text_area_value(other), Some(text));
+        rebuilt.key_input(UiKey::Redo);
+        assert_eq!(rebuilt.text_area_value(other), Some("one cafe\u{301} 👩‍💻 "));
+        ui.key_input(UiKey::Undo);
+        ui.select_text_area_range(area, 4..4);
+        ui.key_input(UiKey::DeleteWordRight);
+        assert_eq!(ui.text_area_value(area), Some("one 👩‍💻 two"));
+        ui.key_input(UiKey::Undo);
+        ui.select_text_area_range(area, 4..9);
+        ui.key_input(UiKey::DeleteWordRight);
+        assert_eq!(ui.text_area_value(area), Some("one  👩‍💻 two"));
+        ui.key_input(UiKey::Undo);
+        assert_eq!(ui.text_area_value(area), Some(text));
+    }
+
+    #[test]
+    fn word_deletion_respects_read_only_and_new_word_keys_defer_to_composition() {
+        let (mut ui, _, area) = editor("SELECT 中文_name");
+        ui.set_text_area_read_only(area, true);
+        for key in [UiKey::DeleteWordLeft, UiKey::DeleteWordRight] { assert!(ui.key_input(key)); }
+        assert_eq!(ui.text_area_value(area), Some("SELECT 中文_name"));
+        ui.key_input(UiKey::WordLeft);
+        assert_eq!(ui.text_area_caret(area), Some(7));
+        ui.set_text_area_read_only(area, false);
+        ui.ime_preedit("候选", None);
+        let before = ui.text_area_selection(area);
+        for key in [UiKey::WordLeft, UiKey::WordRight, UiKey::SelectWordLeft, UiKey::SelectWordRight,
+            UiKey::DeleteWordLeft, UiKey::DeleteWordRight] { assert!(ui.key_input(key)); }
+        assert_eq!(ui.text_area_selection(area), before);
+        let Kind::TextArea { preedit, .. } = &ui.widgets[&area].kind else { unreachable!() };
+        assert_eq!(preedit, "候选");
+        ui.ime_commit("字");
+        assert_eq!(ui.text_area_value(area), Some("SELECT 字中文_name"));
+        ui.key_input(UiKey::Undo);
+        assert_eq!(ui.text_area_value(area), Some("SELECT 中文_name"));
     }
 
     #[test]

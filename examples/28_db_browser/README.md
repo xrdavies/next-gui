@@ -57,6 +57,11 @@ hint or cycles to the next overload. Long hint text scrolls with the wheel over
 the hint or Cmd/Ctrl+Shift+PageUp/PageDown. The SQL editor keeps focus, selection
 and undo history; ordinary PageUp/PageDown still navigates the document.
 
+Option+Left/Right on macOS (Ctrl+Left/Right on Windows/Linux) moves by word in
+the SQL editor; Shift extends the selection. The same modifier with Backspace
+or forward Delete removes the selection or one word in that direction, as one
+undoable edit. Identifier runs include Unicode letters and underscores.
+
 Execute runs the selection when present, otherwise the entire script.
 Cmd/Ctrl+Enter executes, Cmd/Ctrl+F opens Find, Cmd/Ctrl+Z undoes, and
 Cmd/Ctrl+Shift+Z or Ctrl+Y redoes. Cmd/Ctrl+C/X/V copy, cut and paste the SQL

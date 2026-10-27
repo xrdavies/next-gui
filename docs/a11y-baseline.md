@@ -107,6 +107,18 @@ Escape 关闭，其他按键继续编辑。替换范围使用 Unicode scalar 偏
 菜单、选区、失焦、只读、过期文档、离屏定位与 IME 组合会隐藏提示。
 `text_area_hint` 提供当前有效文字，提示组件的可访问名也包含文字；尚无 OS 读屏提示播报桥接。
 
+### 按词移动、选择和删除
+
+TextArea 支持 `UiKey::WordLeft` / `WordRight`、`SelectWordLeft` /
+`SelectWordRight` 和 `DeleteWordLeft` / `DeleteWordRight`。默认词类为
+Unicode 字母/数字/下划线、空白、标点；词边界保留组合字符和 emoji 字素簇。
+删除优先作用于已有选择，否则删除至对应词边界，并保留一次 Undo。
+只读控件允许移动/选择并阻止删除；IME 组合期间这些命令不修改组合或文档。
+e28 在 macOS 映射 Option，在 Windows/Linux 映射 Ctrl；Shift 扩展选择。
+其他调用者可映射这些枚举值；下游穷尽匹配 `UiKey` 时需要增加相应分支。
+普通逐字符移动和指针命中的完整字素支持仍未实现；这不是完整原生编辑器验收。
+
+
 ## 2. 可访问名
 
 | API | 说明 |

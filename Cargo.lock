@@ -1569,6 +1569,7 @@ dependencies = [
  "next-gui-render-soft",
  "next-gui-scene",
  "next-gui-text",
+ "unicode-segmentation",
 ]
 
 [[package]]
