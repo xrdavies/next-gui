@@ -14,6 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-4bb6e7d46905-F01 | verified | P2 | grok | shared / e28 | existing branch | text_area | TextArea handles page navigation, Shift selection and viewport movement | [F01](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f01) | 4bb6e7d46905 | 4bb6e7d46905 |
+| R-20261027-4bb6e7d46905-F02 | verified | P2 | grok | shared / e28 | existing branch | text_area | Keyboard row targeting avoids fractional-height one-row drift | [F02](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f02) | 4bb6e7d46905 | 4bb6e7d46905 |
+| R-20261027-4bb6e7d46905-F03 | open | P2 | grok | shared / e28 | existing branch | text_area | Vertical keys need remembered horizontal goal across shorter lines | [F03](R-20261027-4bb6e7d46905.md#r-20261027-4bb6e7d46905-f03) | — | — |
 | R-20261027-3ab164fed903-F01 | verified | P1 | grok | e28 / shared | existing branch | SQL comment action | Selected-line comments preserve unrelated SQL, EOLs and undo sessions | [F01](R-20261027-3ab164fed903.md#r-20261027-3ab164fed903-f01) | 3ab164fed903 | 3ab164fed903 |
 | R-20261027-fdbf1e3c3942-F01 | verified | P2 | grok | e28 / shared | existing branch | see report | Popup owner changes hide the previous overlay | [F01](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f01) | fdbf1e3c3942 | fdbf1e3c3942 |
 | R-20261027-fdbf1e3c3942-F02 | verified | P2 | grok | e28 / shared | existing branch | see report | Light selection and menu highlight text contrast repaired | [F02](R-20261027-fdbf1e3c3942.md#r-20261027-fdbf1e3c3942-f02) | fdbf1e3c3942 | fdbf1e3c3942 |
