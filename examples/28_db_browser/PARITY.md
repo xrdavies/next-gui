@@ -545,3 +545,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Multiline index editing checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-abc0450a381d.md): syntax-colored key and partial WHERE TextAreas preserve focus, selection and Undo through rebuilding; multiline expressions/comments and failed replacement retain their exact drafts. Narrow top/bottom scrolling keeps actions reachable. 407 tests/strict checks, twelve Soft/Metal pairs and two native static forms inspected. Available/ordered key controls, SQL preview, full table migration and native input acceptance remain unfinished.
+
+## Ordered index key and preview checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-0333104cbccf.md): available/ordered key lists now add generated/quoted columns and expressions, edit/remove/reorder through the same undoable SQL draft, and show execution-identical read-only SQL. Shared List offset/reveal APIs retain long-list sessions; preview selection/focus also restores. 410 tests/strict checks, fourteen Soft/Metal pairs and two native static forms inspected. Dedicated key-order selector/type presentation, exact original transfer behavior, full table migration and native acceptance remain unfinished.
