@@ -14,8 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-27 | `c365bf6..3855f40fe8ba` | Codex | issues — F02 verified: 353 tests/strict checks; original extra words, keyword case/Cancel/defaults, dark/light/Metal delta 1 pass; native acceptance remains unavailable | [Report](R-20261027-3855f40fe8ba.md) |
 | 2026-10-27 | `ba6a66d..605b04835365` | Codex | issues — 351 tests/strict checks; SQL namespace completion, shared suggestion input/Undo and dark/light Metal delta 1 verified; original keyword case/words and native acceptance remain | [Report](R-20261027-605b04835365.md) |
-| R-20261027-605b04835365-F02 | open | P2 | grok | e28 / all | incomplete parity | SQL completion / Prefs | Original extra keyword/type words and keyword output-case preference remain absent | [F02](R-20261027-605b04835365.md#r-20261027-605b04835365-f02) | — | — |
+| R-20261027-605b04835365-F02 | verified | P2 | grok | e28 / all | incomplete parity | SQL completion / Prefs | Original extra words share syntax/completion; output case, defaults and draft Cancel verified | [F02](R-20261027-605b04835365.md#r-20261027-605b04835365-f02) | 3855f40fe8ba | 3855f40fe8ba |
 | R-20261027-605b04835365-F01 | verified | P2 | grok | shared / all | existing branch | paint_item_popup | Long menu labels clip within narrow rows without truncating insertion text | [F01](R-20261027-605b04835365.md#r-20261027-605b04835365-f01) | 605b04835365 | 605b04835365 |
 | 2026-10-27 | `69e0dac..b8afc40b7b78` | Codex | issues — 341 tests/strict checks, token colors/foreground sessions and Soft/Metal delta 2 verified; dark/light inspected; native capture failed while display asleep | [Report](R-20261027-b8afc40b7b78.md) |
 | 2026-10-27 | `c5ce8bc..4c3ca63f83ac` | Codex | pass for physical line numbers — 336 tests/strict checks, Soft/Metal delta 2, dark/light/14 Office/native static inspection; full editor/native acceptance remain | [Report](R-20261027-4c3ca63f83ac.md) |

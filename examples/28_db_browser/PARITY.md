@@ -63,7 +63,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Create Index… | partial | Basic name/table/raw column SQL/unique; no structured order/expression/partial-index editor. |
 | Modify Object… | partial | Native ALTER preserves constraints/triggers/indexes; definition changes/reordering and expression/partial indexes require explicit SQL |
 | Delete Object… | done | confirm + DROP |
-| Preferences… | partial | Six options including SQL auto completion; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
+| Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
 
 ## View menu
 
@@ -135,7 +135,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). PageUp/PageDown with Shift selection now moves the caret/viewport by visual lines. Vertical keys retain the desired column through short lines and same-layout sessions. Optional shared physical line numbers are enabled in SQL/Find, with wrap/scroll/pointer/IME alignment. Lexical token colors cover runtime keywords, literals, quoted names, parameters, functions and comments. Cached keyword/function/schema/table/column suggestions support automatic/manual triggering, quoted/qualified replacement and undo. Original extra keyword/type words, keyword case preferences, calltips, full syntax styling and grapheme-aware navigation remain. |
+| SQL editor | partial | Shared TextArea now has pointer/drag and keyboard selection, scrolling, undo/redo, IME replacement and rebuild state (F01 addressed). PageUp/PageDown with Shift selection now moves the caret/viewport by visual lines. Vertical keys retain the desired column through short lines and same-layout sessions. Optional shared physical line numbers are enabled in SQL/Find, with wrap/scroll/pointer/IME alignment. Lexical token colors cover runtime keywords, literals, quoted names, parameters, functions and comments. Cached keyword/function/schema/table/column suggestions support automatic/manual triggering, quoted/qualified replacement and undo. Original extra keyword/type words now share syntax/completion; keyword output case is a persisted draft preference. Calltips, full syntax styling and grapheme-aware navigation remain. |
 | Execute / message / results table | partial | Final statement preview, at most 500 displayed rows; results/messages/export snapshots belong to each SQL tab (F09 addressed). |
 | Toolbar: Open Tab, Open/Save file, Execute, Stop, Find | partial | Selection/whole-script execution, source-bound Save/Save As and shortcuts; external file changes reject overwrite; opening preserves existing drafts. |
 | Multi SQL tabs | partial | Independent drafts/sessions/results, file names and dirty markers; Close Tab, move arrows and Cmd/Ctrl+T/W/S/Shift+S. Pointer tab dragging, close affordances and rename remain. |
@@ -164,7 +164,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | UTF-8 plus BOM-detected UTF-16LE/BE; malformed units/surrogates and unsupported UTF-32 BOMs are rejected before writing; delimiter/quote/header and multiline quoting supported; legacy code pages and an explicit encoding picker remain |
 | ExportSqlDialog (options) | partial | Four switches, all tables; no multi-table selection, IF NOT EXISTS mode, INSERT batching or original-CREATE choice. |
 | CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
-| PreferencesDialog | partial | Font/theme/drop confirmation/CSV delimiter/frozen count/SQL auto completion; Cancel preserves live settings (F11 addressed); full upstream preferences absent. |
+| PreferencesDialog | partial | Font/theme/drop confirmation/CSV delimiter/frozen count/SQL auto completion/keyword case; Cancel preserves live settings (F11 addressed); full upstream preferences absent. |
 | FindReplaceDialog | partial | Six search options, Find All and disjoint highlights, Unicode captures/escapes, F3/Shift+F3 and atomic undoable replacement; PCRE2 is not certified Scintilla regex compatibility. One-second scan budget; large backward searches still need a cancellable worker. |
 | EditDialog (blob/image/hex) | partial | Multiline text/JSON, typed/NULL values, Hex and RGBA preview; Fit/1:1/zoom/pan/original image export supported (F12 addressed). Full binary editor remains. |
 | Load Extension | done | OverlayKind::LoadExtension |
@@ -467,3 +467,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## SQL namespace completion checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-605b04835365.md): shared caret-anchored, paged completion menus accept one undoable replacement, retain editor focus, and reject stale/read-only/composing contexts. SQL/Find supply cached engine functions and all attached/temp schema/table/column paths, quote-aware Unicode replacements, three-character auto triggering and explicit Ctrl/Command+Space. Built-in functions work while disconnected, and auto completion has a compatible persisted draft preference. 351 tests/strict checks pass; dark/light Soft and preference overlay inspected; actual completion Metal readback delta 1. Long menu-label overflow was reproduced and fixed. F02 tracks original extra word/case settings; calltips, full editor/native/original acceptance remain open. Query-scope alias/CTE analysis is outside the reference static API provider verified here.
+
+
+## Original keyword parity checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-3855f40fe8ba.md): F02 verified after reproducing missing ANY. Eleven original editor/type words now share keyword colors and completion; keyword output case defaults uppercase and has a persisted draft preference. Functions and object spellings stay intact. 353 tests/strict checks, dark/light Soft, preference overlay and actual completion Metal delta 1 pass. Native display remains asleep; function calltips, broader editor/preferences and native/original acceptance remain unfinished.
