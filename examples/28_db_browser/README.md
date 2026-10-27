@@ -197,3 +197,11 @@ budget. Forward navigation stops at its first match. Large backward overlap scan
 still need a cancellable worker; full Scintilla regex dialect/native acceptance
 is not established. The six options and transient search scope are session state,
 not additional project XML settings.
+
+### Browse row selection (2026-10-27)
+
+The shared Table supports a contiguous row range with Shift+Up/Down. The active
+range remains selected through e28 rebuilds and is copied as TSV with Cmd/Ctrl+C;
+copying a text editor still uses the existing Unicode selection path. Cell-level
+ranges, TSV paste/bulk updates, inline editing, column hide/reorder and total-count
+navigation remain open parity work.

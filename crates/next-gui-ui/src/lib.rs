@@ -1759,6 +1759,8 @@ enum Kind {
         selected_row: Option<usize>,
         /// Column index of the last body click (for cell editors).
         selected_col: Option<usize>,
+        /// Inclusive row range selected with Shift+Up/Down.
+        selected_range: Option<(usize, usize)>,
         scroll_y: f32,
         /// Horizontal scroll for columns beyond [`frozen_cols`].
         scroll_x: f32,
@@ -4389,6 +4391,23 @@ impl Ui {
         }
     }
 
+    /// Inclusive selected row range. A single click is a one-row range.
+    pub fn table_selected_rows(&self, id: WidgetId) -> Option<(usize, usize)> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { selected_range, selected_row, .. }) => selected_range.or_else(|| selected_row.map(|row| (row, row))),
+            _ => None,
+        }
+    }
+
+    /// Copy the selected table rows as tab-separated text.
+    pub fn table_selected_text(&self, id: WidgetId) -> Option<String> {
+        let Some(Kind::Table { rows, columns, .. }) = self.widgets.get(&id).map(|w| &w.kind) else { return None; };
+        let (start, end) = self.table_selected_rows(id)?;
+        let end = end.min(rows.len().saturating_sub(1));
+        if start > end { return None; }
+        Some((start..=end).map(|row| (0..columns.len()).map(|col| rows[row].get(col).map(String::as_str).unwrap_or("")).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"))
+    }
+
     /// Drain last Table header click as `(table_id, column_index)`.
     pub fn take_table_header_click(&mut self) -> Option<(WidgetId, usize)> {
         self.pending_table_header_click.take()
@@ -4451,12 +4470,24 @@ impl Ui {
             if let Kind::Table {
                 rows,
                 selected_row,
+                selected_range,
                 ..
             } = &mut w.kind
             {
                 *selected_row = row.filter(|i| *i < rows.len());
+                *selected_range = selected_row.map(|i| (i, i));
             }
         }
+    }
+
+    /// Set an inclusive table row range without changing the active row.
+    pub fn set_table_selected_rows(&mut self, id: WidgetId, range: Option<(usize, usize)>) -> bool {
+        let Some(Widget { kind: Kind::Table { rows, selected_row, selected_range, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let Some((start, end)) = range else { *selected_range = None; return true; };
+        if start >= rows.len() || end >= rows.len() { return false; }
+        *selected_range = Some((start.min(end), start.max(end)));
+        *selected_row = Some(end);
+        true
     }
 
     /// Replace table body rows.
@@ -4465,6 +4496,7 @@ impl Ui {
             if let Kind::Table {
                 rows: slot,
                 selected_row,
+                selected_range,
                 scroll_y,
                 ..
             } = &mut w.kind
@@ -4473,6 +4505,7 @@ impl Ui {
                 if let Some(i) = *selected_row {
                     if i >= slot.len() {
                         *selected_row = slot.len().checked_sub(1);
+                        *selected_range = selected_row.map(|i| (i, i));
                     }
                 }
                 *scroll_y = 0.0;
@@ -5502,11 +5535,13 @@ impl Ui {
                 if let Kind::Table {
                     selected_row,
                     selected_col,
+                    selected_range,
                     ..
                 } = &mut w.kind
                 {
                     *selected_row = Some(idx as usize);
                     *selected_col = column_hit;
+                    *selected_range = Some((idx as usize, idx as usize));
                 }
             }
         }
@@ -5711,15 +5746,19 @@ impl Ui {
         }
         let cur = self.table_selected_row(id);
         match key {
-            UiKey::Down => {
+            UiKey::Down | UiKey::SelectDown => {
                 let next = cur.map(|i| (i + 1).min(n - 1)).unwrap_or(0);
+                let range_start = cur.unwrap_or(next);
                 self.set_table_selected_row(id, Some(next));
+                if key == UiKey::SelectDown { if let Some(w) = self.widgets.get_mut(&id) { if let Kind::Table { selected_range, .. } = &mut w.kind { *selected_range = Some((range_start, next)); } } }
                 self.ensure_selected_visible_table(id);
                 true
             }
-            UiKey::Up => {
+            UiKey::Up | UiKey::SelectUp => {
                 let next = cur.map(|i| i.saturating_sub(1)).unwrap_or(0);
+                let range_start = cur.unwrap_or(next);
                 self.set_table_selected_row(id, Some(next));
+                if key == UiKey::SelectUp { if let Some(w) = self.widgets.get_mut(&id) { if let Kind::Table { selected_range, .. } = &mut w.kind { *selected_range = Some((range_start, next)); } } }
                 self.ensure_selected_visible_table(id);
                 true
             }
@@ -11701,6 +11740,7 @@ impl Ui {
                     rows,
                     selected_row,
                     selected_col: _,
+                    selected_range,
                     scroll_y,
                     scroll_x,
                     frozen_cols,
@@ -11718,6 +11758,7 @@ impl Ui {
         let columns = columns.clone();
         let rows = rows.clone();
         let selected_row = *selected_row;
+        let selected_range = *selected_range;
         let scroll_y = *scroll_y;
         let scroll_x = *scroll_x;
         let frozen_cols = *frozen_cols;
@@ -11808,7 +11849,7 @@ impl Ui {
                 }
                 continue;
             }
-            let is_sel = selected_row == Some(ri);
+            let is_sel = selected_range.map_or(selected_row == Some(ri), |(start, end)| ri >= start.min(end) && ri <= start.max(end));
             if let Some(&bg) = aux.get(base) {
                 scene.set_clip(bg, Some(body_clip));
                 scene.set_bounds(
@@ -17823,6 +17864,7 @@ impl FlexBuilder<'_> {
                     rows,
                     selected_row: None,
                     selected_col: None,
+                    selected_range: None,
                     scroll_y: 0.0,
                     scroll_x: 0.0,
                     frozen_cols: 0,
@@ -18479,6 +18521,7 @@ impl FlexBuilder<'_> {
                     rows,
                     selected_row: None,
                     selected_col: None,
+                    selected_range: None,
                     scroll_y: 0.0,
                     scroll_x: 0.0,
                     frozen_cols: 0,
@@ -22752,4 +22795,17 @@ mod tests {
             other => panic!("expected Button, got {other:?}"),
         }
     }
+}
+
+#[cfg(test)]
+mod range_smoke_tests {
+ use super::*;
+ #[test]
+ fn range_text_is_tsv() {
+  let mut ui=Ui::new(); let mut id=WidgetId(0);
+  ui.column(ColumnStyle { width: 220.0, height: 160.0, ..ColumnStyle::default() }, |c| {
+   id=c.table(vec![TableColumn::new("a",80.0)], vec![vec!["x".into()]], TableStyle::default());
+  });
+  ui.set_table_selected_row(id,Some(0)); assert_eq!(ui.table_selected_text(id).as_deref(),Some("x"));
+ }
 }

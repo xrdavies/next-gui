@@ -136,6 +136,10 @@ pub struct BrowseTabState {
     #[serde(skip)]
     pub sel_row: Option<usize>,
     #[serde(skip)]
+    pub sel_row_start: Option<usize>,
+    #[serde(skip)]
+    pub sel_row_end: Option<usize>,
+    #[serde(skip)]
     pub sel_col: Option<usize>,
 }
 
@@ -156,6 +160,8 @@ impl BrowseTabState {
             result: None,
             rowids: Vec::new(),
             sel_row: None,
+            sel_row_start: None,
+            sel_row_end: None,
             sel_col: None,
         }
     }

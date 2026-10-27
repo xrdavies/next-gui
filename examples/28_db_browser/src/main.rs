@@ -2467,9 +2467,12 @@ impl Demo {
         if let Some(row) = self.ui.table_selected_row(self.ids.browse_table) {
             let col = self.ui.table_selected_col(self.ids.browse_table);
             let col_changed = col.is_some() && col != self.state.browse().sel_col;
-            if self.last_browse_row != Some(row) || col_changed {
+            let rows = self.ui.table_selected_rows(self.ids.browse_table);
+            if self.last_browse_row != Some(row) || col_changed || rows.is_some_and(|(_, end)| self.state.browse().sel_row_end != Some(end)) {
                 self.last_browse_row = Some(row);
                 self.state.browse_mut().sel_row = Some(row);
+                self.state.browse_mut().sel_row_start = rows.map(|(start, _)| start);
+                self.state.browse_mut().sel_row_end = rows.map(|(_, end)| end);
                 if let Some(c) = col {
                     self.state.browse_mut().sel_col = Some(c);
                 }
@@ -2912,6 +2915,12 @@ impl AppCallbacks for Demo {
                             return;
                         }
                         KeyCode::Char('c' | 'C' | 'x' | 'X') => {
+                            if self.ui.focused() == Some(self.ids.browse_table) {
+                                if let Some(text) = self.ui.table_selected_text(self.ids.browse_table) {
+                                    if let Err(e) = ctx.clipboard_set_text(&text) { self.set_error(e.to_string()); }
+                                }
+                                return;
+                            }
                             if let Some(text) = self.ui.focused_text_for_copy() {
                                 if let Err(e) = ctx.clipboard_set_text(&text) {
                                     self.set_error(e.to_string());
@@ -3200,6 +3209,26 @@ mod interaction_tests {
             demo.ui.set_scroll_offset(demo.ids.shell_scroll, 0.0, 10000.0);
             assert_eq!(demo.ui.scroll_offset(demo.ids.shell_scroll), Some((0.0, 0.0)), "{tab:?}");
         }
+    }
+
+    #[test]
+    fn browse_shift_selection_copies_selected_rows_as_tsv() {
+        let mut demo = Demo::new(1200, 800, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.run_sql_text_sync("CREATE TABLE t(a,b); INSERT INTO t VALUES('one','x'),('two','y'),('three','z');").unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.browse_mut().table = Some("t".into());
+        demo.state.tab = MainTab::Browse;
+        demo.state.refresh_browse().unwrap();
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.browse_table));
+        demo.ui.key_input(UiKey::Down);
+        demo.ui.key_input(UiKey::SelectDown);
+        assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 1)));
+        assert_eq!(demo.ui.table_selected_text(demo.ids.browse_table).as_deref(), Some("one\tx\ntwo\ty"));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 1)));
     }
 
     #[test]
