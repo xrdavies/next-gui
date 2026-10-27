@@ -298,6 +298,7 @@ struct BuiltUiIds {
     ov_pk: WidgetId,
     ov_ai: WidgetId,
     ov_collation: WidgetId,
+    ov_check: WidgetId,
     ov_nn: WidgetId,
     ov_unique: WidgetId,
     ov_default: WidgetId,
@@ -473,6 +474,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_pk: b.ov_pk,
             ov_ai: b.ov_ai,
             ov_collation: b.ov_collation,
+            ov_check: b.ov_check,
             ov_nn: b.ov_nn,
             ov_unique: b.ov_unique,
             ov_default: b.ov_default,
@@ -647,6 +649,18 @@ impl Demo {
                         state.apply_table_wizard().unwrap();
                         MainTab::Browse
                     } else { MainTab::Structure }
+                }
+                "table-check" | "table-checked" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(value TEXT CONSTRAINT valid_value CHECK(length(value)>0),note TEXT); INSERT INTO records VALUES('Zulu','last'),('alpha','first');").unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[0].check_expression = "length(value) >= 3\nAND value != 'blocked'".into();
+                    state.wizard_scroll = (0.0, 10000.0);
+                    if tab == "table-checked" { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
                 }
                 "table-collation" | "table-collated" => {
                     state.new_memory_db().unwrap();
@@ -1349,6 +1363,11 @@ impl Demo {
         if sel >= self.state.wizard_cols.len() {
             return;
         }
+        self.state.wizard_column_check_states.resize(self.state.wizard_cols.len(), None);
+        if let Some(value) = self.ui.text_area_value(self.ids.ov_check) {
+            self.state.wizard_cols[sel].check_expression = value.to_string();
+            self.state.wizard_column_check_states[sel] = self.ui.text_area_state(self.ids.ov_check);
+        }
         let previous_pk = self.state.wizard_cols[sel].pk;
         let previous_ai = self.state.wizard_cols[sel].auto_increment;
         if self.ids.ov_col_name.0 != 0 {
@@ -1486,6 +1505,14 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let check_focused = self.state.overlay == Some(OverlayKind::EditTable)
+            && self.ui.focused() == Some(self.ids.ov_check)
+            && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
+            && self.ui.text_area_value(self.ids.ov_check) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.check_expression.as_str());
+        if check_focused {
+            self.state.wizard_column_check_states.resize(self.state.wizard_cols.len(), None);
+            self.state.wizard_column_check_states[self.state.wizard_col_sel] = self.ui.text_area_state(self.ids.ov_check);
+        }
         let collation_session = (self.state.overlay == Some(OverlayKind::EditTable)
             && self.ui.focused() == Some(self.ids.ov_collation)
             && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
@@ -1522,6 +1549,14 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if check_focused {
+            self.ui.set_focus(Some(self.ids.ov_check));
+            if let Some(Some(editor)) = self.state.wizard_column_check_states.get(self.state.wizard_col_sel) {
+                self.ui.restore_text_area_state(self.ids.ov_check, editor);
+            }
+            sql_syntax::apply(&mut self.ui, self.ids.ov_check, &self.theme);
+            self.ui.sync(&mut self.scene);
+        }
         if let Some(session) = collation_session {
             if self.ui.set_autocomplete_state(self.ids.ov_collation, &session) {
                 self.ui.set_focus(Some(self.ids.ov_collation));
@@ -1536,6 +1571,10 @@ impl Demo {
         }
         if let Some(index) = index_focused {
             self.ui.set_focus(Some([self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available, self.ids.ov_idx_order][index]));
+            if let Some(Some(editor)) = self.state.wizard_index_edit_states.get(index) {
+                self.ui.restore_text_area_state([self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview][index], editor);
+                sql_syntax::apply(&mut self.ui, [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview][index], &self.theme);
+            }
             self.ui.sync(&mut self.scene);
         }
         self.last_schema_names = self.state.schema_names.clone();
@@ -1565,7 +1604,11 @@ impl Demo {
         }
         if sql_focused {
             self.ui.set_focus(Some(self.ids.sql_area));
+            if let Some(Some(editor)) = self.state.sql_edit_states.get(self.state.sql_tab_idx) {
+                self.ui.restore_text_area_state(self.ids.sql_area, editor);
+            }
             self.update_sql_hint();
+            sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
             self.ui.sync(&mut self.scene);
         }
         if log_focused && self.ids.log_area.0 != 0 {
@@ -2427,6 +2470,7 @@ impl Demo {
             self.state
                 .wizard_cols
                 .push(dbmod::ColDef::new("col", "TEXT"));
+            self.state.wizard_column_check_states.push(None);
             if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.push(None); }
             self.state.wizard_col_sel = self.state.wizard_cols.len() - 1;
             self.rebuild = true;
@@ -2440,6 +2484,7 @@ impl Demo {
                     .wizard_col_sel
                     .min(self.state.wizard_cols.len() - 1);
                 self.state.wizard_cols.remove(i);
+                self.state.wizard_column_check_states.remove(i);
                 if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.remove(i); }
                 if self.state.wizard_col_sel >= self.state.wizard_cols.len() {
                     self.state.wizard_col_sel = self.state.wizard_cols.len().saturating_sub(1);
@@ -2453,6 +2498,7 @@ impl Demo {
             let i = self.state.wizard_col_sel;
             if i > 0 {
                 self.state.wizard_cols.swap(i, i - 1);
+                self.state.wizard_column_check_states.swap(i, i - 1);
                 if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.swap(i, i - 1); }
                 self.state.wizard_col_sel = i - 1;
             }
@@ -2464,6 +2510,7 @@ impl Demo {
             let i = self.state.wizard_col_sel;
             if i + 1 < self.state.wizard_cols.len() {
                 self.state.wizard_cols.swap(i, i + 1);
+                self.state.wizard_column_check_states.swap(i, i + 1);
                 if self.state.wizard_table_original.is_some() { self.state.wizard_col_sources.swap(i, i + 1); }
                 self.state.wizard_col_sel = i + 1;
             }
@@ -3473,7 +3520,7 @@ impl Demo {
             self.do_rebuild();
         } else {
             sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
-            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where] {
+            for area in [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_check] {
                 sql_syntax::apply(&mut self.ui, area, &self.theme);
             }
             self.update_sql_hint();
@@ -6052,7 +6099,7 @@ mod interaction_tests {
                         let save = bounds(demo.ids.ov_btn_ok);
                         assert!(viewport.y + viewport.height <= save.y && save.y + save.height <= height as f32);
                         if *phase == "bottom" {
-                            let field = bounds(if index { demo.ids.ov_idx_preview } else { demo.ids.ov_default });
+                            let field = bounds(if index { demo.ids.ov_idx_preview } else { demo.ids.ov_check });
                             assert!(field.y >= viewport.y && field.y + field.height <= viewport.y + viewport.height);
                         }
                         if *phase == "middle" {
@@ -6274,6 +6321,141 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
             demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn sql_and_index_editors_keep_active_composition_through_form_rebuilds() {
+        for index in [false,true] {
+            let mut demo = Demo::new(1400,1000,PresentBackend::Softbuffer);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(value TEXT)").unwrap();
+            demo.state.refresh_schema().unwrap();
+            if index { demo.state.open_create_index_wizard(); }
+            else { demo.state.tab = MainTab::ExecuteSql; }
+            demo.do_rebuild();
+            let area = if index { demo.ids.ov_idx_cols } else { demo.ids.sql_area };
+            demo.ui.set_text_area_value(area,"value");
+            demo.ui.set_focus(Some(area));
+            demo.ui.select_text_area_range(area,0..0);
+            demo.ui.ime_preedit("中文",Some((3,6)));
+            demo.ui.sync(&mut demo.scene);
+            let cursor = demo.ui.ime_cursor_area(&demo.scene);
+            demo.snapshot_inputs(); demo.do_rebuild();
+            let area = if index { demo.ids.ov_idx_cols } else { demo.ids.sql_area };
+            assert_eq!(demo.ui.focused(),Some(area));
+            assert_eq!(demo.ui.ime_cursor_area(&demo.scene),cursor);
+            assert!(demo.ui.ime_commit("中文"));
+            assert_eq!(demo.ui.text_area_value(area),Some("中文value"));
+            assert!(demo.ui.key_input(UiKey::Undo));
+            assert_eq!(demo.ui.text_area_value(area),Some("value"));
+        }
+    }
+
+    #[test]
+    fn table_wizard_check_editor_keeps_column_sessions_and_saves_validated_constraints() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(value TEXT CONSTRAINT valid_value CHECK(length(value)>0),note TEXT); INSERT INTO records VALUES('Zulu','last'),('alpha','first');").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000 + row as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.accessible_name(demo.ids.ov_check).as_deref(), Some("Column CHECK expression"));
+            let original = demo.ui.text_area_value(demo.ids.ov_check).unwrap().to_string();
+            let expression = "length(value) >= 3\nAND value != 'blocked'";
+            demo.ui.set_focus(Some(demo.ids.ov_check));
+            demo.ui.key_input(UiKey::SelectAll);
+            assert!(demo.ui.paste_into_focused_text(expression));
+            demo.snapshot_inputs();
+            demo.ui.select_text_area_range(demo.ids.ov_check,0..0);
+            demo.ui.ime_preedit("中文",Some((3,6)));
+            demo.ui.sync(&mut demo.scene);
+            let cursor = demo.ui.ime_cursor_area(&demo.scene);
+            demo.do_rebuild();
+            assert_eq!(demo.ui.focused(),Some(demo.ids.ov_check));
+            assert_eq!(demo.ui.ime_cursor_area(&demo.scene),cursor);
+            assert!(demo.ui.ime_commit("-- 中文\n"));
+            assert!(demo.ui.text_area_value(demo.ids.ov_check).unwrap().starts_with("-- 中文"));
+            demo.ui.key_input(UiKey::Undo);
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(expression));
+            demo.snapshot_inputs();
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(1));
+            demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(""));
+            demo.ui.set_focus(Some(demo.ids.ov_check));
+            demo.ui.paste_into_focused_text("note IS NULL OR length(note)>0");
+            demo.snapshot_inputs();
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(0));
+            demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_check));
+            assert!(demo.ui.key_input(UiKey::Undo));
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(original.as_str()));
+            demo.ui.key_input(UiKey::Redo);
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(expression));
+            demo.handle_button(demo.ids.ov_btn_down); demo.do_rebuild();
+            assert_eq!(demo.state.wizard_col_sel,1);
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(expression));
+            demo.handle_button(demo.ids.ov_btn_up); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(expression));
+            demo.handle_button(demo.ids.ov_btn_add); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(""));
+            demo.ui.set_text_area_value(demo.ids.ov_check,"col IS NULL");
+            demo.handle_button(demo.ids.ov_btn_del); demo.do_rebuild();
+            demo.ui.set_list_selected(demo.ids.ov_list,Some(0));
+            demo.snapshot_inputs(); demo.do_rebuild();
+            for invalid in ["length(value)>20", "1)); DELETE FROM records; --"] {
+                demo.ui.set_text_area_value(demo.ids.ov_check,invalid);
+                demo.handle_button(demo.ids.ov_btn_ok);
+                assert!(demo.state.error_msg.is_some() && demo.state.overlay.is_some());
+                assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"records").unwrap(),2);
+                demo.do_rebuild();
+                assert_eq!(demo.ui.text_area_value(demo.ids.ov_check),Some(invalid));
+            }
+            demo.ui.set_text_area_value(demo.ids.ov_check,expression);
+            demo.snapshot_inputs(); demo.clear_error();
+            demo.ui.set_scroll_offset(demo.ids.ov_scroll,0.0,10000.0);
+            demo.snapshot_inputs(); demo.do_rebuild();
+            for phase in ["draft", "saved"] {
+                if phase == "saved" {
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_CHECK_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Check {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Check GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert!(conn.execute("INSERT INTO records VALUES('X','valid')",[]).is_err());
+            assert!(conn.execute("INSERT INTO records VALUES('blocked','valid')",[]).is_err());
+            assert!(conn.execute("INSERT INTO records VALUES('valid','')",[]).is_err());
+            conn.execute("INSERT INTO records VALUES('valid','valid')",[]).unwrap();
+            demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
+            assert!(demo.ui.text_area_value(demo.ids.ov_check).unwrap().contains("blocked"));
+            demo.ui.set_text_area_value(demo.ids.ov_check,"");
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            demo.state.conn.as_ref().unwrap().execute("INSERT INTO records VALUES('X','valid')",[]).unwrap();
         }
     }
 

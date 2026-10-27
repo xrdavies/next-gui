@@ -177,6 +177,7 @@ pub struct BuiltUi {
     pub ov_pk: WidgetId,
     pub ov_ai: WidgetId,
     pub ov_collation: WidgetId,
+    pub ov_check: WidgetId,
     pub ov_nn: WidgetId,
     pub ov_unique: WidgetId,
     pub ov_default: WidgetId,
@@ -452,6 +453,7 @@ pub fn build_ui(
     let mut ov_pk = z;
     let mut ov_ai = z;
     let mut ov_collation = z;
+    let mut ov_check = z;
     let mut ov_nn = z;
     let mut ov_unique = z;
     let mut ov_default = z;
@@ -899,6 +901,11 @@ pub fn build_ui(
                                     ov_collation = r.autocomplete_placeholder(state.column_collation_names(),
                                         coldef.map(|column| column.collation.as_str()).unwrap_or(""), "Default (BINARY)", style);
                                 });
+                                c.text("Check expression · SQL (optional)");
+                                let mut check_style = area_s;
+                                check_style.height = 80.0;
+                                ov_check = c.text_area(coldef.map(|column| column.check_expression.as_str()).unwrap_or(""),
+                                    "e.g. length(name) > 0", check_style);
                             });
                         }
                         OverlayKind::EditIndex => {
@@ -2045,6 +2052,7 @@ pub fn build_ui(
     ui.set_accessible_name(ov_col_type, "Column declared type (editable)");
     ui.set_accessible_name(ov_ai, "Column autoincrement");
     ui.set_accessible_name(ov_collation, "Column collation (editable)");
+    ui.set_accessible_name(ov_check, "Column CHECK expression");
     if state.overlay == Some(OverlayKind::EditIndex) {
         ui.set_accessible_name(ov_idx_available, "Available table columns for index");
         ui.set_accessible_name(ov_list, "Ordered index keys");
@@ -2113,6 +2121,10 @@ pub fn build_ui(
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
+    if let Some(Some(editor)) = state.wizard_column_check_states.get(state.wizard_col_sel) {
+        ui.restore_text_area_state(ov_check, editor);
+    }
+    crate::sql_syntax::apply(&mut ui, ov_check, &theme);
     for (index, area) in [ov_idx_cols, ov_idx_where, ov_idx_preview].into_iter().enumerate() {
         if let Some(editor) = &state.wizard_index_edit_states[index] { ui.restore_text_area_state(area, editor); }
         crate::sql_syntax::apply(&mut ui, area, &theme);
@@ -2222,6 +2234,7 @@ pub fn build_ui(
         ov_pk,
         ov_ai,
         ov_collation,
+        ov_check,
         ov_nn,
         ov_unique,
         ov_default,

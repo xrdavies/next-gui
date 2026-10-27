@@ -21,7 +21,7 @@ struct EditSnapshot {
     anchor: Option<usize>,
 }
 
-/// Opaque TextArea editing session, including selection, viewport and undo/redo.
+/// Opaque TextArea editing session, including composition, selection, viewport and undo/redo.
 /// Restore it only with the same document value; it is not a project file format.
 #[derive(Debug, Clone)]
 pub struct TextAreaState {
@@ -31,6 +31,8 @@ pub struct TextAreaState {
     font_size: f32,
     line_numbers: bool,
     edit: TextAreaEdit,
+    preedit: String,
+    preedit_cursor: Option<(usize, usize)>,
 }
 
 fn selection(caret: usize, anchor: Option<usize>) -> Range<usize> {
@@ -120,7 +122,7 @@ fn nearest_on_row(positions: &[(f32, f32)], x: f32, row: f32) -> usize {
 }
 
 impl Ui {
-    /// Capture selection, viewport and history for rebuilding a TextArea.
+    /// Capture composition, selection, viewport and history for rebuilding a TextArea.
     pub fn text_area_state(&self, id: WidgetId) -> Option<TextAreaState> {
         let Kind::TextArea {
             value,
@@ -129,6 +131,8 @@ impl Ui {
             style,
             line_numbers,
             edit,
+            preedit,
+            preedit_cursor,
             ..
         } = &self.widgets.get(&id)?.kind
         else {
@@ -145,6 +149,8 @@ impl Ui {
             font_size: style.size,
             line_numbers: *line_numbers,
             edit: edit.clone(),
+            preedit: preedit.clone(),
+            preedit_cursor: *preedit_cursor,
         })
     }
 
@@ -159,6 +165,9 @@ impl Ui {
                     style,
                     line_numbers,
                     edit,
+                    preedit,
+                    preedit_cursor,
+                    read_only,
                     ..
                 },
             ..
@@ -172,6 +181,8 @@ impl Ui {
         *caret = state.snapshot.caret;
         *scroll_y = state.scroll_y;
         *edit = state.edit.clone();
+        *preedit = if *read_only { String::new() } else { state.preedit.clone() };
+        *preedit_cursor = if *read_only { None } else { state.preedit_cursor };
         edit.reveal |= state.viewport != (style.width, style.height) || state.font_size != style.size || state.line_numbers != *line_numbers;
         if state.viewport.0 != style.width || state.font_size != style.size || state.line_numbers != *line_numbers {
             edit.goal_x = None;
@@ -1343,6 +1354,34 @@ mod tests {
         assert!(!rebuilt.replace_text_area_range(next_area, 0..2, "bad"));
         assert!(!rebuilt.replace_text_area_range(WidgetId(0), 0..0, "bad"));
         assert_eq!(rebuilt.text_area_value(next_area), Some(changed.as_str()));
+    }
+
+    #[test]
+    fn active_composition_survives_same_document_rebuild_and_respects_read_only() {
+        let original = "SELECT '中文🙂';";
+        let (mut ui, mut scene, area) = editor(original);
+        ui.select_text_area_range(area, 8..11);
+        ui.ime_preedit("東京", Some((3, 6)));
+        ui.sync(&mut scene);
+        let cursor = ui.ime_cursor_area(&scene);
+        let session = ui.text_area_state(area).unwrap();
+        let (mut next, mut next_scene, next_area) = editor(original);
+        assert!(next.restore_text_area_state(next_area, &session));
+        next.sync(&mut next_scene);
+        assert_eq!(next.ime_cursor_area(&next_scene), cursor);
+        assert_eq!(next.text_area_value(next_area), Some(original));
+        assert!(matches!(&next.widgets[&next_area].kind, Kind::TextArea { preedit, preedit_cursor: Some((3,6)), .. } if preedit == "東京"));
+        assert!(next.ime_commit("東京"));
+        assert_eq!(next.text_area_value(next_area), Some("SELECT '東京';"));
+        assert!(next.key_input(UiKey::Undo));
+        assert_eq!(next.text_area_value(next_area), Some(original));
+        next.set_text_area_read_only(next_area, true);
+        assert!(next.restore_text_area_state(next_area, &session));
+        assert!(matches!(&next.widgets[&next_area].kind, Kind::TextArea { preedit, preedit_cursor: None, .. } if preedit.is_empty()));
+        assert!(!next.ime_commit("bad"));
+        assert_eq!(next.text_area_value(next_area), Some(original));
+        next.set_text_area_value(next_area, "different document");
+        assert!(!next.restore_text_area_state(next_area, &session));
     }
 
     #[test]

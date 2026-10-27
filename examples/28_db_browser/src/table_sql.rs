@@ -88,7 +88,7 @@ pub fn column_definition(
     {
         return Err("A column field cannot add columns or table constraints".into());
     }
-    let mut actual = [0; 6];
+    let mut actual = [0; 7];
     let definition = columns.into_values().next().unwrap();
     for value in &definition.constraints {
         if let ColumnConstraint::PrimaryKey { auto_increment, .. } = value.constraint {
@@ -100,6 +100,7 @@ pub fn column_definition(
             ColumnConstraint::Unique(..) => 2,
             ColumnConstraint::Default(..) => 3,
             ColumnConstraint::Collate { .. } => 5,
+            ColumnConstraint::Check(..) => 6,
             _ => return Err("Use the constraint controls rather than adding constraints to a type/default field".into()),
         }] += 1;
     }
@@ -110,6 +111,7 @@ pub fn column_definition(
         (!column.default_value.trim().is_empty()) as usize,
         column.auto_increment as usize,
         (!column.collation.is_empty()) as usize,
+        (!column.check_expression.trim().is_empty()) as usize,
     ];
     if actual != expected {
         return Err("A type/default field cannot change other column constraints".into());
@@ -211,6 +213,29 @@ pub fn rebuild_definition(
                 .ok_or("Original column definition no longer exists")?;
             if !old.type_name.eq_ignore_ascii_case(&col.type_name) {
                 item.col_type = replacement.col_type.clone();
+            }
+            if old.check_expression != col.check_expression {
+                // shortcut: this field edits the first column CHECK; expose every constraint in the advanced tab.
+                let position = item
+                    .constraints
+                    .iter()
+                    .position(|value| matches!(value.constraint, ColumnConstraint::Check(..)));
+                let replacement = replacement
+                    .constraints
+                    .iter()
+                    .find(|value| matches!(value.constraint, ColumnConstraint::Check(..)))
+                    .cloned();
+                match (position, replacement) {
+                    (Some(position), Some(mut value)) => {
+                        value.name = item.constraints[position].name.clone();
+                        item.constraints[position] = value;
+                    }
+                    (Some(position), None) => {
+                        item.constraints.remove(position);
+                    }
+                    (None, Some(value)) => item.constraints.push(value),
+                    (None, None) => {}
+                }
             }
             for category in 0..4 {
                 let changed = match category {
@@ -406,7 +431,7 @@ pub fn autoincrement_column(sql: &str) -> Result<Option<Name>, String> {
     Ok(None)
 }
 
-pub fn column_collations(sql: &str) -> Result<Vec<(Name, String)>, String> {
+pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<(), String> {
     let Cmd::Stmt(Stmt::CreateTable {
         body: CreateTableBody::ColumnsAndConstraints { columns, .. },
         ..
@@ -414,11 +439,17 @@ pub fn column_collations(sql: &str) -> Result<Vec<(Name, String)>, String> {
     else {
         return Err("Expected an ordinary CREATE TABLE definition".into());
     };
-    Ok(columns
-        .into_values()
-        .filter_map(|column| {
-            column.constraints.into_iter().rev().find_map(|item| {
-                if let ColumnConstraint::Collate { collation_name } = item.constraint {
+    for definition in definitions {
+        let column = columns
+            .values()
+            .find(|column| column.col_name.eq(definition.name.as_str()))
+            .ok_or("Column definition no longer exists")?;
+        definition.collation = column
+            .constraints
+            .iter()
+            .rev()
+            .find_map(|item| {
+                if let ColumnConstraint::Collate { collation_name } = &item.constraint {
                     let value = collation_name.0.as_ref();
                     let name = match value.as_bytes().first() {
                         Some(b'[') => value[1..value.len() - 1].to_string(),
@@ -428,13 +459,25 @@ pub fn column_collations(sql: &str) -> Result<Vec<(Name, String)>, String> {
                         ),
                         _ => value.to_string(),
                     };
-                    Some((column.col_name.clone(), name))
+                    Some(name)
                 } else {
                     None
                 }
             })
-        })
-        .collect())
+            .unwrap_or_default();
+        definition.check_expression = column
+            .constraints
+            .iter()
+            .find_map(|item| {
+                if let ColumnConstraint::Check(expression) = &item.constraint {
+                    Some(expression.to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+    }
+    Ok(())
 }
 
 pub fn qualify_dependency(sql: &str, schema: &str) -> Result<String, String> {
@@ -492,7 +535,16 @@ mod tests {
         assert!(parse("CREATE TABLE t(v); DROP TABLE t").is_err());
         assert!(column_definition(&ColDef::new("v", "TEXT NOT NULL"), None).is_err());
         assert!(column_definition(&ColDef::new("v", "TEXT COLLATE NOCASE"), None).is_err());
-        assert_eq!(column_collations("CREATE TABLE t(v TEXT COLLATE [NOCASE],w TEXT COLLATE `RTRIM`,x TEXT COLLATE 'cus''tom')").unwrap().into_iter().map(|(_, name)| name).collect::<Vec<_>>(), ["NOCASE", "RTRIM", "cus'tom"]);
+        let mut columns = [
+            ColDef::new("v", "TEXT"),
+            ColDef::new("w", "TEXT"),
+            ColDef::new("x", "TEXT"),
+        ];
+        read_column_constraints("CREATE TABLE t(v TEXT COLLATE [NOCASE],w TEXT COLLATE `RTRIM`,x TEXT COLLATE 'cus''tom')", &mut columns).unwrap();
+        assert_eq!(
+            columns.map(|column| column.collation),
+            ["NOCASE", "RTRIM", "cus'tom"]
+        );
         assert!(column_definition(&ColDef::new("v", "TEXT, extra INT"), None).is_err());
         assert!(column_definition(
             &ColDef {

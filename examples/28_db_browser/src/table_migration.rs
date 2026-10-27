@@ -397,6 +397,172 @@ mod tests {
     use super::*;
 
     #[test]
+    fn column_checks_edit_first_named_constraint_and_keep_other_constraints_and_dependencies() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\";")
+                .unwrap();
+            let table = db::qualified_name(schema, "t");
+            conn.execute_batch(&format!("CREATE TABLE {table}(v TEXT CONSTRAINT chosen CHECK(length(v)>0) CONSTRAINT kept CHECK(v!='bad') UNIQUE, n INTEGER, CONSTRAINT table_check CHECK(n>0)); INSERT INTO {table}(rowid,v,n) VALUES(7,'Alpha',1),(9,'Beta',2);
+                CREATE INDEX {} ON t(n); CREATE TABLE {}(v); CREATE TRIGGER {} AFTER INSERT ON t BEGIN INSERT INTO audit VALUES(new.v); END; BEGIN;", db::qualified_name(schema,"ix"), db::qualified_name(schema,"audit"), db::qualified_name(schema,"tr"))).unwrap();
+            let mut draft = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            assert!(draft[0]
+                .check_expression
+                .split_whitespace()
+                .collect::<String>()
+                .contains("length(v)"));
+            assert!(draft[1].check_expression.is_empty());
+            draft[0].check_expression = "length(v) >= 4\nAND v != 'none'".into();
+            let sources = [Some("v".into()), Some("n".into())];
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            let sql: String = conn
+                .query_row(
+                    &format!(
+                        "SELECT sql FROM {}.sqlite_schema WHERE name='t'",
+                        db::quote_ident(schema)
+                    ),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            for name in ["chosen", "kept", "table_check"] {
+                assert!(sql.contains(&format!("CONSTRAINT {name}")), "{sql}");
+            }
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}",
+                        db::qualified_name(schema, "audit")
+                    )
+                ),
+                0,
+                "copy must not fire the user trigger"
+            );
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES('abc',1)"), [])
+                .is_err());
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!("SELECT count(*) FROM {table} WHERE rowid IN(7,9)")
+                ),
+                2
+            );
+            draft[0].check_expression.clear();
+            apply(&conn, schema, "t", &draft, &sources).unwrap();
+            let definitions = db::table_column_defs_in(&conn, schema, "t").unwrap();
+            assert!(
+                definitions[0].check_expression.contains("bad"),
+                "other column CHECK remains editable after reopening"
+            );
+            conn.execute(&format!("INSERT INTO {table} VALUES('X',1)"), [])
+                .unwrap();
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES('bad',1)"), [])
+                .is_err());
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES('other',0)"), [])
+                .is_err());
+            assert!(conn
+                .execute(&format!("INSERT INTO {table} VALUES('Alpha',1)"), [])
+                .is_err());
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}",
+                        db::qualified_name(schema, "audit")
+                    )
+                ),
+                1
+            );
+            assert_eq!(
+                count(
+                    &conn,
+                    &format!(
+                        "SELECT count(*) FROM {}.sqlite_schema WHERE name='ix'",
+                        db::quote_ident(schema)
+                    )
+                ),
+                1
+            );
+            assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(count(&conn, &format!("SELECT count(*) FROM {table}")), 2);
+            assert!(db::table_column_defs_in(&conn, schema, "t").unwrap()[0]
+                .check_expression
+                .split_whitespace()
+                .collect::<String>()
+                .contains("length(v)"));
+        }
+    }
+
+    #[test]
+    fn invalid_column_checks_roll_back_pending_data_and_create_add_enforce_checks() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE t(v TEXT,n INTEGER); INSERT INTO t(rowid,v,n) VALUES(7,'kept',1); BEGIN; INSERT INTO t(rowid,v,n) VALUES(9,'pending',2);").unwrap();
+        let mut draft = db::table_column_defs_in(&conn, "main", "t").unwrap();
+        let sources = [Some("v".into()), Some("n".into())];
+        for expression in [
+            "length(v)>20",
+            "missing_column>0",
+            "v IN (SELECT v FROM t)",
+            "1) UNIQUE CHECK(1",
+            "1)); DELETE FROM t; --",
+            "?1",
+        ] {
+            draft[0].check_expression = expression.into();
+            assert!(
+                apply(&conn, "main", "t", &draft, &sources).is_err(),
+                "{expression}"
+            );
+            assert_eq!(
+                count(&conn, "SELECT count(*) FROM t WHERE rowid IN(7,9)"),
+                2
+            );
+            assert!(db::table_column_defs_in(&conn, "main", "t").unwrap()[0]
+                .check_expression
+                .is_empty());
+            assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
+            assert!(!conn.is_autocommit());
+        }
+        draft[0].check_expression.clear();
+        draft.push(ColDef {
+            check_expression: "extra >= 0".into(),
+            default_value: "3".into(),
+            ..ColDef::new("extra", "INTEGER")
+        });
+        apply(
+            &conn,
+            "main",
+            "t",
+            &draft,
+            &[Some("v".into()), Some("n".into()), None],
+        )
+        .unwrap();
+        assert_eq!(count(&conn, "SELECT sum(extra) FROM t"), 6);
+        assert!(conn
+            .execute("INSERT INTO t VALUES('bad',3,-1)", [])
+            .is_err());
+        let column = ColDef {
+            check_expression: "length(v)>0 -- final comment\n".into(),
+            ..ColDef::new("v", "TEXT")
+        };
+        crate::table_sql::column_definition(&column, None).unwrap();
+        db::execute_single_statement(&conn, &db::create_table_ddl("created", &[column])).unwrap();
+        assert!(conn.execute("INSERT INTO created VALUES('')", []).is_err());
+        conn.execute("INSERT INTO created VALUES('valid')", [])
+            .unwrap();
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(&conn, "SELECT count(*) FROM t"), 1);
+        assert_eq!(
+            db::table_column_defs_in(&conn, "main", "t").unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
     fn collation_edits_preserve_constraints_and_actual_comparison_semantics() {
         for schema in ["main", "temp", "aux.\"db"] {
             let conn = Connection::open_in_memory().unwrap();
