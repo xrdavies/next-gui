@@ -6,6 +6,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params_from_iter, Connection, OpenFlags};
+use crate::cell_snapshot::CellSnapshot;
 
 /// Schema object kinds shown in the structure tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,11 +46,11 @@ pub struct SchemaObject {
 }
 
 /// Owned SQLite cell, including TEXT bytes that are not valid UTF-8.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CellValue {
     Null,
     Integer(i64),
-    Real(f64),
+    Real(#[serde(with = "crate::cell_snapshot::real_bits")] f64),
     Text(Vec<u8>),
     Blob(Vec<u8>),
 }
@@ -91,7 +92,7 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     pub statement: Option<String>,
     pub rows: Vec<Vec<String>>,
-    pub values: Vec<Vec<CellValue>>,
+    pub values: CellSnapshot,
     pub rows_affected: Option<u64>,
     pub truncated: bool,
     pub export_rows: Option<std::sync::Arc<tempfile::NamedTempFile>>,
@@ -443,7 +444,7 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
         .collect::<Vec<_>>();
     let mut query = stmt.query([]).map_err(|e| e.to_string())?;
     let mut rows = Vec::new();
-    let mut values = Vec::new();
+    let mut values = CellSnapshot::default();
     let mut truncated = false;
     while let Some(row) = query.next().map_err(|e| e.to_string())? {
         if rows.len() == limit {
@@ -454,7 +455,7 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
             .map(|i| row.get_ref(i).map(CellValue::from))
             .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
         rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
-        values.push(cells);
+        values.push(cells)?;
     }
     Ok(QueryResult {
         statement: None,
@@ -490,7 +491,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
         let mut export_rows = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
         let mut output = std::io::BufWriter::new(&mut export_rows);
         let mut rows = Vec::new();
-        let mut cell_values = Vec::new();
+        let mut cell_values = CellSnapshot::default();
         let mut truncated = false;
         while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
             let values = (0..col_count)
@@ -506,7 +507,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
                 .map(|i| row.get_ref(i).map(CellValue::from))
                 .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
             rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
-            cell_values.push(cells);
+            cell_values.push(cells)?;
         }
         output.flush().map_err(|e| e.to_string())?;
         drop(output);
@@ -540,11 +541,11 @@ pub fn pragma_check(conn: &Connection, name: &str) -> Result<QueryResult, String
 pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
     let schema = list_schema(conn)?;
     let mut rows = Vec::new();
-    let mut values = Vec::new();
+    let mut values = CellSnapshot::default();
     for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
         let n = count_rows(conn, &obj.name).unwrap_or(-1);
         rows.push(vec![obj.name.clone(), n.to_string()]);
-        values.push(vec![CellValue::Text(obj.name.as_bytes().to_vec()), CellValue::Integer(n)]);
+        values.push(vec![CellValue::Text(obj.name.as_bytes().to_vec()), CellValue::Integer(n)])?;
     }
     Ok(QueryResult {
         statement: None,

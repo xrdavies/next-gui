@@ -1032,7 +1032,7 @@ impl AppState {
                                     row.remove(idx);
                                 }
                             }
-                            for row in &mut q.values { row.remove(idx); }
+                            q.values.remove_column(idx);
                         }
                         (total_rows, q, rowids)
                     }
@@ -2275,7 +2275,7 @@ impl AppState {
         if last >= result.values.len() || result.columns.is_empty() || last_col >= result.columns.len() {
             return Err("Selection no longer fits the browse page; refresh and retry".into());
         }
-        let cells = result.values[first..=last].iter().map(|row| row[first_col..=last_col].to_vec()).collect();
+        let cells = result.values.rectangle(first..=last, first_col..=last_col)?;
         Ok(crate::cell_clipboard::CellClipboard::new(tab.table.as_deref().ok_or("No browse table")?,
             &result.columns[first_col..=last_col], cells, headers, sql))
     }
@@ -2538,7 +2538,10 @@ impl AppState {
         let Some(col) = res.columns.get(ci).cloned() else {
             return;
         };
-        let Some(cell) = res.values.get(ri).and_then(|row| row.get(ci)) else { return; };
+        let cell = match res.values.cell(ri, ci) {
+            Ok(cell) => cell,
+            Err(e) => { self.clear_browse_editor(); self.error_msg = Some(e); return; }
+        };
         let raw = cell.as_ref();
         if let rusqlite::types::ValueRef::Text(bytes) = raw {
             if std::str::from_utf8(bytes).is_err() {
@@ -3668,7 +3671,7 @@ mod chart_default_tests {
         state.edit_col = "k".into();
         state.navigate_fk().unwrap();
         assert_eq!(state.browse().table.as_deref(), Some("parent"));
-        assert_eq!(state.browse().result.as_ref().unwrap().values, vec![vec![db::CellValue::Text(vec![255])]]);
+        assert_eq!(state.browse().result.as_ref().unwrap().values.rectangle(0..=0, 0..=0).unwrap(), vec![vec![db::CellValue::Text(vec![255])]]);
     }
 
     #[test]
@@ -3685,7 +3688,7 @@ mod chart_default_tests {
         state.browse_mut().sel_row_start = Some(0);
         let copy = state.copy_browse_cells(false, false).unwrap();
         state.cut_browse_cells().unwrap();
-        assert_eq!(state.browse().result.as_ref().unwrap().values,
+        assert_eq!(state.browse().result.as_ref().unwrap().values.rectangle(0..=1, 0..=1).unwrap(),
             vec![vec![db::CellValue::Text(Vec::new()), db::CellValue::Null]; 2]);
         assert!(state.dirty);
         state.browse_mut().sel_row = Some(0);
@@ -3711,7 +3714,7 @@ mod chart_default_tests {
         state.refresh_schema().unwrap();
         state.browse_mut().table = Some("t".into());
         state.refresh_browse().unwrap();
-        let original = state.browse().result.as_ref().unwrap().values.clone();
+        let original = state.browse().result.as_ref().unwrap().values.rectangle(0..=6, 0..=0).unwrap();
         state.browse_mut().sel_row = Some(6);
         state.browse_mut().sel_row_start = Some(0);
         state.browse_mut().sel_col = Some(0);
@@ -3724,7 +3727,7 @@ mod chart_default_tests {
         state.browse_mut().sel_row = Some(0);
         state.browse_mut().sel_col = Some(0);
         state.paste_browse_cells(cells).unwrap();
-        assert_eq!(state.browse().result.as_ref().unwrap().values, original);
+        assert_eq!(state.browse().result.as_ref().unwrap().values.rectangle(0..=6, 0..=0).unwrap(), original);
         let types: Vec<String> = state.conn.as_ref().unwrap().prepare("SELECT typeof(v)||':'||hex(v) FROM dest ORDER BY rowid").unwrap()
             .query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
         assert_eq!(types, vec!["null:", "text:", "text:4E554C4C", "integer:39323233333732303336383534373735383037", "real:312E3235", "blob:00FF", "text:FF"]);

@@ -5,6 +5,7 @@
 
 mod db;
 mod cell_clipboard;
+mod cell_snapshot;
 mod file_dlg;
 mod filters;
 mod prefs;
