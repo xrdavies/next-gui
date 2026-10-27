@@ -362,6 +362,24 @@ pub fn table_columns_in(conn: &Connection, schema: &str, table: &str) -> Result<
     Ok(out)
 }
 
+pub fn table_column_defs_in(conn: &Connection, schema: &str, table: &str) -> Result<Vec<ColDef>, String> {
+    let mut unique_columns = Vec::new();
+    let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", quote_ident(schema), quote_literal(table))).map_err(|e| e.to_string())?;
+    let indexes = stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, String>(3)?))).map_err(|e| e.to_string())?;
+    for index in indexes {
+        let (index, origin) = index.map_err(|e| e.to_string())?;
+        if origin != "u" { continue; }
+        let mut stmt = conn.prepare(&format!("PRAGMA {}.index_info({})", quote_ident(schema), quote_literal(&index))).map_err(|e| e.to_string())?;
+        let columns = stmt.query_map([], |row| row.get::<_, Option<String>>(2)).map_err(|e| e.to_string())?.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())?;
+        if let [Some(column)] = columns.as_slice() { unique_columns.push(column.clone()); }
+    }
+    Ok(table_columns_in(conn, schema, table)?.into_iter().map(|col| ColDef {
+        unique: unique_columns.iter().any(|name| name.eq_ignore_ascii_case(&col.name)),
+        name: col.name, type_name: col.type_name, pk: col.pk, notnull: col.notnull,
+        default_value: col.default_value.unwrap_or_default(),
+    }).collect())
+}
+
 pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
@@ -1310,12 +1328,13 @@ pub fn create_table_ddl_in(schema: &str, name: &str, cols: &[ColDef]) -> String 
         if c.notnull {
             piece.push_str(" NOT NULL");
         }
-        if c.unique && !c.pk {
+        if c.unique {
             piece.push_str(" UNIQUE");
         }
         if !c.default_value.trim().is_empty() {
-            piece.push_str(" DEFAULT ");
+            piece.push_str(" DEFAULT (");
             piece.push_str(c.default_value.trim());
+            piece.push(')');
         }
         parts.push(piece);
     }
@@ -1351,12 +1370,22 @@ pub fn recreate_table_in(
     new_name: &str,
     cols: &[ColDef],
 ) -> Result<(), String> {
-    let existing = table_columns_in(conn, schema, old_name)?;
+    let existing = table_column_defs_in(conn, schema, old_name)?;
     let sources: Vec<_> = cols.iter().map(|col| existing.iter().find(|old| old.name == col.name).map(|old| old.name.clone())).collect();
     if sources.iter().any(Option::is_none) && existing.iter().any(|old| !sources.iter().any(|source| source.as_ref() == Some(&old.name))) {
         return Err("Use ALTER TABLE RENAME COLUMN in Execute SQL to rename a column".into());
     }
-    recreate_table_columns_in(conn, schema, old_name, new_name, cols, &sources)
+    let mut draft = cols.to_vec();
+    for (col, source) in draft.iter_mut().zip(&sources) {
+        if let Some(old) = source.as_ref().and_then(|source| existing.iter().find(|old| old.name == *source)) {
+            if !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.pk != col.pk || old.notnull != col.notnull
+                || old.default_value != col.default_value || col.unique {
+                return Err("Changing existing column definitions requires an explicit SQL migration; the wizard preserves existing constraints".into());
+            }
+            col.unique = old.unique;
+        }
+    }
+    recreate_table_columns_in(conn, schema, old_name, new_name, &draft, &sources)
 }
 
 /// Apply column edits using explicit original identities; None denotes a new column.
@@ -1368,13 +1397,14 @@ pub fn recreate_table_columns_in(
     cols: &[ColDef],
     sources: &[Option<String>],
 ) -> Result<(), String> {
-    let existing = table_columns_in(conn, schema, old_name)?;
+    let existing = table_column_defs_in(conn, schema, old_name)?;
     if existing.is_empty() {
         return Err(format!("Table {} has no editable columns", qualified_name(schema, old_name)));
     }
     if cols.is_empty() || sources.len() != cols.len() {
         return Err("Column identities do not match the table draft; reopen Modify Table".into());
     }
+    let mut rebuild = false;
     for (index, (col, source)) in cols.iter().zip(sources).enumerate() {
         if cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&col.name)) {
             return Err(format!("Duplicate column name: {}", col.name));
@@ -1384,16 +1414,15 @@ pub fn recreate_table_columns_in(
                 return Err(format!("Duplicate original column identity: {source}"));
             }
             let old = existing.iter().find(|c| c.name == *source).ok_or_else(|| format!("Original column no longer exists: {source}"))?;
-            if !old.type_name.eq_ignore_ascii_case(&col.type_name)
-                || old.pk != col.pk
-                || old.notnull != col.notnull
-                || old.default_value.as_deref().unwrap_or("") != col.default_value
-                || col.unique
-            {
-                return Err("Changing existing column definitions requires an explicit SQL migration; the wizard preserves existing constraints".into());
-            }
-        } else if col.pk || col.unique {
-            return Err("SQLite ALTER cannot add PRIMARY KEY or UNIQUE columns".into());
+            crate::table_sql::column_definition(col, Some(old))?;
+            // shortcut: retain primary-key definitions until all of their constraint options are editable.
+            if old.pk != col.pk { return Err("Changing the primary key requires an explicit SQL migration".into()); }
+            rebuild |= !old.type_name.eq_ignore_ascii_case(&col.type_name) || old.notnull != col.notnull
+                || old.default_value != col.default_value || old.unique != col.unique;
+        } else {
+            crate::table_sql::column_definition(col, None)?;
+            if col.pk { return Err("Adding a primary key requires an explicit SQL migration".into()); }
+            rebuild |= col.unique || !col.default_value.trim().is_empty();
         }
     }
     let added: Vec<_> = cols
@@ -1428,9 +1457,7 @@ pub fn recreate_table_columns_in(
         .map(|c| &c.name)
         .collect();
     let requested: Vec<_> = sources.iter().filter_map(Option::as_ref).collect();
-    if retained != requested || sources.iter().skip_while(|source| source.is_some()).any(Option::is_some) {
-        return Err("Reordering existing columns requires an explicit SQL migration".into());
-    }
+    rebuild |= retained != requested || sources.iter().skip_while(|source| source.is_some()).any(Option::is_some);
     let mut reserved = table_column_names_in(conn, schema, old_name)?;
     reserved.extend(cols.iter().map(|col| col.name.clone()));
     let mut renames = Vec::new();
@@ -1465,19 +1492,31 @@ pub fn recreate_table_columns_in(
                 qualified_name(schema, old_name), quote_ident(temporary), quote_ident(target)))
                 .map_err(|error| format!("Cannot rename column to {target}: {error}"))?;
         }
-        for col in added {
-            let ddl = create_table_ddl("unused", std::slice::from_ref(col));
-            let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
-            execute_single_statement(conn, &format!(
-                "ALTER TABLE {} ADD COLUMN {definition}", qualified_name(schema, old_name)
-            ))?;
+        if rebuild {
+            crate::table_migration::rebuild(conn, schema, old_name, &existing, cols, sources)?;
+        } else {
+            for col in added {
+                let ddl = create_table_ddl("unused", std::slice::from_ref(col));
+                let definition = ddl.split_once("(\n  ").unwrap().1.trim_end_matches("\n)");
+                execute_single_statement(conn, &format!(
+                    "ALTER TABLE {} ADD COLUMN {definition}", qualified_name(schema, old_name)
+                ))?;
+            }
         }
         if old_name != new_name {
-            execute_single_statement(conn, &format!(
+            let setting = rusqlite::config::DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE;
+            let legacy = conn.db_config(setting).map_err(|e| e.to_string())?;
+            if legacy { conn.set_db_config(setting, false).map_err(|e| e.to_string())?; }
+            let renamed = execute_single_statement(conn, &format!(
                 "ALTER TABLE {} RENAME TO {}",
                 qualified_name(schema, old_name),
                 quote_ident(new_name)
-            ))?;
+            ));
+            if legacy {
+                conn.set_db_config(setting, true).map_err(|e| format!("{}Restoring legacy ALTER setting failed: {e}",
+                    renamed.as_ref().err().map(|error| format!("{error}; ")).unwrap_or_default()))?;
+            }
+            renamed?;
         }
         Ok(())
     })

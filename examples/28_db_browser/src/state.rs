@@ -527,6 +527,8 @@ pub struct AppState {
     pub edit_image_view: next_gui_ui::ImageView,
     pub edit_image_rgba: Option<(u32, u32, Vec<u8>)>,
     pub cipher_linked: bool,
+    #[cfg(test)]
+    _demo_directory: Option<tempfile::TempDir>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -571,8 +573,15 @@ pub enum DocumentAction {
 
 impl AppState {
     pub fn new_with_demo() -> Self {
+        #[cfg(not(test))]
         let demo = db::default_demo_path();
+        #[cfg(test)]
+        let demo_directory = tempfile::tempdir().expect("create isolated demo fixture");
+        #[cfg(test)]
+        let demo = demo_directory.path().join("sample.db");
         let mut state = Self::empty();
+        #[cfg(test)]
+        { state._demo_directory = Some(demo_directory); }
         state.load_recent();
         state.sync_prefs_drafts();
         match open_or_create_demo(&demo) {
@@ -775,6 +784,8 @@ impl AppState {
             edit_image_view: next_gui_ui::ImageView::default(),
             edit_image_rgba: None,
             cipher_linked: false,
+            #[cfg(test)]
+            _demo_directory: None,
         };
         state.checkpoint_project();
         state
@@ -1543,24 +1554,14 @@ impl AppState {
             return Err("Modify Table only works on tables".into());
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let cols = db::table_columns_in(conn, &sel.schema, &sel.name)?;
+        let cols = db::table_column_defs_in(conn, &sel.schema, &sel.name)?;
         if cols.is_empty() { return Err("Table has no editable columns".into()); }
         self.wizard_col_sources = cols.iter().map(|col| Some(col.name.clone())).collect();
         self.wizard_schema = sel.schema.clone();
         self.wizard_scroll = (0.0, 0.0);
         self.wizard_table_name = sel.name.clone();
         self.wizard_table_original = Some(sel);
-        self.wizard_cols = cols
-            .into_iter()
-            .map(|c| ColDef {
-                name: c.name,
-                type_name: c.type_name,
-                pk: c.pk,
-                notnull: c.notnull,
-                unique: false,
-                default_value: c.default_value.unwrap_or_default(),
-            })
-            .collect();
+        self.wizard_cols = cols;
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
         Ok(())
@@ -1658,6 +1659,7 @@ impl AppState {
             db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources)?;
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
+            for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
             let ddl = db::create_table_ddl_in(&schema, &name, &self.wizard_cols);
             db::execute_single_statement(conn, &ddl)?;
             self.log_sql(ddl);
@@ -3451,6 +3453,31 @@ mod chart_default_tests {
         assert_eq!(options.column_widths, [333.0, 111.0, 140.0]);
         assert_eq!(options.frozen_cols, Some(0));
         assert_eq!(options.ordering[0].column, "C");
+    }
+
+    #[test]
+    fn modify_table_rebuilds_type_constraints_and_column_order_without_losing_rows() {
+        let mut state = test_state();
+        state.refresh_schema().unwrap();
+        let index = state.schema.iter().position(|o| o.schema == "main" && o.name == "t").unwrap();
+        state.select_schema_node(10_000 + index as u64);
+        state.open_modify_table_wizard().unwrap();
+        state.wizard_cols[0].type_name = "BLOB".into();
+        state.wizard_cols[0].notnull = true;
+        state.wizard_cols[0].unique = true;
+        state.wizard_cols[0].default_value = "'fallback'".into();
+        state.wizard_cols.insert(0, ColDef { default_value: "7".into(), ..ColDef::new("first", "INTEGER") });
+        state.wizard_col_sources.insert(0, None);
+        state.apply_table_wizard().unwrap();
+        let conn = state.conn.as_ref().unwrap();
+        assert_eq!(db::table_column_names(conn, "t").unwrap(), ["first", "v"]);
+        let row: (i64,String,i64) = conn.query_row("SELECT first,v,rowid FROM t", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(row, (7,"saved".into(),1));
+        assert!(conn.execute("INSERT INTO t(v) VALUES('saved')", []).is_err());
+        assert!(conn.execute("INSERT INTO t(v) VALUES(NULL)", []).is_err());
+        conn.execute("INSERT INTO t DEFAULT VALUES", []).unwrap();
+        assert_eq!(conn.query_row("SELECT v FROM t WHERE rowid=2", [], |r| r.get::<_,String>(0)).unwrap(), "fallback");
+        assert!(!conn.is_autocommit());
     }
 
     #[test]
@@ -5302,6 +5329,20 @@ mod chart_default_tests {
             db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn demo_test_sessions_keep_independent_pending_database_writes() {
+        let first = AppState::new_with_demo();
+        let second = AppState::new_with_demo();
+        assert_ne!(first.path, second.path);
+        let first = first.conn.as_ref().unwrap();
+        let second = second.conn.as_ref().unwrap();
+        first.execute("UPDATE customers SET city='first' WHERE id=1", []).unwrap();
+        second.execute("UPDATE customers SET city='second' WHERE id=1", []).unwrap();
+        assert_eq!(first.query_row("SELECT city FROM customers WHERE id=1", [], |row|row.get::<_,String>(0)).unwrap(), "first");
+        assert_eq!(second.query_row("SELECT city FROM customers WHERE id=1", [], |row|row.get::<_,String>(0)).unwrap(), "second");
+        assert!(!first.is_autocommit() && !second.is_autocommit());
     }
 
     #[test]

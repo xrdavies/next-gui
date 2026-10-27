@@ -8,6 +8,8 @@ mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
 mod index_sql;
+mod table_sql;
+mod table_migration;
 mod filters;
 mod prefs;
 mod project;
@@ -589,6 +591,26 @@ impl Demo {
                     state.open_modify_table_wizard().unwrap();
                     state.wizard_cols[0].name = "customer_key".into();
                     if tab == "table-renamed" {
+                        state.apply_table_wizard().unwrap();
+                        MainTab::Browse
+                    } else { MainTab::Structure }
+                }
+                "table-rebuild" | "table-rebuilt" => {
+                    state.new_memory_db().unwrap();
+                    db::seed_demo(state.conn.as_ref().unwrap()).unwrap();
+                    state.refresh_schema().unwrap();
+                    let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "customers" && o.kind == ObjectKind::Table).unwrap();
+                    state.select_schema_node(10_000 + row as u64);
+                    state.open_modify_table_wizard().unwrap();
+                    state.wizard_cols[3].type_name = "VARYING CHARACTER(48)".into();
+                    state.wizard_cols[3].notnull = true;
+                    state.wizard_cols[3].unique = true;
+                    state.wizard_cols[3].default_value = "'Unknown city'".into();
+                    let column = state.wizard_cols.remove(3);
+                    let source = state.wizard_col_sources.remove(3);
+                    state.wizard_cols.insert(0, column);
+                    state.wizard_col_sources.insert(0, source);
+                    if tab == "table-rebuilt" {
                         state.apply_table_wizard().unwrap();
                         MainTab::Browse
                     } else { MainTab::Structure }
@@ -6045,10 +6067,6 @@ mod interaction_tests {
             demo.do_rebuild();
             assert_eq!(demo.state.wizard_col_sources[1], sources[0]);
             assert_eq!(demo.ui.text_input_value(demo.ids.ov_col_name), Some("customer_key"));
-            demo.handle_button(demo.ids.ov_btn_ok);
-            assert!(demo.state.error_msg.as_deref().unwrap().contains("Reordering"));
-            assert!(demo.state.overlay.is_some());
-            demo.do_rebuild();
             demo.handle_button(demo.ids.ov_btn_up);
             demo.do_rebuild();
             assert_eq!(demo.state.wizard_col_sources, sources);
@@ -6095,6 +6113,84 @@ mod interaction_tests {
             assert_eq!(dbmod::browse_table(conn, "customers", &[], None, 500, 0).unwrap().rows, original);
             demo.state.open_modify_table_wizard().unwrap();
             assert_eq!(demo.state.wizard_col_sources[0].as_deref(), Some("customer_key"));
+        }
+    }
+
+    #[test]
+    fn modify_table_controls_save_custom_types_constraints_and_reordering_atomically() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            dbmod::seed_demo(demo.state.conn.as_ref().unwrap()).unwrap();
+            demo.state.refresh_schema().unwrap();
+            let row = demo.state.schema.iter().position(|o| o.schema == "main" && o.name == "customers" && o.kind == ObjectKind::Table).unwrap();
+            demo.state.select_schema_node(10_000 + row as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.state.wizard_col_sel = 3;
+            demo.do_rebuild();
+            demo.ui.set_autocomplete_value(demo.ids.ov_col_type, "VARYING CHARACTER(48)");
+            demo.ui.set_checked(demo.ids.ov_nn, true);
+            demo.ui.set_checked(demo.ids.ov_unique, true);
+            demo.ui.set_text_input(demo.ids.ov_default, "'Unknown city'");
+            for _ in 0..3 {
+                demo.handle_button(demo.ids.ov_btn_up);
+                demo.do_rebuild();
+            }
+            assert_eq!(demo.state.wizard_col_sources[0].as_deref(), Some("city"));
+            assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_col_type), Some("VARYING CHARACTER(48)"));
+            for phase in ["draft", "saved"] {
+                if phase == "saved" {
+                    demo.ui.set_text_input(demo.ids.ov_default, "0); DELETE FROM customers; --");
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_some());
+                    assert!(demo.state.overlay.is_some());
+                    assert_eq!(dbmod::table_column_names(demo.state.conn.as_ref().unwrap(), "customers").unwrap()[0], "id");
+                    assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(), "customers").unwrap(), 3);
+                    demo.do_rebuild();
+                    assert_eq!(demo.ui.text_input_value(demo.ids.ov_default), Some("0); DELETE FROM customers; --"));
+                    demo.ui.set_text_input(demo.ids.ov_default, "'Unknown city'");
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                    demo.state.tab = MainTab::Browse;
+                    demo.do_rebuild();
+                }
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_REBUILD_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(1400.0, 1000.0);
+                    let dirty = demo.scene.take_dirty();
+                    let commands = encode_scene(&demo.scene, &dirty);
+                    let clear = clear_color(&demo.theme);
+                    let mut soft = SoftRenderer::new(1400, 1000, clear);
+                    soft.render(&commands, &dirty);
+                    write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"), soft.frame_pixels().unwrap().0, 1400, 1000).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(1400, 1000, clear) {
+                        gpu.render(&commands, &dirty);
+                        let a = soft.frame_pixels().unwrap().0;
+                        let b = gpu.frame_pixels().unwrap().0;
+                        write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"), b, 1400, 1000).unwrap();
+                        let delta = a.iter().zip(b).flat_map(|(a,b)| [0,8,16].map(|shift| (((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32).abs())).max().unwrap();
+                        assert!(delta <= 2, "{theme_name}/{phase}: full-frame channel delta {delta}");
+                        eprintln!("Table rebuild {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Table rebuild GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn = demo.state.conn.as_ref().unwrap();
+            let columns = dbmod::table_column_defs_in(conn, "main", "customers").unwrap();
+            assert_eq!(columns[0].name, "city");
+            assert_eq!(columns[0].type_name, "VARYING CHARACTER (48)");
+            assert!(columns[0].notnull && columns[0].unique);
+            assert_eq!(columns[0].default_value, "'Unknown city'");
+            assert_eq!(conn.query_row("SELECT name FROM customers WHERE id=1", [], |row| row.get::<_,String>(0)).unwrap(), "Alice");
+            assert!(conn.execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).is_err());
+            assert!(conn.execute("INSERT INTO customers(name,city) VALUES('null',NULL)", []).is_err());
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.is_checked(demo.ids.ov_unique), Some(true));
+            demo.ui.set_checked(demo.ids.ov_unique, false);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+            demo.state.conn.as_ref().unwrap().execute("INSERT INTO customers(name,city) VALUES('duplicate','Shanghai')", []).unwrap();
         }
     }
 
