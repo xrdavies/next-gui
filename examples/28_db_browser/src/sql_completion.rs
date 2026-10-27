@@ -40,10 +40,16 @@ struct Entry {
     category: Category,
 }
 
+struct RegisteredFunction {
+    name: String,
+    arity: i32,
+    builtin: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Catalog {
     entries: Vec<Entry>,
-    functions: BTreeMap<String, Vec<i32>>,
+    functions: BTreeMap<String, BTreeMap<i32, bool>>,
     pub warning: Option<String>,
 }
 
@@ -75,7 +81,7 @@ impl Default for Catalog {
         for word in sql_syntax::EXTRA_KEYWORDS {
             catalog.add(vec![(*word).to_owned()], Category::Keyword);
         }
-        static BUILTINS: OnceLock<Result<Vec<(String, i32)>, String>> = OnceLock::new();
+        static BUILTINS: OnceLock<Result<Vec<RegisteredFunction>, String>> = OnceLock::new();
         match BUILTINS.get_or_init(|| {
             Connection::open_in_memory()
                 .and_then(|conn| function_signatures(&conn))
@@ -101,17 +107,15 @@ impl Catalog {
         catalog
     }
 
-    fn add_functions(&mut self, signatures: &[(String, i32)]) {
+    fn add_functions(&mut self, signatures: &[RegisteredFunction]) {
         self.functions.clear();
-        for (name, arity) in signatures {
+        for function in signatures {
             self.functions
-                .entry(name.to_ascii_lowercase())
+                .entry(function.name.to_ascii_lowercase())
                 .or_default()
-                .push(*arity);
-        }
-        for arities in self.functions.values_mut() {
-            arities.sort();
-            arities.dedup();
+                .entry(function.arity)
+                .and_modify(|builtin| *builtin &= function.builtin)
+                .or_insert(function.builtin);
         }
         let names = self.functions.keys().cloned().collect::<Vec<_>>();
         for name in names {
@@ -233,38 +237,82 @@ impl Catalog {
         let context =
             crate::sql_calltip::context(sql, caret, |name| self.functions.contains_key(name))?;
         let arities = self.functions.get(&context.name)?;
-        let signatures = arities
+        let forms = arities
             .iter()
-            .map(|&arity| {
-                let args = if arity < 0 {
-                    "arg1, …".to_owned()
-                } else {
-                    (1..=arity)
-                        .map(|i| format!("arg{i}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                format!("{}({args})", context.name)
+            .map(|(&arity, &builtin)| {
+                let help = builtin
+                    .then(|| crate::sql_function_help::lookup(&context.name, arity))
+                    .flatten();
+                let params = help
+                    .map(|(params, _)| params.to_owned())
+                    .unwrap_or_else(|| {
+                        if arity < 0 {
+                            "arg1, …".to_owned()
+                        } else {
+                            (1..=arity)
+                                .map(|i| format!("arg{i}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    });
+                (
+                    arity,
+                    params,
+                    help.map(|(_, text)| text).unwrap_or_default(),
+                )
             })
+            .collect::<Vec<_>>();
+        let active = forms
+            .iter()
+            .find(|(arity, _, _)| {
+                usize::try_from(*arity).is_ok_and(|arity| arity > context.argument)
+            })
+            .or_else(|| forms.iter().find(|(arity, _, _)| *arity < 0))
+            .or_else(|| forms.last())?;
+        let signatures = forms
+            .iter()
+            .map(|(_, params, _)| format!("{}({params})", context.name))
             .collect::<Vec<_>>()
             .join("\n");
-        let status = if arities.iter().all(|&n| n == 0) {
+        let status = if active.0 == 0 {
             "No arguments".to_owned()
         } else {
-            format!("Argument {}", context.argument + 1)
+            let params = active.1.split(", ").collect::<Vec<_>>();
+            let parameter = params
+                .get(context.argument)
+                .or_else(|| params.last().filter(|p| p.contains('…')));
+            if let Some(parameter) = parameter.filter(|p| !active.2.is_empty() && **p != "…") {
+                format!(
+                    "Argument {} · {}",
+                    context.argument + 1,
+                    parameter.trim_end_matches('…')
+                )
+            } else {
+                format!("Argument {}", context.argument + 1)
+            }
         };
-        Some((context.anchor, format!("{signatures}\n{status}")))
+        Some((
+            context.anchor,
+            format!(
+                "{signatures}\n{status}{}{}",
+                if active.2.is_empty() { "" } else { "\n" },
+                active.2
+            ),
+        ))
     }
 }
 
-fn function_signatures(conn: &Connection) -> rusqlite::Result<Vec<(String, i32)>> {
+fn function_signatures(conn: &Connection) -> rusqlite::Result<Vec<RegisteredFunction>> {
     // PRAGMA cannot be shadowed by a user table named pragma_function_list.
     let mut stmt = conn.prepare("PRAGMA function_list")?;
-    let rows = stmt.query_map([], |r| Ok((r.get("name")?, r.get("narg")?)))?;
-    let mut functions = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-    functions.sort();
-    functions.dedup();
-    Ok(functions)
+    let rows = stmt.query_map([], |r| {
+        Ok(RegisteredFunction {
+            name: r.get("name")?,
+            arity: r.get("narg")?,
+            builtin: r.get("builtin")?,
+        })
+    })?;
+    rows.collect()
 }
 
 fn identifier_text(name: &str, quote: Option<char>) -> String {
@@ -413,6 +461,79 @@ mod tests {
     }
 
     #[test]
+    fn descriptive_calltips_name_parameters_and_respect_custom_overrides() {
+        let conn = Connection::open_in_memory().unwrap();
+        let builtin = Catalog::load(&conn);
+        let sql = "substr('中文', 1,";
+        let text = builtin.calltip(sql, sql.chars().count()).unwrap().1;
+        assert!(text.contains("substr(string, start, length)"), "{text}");
+        assert!(text.contains("Argument 3 · length"), "{text}");
+        conn.create_scalar_function(
+            "substr",
+            3,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |_| Ok(1),
+        )
+        .unwrap();
+        let custom = Catalog::load(&conn);
+        let text = custom.calltip(sql, sql.chars().count()).unwrap().1;
+        assert!(text.contains("substr(arg1, arg2, arg3)"), "{text}");
+        assert!(!text.contains("Argument 3 · length"), "{text}");
+        assert!(!text.contains("Extract a substring"), "{text}");
+        assert!(Catalog::default()
+            .calltip(sql, sql.chars().count())
+            .unwrap()
+            .1
+            .contains("Argument 3 · length"));
+    }
+
+    #[test]
+    fn descriptive_calltips_follow_fixed_variadic_date_and_window_argument_roles() {
+        let c = Catalog::default();
+        for (sql, parameter) in [
+            ("instr('abc',", "substring"),
+            ("strftime('%Y', 'now', '+1 day',", "modifiers"),
+            ("coalesce(NULL, 1, 2, 3,", "values"),
+            ("printf('%s %s', 'a',", "values"),
+            ("lead(value, 2,", "default"),
+            ("group_concat(value,", "separator"),
+            ("max(1, 2, 3,", "values"),
+        ] {
+            let text = c.calltip(sql, sql.chars().count()).unwrap().1;
+            assert!(text.contains(&format!(" · {parameter}\n")), "{text}");
+        }
+        let zero = c.calltip("row_number(", 11).unwrap().1;
+        assert!(zero.contains("No arguments\nRow position"));
+        assert!(!zero.contains("Argument 1"));
+    }
+
+    #[test]
+    fn math_help_follows_engine_availability_and_sqlite_argument_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        let available = conn.prepare("SELECT atan2(1, 0)").is_ok();
+        let c = Catalog::load(&conn);
+        assert_eq!(c.calltip("atan2(1,", 8).is_some(), available);
+        if available {
+            let text = c.calltip("atan2(1,", 8).unwrap().1;
+            assert!(text.contains("atan2(y, x)\nArgument 2 · x"), "{text}");
+            let angle: f64 = conn
+                .query_row("SELECT atan2(1, 0)", [], |r| r.get(0))
+                .unwrap();
+            assert!((angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+        }
+        conn.create_scalar_function(
+            "coalesce",
+            -1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |_| Ok(1),
+        )
+        .unwrap();
+        let c = Catalog::load(&conn);
+        let custom = c.calltip("coalesce(NULL,", 14).unwrap().1;
+        assert_eq!(custom, "coalesce(arg1, …)\nArgument 2");
+    }
+
+    #[test]
     fn cached_calltips_include_overloads_variadic_zero_and_connection_specific_functions() {
         let conn = Connection::open_in_memory().unwrap();
         for arity in [0, 2] {
@@ -431,11 +552,17 @@ mod tests {
             hint("custom_hint("),
             "custom_hint()\ncustom_hint(arg1, arg2)\nArgument 1"
         );
-        assert_eq!(hint("random("), "random()\nNo arguments");
-        assert_eq!(hint("coalesce(1,"), "coalesce(arg1, …)\nArgument 2");
+        assert_eq!(
+            hint("random("),
+            "random()\nNo arguments\nPseudorandom signed integer."
+        );
+        assert_eq!(
+            hint("coalesce(1,"),
+            "coalesce(first, second, values…)\nArgument 2 · second\nFirst non-NULL value."
+        );
         let overloads = hint("substr('x', 1,");
-        assert!(overloads.contains("substr(arg1, arg2)\nsubstr(arg1, arg2, arg3)"));
-        assert!(overloads.ends_with("Argument 3"));
+        assert!(overloads.contains("substr(string, start)\nsubstr(string, start, length)"));
+        assert!(overloads.contains("Argument 3 · length"));
         assert!(Catalog::default().calltip("custom_hint(", 12).is_none());
         assert!(c.calltip("unknown(", 8).is_none());
     }

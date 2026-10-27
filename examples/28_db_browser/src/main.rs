@@ -17,6 +17,7 @@ mod sql_editor;
 mod sql_syntax;
 mod sql_completion;
 mod sql_calltip;
+mod sql_function_help;
 mod state;
 mod ui_build;
 
@@ -4357,7 +4358,7 @@ mod interaction_tests {
         assert_eq!(demo.ui.text_area_hint(demo.ids.sql_area), None);
         demo.input_key_with_sql_completions(UiKey::Char(')'));
         demo.update_sql_hint();
-        assert_eq!(demo.ui.text_area_hint(demo.ids.sql_area), Some("coalesce(arg1, …)\nArgument 1"));
+        assert_eq!(demo.ui.text_area_hint(demo.ids.sql_area), Some("coalesce(first, second, values…)\nArgument 1 · first\nFirst non-NULL value."));
         demo.input_key_with_sql_completions(UiKey::Undo);
         demo.update_sql_hint();
         assert!(demo.ui.text_area_hint(demo.ids.sql_area).unwrap().contains("Argument 3"));
