@@ -172,6 +172,9 @@ pub struct BuiltUi {
     pub insert_values: Vec<WidgetId>,
     pub insert_modes: Vec<WidgetId>,
     pub ov_list: WidgetId,
+    pub ov_fields_table: WidgetId,
+    pub ov_field_top: WidgetId,
+    pub ov_field_bottom: WidgetId,
     pub ov_col_name: WidgetId,
     pub ov_col_type: WidgetId,
     pub ov_pk: WidgetId,
@@ -315,6 +318,14 @@ fn schema_tree(state: &AppState) -> Vec<TreeNode> {
             }).collect();
         TreeNode::new(root, name.clone(), groups)
     }).collect()
+}
+
+pub fn table_field_rows(state: &AppState) -> Vec<Vec<String>> {
+    let flag = |value| if value { "Yes".to_string() } else { String::new() };
+    state.wizard_cols.iter().map(|column|vec![column.name.clone(),
+        format!("{}{}",column.type_name,column.generated.as_ref().map_or("",|generated|if generated.stored { " · STORED" } else { " · VIRTUAL" })),
+        flag(column.notnull),flag(column.pk),flag(column.auto_increment),flag(column.unique),column.default_value.clone(),
+        column.check_expression.clone(),column.collation.clone(),column.foreign_key_clause.clone()]).collect()
 }
 
 fn decorate_browse_cols(state: &AppState, cols: &[String]) -> Vec<TableColumn> {
@@ -485,6 +496,9 @@ pub fn build_ui(
     let mut insert_values = Vec::new();
     let mut insert_modes = Vec::new();
     let mut ov_list = z;
+    let mut ov_fields_table = z;
+    let mut ov_field_top = z;
+    let mut ov_field_bottom = z;
     let mut ov_col_name = z;
     let mut ov_col_type = z;
     let mut ov_pk = z;
@@ -937,30 +951,19 @@ pub fn build_ui(
                                     ov_pk_conflict = r.select(crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().map(|(label,_)| *label),
                                         crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().position(|(_,action)| *action == state.wizard_table_options.primary_key_conflict), "Default", selector);
                                 });
-                                let items: Vec<String> = state
-                                    .wizard_cols
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, col)| {
-                                        format!(
-                                            "{}. {} {}{}{}{}",
-                                            i + 1,
-                                            col.name,
-                                            col.type_name,
-                                            if col.pk { " PK" } else { "" },
-                                            if col.auto_increment { " AI" } else { "" },
-                                            col.generated.as_ref().map_or("", |generated| if generated.stored { " STORED" } else { " VIRTUAL" })
-                                        )
-                                    })
-                                    .collect();
                                 c.text("Columns");
-                                ov_list = c.list(items, list_s);
                                 c.row(row, |r| {
-                                    ov_btn_add = r.tool_button("Add");
-                                    ov_btn_del = r.tool_button("Remove");
-                                    ov_btn_up = r.tool_button("Up");
-                                    ov_btn_down = r.tool_button("Down");
+                                    ov_btn_add = r.tool_button("Add"); ov_btn_del = r.tool_button("Remove");
+                                    ov_field_top = r.tool_button("Top"); ov_btn_up = r.tool_button("Up");
+                                    ov_btn_down = r.tool_button("Down"); ov_field_bottom = r.tool_button("Bottom");
                                 });
+                                let mut fields_style = TableStyle::from_theme(&theme);
+                                fields_style.width = scroll.width-12.0; fields_style.height = scroll.height.min(180.0);
+                                let columns = [("Name",180.0),("Type",160.0),("NN",44.0),("PK",44.0),("AI",44.0),("U",44.0),
+                                    ("Default",140.0),("Check",240.0),("Collation",140.0),("Foreign Key",280.0)].into_iter()
+                                    .map(|(title,width)|TableColumn::new(title,width)).collect();
+                                // shortcut: cells use selected-column controls; add inline editors for DB4S parity.
+                                ov_fields_table = c.table(columns,table_field_rows(state),fields_style);
                                 let sel = state.wizard_col_sel.min(state.wizard_cols.len().saturating_sub(1));
                                 let coldef = state.wizard_cols.get(sel);
                                 c.text(format!("Selected column #{}", sel + 1));
@@ -2118,8 +2121,16 @@ pub fn build_ui(
     if ov_cipher_pass.0 != 0 {
         ui.set_text_input_secret(ov_cipher_pass, true);
     }
-    if ov_list.0 != 0 {
-        ui.set_list_selected(ov_list, Some(state.wizard_col_sel));
+    if ov_fields_table.0 != 0 {
+        ui.set_table_selected_row(ov_fields_table,Some(state.wizard_col_sel));
+        ui.set_table_selected_col(ov_fields_table,state.wizard_field_column);
+        ui.set_table_frozen_cols(ov_fields_table,1);
+        for (column,width) in state.wizard_field_widths.iter().enumerate() { ui.set_table_column_width(ov_fields_table,column,*width); }
+        ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key");
+        ui.set_accessible_name(ov_field_top,"Move selected column to top"); ui.set_accessible_name(ov_field_bottom,"Move selected column to bottom");
+        for button in [ov_field_top,ov_btn_up] { ui.set_button_enabled(button,state.wizard_col_sel>0 && !state.wizard_cols.is_empty()); }
+        for button in [ov_field_bottom,ov_btn_down] { ui.set_button_enabled(button,state.wizard_col_sel+1<state.wizard_cols.len()); }
+        ui.set_button_enabled(ov_btn_del,!state.wizard_cols.is_empty());
     }
     if state.overlay.is_none() {
         let _ = ui.set_tabs_selected(tabs, state.tab.index());
@@ -2355,6 +2366,7 @@ pub fn build_ui(
             ui.set_list_scroll_offset(list, state.wizard_index_list_scroll[index]);
         }
     }
+    ui.set_table_scroll_offset(ov_fields_table,state.wizard_field_scroll.0,state.wizard_field_scroll.1);
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
     ui.set_scroll_offset(ov_keys_scroll, state.wizard_key_scroll.0, state.wizard_key_scroll.1);
@@ -2489,6 +2501,9 @@ pub fn build_ui(
         insert_values,
         insert_modes,
         ov_list,
+        ov_fields_table,
+        ov_field_top,
+        ov_field_bottom,
         ov_col_name,
         ov_col_type,
         ov_pk,

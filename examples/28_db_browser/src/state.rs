@@ -406,6 +406,9 @@ pub struct AppState {
     pub overlay: Option<OverlayKind>,
     pub wizard_schema: String,
     pub wizard_scroll: (f32, f32),
+    pub wizard_field_scroll: (f32, f32),
+    pub wizard_field_widths: Vec<f32>,
+    pub wizard_field_column: Option<usize>,
     pub wizard_table_name: String,
     pub wizard_table_options: crate::table_sql::TableOptions,
     pub wizard_table_original: Option<SelectedObject>,
@@ -692,6 +695,9 @@ impl AppState {
             overlay: None,
             wizard_schema: "main".into(),
             wizard_scroll: (0.0, 0.0),
+            wizard_field_scroll: (0.0, 0.0),
+            wizard_field_widths: Vec::new(),
+            wizard_field_column: None,
             wizard_table_options: crate::table_sql::TableOptions::default(),
             wizard_table_name: "new_table".into(),
             wizard_table_original: None,
@@ -1574,6 +1580,9 @@ impl AppState {
     pub fn open_create_table_wizard(&mut self) {
         self.wizard_schema = "main".into();
         self.wizard_scroll = (0.0, 0.0);
+        self.wizard_field_scroll = (0.0, 0.0);
+        self.wizard_field_widths.clear();
+        self.wizard_field_column = None;
         self.wizard_table_name = "new_table".into();
         self.wizard_table_original = None;
         self.wizard_table_options = crate::table_sql::TableOptions::default();
@@ -1631,6 +1640,9 @@ impl AppState {
         self.wizard_col_sources = cols.iter().map(|col| Some(col.name.clone())).collect();
         self.wizard_schema = sel.schema.clone();
         self.wizard_scroll = (0.0, 0.0);
+        self.wizard_field_scroll = (0.0, 0.0);
+        self.wizard_field_widths.clear();
+        self.wizard_field_column = None;
         self.wizard_table_name = sel.name.clone();
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", db::quote_ident(&sel.schema)), [&sel.name], |row| row.get(0)).map_err(|error| error.to_string())?;
@@ -1770,6 +1782,24 @@ impl AppState {
         if !self.table_wizard_names_valid() { return Err("Finish distinct column names before changing key membership".into()); }
         crate::table_sql::index_constraints_from_columns(&self.renamed_wizard_index_constraints(&self.wizard_index_constraints)?,
             &self.wizard_cols, self.wizard_table_options.primary_key_conflict)
+    }
+
+    pub fn move_wizard_column(&mut self, target: usize) -> Result<(), String> {
+        let selected = self.wizard_col_sel; let count = self.wizard_cols.len();
+        if selected >= count || target >= count { return Err("Select an existing column to move".into()); }
+        if self.wizard_column_edit_states.len()!=count || self.wizard_constraint_columns.len()!=count
+            || (self.wizard_table_original.is_some() && self.wizard_col_sources.len()!=count) {
+            return Err("Column identities do not match the table draft; reopen Modify Table".into());
+        }
+        if selected == target { return Ok(()); }
+        let range = selected.min(target)..selected.max(target)+1;
+        let shift = if selected < target { range.len()-1 } else { 1 };
+        self.wizard_cols[range.clone()].rotate_right(shift);
+        self.wizard_column_edit_states[range.clone()].rotate_right(shift);
+        self.wizard_constraint_columns[range.clone()].rotate_right(shift);
+        if self.wizard_table_original.is_some() { self.wizard_col_sources[range].rotate_right(shift); }
+        self.wizard_col_sel = target;
+        Ok(())
     }
 
     pub fn store_wizard_checks(&mut self) {
