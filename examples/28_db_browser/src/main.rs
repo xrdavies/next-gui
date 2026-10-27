@@ -2519,7 +2519,12 @@ impl Demo {
                 let tab = self.state.browse_mut();
                 tab.offset = 0;
                 if tab.order_col.as_deref() == Some(col_name.as_str()) {
-                    tab.order_desc = !tab.order_desc;
+                    if tab.order_desc {
+                        tab.order_col = None;
+                        tab.order_desc = false;
+                    } else {
+                        tab.order_desc = true;
+                    }
                 } else {
                     tab.order_col = Some(col_name);
                     tab.order_desc = false;
@@ -3916,6 +3921,30 @@ mod interaction_tests {
         demo.poll_header_sort();
         assert_eq!(demo.state.browse().order_col.as_deref(), Some("score ▲"));
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "1");
+        demo.do_rebuild();
+        let bounds = demo
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table))
+            .unwrap()
+            .bounds;
+        demo.ui
+            .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
+        demo.poll_header_sort();
+        assert!(demo.state.browse().order_desc);
+        demo.do_rebuild();
+        let bounds = demo
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table))
+            .unwrap()
+            .bounds;
+        demo.ui
+            .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
+        demo.poll_header_sort();
+        assert!(demo.state.browse().order_col.is_none());
     }
 
     #[test]
