@@ -645,3 +645,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Original constraint grids (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-ce1ec4558b01.md): Index/FK/CHECK pages now show the original columns in frozen/resizable/scrollable shared tables. Draft-safe selection/focus/view persistence, validated SQL fragments, quoted multiline copy and actual Save retain rowids/sequence/view/trigger/enforced constraints.515 tests/strict checks, eight Soft/Metal pairs (delta<=2), six native pages/14 Office static windows inspected. Direct constraint editors/selectors, inline SQL, resizable preview, full history/movement/details and broader product/runtime parity remain unfinished; native input unavailable on locked desktop.
+
+### Resizable table definition and SQL preview (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-bafb781fb129.md): Original-style vertical split now resizes live and retains ratio across pages/rebuild/resize. Shared splitter minima and viewport-filling scroll pages prevent overlap and preserve sash access; hidden pages no longer receive keyboard focus. Read-only preview sessions, small-window controls and actual migrated data/view/CHECK verified.518 tests/strict checks, four Soft/Metal pairs (delta2), ten native configurations/14 Office static captures inspected. Native drag/input, direct constraint selectors/editors, inline SQL/full history/movement/details, original dialog polish and broader product/runtime parity remain unfinished.
