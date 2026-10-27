@@ -531,3 +531,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Fractional primitive coverage checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-977efec45f5f.md): renderer F01 verified. Shared pixel-center bounds, signed-distance rounded edges, sharp small-radius fallback and straight-alpha rectangles align Soft/GPU. Actual primitive readback max 1; all ten wizard whole frames max 2; fresh e28 plus fourteen Office native static windows inspected. 403 tests/strict checks pass. A new P1 finding tracks generated schema fields reaching execute_batch; full editors/Plot/original interface and native input acceptance remain unfinished.
+
+
+## Structured schema statement boundary checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-b9a0f821765e.md): generated-DDL F01 verified after reproducing a Columns field executing an extra DELETE. CREATE/ALTER/index replacement now reject tails before stepping or preparing PRAGMAs, preserving data and pending transactions. Quoted semicolons, custom types, expression creation, CSV imports and intentional scripts still work. 405 tests/strict checks pass. No layout change or new native acceptance; full expression/partial-index controls and schema/interface parity remain unfinished.

@@ -14,7 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R-20261027-977efec45f5f-F01 | open | P1 | grok | e28 / all | existing generated DDL | structured schema SQL fields | execute_batch may execute a second statement from an expression/default; boundary needs reproduction and fix | [F01](R-20261027-977efec45f5f.md#r-20261027-977efec45f5f-f01) | — | — |
+| R-20261027-977efec45f5f-F01 | verified | P1 | grok | e28 / all | existing generated DDL | structured schema SQL fields | Reproduced DELETE tail; generated CREATE/ALTER/replacement and PRAGMA boundaries now reject before mutation | [F01](R-20261027-977efec45f5f.md#r-20261027-977efec45f5f-f01) | b9a0f821765e | b9a0f821765e |
 | R-20261027-6a2fb87f7784-F02 | verified | P2 | grok | e28 / all | existing positional settings | refresh_browse | Named surviving filters/order/widths/frozen prefix verified in refresh/export and active/inactive JSON/XML projects | [F02](R-20261027-6a2fb87f7784.md#r-20261027-6a2fb87f7784-f02) | 80c8803f4766 | 80c8803f4766 |
 | R-20261027-6a2fb87f7784-F01 | verified | P3 | grok | shared render / macOS | existing primitive paths | fractional rectangle edges | Pixel-center bounds, rounded coverage and solid alpha verified; primitive delta 1, whole wizard frames <=2 | [F01](R-20261027-6a2fb87f7784.md#r-20261027-6a2fb87f7784-f01) | 977efec45f5f | 977efec45f5f |
 | R-20261027-1ca20533cf37-F01 | verified | P2 | grok | shared / e28 | existing Chart title | Ui::paint_chart | Bounded Unicode caption wrapping/ellipsis, full accessible text and e28 tooltip verified; Soft/Metal and native Office inspected | [F01](R-20261027-1ca20533cf37.md#r-20261027-1ca20533cf37-f01) | 14a98a98cdb1 | 14a98a98cdb1 |
@@ -84,6 +84,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `a7dfa50..b9a0f821765e` | Codex | issues — generated-DDL F01 verified; baseline DELETE reproduced, 405 tests/strict checks pass; full schema/interface/native acceptance remain | [Report](R-20261027-b9a0f821765e.md) |
 | 2026-10-27 | `86b2739..977efec45f5f` | Codex | issues — primitive F01 verified; 403 tests/strict checks; ten whole-frame deltas <=2, native Office 14/e28 static inspected; generated-DDL boundary open | [Report](R-20261027-977efec45f5f.md) |
 | 2026-10-27 | `67f87f4..80c8803f4766` | Codex | issues — column refresh F02 verified; 401 tests/strict checks; Soft/native Browse static inspected; renderer/full parity remain | [Report](R-20261027-80c8803f4766.md) |
 | 2026-10-27 | `7d58515..6a2fb87f7784` | Codex | issues — 399 tests/strict checks, qualified wizard controls/types/rollback and scroll/native static captures verified; edge coverage/browse settings/full/native parity remain | [Report](R-20261027-6a2fb87f7784.md) |
