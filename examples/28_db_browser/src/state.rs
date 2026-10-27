@@ -142,6 +142,10 @@ pub struct BrowseTabState {
     #[serde(skip)]
     pub sel_col: Option<usize>,
     #[serde(skip)]
+    pub sel_col_start: Option<usize>,
+    #[serde(skip)]
+    pub sel_col_end: Option<usize>,
+    #[serde(skip)]
     pub total_rows: Option<usize>,
 }
 
@@ -165,6 +169,8 @@ impl BrowseTabState {
             sel_row_start: None,
             sel_row_end: None,
             sel_col: None,
+            sel_col_start: None,
+            sel_col_end: None,
             total_rows: None,
         }
     }
@@ -2217,7 +2223,7 @@ impl AppState {
             (
                 tab.table.clone().ok_or("No browse table")?,
                 tab.sel_row_start.or(tab.sel_row).ok_or("Select a browse cell first")?,
-                tab.sel_col.unwrap_or(0),
+                tab.sel_col_start.or(tab.sel_col).unwrap_or(0),
                 tab.rowids.clone(),
                 result.columns.clone(),
                 result.rows.len(),
@@ -3499,6 +3505,20 @@ mod chart_default_tests {
                 .query_row("SELECT a FROM t WHERE rowid=1", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
             7
+        );
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(1);
+        state.browse_mut().sel_col_start = Some(1);
+        state.browse_mut().sel_col_end = Some(1);
+        state.paste_browse_tsv("changed").unwrap();
+        assert_eq!(
+            state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row("SELECT b FROM t WHERE rowid=1", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "changed"
         );
     }
 

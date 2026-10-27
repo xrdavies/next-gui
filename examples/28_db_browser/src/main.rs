@@ -2468,11 +2468,16 @@ impl Demo {
             let col = self.ui.table_selected_col(self.ids.browse_table);
             let col_changed = col.is_some() && col != self.state.browse().sel_col;
             let rows = self.ui.table_selected_rows(self.ids.browse_table);
-            if self.last_browse_row != Some(row) || col_changed || rows.is_some_and(|(_, end)| self.state.browse().sel_row_end != Some(end)) {
+            let cols = self.ui.table_selected_cols(self.ids.browse_table);
+            let expected_cols = self.state.browse().sel_col_start.zip(self.state.browse().sel_col_end);
+            let col_range_changed = cols != expected_cols;
+            if self.last_browse_row != Some(row) || col_changed || col_range_changed || rows.is_some_and(|(_, end)| self.state.browse().sel_row_end != Some(end)) {
                 self.last_browse_row = Some(row);
                 self.state.browse_mut().sel_row = Some(row);
                 self.state.browse_mut().sel_row_start = rows.map(|(start, _)| start);
                 self.state.browse_mut().sel_row_end = rows.map(|(_, end)| end);
+                self.state.browse_mut().sel_col_start = cols.map(|(start, _)| start);
+                self.state.browse_mut().sel_col_end = cols.map(|(_, end)| end);
                 if let Some(c) = col {
                     self.state.browse_mut().sel_col = Some(c);
                 }
@@ -3233,10 +3238,14 @@ mod interaction_tests {
         demo.ui.key_input(UiKey::Down);
         demo.ui.key_input(UiKey::SelectDown);
         assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 1)));
+        demo.ui.set_table_selected_col(demo.ids.browse_table, Some(0));
+        demo.ui.key_input(UiKey::SelectRight);
+        assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 1)));
         assert_eq!(demo.ui.table_selected_text(demo.ids.browse_table).as_deref(), Some("one\tx\ntwo\ty"));
         demo.poll_selection_changes();
         demo.do_rebuild();
         assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 1)));
+        assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 1)));
     }
 
     #[test]

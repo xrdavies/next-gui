@@ -1761,6 +1761,8 @@ enum Kind {
         selected_col: Option<usize>,
         /// Inclusive row range selected with Shift+Up/Down.
         selected_range: Option<(usize, usize)>,
+        /// Inclusive column range selected with Shift+Left/Right.
+        selected_col_range: Option<(usize, usize)>,
         scroll_y: f32,
         /// Horizontal scroll for columns beyond [`frozen_cols`].
         scroll_x: f32,
@@ -4399,13 +4401,25 @@ impl Ui {
         }
     }
 
+    /// Inclusive selected table column range, or the active cell column.
+    pub fn table_selected_cols(&self, id: WidgetId) -> Option<(usize, usize)> {
+        match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { selected_col_range, selected_col, .. }) => selected_col_range.or_else(|| selected_col.map(|col| (col, col))),
+            _ => None,
+        }
+    }
+
     /// Copy the selected table rows as tab-separated text.
     pub fn table_selected_text(&self, id: WidgetId) -> Option<String> {
-        let Some(Kind::Table { rows, columns, .. }) = self.widgets.get(&id).map(|w| &w.kind) else { return None; };
+        let Some(Kind::Table { rows, columns, selected_col, selected_col_range, .. }) = self.widgets.get(&id).map(|w| &w.kind) else { return None; };
         let (start, end) = self.table_selected_rows(id)?;
         let end = end.min(rows.len().saturating_sub(1));
         if start > end { return None; }
-        Some((start..=end).map(|row| (0..columns.len()).map(|col| rows[row].get(col).map(String::as_str).unwrap_or("")).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"))
+        let (col_start, col_end) = selected_col_range
+            .or_else(|| selected_col.map(|col| (col, col)))
+            .unwrap_or((0, columns.len().saturating_sub(1)));
+        if columns.is_empty() || col_start > col_end || col_end >= columns.len() { return None; }
+        Some((start..=end).map(|row| (col_start..=col_end).map(|col| rows[row].get(col).map(String::as_str).unwrap_or("")).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"))
     }
 
     /// Drain last Table header click as `(table_id, column_index)`.
@@ -4478,6 +4492,29 @@ impl Ui {
                 *selected_range = selected_row.map(|i| (i, i));
             }
         }
+    }
+
+    /// Set the active table column and reset its range to one cell.
+    pub fn set_table_selected_col(&mut self, id: WidgetId, col: Option<usize>) -> bool {
+        let Some(Widget { kind: Kind::Table { columns, selected_col, selected_col_range, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let Some(col) = col else { *selected_col = None; *selected_col_range = None; return true; };
+        if col >= columns.len() { return false; }
+        *selected_col = Some(col);
+        *selected_col_range = Some((col, col));
+        true
+    }
+
+    /// Set an inclusive table cell range.
+    pub fn set_table_selected_cells(&mut self, id: WidgetId, rows: Option<(usize, usize)>, cols: Option<(usize, usize)>) -> bool {
+        let Some(Widget { kind: Kind::Table { columns, rows: body, selected_row, selected_col, selected_range, selected_col_range, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let Some((row_start, row_end)) = rows else { *selected_row = None; *selected_range = None; *selected_col = None; *selected_col_range = None; return true; };
+        let Some((col_start, col_end)) = cols else { return false; };
+        if row_start >= body.len() || row_end >= body.len() || col_start >= columns.len() || col_end >= columns.len() { return false; }
+        *selected_row = Some(row_end);
+        *selected_range = Some((row_start.min(row_end), row_start.max(row_end)));
+        *selected_col = Some(col_end);
+        *selected_col_range = Some((col_start.min(col_end), col_start.max(col_end)));
+        true
     }
 
     /// Set an inclusive table row range without changing the active row.
@@ -5536,12 +5573,14 @@ impl Ui {
                     selected_row,
                     selected_col,
                     selected_range,
+                    selected_col_range,
                     ..
                 } = &mut w.kind
                 {
                     *selected_row = Some(idx as usize);
                     *selected_col = column_hit;
                     *selected_range = Some((idx as usize, idx as usize));
+                    *selected_col_range = column_hit.map(|col| (col, col));
                 }
             }
         }
@@ -5737,8 +5776,8 @@ impl Ui {
     }
 
     fn key_table(&mut self, id: WidgetId, key: UiKey) -> bool {
-        let n = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Table { rows, .. }) => rows.len(),
+        let (n, cols) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { rows, columns, .. }) => (rows.len(), columns.len()),
             _ => return false,
         };
         if n == 0 {
@@ -5760,6 +5799,24 @@ impl Ui {
                 self.set_table_selected_row(id, Some(next));
                 if key == UiKey::SelectUp { if let Some(w) = self.widgets.get_mut(&id) { if let Kind::Table { selected_range, .. } = &mut w.kind { *selected_range = Some((range_start, next)); } } }
                 self.ensure_selected_visible_table(id);
+                true
+            }
+            UiKey::Left | UiKey::SelectLeft | UiKey::Right | UiKey::SelectRight => {
+                if cols == 0 { return false; }
+                let cur = self.table_selected_col(id);
+                let next = match key {
+                    UiKey::Left | UiKey::SelectLeft => cur.map(|i| i.saturating_sub(1)).unwrap_or(0),
+                    _ => cur.map(|i| (i + 1).min(cols - 1)).unwrap_or(0),
+                };
+                let range_start = cur.unwrap_or(next);
+                self.set_table_selected_col(id, Some(next));
+                if matches!(key, UiKey::SelectLeft | UiKey::SelectRight) {
+                    if let Some(w) = self.widgets.get_mut(&id) {
+                        if let Kind::Table { selected_col_range, .. } = &mut w.kind {
+                            *selected_col_range = Some((range_start, next));
+                        }
+                    }
+                }
                 true
             }
             UiKey::Home => {
@@ -11739,8 +11796,9 @@ impl Ui {
                     columns,
                     rows,
                     selected_row,
-                    selected_col: _,
+                    selected_col,
                     selected_range,
+                    selected_col_range,
                     scroll_y,
                     scroll_x,
                     frozen_cols,
@@ -11758,7 +11816,9 @@ impl Ui {
         let columns = columns.clone();
         let rows = rows.clone();
         let selected_row = *selected_row;
+        let selected_col = *selected_col;
         let selected_range = *selected_range;
+        let selected_col_range = *selected_col_range;
         let scroll_y = *scroll_y;
         let scroll_x = *scroll_x;
         let frozen_cols = *frozen_cols;
@@ -11849,7 +11909,9 @@ impl Ui {
                 }
                 continue;
             }
-            let is_sel = selected_range.map_or(selected_row == Some(ri), |(start, end)| ri >= start.min(end) && ri <= start.max(end));
+            let row_sel = selected_range.map_or(selected_row == Some(ri), |(start, end)| ri >= start.min(end) && ri <= start.max(end));
+            let has_col_selection = selected_col_range.is_some() || selected_col.is_some();
+            let full_row_sel = row_sel && !has_col_selection;
             if let Some(&bg) = aux.get(base) {
                 scene.set_clip(bg, Some(body_clip));
                 scene.set_bounds(
@@ -11861,7 +11923,7 @@ impl Ui {
                         style.row_height,
                     ),
                 );
-                if is_sel {
+                if full_row_sel {
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
@@ -11876,11 +11938,21 @@ impl Ui {
                 let (ox, clip) = cells[ci];
                 let clip = clip.intersect(&body_clip);
                 let visible = !clip.is_empty();
+                let col_sel = selected_col_range.map_or(selected_col == Some(ci), |(start, end)| ci >= start.min(end) && ci <= start.max(end));
+                let is_sel = row_sel && (!has_col_selection || col_sel);
                 // cell background node
                 if let Some(&cbg) = aux.get(base + 1 + ci) {
                     scene.set_clip(cbg, Some(clip));
                     if visible {
-                        if let Some(fill) = fmt {
+                        if is_sel {
+                            scene.set_bounds(
+                                cbg,
+                                Rect::new(ox, y, col.width.max(1.0), style.row_height),
+                            );
+                            scene.set_fill(cbg, style.selected_bg);
+                            scene.set_mask(cbg, None);
+                            scene.set_visible(cbg, true);
+                        } else if let Some(fill) = fmt {
                             scene.set_bounds(
                                 cbg,
                                 Rect::new(ox, y, col.width.max(1.0), style.row_height),
@@ -17865,6 +17937,7 @@ impl FlexBuilder<'_> {
                     selected_row: None,
                     selected_col: None,
                     selected_range: None,
+                    selected_col_range: None,
                     scroll_y: 0.0,
                     scroll_x: 0.0,
                     frozen_cols: 0,
@@ -18522,6 +18595,7 @@ impl FlexBuilder<'_> {
                     selected_row: None,
                     selected_col: None,
                     selected_range: None,
+                    selected_col_range: None,
                     scroll_y: 0.0,
                     scroll_x: 0.0,
                     frozen_cols: 0,
@@ -22807,5 +22881,24 @@ mod range_smoke_tests {
    id=c.table(vec![TableColumn::new("a",80.0)], vec![vec!["x".into()]], TableStyle::default());
   });
   ui.set_table_selected_row(id,Some(0)); assert_eq!(ui.table_selected_text(id).as_deref(),Some("x"));
+ }
+
+ #[test]
+ fn cell_ranges_copy_as_a_rectangle() {
+  let mut ui=Ui::new(); let mut id=WidgetId(0);
+  ui.column(ColumnStyle { width: 320.0, height: 200.0, ..ColumnStyle::default() }, |c| {
+   id=c.table(
+    vec![TableColumn::new("a",80.0), TableColumn::new("b",80.0), TableColumn::new("c",80.0)],
+    vec![vec!["a1".into(),"b1".into(),"c1".into()], vec!["a2".into(),"b2".into(),"c2".into()], vec!["a3".into(),"b3".into(),"c3".into()]],
+    TableStyle::default(),
+   );
+  });
+  ui.set_table_selected_row(id,Some(1));
+  ui.set_table_selected_col(id,Some(1));
+  ui.set_focus(Some(id));
+  assert!(ui.key_input(UiKey::SelectRight));
+  assert!(ui.key_input(UiKey::SelectDown));
+  assert_eq!(ui.table_selected_cols(id), Some((1, 2)));
+  assert_eq!(ui.table_selected_text(id).as_deref(), Some("b2\tc2\nb3\tc3"));
  }
 }

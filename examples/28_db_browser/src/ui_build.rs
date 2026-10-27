@@ -1835,7 +1835,21 @@ pub fn build_ui(
         if let Some(row) = state.browse().sel_row {
             if browse_table.0 != 0 {
                 ui.set_table_selected_row(browse_table, Some(row));
-                ui.set_table_selected_rows(browse_table, Some((state.browse().sel_row_start.unwrap_or(row), state.browse().sel_row_end.unwrap_or(row))));
+                let row_range = (
+                    state.browse().sel_row_start.unwrap_or(row),
+                    state.browse().sel_row_end.unwrap_or(row),
+                );
+                ui.set_table_selected_rows(browse_table, Some(row_range));
+                if let Some(col) = state.browse().sel_col {
+                    ui.set_table_selected_col(browse_table, Some(col));
+                }
+                if let Some((col_start, col_end)) = state
+                    .browse()
+                    .sel_col_start
+                    .zip(state.browse().sel_col_end)
+                {
+                    ui.set_table_selected_cells(browse_table, Some(row_range), Some((col_start, col_end)));
+                }
             }
         }
         if browse_table.0 != 0 {
