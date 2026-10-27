@@ -621,3 +621,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Complete column CHECK exposure (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-7f33ef98dafd.md): Check Constraints exposes all named column CHECKs beside table CHECKs, with explicit scope, Add column for the selected field, independent expressions/names and scope-preserving reorder/removal. Fields first-CHECK editing/removal shares the complete draft and reveals remaining checks. Qualified previews/save/swaps/dependencies/data/rowids/sequence/pending transactions and SQL rejection are verified.500 tests/strict checks, four Soft/Metal pairs and native static windows inspected. Existing TEMP-trigger referenced-column rename failure rolls back; linked history resets, original grids/selectors/layout/history/movement/details and full product/native acceptance remain.
+
+### Fields grid and endpoint movement (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-cdf760f3ad1d.md): Fields displays the original ten property columns with frozen names, resizable widths, retained scroll/cell/row/focus and live draft updates. Top/Bottom move complete identities/editor sessions with qualified migration/data/dependency checks.502 tests/strict checks, four Soft/Metal pairs and final native dark/light windows inspected. Native focus/select-all/paste rename updates dependent SQL; single-line Undo is missing (F01). Inline editors/checkboxes, original selectors/advanced layout, full history and remaining product/runtime acceptance are unfinished.
