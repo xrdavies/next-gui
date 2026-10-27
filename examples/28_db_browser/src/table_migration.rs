@@ -450,7 +450,7 @@ mod tests {
         let conn=Connection::open_in_memory().unwrap(); conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE t(v INTEGER,FOREIGN KEY(v) REFERENCES parent(id)); INSERT INTO t VALUES(1); BEGIN; INSERT INTO t VALUES(1);").unwrap();
         let draft=db::table_column_defs_in(&conn,"main","t").unwrap();
         for (columns,clause) in [("","REFERENCES parent(id)"),("v", ""),("v DESC","REFERENCES parent(id)"),("v COLLATE NOCASE","REFERENCES parent(id)"),("v","REFERENCES parent(id,id)"),("v","REFERENCES missing(id)"),("missing","REFERENCES parent(id)"),("v) REFERENCES parent(id),FOREIGN KEY(v","REFERENCES parent(id)"),("v","REFERENCES parent(id),CHECK(1)"),("v","REFERENCES parent(id)); PRAGMA foreign_keys=OFF; --"),("?1","REFERENCES parent(id)")] {
-            let options=table_sql::TableOptions { foreign_keys:Some(vec![table_sql::NamedForeignKey { name:Some("safe.\"名".into()),columns:columns.into(),clause:clause.into() }]),..Default::default() };
+            let options=table_sql::TableOptions { foreign_keys:Some(vec![table_sql::NamedForeignKey { name:Some("safe.\"名".into()),columns:columns.into(),clause:clause.into(),inline:false }]),..Default::default() };
             assert!(db::recreate_table_columns_in(&conn,"main","t","t",&draft,&[Some("v".into())],Some(options)).is_err(),"{columns}/{clause}");
             assert_eq!(count(&conn,"SELECT count(*) FROM t WHERE v=1"),2); assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap()); assert!(!conn.is_autocommit());
             let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap(); assert_eq!(table_sql::table_foreign_keys(&sql).unwrap()[0].clause,"REFERENCES parent (id)");
@@ -753,6 +753,7 @@ mod tests {
                 primary_key_conflict: None,
                 checks: None,
                 foreign_keys: None,
+                inline_foreign_keys: None,
                 index_constraints: None,
             };
             db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options.clone()))
@@ -875,6 +876,7 @@ mod tests {
             primary_key_conflict: None,
             checks: None,
             foreign_keys: None,
+            inline_foreign_keys: None,
             index_constraints: None,
         };
         let without_rowid = table_sql::TableOptions {
@@ -883,6 +885,7 @@ mod tests {
             primary_key_conflict: None,
             checks: None,
             foreign_keys: None,
+            inline_foreign_keys: None,
             index_constraints: None,
         };
         for (name, options) in [

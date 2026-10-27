@@ -30,6 +30,7 @@ pub struct TableOptions {
     pub primary_key_conflict: Option<ResolveType>,
     pub checks: Option<Vec<NamedCheck>>,
     pub foreign_keys: Option<Vec<NamedForeignKey>>,
+    pub inline_foreign_keys: Option<Vec<NamedForeignKey>>,
     pub index_constraints: Option<Vec<NamedIndexConstraint>>,
 }
 
@@ -44,6 +45,7 @@ pub struct NamedForeignKey {
     pub name: Option<String>,
     pub columns: String,
     pub clause: String,
+    pub inline: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -108,6 +110,7 @@ fn table_options_of(command: &Cmd) -> Result<TableOptions, String> {
         primary_key_conflict,
         checks: None,
         foreign_keys: None,
+        inline_foreign_keys: None,
         index_constraints: None,
     })
 }
@@ -170,6 +173,7 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
     else { set_primary_key_conflict(&mut command, options.primary_key_conflict)?; }
     if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
     if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
+    if let Some(keys) = options.inline_foreign_keys { set_inline_foreign_keys(&mut command, &keys)?; }
     Ok(emit(command))
 }
 
@@ -228,6 +232,7 @@ fn foreign_key_fields(item: &NamedTableConstraint) -> Option<NamedForeignKey> {
         name: item.name.as_ref().map(identifier_text),
         columns: columns.iter().map(|column| SqlFragment(&column.col_name).to_string()).collect::<Vec<_>>().join(", "),
         clause: format!("REFERENCES {}{}", SqlFragment(clause), deref_clause.as_ref().map(|defer| format!(" {}", SqlFragment(defer))).unwrap_or_default()),
+        inline: false,
     })
 }
 
@@ -257,6 +262,25 @@ fn foreign_key_definition(key: &NamedForeignKey) -> Result<NamedTableConstraint,
 
 pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, renames: &[(&str, &str)]) -> Result<Vec<NamedForeignKey>, String> {
     keys.iter().map(|key| {
+        if key.inline {
+            let (mut column, mut constraints) = inline_foreign_key_definition(key)?;
+            let original_column = column.clone();
+            let original_clause = constraints.iter().map(|item| SqlFragment(item).to_string()).collect::<Vec<_>>().join(" ");
+            rename_identifier(&mut column, renames);
+            for item in &mut constraints {
+                if let ColumnConstraint::ForeignKey { clause, .. } = &mut item.constraint {
+                    if clause.tbl_name.eq(table) {
+                        clause.tbl_name = identifier(target);
+                        for column in clause.columns.iter_mut().flatten() { rename_identifier(&mut column.col_name, renames); }
+                    }
+                }
+            }
+            let changed_clause = constraints.iter().map(|item| SqlFragment(item).to_string()).collect::<Vec<_>>().join(" ") != original_clause;
+            let mut result = inline_foreign_key_fields(&column, &constraints);
+            if column.0 == original_column.0 { result.columns = key.columns.clone(); }
+            if !changed_clause { result.clause = key.clause.clone(); }
+            return Ok(result);
+        }
         let mut definition = foreign_key_definition(key)?;
         let original = SqlFragment(&definition).to_string();
         let TableConstraint::ForeignKey { columns, clause, .. } = &mut definition.constraint else { unreachable!() };
@@ -271,7 +295,89 @@ pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, 
 }
 
 fn set_table_foreign_keys(command: &mut Cmd, keys: &[NamedForeignKey]) -> Result<(), String> {
+    if keys.iter().any(|key| key.inline) { return Err("Column foreign keys require a column-constraint override".into()); }
     replace_table_constraints(command, keys.iter().map(foreign_key_definition).collect::<Result<Vec<_>, _>>()?, |constraint| matches!(constraint, TableConstraint::ForeignKey { .. }))
+}
+
+fn inline_foreign_key_fields(column: &Name, constraints: &[NamedColumnConstraint]) -> NamedForeignKey {
+    NamedForeignKey {
+        name: constraints[0].name.as_ref().map(identifier_text), columns: SqlFragment(column).to_string(), inline: true,
+        clause: std::iter::once(SqlFragment(&constraints[0].constraint).to_string())
+            .chain(constraints[1..].iter().map(|item| SqlFragment(item).to_string())).collect::<Vec<_>>().join(" "),
+    }
+}
+
+pub fn inline_foreign_keys(sql: &str) -> Result<Vec<NamedForeignKey>, String> {
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, .. }, .. }) = parse(sql)? else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    Ok(columns.values().flat_map(|column| foreign_key_groups(&column.constraints).into_iter().map(|group| {
+        let constraints = group.into_iter().map(|index| column.constraints[index].clone()).collect::<Vec<_>>();
+        inline_foreign_key_fields(&column.col_name, &constraints)
+    })).collect())
+}
+
+pub fn inline_foreign_key_column(key: &NamedForeignKey) -> Result<String, String> {
+    let definition = foreign_key_definition(&NamedForeignKey { name: None, columns: key.columns.clone(), clause: "REFERENCES __next_gui_parent".into(), inline: false })?;
+    let TableConstraint::ForeignKey { columns, .. } = definition.constraint else { unreachable!() };
+    let [column] = columns.as_slice() else { return Err("A column foreign key requires exactly one local column; add a table foreign key for a composite reference".into()); };
+    Ok(identifier_text(&column.col_name))
+}
+
+pub fn foreign_keys_can_swap(a: &NamedForeignKey, b: &NamedForeignKey) -> bool {
+    if !a.inline && !b.inline { return true; }
+    if !a.inline || !b.inline { return false; }
+    inline_foreign_key_column(a).ok().zip(inline_foreign_key_column(b).ok()).is_some_and(|(a,b)| a.eq_ignore_ascii_case(&b))
+}
+
+pub fn normalize_foreign_key_scope(key: &mut NamedForeignKey) {
+    if key.inline {
+        if let Ok(NamedTableConstraint { constraint: TableConstraint::ForeignKey { columns, .. }, .. }) = foreign_key_definition(key) {
+            if columns.len() > 1 { key.inline = false; }
+        }
+    }
+}
+
+fn inline_foreign_key_definition(key: &NamedForeignKey) -> Result<(Name, Vec<NamedColumnConstraint>), String> {
+    let column = inline_foreign_key_column(key)?;
+    let name = key.name.as_ref().map(|name| format!("CONSTRAINT {} ", db::quote_ident(name))).unwrap_or_default();
+    let sql = format!("CREATE TABLE __next_gui_column_fk({} BLOB {name}{}\n)", db::quote_ident(&column), key.clause.trim());
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints, flags }, .. }) = parse(&sql)? else {
+        return Err("Expected one column REFERENCES clause".into());
+    };
+    if columns.len() != 1 || constraints.as_ref().is_some_and(|items| !items.is_empty()) || !flags.is_empty() { return Err("A column foreign-key field cannot add columns, table constraints or options".into()); }
+    let definition = columns.values().next().unwrap();
+    let Some(first) = definition.constraints.first() else { return Err("A column foreign key requires a REFERENCES clause".into()); };
+    let ColumnConstraint::ForeignKey { clause, .. } = &first.constraint else { return Err("A column foreign-key field must begin with REFERENCES".into()); };
+    if definition.constraints.iter().skip(1).any(|item| !matches!(item.constraint, ColumnConstraint::Defer(..)))
+        || first.name.as_ref().map(identifier_text) != key.name { return Err("A column foreign-key field requires one REFERENCES clause and optional named deferrals".into()); }
+    if clause.columns.as_ref().is_some_and(|columns| columns.len() != 1 || columns.iter().any(|column| column.order.is_some() || column.collation_name.is_some())) {
+        return Err("A column foreign key requires one referenced column without sorting or collations".into());
+    }
+    Ok((definition.col_name.clone(), definition.constraints.clone()))
+}
+
+fn set_inline_foreign_keys(command: &mut Cmd, keys: &[NamedForeignKey]) -> Result<(), String> {
+    if keys.iter().any(|key| !key.inline) { return Err("A column-constraint override requires column foreign keys".into()); }
+    let replacements = keys.iter().map(inline_foreign_key_definition).collect::<Result<Vec<_>, _>>()?;
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, .. }, .. }) = command else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    for (name, _) in &replacements {
+        if !columns.values().any(|column| column.col_name.eq(name)) { return Err(format!("Unknown column foreign-key owner: {}", identifier_text(name))); }
+    }
+    for column in columns.values_mut() {
+        let groups = foreign_key_groups(&column.constraints);
+        let mut replacements = replacements.iter().filter(|(name, _)| name.eq(&column.col_name)).map(|(_, constraints)| constraints.clone());
+        let mut result = Vec::new();
+        // Deferrals belong to the preceding FK even across unrelated column constraints.
+        for (index, item) in std::mem::take(&mut column.constraints).into_iter().enumerate() {
+            if groups.iter().any(|group| group[0] == index) { if let Some(group) = replacements.next() { result.extend(group); } }
+            if !groups.iter().flatten().any(|position| *position == index) { result.push(item); }
+        }
+        result.extend(replacements.flatten()); column.constraints = result;
+    }
+    Ok(())
 }
 
 fn index_constraint_fields(item: &NamedTableConstraint, inline: bool) -> Option<NamedIndexConstraint> {
@@ -942,7 +1048,7 @@ pub fn rebuild_definition(
                 }
             }
             if old.foreign_key_clause != col.foreign_key_clause {
-                // shortcut: the field edits the first inline FK; the advanced tab must expose every FK.
+                // Fields edits the first FK; the Foreign Keys page can override every column declaration.
                 let positions = foreign_key_indices(&item.constraints);
                 let mut replacement = foreign_key_indices(&replacement.constraints)
                     .into_iter()
@@ -1116,6 +1222,7 @@ pub fn rebuild_definition(
         else { set_primary_key_conflict(&mut command, options.primary_key_conflict)?; }
         if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
         if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
+        if let Some(keys) = options.inline_foreign_keys { set_inline_foreign_keys(&mut command, &keys)?; }
     }
     Ok(emit(command))
 }
@@ -1165,22 +1272,19 @@ pub fn autoincrement_column(sql: &str) -> Result<Option<Name>, String> {
 }
 
 fn foreign_key_indices(constraints: &[NamedColumnConstraint]) -> Vec<usize> {
-    let Some(start) = constraints
-        .iter()
-        .position(|item| matches!(item.constraint, ColumnConstraint::ForeignKey { .. }))
-    else {
-        return Vec::new();
-    };
-    let mut indices = vec![start];
-    // SQLite associates DEFERRABLE with the last FK, even across CHECK/NOT NULL constraints.
-    for (index, item) in constraints.iter().enumerate().skip(start + 1) {
+    foreign_key_groups(constraints).into_iter().next().unwrap_or_default()
+}
+
+fn foreign_key_groups(constraints: &[NamedColumnConstraint]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (index, item) in constraints.iter().enumerate() {
         match item.constraint {
-            ColumnConstraint::ForeignKey { .. } => break,
-            ColumnConstraint::Defer(..) => indices.push(index),
+            ColumnConstraint::ForeignKey { .. } => groups.push(vec![index]),
+            ColumnConstraint::Defer(..) => { if let Some(group) = groups.last_mut() { group.push(index); } }
             _ => {}
         }
     }
-    indices
+    groups
 }
 
 pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<(), String> {
@@ -1221,7 +1325,9 @@ pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<
             .unwrap_or_default();
         definition.foreign_key_clause = foreign_key_indices(&column.constraints)
             .into_iter()
-            .map(|index| SqlFragment(&column.constraints[index].constraint).to_string())
+            .map(|index| if matches!(column.constraints[index].constraint, ColumnConstraint::Defer(..)) {
+                SqlFragment(&column.constraints[index]).to_string()
+            } else { SqlFragment(&column.constraints[index].constraint).to_string() })
             .collect::<Vec<_>>()
             .join(" ");
         definition.generated = column.constraints.iter().find_map(|item| {
@@ -1263,6 +1369,84 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn all_inline_foreign_keys_preserve_named_deferrals_dependencies_and_pending_violations() {
+        for schema in ["main","temp","aux.\"db"] {
+            let conn=Connection::open_in_memory().unwrap(); let table=db::qualified_name(schema,"records");
+            let parent=db::qualified_name(schema,"parent"); let other=db::qualified_name(schema,"other_parent"); let audit=db::qualified_name(schema,"audit");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {parent}(id INTEGER PRIMARY KEY); INSERT INTO {parent} VALUES(1),(2);
+                CREATE TABLE {other}(id INTEGER PRIMARY KEY); INSERT INTO {other} VALUES(1),(2);
+                CREATE TABLE {table}(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    p INTEGER CONSTRAINT first_parent REFERENCES parent(id) CHECK(p>0) CONSTRAINT \"deadline\" DEFERRABLE INITIALLY DEFERRED NOT NULL
+                        CONSTRAINT second_parent REFERENCES other_parent(id) ON UPDATE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+                    q INTEGER REFERENCES records(id) DEFERRABLE INITIALLY DEFERRED,
+                    g INTEGER AS(p+1) STORED, note TEXT DEFAULT 'REFERENCES CONSTRAINT DEFERRABLE',
+                    CONSTRAINT previous_record FOREIGN KEY(q) REFERENCES records(id));
+                INSERT INTO {table}(id,p,q) VALUES(7,1,NULL),(11,2,7),(99,2,NULL); DELETE FROM {table} WHERE id=99;
+                CREATE TABLE {audit}(note TEXT); CREATE INDEX {} ON records(p); CREATE VIEW {} AS SELECT id,g FROM records;
+                CREATE TRIGGER {} AFTER INSERT ON records BEGIN INSERT INTO audit VALUES(new.note); END;
+                BEGIN; INSERT INTO {other} VALUES(3); INSERT INTO {table}(id,p) VALUES(13,3); INSERT INTO {audit} VALUES('pending');",
+                db::qualified_name(schema,"by_parent"),db::qualified_name(schema,"visible"),db::qualified_name(schema,"audit_insert"))).unwrap();
+            let original:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='records'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            let mut keys=inline_foreign_keys(&original).unwrap(); assert_eq!(keys.len(),3); assert!(keys.iter().all(|key|key.inline));
+            assert!(keys[0].clause.contains("CONSTRAINT \"deadline\" DEFERRABLE"));
+            keys[0].name=Some("first.\"父键".into()); keys[0].clause=keys[0].clause.replace("\"deadline\"","\"new deadline\"");
+            keys[1].clause=keys[1].clause.replace("INITIALLY IMMEDIATE","INITIALLY DEFERRED");
+            keys=rename_foreign_keys(&keys,"records","orders",&[("p","parent_value"),("q","previous")]).unwrap();
+            assert!(keys[0].clause.contains("parent (id)") && keys[2].clause.contains("\"orders\""));
+            let mut options=table_options(&original).unwrap(); options.inline_foreign_keys=Some(keys.clone());
+            let mut draft=db::table_column_defs_in(&conn,schema,"records").unwrap(); let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+            draft[1].name="parent_value".into(); draft[2].name="previous".into();
+            db::recreate_table_columns_in(&conn,schema,"records","orders",&draft,&sources,Some(options)).unwrap_or_else(|error|panic!("{schema}: {error}"));
+            let saved:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='orders'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            assert_eq!(inline_foreign_keys(&saved).unwrap(),keys); assert_eq!(table_foreign_keys(&saved).unwrap().len(),1);
+            let target=db::qualified_name(schema,"orders");
+            assert_eq!(conn.query_row(&format!("SELECT sum(rowid)+sum(id)+sum(g) FROM {target}"),[],|row|row.get::<_,i64>(0)).unwrap(),71);
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {audit}"),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+            assert!(conn.execute_batch("COMMIT").is_err()); assert!(!conn.is_autocommit());
+            conn.execute(&format!("INSERT INTO {parent} VALUES(3)"),[]).unwrap();
+            conn.execute(&format!("UPDATE {other} SET id=4 WHERE id=1"),[]).unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT parent_value,g FROM {target} WHERE id=7"),[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?))).unwrap(),(4,5));
+            assert!(conn.execute_batch("COMMIT").is_err()); conn.execute(&format!("INSERT INTO {parent} VALUES(4)"),[]).unwrap();
+            let draft=db::table_column_defs_in(&conn,schema,"orders").unwrap(); let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+            let mut options=table_options(&saved).unwrap(); options.inline_foreign_keys=Some(Vec::new());
+            db::recreate_table_columns_in(&conn,schema,"orders","orders",&draft,&sources,Some(options)).unwrap();
+            assert!(db::table_column_defs_in(&conn,schema,"orders").unwrap().iter().all(|column|column.foreign_key_clause.is_empty()));
+            conn.execute(&format!("INSERT INTO {target}(parent_value) VALUES(999)"),[]).unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT id FROM {target} WHERE parent_value=999"),[],|row|row.get::<_,i64>(0)).unwrap(),100);
+            assert!(conn.execute(&format!("INSERT INTO {target}(parent_value) VALUES(NULL)"),[]).is_err());
+            assert!(conn.execute(&format!("INSERT INTO {target}(parent_value) VALUES(-1)"),[]).is_err());
+            assert!(conn.execute(&format!("INSERT INTO {target}(parent_value,previous) VALUES(1,99999)"),[]).is_err());
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"visible")),[],|row|row.get::<_,i64>(0)).unwrap(),4);
+            conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='records'",db::quote_ident(schema)),[],|row|row.get::<_,String>(0)).unwrap(),original);
+        }
+    }
+
+    #[test]
+    fn inline_foreign_key_overrides_reject_other_constraints_owners_and_statement_tails() {
+        let conn=Connection::open_in_memory().unwrap(); conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE t(v INTEGER CONSTRAINT original REFERENCES parent(id) CONSTRAINT deadline DEFERRABLE INITIALLY DEFERRED,note TEXT CHECK(length(note)>0)); INSERT INTO t VALUES(1,'kept'); BEGIN; INSERT INTO t VALUES(1,'pending');").unwrap();
+        let original:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
+        let draft=db::table_column_defs_in(&conn,"main","t").unwrap(); let sources:Vec<_>=draft.iter().map(|column|Some(column.name.clone())).collect();
+        for (columns,clause) in [("v",""),("v,note","REFERENCES parent(id)"),("missing","REFERENCES parent(id)"),("v DESC","REFERENCES parent(id)"),
+            ("v","REFERENCES parent(id,id)"),("v","REFERENCES parent(id DESC)"),("v","REFERENCES missing(id)"),
+            ("v","REFERENCES parent(id) CHECK(1)"),("v","REFERENCES parent(id) NOT NULL"),("v","REFERENCES parent(id) REFERENCES parent(id)"),
+            ("v","REFERENCES parent(id)); DELETE FROM t; --"),("v","REFERENCES parent(?1)"),("v","REFERENCES parent(id)),CHECK(1)"),("v","DEFERRABLE REFERENCES parent(id)")] {
+            let key=NamedForeignKey {name:Some("safe.\"键".into()),columns:columns.into(),clause:clause.into(),inline:true};
+            let options=TableOptions {inline_foreign_keys:Some(vec![key]),..Default::default()};
+            assert!(db::recreate_table_columns_in(&conn,"main","t","t",&draft,&sources,Some(options)).is_err(),"{columns}/{clause}");
+            assert_eq!(conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get::<_,String>(0)).unwrap(),original);
+            assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|row|row.get::<_,i64>(0)).unwrap(),2); assert!(!conn.is_autocommit());
+        }
+        let key=inline_foreign_keys(&original).unwrap().remove(0);
+        let ddl=apply_table_options("CREATE TABLE created(v INTEGER,note TEXT)",TableOptions {inline_foreign_keys:Some(vec![key]),..Default::default()}).unwrap();
+        db::execute_single_statement(&conn,&ddl).unwrap(); conn.execute("INSERT INTO created(v) VALUES(2)",[]).unwrap();
+        assert!(conn.execute_batch("COMMIT").is_err()); conn.execute_batch("INSERT INTO parent VALUES(2); COMMIT;").unwrap();
+        let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='created'",[],|row|row.get(0)).unwrap();
+        assert!(sql.contains("CONSTRAINT deadline DEFERRABLE"),"{sql}");
+    }
 
     #[test]
     fn index_constraints_preserve_inline_semantics_dependencies_and_sequences() {

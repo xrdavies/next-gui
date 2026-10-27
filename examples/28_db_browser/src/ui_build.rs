@@ -1041,7 +1041,7 @@ pub fn build_ui(
                             });
                             tabs.page("Foreign Keys", |c| {
                                 ov_fks_scroll = c.scroll_area(scroll, |c| {
-                                    c.text(format!("Table foreign keys · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.text(format!("Foreign keys · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
                                     c.row(row, |r| {
                                         ov_fk_add = r.tool_button("Add"); ov_fk_del = r.tool_button("Remove");
                                         ov_fk_up = r.tool_button("Up"); ov_fk_down = r.tool_button("Down");
@@ -2270,18 +2270,19 @@ pub fn build_ui(
     let movable_key = |index| state.wizard_index_constraints.get(index).is_some_and(|key| !crate::table_sql::index_constraint_requires_inline(key));
     ui.set_button_enabled(ov_key_up, state.wizard_key_sel > 0 && movable_key(state.wizard_key_sel) && movable_key(state.wizard_key_sel.saturating_sub(1)));
     ui.set_button_enabled(ov_key_down, movable_key(state.wizard_key_sel) && movable_key(state.wizard_key_sel+1));
-    ui.set_accessible_name(ov_fks_list, "Table foreign keys");
+    ui.set_accessible_name(ov_fks_list, "Table and column foreign keys");
     ui.set_list_selected(ov_fks_list, (!state.wizard_foreign_keys.is_empty()).then_some(state.wizard_foreign_key_sel));
     ui.set_list_scroll_offset(ov_fks_list, state.wizard_foreign_key_list_scroll);
-    ui.set_accessible_name(ov_fk_name, "Table foreign key constraint name");
+    ui.set_accessible_name(ov_fk_name, "Foreign key constraint name");
     ui.set_accessible_name(ov_fk_columns, "Foreign key local columns SQL");
     ui.set_accessible_name(ov_fk_clause, "Foreign key REFERENCES clause");
     for area in [ov_fk_columns, ov_fk_clause] { ui.set_text_area_read_only(area, state.wizard_foreign_keys.is_empty() || !state.table_wizard_names_valid()); }
-    ui.set_accessible_name(ov_fk_add, "Add table foreign key"); ui.set_accessible_name(ov_fk_del, "Remove table foreign key");
-    ui.set_accessible_name(ov_fk_up, "Move table foreign key up"); ui.set_accessible_name(ov_fk_down, "Move table foreign key down");
+    ui.set_accessible_name(ov_fk_add, "Add table foreign key"); ui.set_accessible_name(ov_fk_del, "Remove foreign key");
+    ui.set_accessible_name(ov_fk_up, "Move foreign key up"); ui.set_accessible_name(ov_fk_down, "Move foreign key down");
     ui.set_button_enabled(ov_fk_del, !state.wizard_foreign_keys.is_empty());
-    ui.set_button_enabled(ov_fk_up, !state.wizard_foreign_keys.is_empty() && state.wizard_foreign_key_sel > 0);
-    ui.set_button_enabled(ov_fk_down, state.wizard_foreign_key_sel + 1 < state.wizard_foreign_keys.len());
+    let fk_can_swap = |target| state.wizard_foreign_keys.get(state.wizard_foreign_key_sel).zip(state.wizard_foreign_keys.get(target)).is_some_and(|(a,b)|crate::table_sql::foreign_keys_can_swap(a,b));
+    ui.set_button_enabled(ov_fk_up, state.wizard_foreign_key_sel>0 && fk_can_swap(state.wizard_foreign_key_sel.saturating_sub(1)));
+    ui.set_button_enabled(ov_fk_down, fk_can_swap(state.wizard_foreign_key_sel+1));
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_area_read_only(edit_value, generated_cell);
     ui.set_button_enabled(btn_edit_cell, !generated_cell);

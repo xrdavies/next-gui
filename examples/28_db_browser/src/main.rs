@@ -745,6 +745,19 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
+                "table-inline-foreign-keys" | "table-inline-foreign-keys-saved" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1),(2); CREATE TABLE other_parent(id INTEGER PRIMARY KEY); INSERT INTO other_parent VALUES(1),(2); CREATE TABLE records(id INTEGER PRIMARY KEY,p INTEGER CONSTRAINT first_parent REFERENCES parent(id) CHECK(p>0) CONSTRAINT deadline DEFERRABLE INITIALLY DEFERRED NOT NULL CONSTRAINT second_parent REFERENCES other_parent(id),q INTEGER REFERENCES records(id) DEFERRABLE INITIALLY DEFERRED,FOREIGN KEY(q) REFERENCES records(id)); INSERT INTO records VALUES(7,1,NULL),(11,2,7);").unwrap();
+                    state.refresh_schema().unwrap(); let row=state.schema.iter().position(|object|object.name=="records").unwrap();
+                    state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap();
+                    state.wizard_foreign_keys[0].name=Some("customer_parent".into());
+                    state.wizard_foreign_keys[0].clause="REFERENCES parent(id)\nCONSTRAINT customer_deadline DEFERRABLE INITIALLY DEFERRED".into();
+                    state.wizard_foreign_keys[1].clause="REFERENCES other_parent(id) ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED".into();
+                    state.store_wizard_foreign_keys(); state.wizard_cols[1].name="parent_value".into(); state.wizard_table_name="orders".into(); state.sync_table_constraint_names().unwrap();
+                    state.wizard_table_page=2; state.wizard_foreign_key_scroll=(0.0,10000.0);
+                    if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
+                    MainTab::Structure
+                }
                 "table-foreign-keys" | "table-foreign-keys-saved" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE customers(id INTEGER,region TEXT,PRIMARY KEY(id,region)); INSERT INTO customers VALUES(1,'west'),(2,'east'); CREATE TABLE records(id INTEGER PRIMARY KEY,customer INTEGER,region TEXT,CONSTRAINT customer_region FOREIGN KEY(customer,region) REFERENCES customers(id,region)); INSERT INTO records VALUES(7,1,'west'),(11,2,'east');").unwrap();
@@ -820,7 +833,7 @@ impl Demo {
                     let row = state.schema.iter().position(|o| o.schema == "main" && o.name == "records" && o.kind == ObjectKind::Table).unwrap();
                     state.select_schema_node(10_000 + row as u64);
                     state.open_modify_table_wizard().unwrap();
-                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, index_constraints:None };
+                    state.wizard_table_options = table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None };
                     if tab == "table-optioned" { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
@@ -1598,14 +1611,7 @@ impl Demo {
                 self.ui.set_list_items(self.ids.ov_checks_list, self.state.wizard_checks.iter().map(|check|
                     format!("{} · {}", check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
                 self.ui.set_list_scroll_offset(self.ids.ov_checks_list, self.state.wizard_check_list_scroll);
-                if let Some(key) = self.state.wizard_foreign_keys.get(self.state.wizard_foreign_key_sel) {
-                    self.ui.set_text_area_value(self.ids.ov_fk_columns, key.columns.clone());
-                    self.ui.set_text_area_value(self.ids.ov_fk_clause, key.clause.clone());
-                    for area in [self.ids.ov_fk_columns, self.ids.ov_fk_clause] { sql_syntax::apply(&mut self.ui, area, &self.theme); }
-                }
-                self.ui.set_list_items(self.ids.ov_fks_list, self.state.wizard_foreign_keys.iter().map(|key|
-                    format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
-                self.ui.set_list_scroll_offset(self.ids.ov_fks_list, self.state.wizard_foreign_key_list_scroll);
+                self.refresh_table_foreign_key_controls();
             }
             Ok(false) => {}
             Err(error) => {
@@ -1619,6 +1625,8 @@ impl Demo {
                 self.set_error(format!("Fix the constraint SQL before renaming: {error}"));
             }
         }
+        if self.state.table_wizard_names_valid() && self.state.wizard_table_options.inline_foreign_keys.is_some()
+            && self.state.sync_wizard_foreign_key_fields() { self.refresh_table_foreign_key_controls(); }
         self.ui.set_text_area_read_only(self.ids.ov_key_columns, self.state.wizard_index_constraints.is_empty() || !self.state.table_wizard_names_valid());
         self.ui.set_text_area_read_only(self.ids.ov_check_expr, self.state.wizard_checks.is_empty() || !self.state.table_wizard_names_valid());
         for area in [self.ids.ov_fk_columns, self.ids.ov_fk_clause] { self.ui.set_text_area_read_only(area, self.state.wizard_foreign_keys.is_empty() || !self.state.table_wizard_names_valid()); }
@@ -1669,6 +1677,27 @@ impl Demo {
         self.state.wizard_key_states[selected] = self.ui.text_area_state(self.ids.ov_key_columns);
     }
 
+    fn refresh_table_foreign_key_controls(&mut self) {
+        self.ui.set_list_items(self.ids.ov_fks_list, self.state.wizard_foreign_keys.iter().map(|key|
+            format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
+        self.ui.set_list_scroll_offset(self.ids.ov_fks_list, self.state.wizard_foreign_key_list_scroll);
+        if let Some(key) = self.state.wizard_foreign_keys.get(self.state.wizard_foreign_key_sel) {
+            for (area,value) in [(self.ids.ov_fk_columns,&key.columns),(self.ids.ov_fk_clause,&key.clause)] {
+                if self.ui.text_area_value(area) != Some(value.as_str()) { self.ui.set_text_area_value(area,value.clone()); sql_syntax::apply(&mut self.ui,area,&self.theme); }
+            }
+        }
+        if let Some(column) = self.state.wizard_cols.get(self.state.wizard_col_sel) {
+            if self.ui.text_area_value(self.ids.ov_foreign_key) != Some(column.foreign_key_clause.as_str()) {
+                // shortcut: cross-view FK edits reset linked history; share a document for wizard-wide Undo.
+                self.ui.set_text_area_value(self.ids.ov_foreign_key,column.foreign_key_clause.clone()); sql_syntax::apply(&mut self.ui,self.ids.ov_foreign_key,&self.theme);
+            }
+        }
+        let selected = self.state.wizard_foreign_key_sel;
+        let can_swap = |target| self.state.wizard_foreign_keys.get(selected).zip(self.state.wizard_foreign_keys.get(target)).is_some_and(|(a,b)|table_sql::foreign_keys_can_swap(a,b));
+        self.ui.set_button_enabled(self.ids.ov_fk_up,selected>0 && can_swap(selected.saturating_sub(1)));
+        self.ui.set_button_enabled(self.ids.ov_fk_down,can_swap(selected+1));
+    }
+
     fn flush_table_foreign_key(&mut self) {
         let selected = self.state.wizard_foreign_key_sel;
         let Some(key) = self.state.wizard_foreign_keys.get_mut(selected) else { return; };
@@ -1678,11 +1707,10 @@ impl Demo {
         }
         if let Some(columns) = self.ui.text_area_value(self.ids.ov_fk_columns) { key.columns = columns.to_string(); }
         if let Some(clause) = self.ui.text_area_value(self.ids.ov_fk_clause) { key.clause = clause.to_string(); }
+        table_sql::normalize_foreign_key_scope(key);
         if *key != previous {
-            self.state.wizard_table_options.foreign_keys = Some(self.state.wizard_foreign_keys.clone());
-            self.ui.set_list_items(self.ids.ov_fks_list, self.state.wizard_foreign_keys.iter().map(|key|
-                format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>());
-            self.ui.set_list_scroll_offset(self.ids.ov_fks_list, self.state.wizard_foreign_key_list_scroll);
+            self.state.store_wizard_foreign_keys(); self.state.sync_wizard_foreign_key_fields();
+            self.refresh_table_foreign_key_controls();
         }
         self.state.wizard_foreign_key_states.resize_with(self.state.wizard_foreign_keys.len(), || [None, None]);
         self.state.wizard_foreign_key_states[selected] = [self.ui.text_area_state(self.ids.ov_fk_columns), self.ui.text_area_state(self.ids.ov_fk_clause)];
@@ -1710,6 +1738,7 @@ impl Demo {
         if sel >= self.state.wizard_cols.len() {
             return;
         }
+        let previous_foreign_key = self.state.wizard_cols[sel].foreign_key_clause.clone();
         if let Some(mode) = self.ui.select_selected(self.ids.ov_generation) {
             let previous = self.state.wizard_cols[sel].generated.as_ref().map_or(0, |generated| if generated.stored { 2 } else { 1 });
             if previous != mode {
@@ -1785,6 +1814,25 @@ impl Demo {
         }
         if let Some(value) = self.ui.autocomplete_value(self.ids.ov_collation) {
             self.state.wizard_cols[sel].collation = value.to_string();
+        }
+        if previous_foreign_key != self.state.wizard_cols[sel].foreign_key_clause {
+            let owner = self.state.wizard_constraint_columns.get(sel).cloned().unwrap_or_else(|| self.state.wizard_cols[sel].name.clone());
+            let clause = self.state.wizard_cols[sel].foreign_key_clause.clone();
+            let index = self.state.wizard_foreign_keys.iter().position(|key| key.inline && table_sql::inline_foreign_key_column(key).is_ok_and(|name|name.eq_ignore_ascii_case(&owner)));
+            match index {
+                Some(index) if clause.trim().is_empty() => {
+                    self.state.wizard_foreign_keys.remove(index); self.state.wizard_foreign_key_states.remove(index);
+                    if index < self.state.wizard_foreign_key_sel { self.state.wizard_foreign_key_sel -= 1; }
+                    self.state.wizard_foreign_key_sel = self.state.wizard_foreign_key_sel.min(self.state.wizard_foreign_keys.len().saturating_sub(1));
+                }
+                Some(index) => { self.state.wizard_foreign_keys[index].clause = clause; self.state.wizard_foreign_key_states[index][1] = None; }
+                None if !clause.trim().is_empty() => {
+                    self.state.wizard_foreign_keys.push(table_sql::NamedForeignKey { name:None,columns:dbmod::quote_ident(&owner),clause,inline:true });
+                    self.state.wizard_foreign_key_states.push([None,None]);
+                }
+                None => {}
+            }
+            self.state.store_wizard_foreign_keys(); self.refresh_table_foreign_key_controls();
         }
         if previous_columns.iter().zip(&self.state.wizard_cols).any(|(old, new)| old.pk != new.pk || old.unique != new.unique || old.auto_increment != new.auto_increment) {
             let result = self.state.table_index_constraints_from_columns().and_then(|keys|
@@ -2952,18 +3000,20 @@ impl Demo {
             let selected = self.state.wizard_foreign_key_sel;
             if id == self.ids.ov_fk_add {
                 self.state.wizard_foreign_keys.push(table_sql::NamedForeignKey { name:None,
-                    columns:self.state.wizard_cols.get(self.state.wizard_col_sel).map(|column|dbmod::quote_ident(&column.name)).unwrap_or_default(), clause:String::new() });
+                    columns:self.state.wizard_cols.get(self.state.wizard_col_sel).map(|column|dbmod::quote_ident(&column.name)).unwrap_or_default(), clause:String::new(), inline:false });
                 self.state.wizard_foreign_key_states.push([None, None]); self.state.wizard_foreign_key_sel = self.state.wizard_foreign_keys.len() - 1;
             } else if id == self.ids.ov_fk_del && selected < self.state.wizard_foreign_keys.len() {
                 self.state.wizard_foreign_keys.remove(selected); self.state.wizard_foreign_key_states.remove(selected);
                 self.state.wizard_foreign_key_sel = selected.min(self.state.wizard_foreign_keys.len().saturating_sub(1));
-            } else if id == self.ids.ov_fk_up && selected > 0 {
-                self.state.wizard_foreign_keys.swap(selected,selected-1); self.state.wizard_foreign_key_states.swap(selected,selected-1); self.state.wizard_foreign_key_sel -= 1;
-            } else if id == self.ids.ov_fk_down && selected + 1 < self.state.wizard_foreign_keys.len() {
-                self.state.wizard_foreign_keys.swap(selected,selected+1); self.state.wizard_foreign_key_states.swap(selected,selected+1); self.state.wizard_foreign_key_sel += 1;
+            } else if id == self.ids.ov_fk_up || id == self.ids.ov_fk_down {
+                let target = if id == self.ids.ov_fk_up { selected.checked_sub(1) } else { selected.checked_add(1) };
+                let Some(target) = target.filter(|target| *target < self.state.wizard_foreign_keys.len()) else { return true; };
+                if !table_sql::foreign_keys_can_swap(&self.state.wizard_foreign_keys[selected],&self.state.wizard_foreign_keys[target]) { return true; }
+                self.state.wizard_foreign_keys.swap(selected,target); self.state.wizard_foreign_key_states.swap(selected,target); self.state.wizard_foreign_key_sel = target;
             }
-            self.state.wizard_table_options.foreign_keys = Some(self.state.wizard_foreign_keys.clone()); self.rebuild = true; return true;
+            self.state.store_wizard_foreign_keys(); self.state.sync_wizard_foreign_key_fields(); self.refresh_table_foreign_key_controls(); self.rebuild = true; return true;
         }
+
         if id == self.ids.ov_btn_add {
             self.flush_wizard_col();
             let mut name = "col".to_string();
@@ -2986,7 +3036,17 @@ impl Demo {
                     .state
                     .wizard_col_sel
                     .min(self.state.wizard_cols.len() - 1);
+                let foreign_key_owner = self.state.wizard_constraint_columns[i].clone();
                 let removed = self.state.wizard_cols.remove(i);
+                for index in (0..self.state.wizard_foreign_keys.len()).rev() {
+                    let key = &self.state.wizard_foreign_keys[index];
+                    if key.inline && table_sql::inline_foreign_key_column(key).is_ok_and(|name|name.eq_ignore_ascii_case(&foreign_key_owner)) {
+                        self.state.wizard_foreign_keys.remove(index); self.state.wizard_foreign_key_states.remove(index);
+                        if index < self.state.wizard_foreign_key_sel { self.state.wizard_foreign_key_sel -= 1; }
+                        self.state.store_wizard_foreign_keys();
+                    }
+                }
+                self.state.wizard_foreign_key_sel = self.state.wizard_foreign_key_sel.min(self.state.wizard_foreign_keys.len().saturating_sub(1));
                 if removed.pk && !self.state.wizard_cols.iter().any(|column| column.pk) { self.state.wizard_table_options.primary_key_conflict = None; }
                 self.state.wizard_column_edit_states.remove(i);
                 self.state.wizard_constraint_columns.remove(i);
@@ -7271,6 +7331,114 @@ mod interaction_tests {
     }
 
     #[test]
+    fn inline_foreign_key_page_edits_every_reference_and_syncs_named_fields() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer); demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1),(2); CREATE TABLE other_parent(id INTEGER PRIMARY KEY); INSERT INTO other_parent VALUES(1),(2); CREATE TABLE records(id INTEGER PRIMARY KEY,p INTEGER CONSTRAINT first_parent REFERENCES parent(id) CHECK(p>0) CONSTRAINT deadline DEFERRABLE INITIALLY DEFERRED NOT NULL CONSTRAINT second_parent REFERENCES other_parent(id),q INTEGER REFERENCES records(id) DEFERRABLE INITIALLY DEFERRED,FOREIGN KEY(q) REFERENCES records(id)); INSERT INTO records VALUES(7,1,NULL),(11,2,7);").unwrap();
+            demo.state.refresh_schema().unwrap(); let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap();
+            demo.state.select_schema_node(10_000+row as u64); demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_col_sel=1; demo.state.wizard_table_page=2; demo.do_rebuild();
+            assert_eq!(demo.state.wizard_foreign_keys.len(),4); assert!(demo.state.wizard_foreign_keys[..3].iter().all(|key|key.inline));
+            assert!(demo.ui.text_area_value(demo.ids.ov_fk_clause).unwrap().contains("CONSTRAINT deadline DEFERRABLE"));
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_fk_clause),demo.ui.text_area_value(demo.ids.ov_foreign_key));
+            let first=demo.ui.text_area_value(demo.ids.ov_fk_clause).unwrap().to_string();
+            demo.ui.set_text_input(demo.ids.ov_fk_name,"first.\"父键"); demo.ui.set_focus(Some(demo.ids.ov_fk_clause)); demo.ui.key_input(UiKey::SelectAll);
+            demo.ui.paste_into_focused_text("REFERENCES parent(id) CONSTRAINT new_deadline DEFERRABLE INITIALLY DEFERRED"); demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.focused(),Some(demo.ids.ov_fk_clause)); demo.ui.key_input(UiKey::Undo); assert_eq!(demo.ui.text_area_value(demo.ids.ov_fk_clause),Some(first.as_str()));
+            demo.ui.key_input(UiKey::Redo); demo.snapshot_inputs();
+            demo.ui.set_list_selected(demo.ids.ov_fks_list,Some(1)); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_fk_clause)); demo.ui.key_input(UiKey::SelectAll);
+            demo.ui.paste_into_focused_text("REFERENCES other_parent(id) ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED"); demo.snapshot_inputs();
+            assert!(demo.ui.text_area_value(demo.ids.ov_foreign_key).unwrap().contains("new_deadline"));
+            demo.ui.set_list_selected(demo.ids.ov_fks_list,Some(0)); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.ov_fk_clause)); demo.ui.key_input(UiKey::Undo); assert_eq!(demo.ui.text_area_value(demo.ids.ov_fk_clause),Some(first.as_str()));
+            demo.ui.key_input(UiKey::Redo); demo.snapshot_inputs();
+            demo.ui.set_scroll_offset(demo.ids.ov_fks_scroll,0.0,10000.0); demo.ui.select_text_area_range(demo.ids.ov_fk_clause,0..0); demo.ui.ime_preedit("中文",Some((3,6))); demo.ui.sync(&mut demo.scene);
+            let candidate=demo.ui.ime_cursor_area(&demo.scene).unwrap(); demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.ime_cursor_area(&demo.scene),Some(candidate)); assert!(demo.ui.ime_commit("-- 中文\n")); demo.ui.key_input(UiKey::Undo); demo.snapshot_inputs();
+            demo.ui.set_list_selected(demo.ids.ov_fks_list,Some(1)); demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.button_enabled(demo.ids.ov_fk_down),Some(false)); demo.handle_button(demo.ids.ov_fk_down); assert_eq!(demo.state.wizard_foreign_key_sel,1);
+            demo.handle_button(demo.ids.ov_fk_up); demo.do_rebuild(); assert!(demo.ui.text_area_value(demo.ids.ov_foreign_key).unwrap().contains("other_parent"));
+            demo.handle_button(demo.ids.ov_fk_down); demo.do_rebuild(); assert!(demo.ui.text_area_value(demo.ids.ov_foreign_key).unwrap().contains("new_deadline"));
+            demo.ui.set_tabs_selected(demo.ids.ov_table_tabs,0); demo.snapshot_inputs(); demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_foreign_key,"REFERENCES parent(id) CONSTRAINT field_deadline DEFERRABLE INITIALLY DEFERRED"); demo.snapshot_inputs();
+            assert!(demo.state.wizard_foreign_keys[0].clause.contains("field_deadline")); assert_eq!(demo.state.wizard_foreign_keys[0].name.as_deref(),Some("first.\"父键"));
+            assert!(demo.state.wizard_foreign_keys[1].clause.contains("CASCADE"));
+            demo.ui.set_text_input(demo.ids.ov_col_name,"parent_value"); demo.ui.set_text_input(demo.ids.ov_name,"orders"); demo.snapshot_inputs();
+            assert!(demo.state.wizard_foreign_keys[0].columns.contains("parent_value")); assert!(demo.state.wizard_foreign_keys[2].clause.contains("\"orders\""));
+            demo.state.wizard_foreign_key_sel=0; demo.state.wizard_table_page=2; demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_fk_columns,"parent_value,q"); demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_some()); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_value(demo.ids.ov_fk_columns),Some("parent_value,q"));
+            demo.ui.set_text_area_value(demo.ids.ov_fk_columns,"\"parent_value\""); demo.snapshot_inputs();
+            for phase in ["draft","saved"] {
+                if phase=="saved" { demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg); demo.do_rebuild(); }
+                else { demo.ui.set_scroll_offset(demo.ids.ov_fks_scroll,0.0,10000.0); demo.ui.sync(&mut demo.scene); }
+                if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_INLINE_FK_QA_OUT") {
+                    demo.scene.mark_full_dirty(1400.0,1000.0); let dirty=demo.scene.take_dirty(); let commands=encode_scene(&demo.scene,&dirty); let clear=clear_color(&demo.theme);
+                    let mut soft=SoftRenderer::new(1400,1000,clear); soft.render(&commands,&dirty); write_ppm(&format!("{prefix}-{theme_name}-{phase}.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
+                    if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear) {
+                        gpu.render(&commands,&dirty); let a=soft.frame_pixels().unwrap().0; let b=gpu.frame_pixels().unwrap().0; write_ppm(&format!("{prefix}-{theme_name}-{phase}-metal.ppm"),b,1400,1000).unwrap();
+                        let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|s|(((a>>s)&255)as i32-((b>>s)&255)as i32).abs())).max().unwrap();
+                        assert!(delta<=2,"{theme_name}/{phase}: {delta}"); eprintln!("Inline FK {theme_name}/{phase}: full-frame Soft/Metal delta {delta}");
+                    } else { eprintln!("Inline FK GPU comparison not_run: adapter unavailable"); }
+                }
+            }
+            let conn=demo.state.conn.as_ref().unwrap(); let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='orders'",[],|row|row.get(0)).unwrap();
+            let keys=table_sql::inline_foreign_keys(&sql).unwrap(); assert_eq!(keys.len(),3); assert!(keys[0].clause.contains("field_deadline")); assert!(keys[1].clause.contains("CASCADE"));
+            conn.execute("INSERT INTO orders(id,parent_value) VALUES(13,999)",[]).unwrap(); assert!(conn.execute_batch("COMMIT").is_err()); conn.execute_batch("INSERT INTO parent VALUES(999); INSERT INTO other_parent VALUES(999);").unwrap();
+            demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_col_sel=1; demo.state.wizard_foreign_key_sel=3; demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_foreign_key,""); demo.snapshot_inputs();
+            assert_eq!(demo.state.wizard_foreign_keys.len(),3); assert_eq!(demo.state.wizard_foreign_key_sel,2); assert!(!demo.state.wizard_foreign_keys[2].inline);
+            assert!(demo.ui.text_area_value(demo.ids.ov_foreign_key).unwrap().contains("other_parent"));
+            demo.state.wizard_foreign_key_sel=0; demo.state.wizard_table_page=2; demo.do_rebuild();
+            demo.handle_button(demo.ids.ov_fk_del); demo.do_rebuild(); assert_eq!(demo.state.wizard_foreign_keys.len(),2);
+            demo.state.wizard_table_page=0; demo.do_rebuild(); assert_eq!(demo.ui.text_area_value(demo.ids.ov_foreign_key),Some(""));
+            demo.handle_button(demo.ids.ov_btn_del); demo.do_rebuild(); assert_eq!(demo.state.wizard_foreign_keys.len(),2);
+            demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            demo.state.open_create_table_wizard(); demo.do_rebuild(); demo.ui.set_text_area_value(demo.ids.ov_foreign_key,"REFERENCES parent(id)"); demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            assert!(demo.state.conn.as_ref().unwrap().execute("INSERT INTO new_table VALUES(1234,'invalid')",[]).is_err());
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE composite_parent(a INTEGER,b INTEGER,PRIMARY KEY(a,b)); INSERT INTO composite_parent VALUES(1,2); CREATE TABLE converted(x INTEGER CONSTRAINT own REFERENCES parent(id),y INTEGER); INSERT INTO converted VALUES(1,2);").unwrap();
+            demo.state.refresh_schema().unwrap(); let row=demo.state.schema.iter().position(|object|object.name=="converted").unwrap();
+            demo.state.select_schema_node(10_000+row as u64); demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_table_page=2; demo.do_rebuild();
+            demo.ui.set_text_area_value(demo.ids.ov_fk_columns,"x,y"); demo.ui.set_text_area_value(demo.ids.ov_fk_clause,"REFERENCES composite_parent(a,b) ON DELETE CASCADE"); demo.snapshot_inputs();
+            assert!(!demo.state.wizard_foreign_keys[0].inline); demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            let conn=demo.state.conn.as_ref().unwrap(); let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='converted'",[],|row|row.get(0)).unwrap();
+            assert!(table_sql::inline_foreign_keys(&sql).unwrap().is_empty()); assert_eq!(table_sql::table_foreign_keys(&sql).unwrap().len(),1);
+            assert!(conn.execute("INSERT INTO converted VALUES(999,2)",[]).is_err()); conn.execute("DELETE FROM composite_parent WHERE a=1 AND b=2",[]).unwrap(); assert_eq!(dbmod::count_rows(conn,"converted").unwrap(),0);
+            conn.execute_batch("CREATE TABLE ambiguous_scope(a INTEGER REFERENCES parent(id),b INTEGER REFERENCES other_parent(id)); INSERT INTO ambiguous_scope(rowid,a,b) VALUES(7,1,1);").unwrap();
+            demo.state.refresh_schema().unwrap(); let row=demo.state.schema.iter().position(|object|object.name=="ambiguous_scope").unwrap();
+            demo.state.select_schema_node(10_000+row as u64); demo.state.open_modify_table_wizard().unwrap(); demo.state.wizard_col_sel=1; demo.do_rebuild();
+            demo.ui.set_text_input(demo.ids.ov_col_name,"a"); demo.snapshot_inputs(); assert!(!demo.state.table_wizard_names_valid());
+            demo.handle_button(demo.ids.ov_btn_del); demo.do_rebuild(); assert_eq!(demo.state.wizard_foreign_keys.len(),1);
+            assert!(demo.state.wizard_foreign_keys[0].clause.contains("parent (id)")); assert!(!demo.state.wizard_foreign_keys[0].clause.contains("other_parent"));
+            demo.handle_button(demo.ids.ov_btn_ok); assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT rowid,a FROM ambiguous_scope",[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?))).unwrap(),(7,1));
+        }
+    }
+
+    #[test]
+    fn direct_inline_foreign_key_previews_and_saves_resolve_owner_and_self_key_renames() {
+        for schema in ["main","temp","aux.\"db"] {
+            let mut state=state::AppState::new_with_demo(); state.new_memory_db().unwrap();
+            let table=dbmod::qualified_name(schema,"records"); let parent=dbmod::qualified_name(schema,"parent");
+            state.conn.as_ref().unwrap().execute_batch(&format!("ATTACH ':memory:' AS \"aux.\"\"db\"; CREATE TABLE {parent}(id INTEGER PRIMARY KEY); INSERT INTO {parent} VALUES(1); CREATE TABLE {table}(id INTEGER PRIMARY KEY,a INTEGER CONSTRAINT own REFERENCES records(id) CONSTRAINT deadline DEFERRABLE INITIALLY DEFERRED,b INTEGER REFERENCES parent(id)); INSERT INTO {table} VALUES(7,7,1);")).unwrap();
+            state.refresh_schema().unwrap(); let row=state.schema.iter().position(|object|object.schema==schema && object.name=="records").unwrap();
+            state.select_schema_node(10_000+row as u64); state.open_modify_table_wizard().unwrap(); state.store_wizard_foreign_keys();
+            state.wizard_cols[0].name="key".into(); state.wizard_cols[1].name="self_ref".into(); state.wizard_cols[2].name="external_ref".into(); state.wizard_table_name="renamed.名".into();
+            let preview=state.table_wizard_sql().unwrap(); state.apply_table_wizard().unwrap();
+            let conn=state.conn.as_ref().unwrap(); let saved:String=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='renamed.名'",dbmod::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            assert_eq!(table_sql::inline_foreign_keys(&preview).unwrap(),table_sql::inline_foreign_keys(&saved).unwrap());
+            let keys=table_sql::inline_foreign_keys(&saved).unwrap(); assert!(keys[0].clause.contains("\"renamed.名\" (\"key\")") && keys[0].clause.contains("CONSTRAINT deadline DEFERRABLE"));
+            assert_eq!(keys[1].clause,"REFERENCES parent (id)");
+            let target=dbmod::qualified_name(schema,"renamed.名");
+            assert_eq!(conn.query_row(&format!("SELECT rowid,\"key\",self_ref,external_ref FROM {target}"),[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?,row.get::<_,i64>(2)?,row.get::<_,i64>(3)?))).unwrap(),(7,7,7,1));
+            assert!(conn.execute(&format!("INSERT INTO {target}(\"key\",external_ref) VALUES(8,999)"),[]).is_err());
+            conn.execute(&format!("INSERT INTO {target}(\"key\",self_ref,external_ref) VALUES(8,999,1)"),[]).unwrap(); assert!(conn.execute_batch("COMMIT").is_err());
+            conn.execute(&format!("INSERT INTO {target}(\"key\") VALUES(999)"),[]).unwrap();
+        }
+    }
+
+    #[test]
     fn foreign_key_column_editor_keeps_sessions_and_saves_real_reference_semantics() {
         for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
             let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
@@ -7649,7 +7817,7 @@ mod interaction_tests {
                 }
             }
             let conn = demo.state.conn.as_ref().unwrap();
-            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, index_constraints:None });
+            assert_eq!(dbmod::table_options_in(conn,"main","records").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None });
             assert!(conn.prepare("SELECT rowid FROM records").is_err());
             assert_eq!(conn.query_row("SELECT amount FROM records WHERE code='second'",[],|r|r.get::<_,String>(0)).unwrap(),"not an integer");
             demo.state.open_modify_table_wizard().unwrap(); demo.do_rebuild();
@@ -7669,7 +7837,7 @@ mod interaction_tests {
             demo.handle_button(demo.ids.ov_btn_ok);
             assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);
             let conn = demo.state.conn.as_ref().unwrap();
-            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, index_constraints:None });
+            assert_eq!(dbmod::table_options_in(conn,"main","created").unwrap(),table_sql::TableOptions { strict:true, without_rowid:true, primary_key_conflict:None, checks:None, foreign_keys:None, inline_foreign_keys:None, index_constraints:None });
             assert!(conn.execute("INSERT INTO created VALUES('bad','text')",[]).is_err());
             conn.execute("INSERT INTO created VALUES(1,'valid')",[]).unwrap();
         }
