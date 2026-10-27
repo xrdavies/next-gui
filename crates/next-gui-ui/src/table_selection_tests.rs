@@ -132,6 +132,29 @@ fn visible_rows_counts_half_rows_and_uses_the_current_viewport() {
 }
 
 #[test]
+fn page_keys_keep_the_column_and_selection_anchor_when_reversing() {
+    let (mut ui, id) = grid();
+    ui.set_table_frozen_cols(id, 1);
+    ui.set_table_selected_cells(id, Some((1, 1)), Some((4, 4)));
+    assert!(ui.key_input(UiKey::SelectPageDown));
+    assert_eq!(ui.table_selected_rows(id), Some((1, 4)));
+    assert_eq!(ui.table_selection_anchor(id), Some((1, Some(4))));
+    assert!(ui.key_input(UiKey::SelectPageUp));
+    assert_eq!(ui.table_selected_rows(id), Some((1, 1)));
+    assert!(ui.key_input(UiKey::SelectPageUp));
+    assert_eq!(ui.table_selected_rows(id), Some((0, 1)));
+    assert_eq!(ui.table_selection_anchor(id), Some((1, Some(4))));
+    assert!(ui.key_input(UiKey::PageDown));
+    assert_eq!(ui.table_selected_rows(id), Some((3, 3)));
+    assert!(ui.key_input(UiKey::PageDown));
+    assert_eq!(ui.table_selected_row(id), Some(5));
+    assert_eq!(ui.table_selected_col(id), Some(4));
+    assert_eq!(ui.table_scroll_offset(id), Some((180.0, 44.0)));
+    ui.set_table_rows(id, Vec::new());
+    assert!(!ui.key_input(UiKey::PageUp));
+}
+
+#[test]
 fn copy_quotes_tabs_line_breaks_and_quotes() {
     let (mut ui, id) = grid();
     ui.set_table_rows(

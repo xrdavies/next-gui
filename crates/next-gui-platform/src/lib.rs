@@ -145,6 +145,10 @@ pub enum KeyCode {
     Home,
     /// End.
     End,
+    /// Page up.
+    PageUp,
+    /// Page down.
+    PageDown,
     /// Printable character from the keyboard path (typically Latin/ASCII).
     /// CJK composition arrives via [`Event::Ime`], not here.
     Char(char),

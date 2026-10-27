@@ -94,6 +94,8 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
             KeyCode::Right => return Some(UiKey::SelectRight),
             KeyCode::Up => return Some(UiKey::SelectUp),
             KeyCode::Down => return Some(UiKey::SelectDown),
+            KeyCode::PageUp => return Some(UiKey::SelectPageUp),
+            KeyCode::PageDown => return Some(UiKey::SelectPageDown),
             KeyCode::Home => return Some(UiKey::SelectHome),
             KeyCode::End => return Some(UiKey::SelectEnd),
             _ => {}
@@ -115,6 +117,8 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
         KeyCode::Down => UiKey::Down,
         KeyCode::Home => UiKey::Home,
         KeyCode::End => UiKey::End,
+        KeyCode::PageUp => UiKey::PageUp,
+        KeyCode::PageDown => UiKey::PageDown,
         KeyCode::Enter => UiKey::Enter,
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,
@@ -1927,6 +1931,21 @@ impl Demo {
         self.rebuild = true;
     }
 
+    fn handle_browse_navigation_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if self.state.tab != MainTab::Browse || self.state.overlay.is_some() || self.state.confirm_open
+            || self.ids.browse_table.0 == 0 || self.ui.focused() != Some(self.ids.browse_table)
+            || modifiers.shift || modifiers.alt { return false; }
+        let button = match key {
+            KeyCode::PageUp if !modifiers.commandish() => self.ids.btn_record_prev,
+            KeyCode::PageDown if !modifiers.commandish() => self.ids.btn_record_next,
+            KeyCode::Home if modifiers.commandish() => self.ids.btn_record_first,
+            KeyCode::End if modifiers.commandish() => self.ids.btn_record_last,
+            _ => return false,
+        };
+        self.handle_button(button);
+        true
+    }
+
     fn handle_sql_search_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
         if key != KeyCode::Function(3) || modifiers.commandish() || modifiers.alt || self.state.tab != MainTab::ExecuteSql
             || self.state.confirm_open || !matches!(self.state.overlay, None | Some(OverlayKind::FindReplace)) { return false; }
@@ -2924,7 +2943,7 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
-                if self.handle_sql_search_key(key, modifiers) {
+                if self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) {
                     self.after_ui(ctx);
                     return;
                 }

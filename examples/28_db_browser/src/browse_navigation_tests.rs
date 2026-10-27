@@ -378,3 +378,64 @@ fn previous_next_keep_drafts_and_failed_query_selection_intact() {
     assert_eq!(selected(&demo), (0, 0, "1205"));
     assert!(demo.state.error_msg.is_none());
 }
+
+#[test]
+fn page_shortcuts_cross_cache_and_command_home_end_reach_the_complete_result() {
+    let mut demo = demo();
+    go(&mut demo, "499");
+    let plain = Modifiers::default();
+    let command = Modifiers {
+        ctrl: true,
+        ..plain
+    };
+    assert!(demo.handle_browse_navigation_key(KeyCode::PageDown, plain));
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().offset, 500);
+    assert!(demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
+    demo.do_rebuild();
+    assert_eq!(demo.state.browse().goto_record, "499");
+    assert!(demo.handle_browse_navigation_key(KeyCode::Home, command));
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert!(demo.handle_browse_navigation_key(KeyCode::End, command));
+    demo.do_rebuild();
+    assert_eq!(selected(&demo), (500, 102, "1"));
+    assert!(demo.handle_browse_navigation_key(KeyCode::PageDown, plain));
+    assert!(!demo.rebuild, "disabled end action does not rebuild");
+    for modifiers in [
+        command,
+        Modifiers {
+            shift: true,
+            ..plain
+        },
+        Modifiers { alt: true, ..plain },
+    ] {
+        assert!(!demo.handle_browse_navigation_key(KeyCode::PageUp, modifiers));
+    }
+    assert_eq!(map_key(KeyCode::PageUp, plain), Some(UiKey::PageUp));
+    assert_eq!(
+        map_key(
+            KeyCode::PageDown,
+            Modifiers {
+                shift: true,
+                ..plain
+            }
+        ),
+        Some(UiKey::SelectPageDown)
+    );
+    demo.ui.set_focus(Some(demo.ids.record_number));
+    assert!(!demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
+    demo.ui.set_focus(Some(demo.ids.browse_table));
+    demo.state.confirm_open = true;
+    assert!(!demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
+    demo.state.confirm_open = false;
+    demo.state.overlay = Some(OverlayKind::ImportCsv);
+    assert!(!demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
+    demo.state.overlay = None;
+    demo.ui
+        .set_text_area_value(demo.ids.edit_value, "retain shortcut draft");
+    assert!(demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
+    assert_eq!(selected(&demo), (500, 102, "1"));
+    assert_eq!(demo.state.edit_value, "retain shortcut draft");
+    assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
+}

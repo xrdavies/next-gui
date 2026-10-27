@@ -102,6 +102,8 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
         KeyCode::Down => UiKey::Down,
         KeyCode::Home => UiKey::Home,
         KeyCode::End => UiKey::End,
+        KeyCode::PageUp => UiKey::PageUp,
+        KeyCode::PageDown => UiKey::PageDown,
         KeyCode::Enter => UiKey::Enter,
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,

@@ -95,6 +95,8 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
             KeyCode::Right => return Some(UiKey::SelectRight),
             KeyCode::Up => return Some(UiKey::SelectUp),
             KeyCode::Down => return Some(UiKey::SelectDown),
+            KeyCode::PageUp => return Some(UiKey::SelectPageUp),
+            KeyCode::PageDown => return Some(UiKey::SelectPageDown),
             KeyCode::Home => return Some(UiKey::SelectHome),
             KeyCode::End => return Some(UiKey::SelectEnd),
             _ => {}
@@ -116,6 +118,8 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
         KeyCode::Down => UiKey::Down,
         KeyCode::Home => UiKey::Home,
         KeyCode::End => UiKey::End,
+        KeyCode::PageUp => UiKey::PageUp,
+        KeyCode::PageDown => UiKey::PageDown,
         KeyCode::Enter => UiKey::Enter,
         KeyCode::Space => UiKey::Space,
         KeyCode::Escape => UiKey::Escape,

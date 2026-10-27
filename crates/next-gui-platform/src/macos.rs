@@ -388,6 +388,8 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     Key::Named(NamedKey::ArrowDown) => KeyCode::Down,
                     Key::Named(NamedKey::Home) => KeyCode::Home,
                     Key::Named(NamedKey::End) => KeyCode::End,
+                    Key::Named(NamedKey::PageUp) => KeyCode::PageUp,
+                    Key::Named(NamedKey::PageDown) => KeyCode::PageDown,
                     Key::Character(s) => {
                         // While IME is composing, text goes through Event::Ime — do not
                         // also insert Latin Key::Character from the composing keys.

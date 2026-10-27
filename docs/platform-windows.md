@@ -115,3 +115,11 @@ constructors must supply the field; exhaustive patterns should include it or `..
 Touch backends call `synthesize_with_modifiers`; the existing `synthesize` helper
 continues to produce unmodified pointer events. Native gesture acceptance remains
 a separate check from compile and synthetic event tests.
+
+## Page keys
+
+All three winit hosts forward named PageUp/PageDown on press and release as
+`KeyCode::PageUp` / `KeyCode::PageDown`, retaining event modifiers. Exhaustive
+consumers must handle these new variants. Office key adapters map them to shared
+Table page movement; Shift-aware adapters use `SelectPageUp` / `SelectPageDown`.
+Windows runtime/hardware acceptance and TextArea page movement remain unverified.

@@ -79,3 +79,14 @@ cargo test -p next-gui-ui --lib key_input_tab
 ## 4. 后续（非 P6d）
 
 完整读屏遍历、平台 a11y 树同步 → 另开阶段。Button 进焦序与键盘激活已在本基线上完成（见上 §1.1）。
+
+## Table page navigation
+
+`UiKey::PageUp` / `PageDown` moves a focused Table by its currently visible row
+count minus one, with a minimum step of one. `SelectPageUp` / `SelectPageDown`
+keeps the original anchor while extending/reversing the range. Active columns
+and frozen columns are preserved, and the destination is revealed. Empty tables
+remain unselected. This operates on rows supplied to the widget; applications
+with virtual data must load further rows themselves (e28 plain PageUp/PageDown
+uses its guarded full-result navigation). This is keyboard behavior, not an OS
+accessibility-tree bridge or native input acceptance.

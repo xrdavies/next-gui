@@ -2333,6 +2333,10 @@ pub enum UiKey {
     Home,
     /// End.
     End,
+    /// Move the table selection up by one visible page.
+    PageUp,
+    /// Move the table selection down by one visible page.
+    PageDown,
     /// Enter.
     Enter,
     /// Tab (move focus forward).
@@ -2355,6 +2359,10 @@ pub enum UiKey {
     SelectUp,
     /// Extend selection down one visual line.
     SelectDown,
+    /// Extend table selection up by one visible page.
+    SelectPageUp,
+    /// Extend table selection down by one visible page.
+    SelectPageDown,
     /// Extend selection to the start of the visual line.
     SelectHome,
     /// Extend selection to the end of the visual line.
@@ -5885,10 +5893,13 @@ impl Ui {
         }) = self.widgets.get(&id).map(|w| &w.kind) else { return false; };
         if rows.is_empty() { return false; }
         let (mut row, mut col) = (selected_row.unwrap_or(0), *selected_col);
-        let extend = matches!(key, UiKey::SelectUp | UiKey::SelectDown | UiKey::SelectLeft | UiKey::SelectRight);
+        let extend = matches!(key, UiKey::SelectUp | UiKey::SelectDown | UiKey::SelectLeft | UiKey::SelectRight | UiKey::SelectPageUp | UiKey::SelectPageDown);
+        let page = self.table_visible_rows(id).unwrap_or(0).saturating_sub(1).max(1);
         match key {
             UiKey::Down | UiKey::SelectDown => row = selected_row.map_or(0, |i| (i + 1).min(rows.len() - 1)),
             UiKey::Up | UiKey::SelectUp => row = row.saturating_sub(1),
+            UiKey::PageUp | UiKey::SelectPageUp => row = row.saturating_sub(page),
+            UiKey::PageDown | UiKey::SelectPageDown => row = selected_row.map_or(0, |i| i.saturating_add(page).min(rows.len() - 1)),
             UiKey::Left | UiKey::SelectLeft if !columns.is_empty() => col = Some(col.unwrap_or(0).saturating_sub(1)),
             UiKey::Right | UiKey::SelectRight if !columns.is_empty() => col = Some(col.map_or(0, |i| (i + 1).min(columns.len() - 1))),
             UiKey::Home => row = 0,
