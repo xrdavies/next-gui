@@ -44,7 +44,7 @@ impl ProjectFile {
         let mut browse_tabs = state.browse_tabs.clone();
         for tab in &mut browse_tabs {
             tab.frozen_cols.get_or_insert(state.frozen_cols);
-            for options in tab.table_options.values_mut() {
+            for options in tab.table_options.values_mut().chain(tab.schema_table_options.values_mut().flat_map(|tables| tables.values_mut())) {
                 options.frozen_cols.get_or_insert(state.frozen_cols);
             }
         }
@@ -113,7 +113,7 @@ impl ProjectFile {
     pub fn restore_legacy_frozen_cols(&mut self) {
         for tab in &mut self.browse_tabs {
             tab.frozen_cols.get_or_insert(self.frozen_cols);
-            for options in tab.table_options.values_mut() {
+            for options in tab.table_options.values_mut().chain(tab.schema_table_options.values_mut().flat_map(|tables| tables.values_mut())) {
                 options.frozen_cols.get_or_insert(self.frozen_cols);
             }
         }
@@ -216,6 +216,7 @@ mod tests {
             chart_table: Some("表".into()),
             chart_column: "price".into(),
             cond_rules: vec![crate::state::CondFormatRule {
+                schema: "main".into(),
                 table: Some("表".into()),
                 column: "price".into(),
                 op: 3,
@@ -240,6 +241,14 @@ mod tests {
         assert_eq!(restored.browse_tabs[0].filter, "id>1");
         assert_eq!(restored.browse_tabs[0].column_widths, vec![100.0, 180.0]);
         assert_eq!(restored.browse_tabs[0].scroll, (15.0, 40.0));
+        let mut legacy = serde_json::to_value(&project).unwrap();
+        legacy["browse_tabs"][0].as_object_mut().unwrap().remove("schema");
+        legacy["cond_rules"][0].as_object_mut().unwrap().remove("schema");
+        let legacy_path = dir.path().join("legacy.json");
+        fs::write(&legacy_path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let restored = ProjectFile::load(&legacy_path).unwrap();
+        assert_eq!(restored.browse_tabs[0].schema, "main");
+        assert_eq!(restored.cond_rules[0].schema, "main");
         fs::write(&path, "<sqlb_project/>").unwrap();
         assert!(ProjectFile::load(&path).is_err());
         fs::write(&path, "{}").unwrap();

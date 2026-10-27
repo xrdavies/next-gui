@@ -18,7 +18,7 @@ On first launch the example opens/creates `examples/28_db_browser/sample.db` wit
 
 Switching structure objects protects edited DDL: keep it in a new SQL tab, discard only that draft, or cancel the selection. Other SQL drafts and pending database changes stay in the session.
 
-The structure tree groups objects under main, temp and attached databases, including empty attachments. Selection, definition previews and confirmed deletion preserve the database identity, including quoted names. Projects retain the selected object's identity with the DDL text. Browse/plot selectors and structured modify wizards currently address main; attached/temp definitions use a read-only preview and qualified SQL in Execute SQL.
+The structure tree groups objects under main, temp and attached databases, including empty attachments. Selection, definition previews and confirmed deletion preserve the database identity, including quoted names. Projects retain the selected object's identity with the DDL text. Browse tabs/selectors, record navigation, filters, conditional formats, typed editing/insert, row deletion, cut/paste, FK navigation and full filtered export preserve the database and table identity. Copy as SQL qualifies the target database. Plot and structured modify wizards still address main; attached/temp definitions use a read-only preview and qualified SQL in Execute SQL.
 
 Structure navigation retains focus, expanded groups and scroll position across page/UI rebuilds. Keyboard selection reveals the active object; expansion state follows database names when an attachment is detached. These view settings last for the current database session.
 
@@ -28,7 +28,7 @@ Structure navigation retains focus, expanded groups and scroll position across p
 
 Native file pickers use `rfd`. Cancel means no operation.
 
-Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
+Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
 
 Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open/Close/Exit use Save/Discard/Cancel for pending database and document edits.
 
@@ -134,7 +134,7 @@ These changes do not claim full DB4S compatibility or native desktop acceptance.
 
 New `.sqbpro` files use the XML layout from DB4S 3.13.1. Open restores the
 main database path/access mode, five connection PRAGMAs, existing attached files,
-main-schema browse tabs, column/global filters, widths/primary sort, SQL text/file references and
+main/attached browse tabs, per-database table settings, column/global filters, widths/sort, SQL text/file references and
 active main/SQL tabs. Relative database, attachment and SQL paths resolve against
 the project directory. Linked SQL text is read from its file before replacing the
 session. Read-only projects also attach files read-only. Missing files, malformed
@@ -142,8 +142,10 @@ XML, unsupported entities and invalid settings report an error. New database
 connections are prepared before replacing the current connection.
 
 Unrecognized elements/attributes and Qt dock data survive XML saves; unsupported
-advanced browse formatting/plots and attached-schema browse tabs are reported as
-retained but not applied. This is partial interoperability, not complete DB4S
+advanced browse formatting/plots are reported as retained but not applied.
+Temporary table contents belong to the original connection; a missing temporary
+browse target reopens as an empty tab with a notice. In-memory attachments cannot
+be saved in a project. This is partial interoperability, not complete DB4S
 project acceptance. The `next_gui` XML extension retains additional local layout
 and draft settings; upstream ignores it. Legacy JSON projects remain readable,
 and choosing a `.json` destination writes JSON. SQLCipher keys are never added to

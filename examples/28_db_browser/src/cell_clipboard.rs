@@ -37,6 +37,7 @@ fn tsv_field(text: &str) -> String {
 
 impl CellClipboard {
     pub fn new(
+        schema: &str,
         table: &str,
         columns: &[String],
         cells: Vec<Vec<CellValue>>,
@@ -71,7 +72,7 @@ impl CellClipboard {
         }
         let insert = format!(
             "INSERT INTO {} ({}) VALUES",
-            db::quote_ident(table),
+            db::qualified_name(schema, table),
             columns
                 .iter()
                 .map(|c| db::quote_ident(c))
@@ -138,19 +139,20 @@ mod tests {
             CellValue::Text(vec![255]),
         ]];
         let columns = vec!["<header>".into(); 7];
-        let copy = CellClipboard::new("t", &columns, cells.clone(), true, false);
+        let copy = CellClipboard::new("main", "t", &columns, cells.clone(), true, false);
         assert!(copy.html.contains("&lt;header&gt;"));
         assert!(copy.html.contains("&quot;&lt;&amp;"));
         assert!(copy.text.contains("\"NULL\t\n\"\"<&\""));
         assert_eq!(copy.internal_cells(&copy.html), Some(cells.clone()));
         assert_eq!(copy.internal_cells("<html>external</html>"), None);
-        let other = CellClipboard::new("t", &columns, cells, false, false);
+        let other = CellClipboard::new("main", "t", &columns, cells, false, false);
         assert_eq!(copy.internal_cells(&other.html), None);
     }
 
     #[test]
     fn sql_copy_quotes_identifiers_and_preserves_blob_null_and_invalid_text() {
         let copy = CellClipboard::new(
+            "main",
             "odd\"table",
             &["a\"b".into(), "c".into(), "d".into()],
             vec![vec![
@@ -161,7 +163,7 @@ mod tests {
             false,
             true,
         );
-        assert_eq!(copy.text, "INSERT INTO \"odd\"\"table\" (\"a\"\"b\", \"c\", \"d\") VALUES (NULL, X'00FF', CAST(X'FF' AS TEXT));");
+        assert_eq!(copy.text, "INSERT INTO \"main\".\"odd\"\"table\" (\"a\"\"b\", \"c\", \"d\") VALUES (NULL, X'00FF', CAST(X'FF' AS TEXT));");
         assert!(copy.html.is_empty());
         assert_eq!(copy.internal_cells(&copy.html), None);
     }

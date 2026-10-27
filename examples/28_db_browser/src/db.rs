@@ -2281,13 +2281,16 @@ pub fn list_foreign_keys_in(conn: &Connection, schema: &str, table: &str) -> Res
     for row in rows {
         let mut fk = row.map_err(|e| e.to_string())?;
         if fk.to_col.is_empty() {
-            fk.to_col = conn
-                .query_row(
-                    "SELECT name FROM pragma_table_info(?1, ?3) WHERE pk=?2",
-                    rusqlite::params![fk.to_table, fk.seq + 1, schema],
-                    |r| r.get(0),
-                )
-                .map_err(|e| format!("Cannot resolve parent primary key: {e}"))?;
+            let sql = format!("PRAGMA {}.table_info({})", quote_ident(schema), quote_ident(&fk.to_table));
+            let mut parent = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let mut columns = parent.query([]).map_err(|e| e.to_string())?;
+            while let Some(column) = columns.next().map_err(|e| e.to_string())? {
+                if column.get::<_, i64>(5).map_err(|e| e.to_string())? == fk.seq + 1 {
+                    fk.to_col = column.get(1).map_err(|e| e.to_string())?;
+                    break;
+                }
+            }
+            if fk.to_col.is_empty() { return Err("Cannot resolve parent primary key".into()); }
         }
         out.push(fk);
     }

@@ -127,6 +127,8 @@ pub struct BrowseTableOptions {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrowseTabState {
     pub title: String,
+    #[serde(default = "main_schema")]
+    pub schema: String,
     pub table: Option<String>,
     pub filter: String,
     #[serde(default)]
@@ -148,6 +150,8 @@ pub struct BrowseTabState {
     pub scroll: (f32, f32),
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub table_options: BTreeMap<String, BrowseTableOptions>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub schema_table_options: BTreeMap<String, BTreeMap<String, BrowseTableOptions>>,
     #[serde(skip)]
     pub result: Option<QueryResult>,
     #[serde(skip)]
@@ -171,6 +175,20 @@ pub struct BrowseTabState {
 }
 
 impl BrowseTabState {
+    pub fn stored_options(&self, schema: &str, table: &str) -> Option<&BrowseTableOptions> {
+        if schema == "main" { self.table_options.get(table) }
+        else { self.schema_table_options.get(schema)?.get(table) }
+    }
+
+    pub fn store_options(&mut self, schema: &str, table: &str, options: BrowseTableOptions) {
+        if schema == "main" { self.table_options.insert(table.into(), options); }
+        else { self.schema_table_options.entry(schema.into()).or_default().insert(table.into(), options); }
+    }
+
+    pub fn saved_options(&self) -> impl Iterator<Item = (&str, &str, &BrowseTableOptions)> {
+        self.table_options.iter().map(|(table, options)| ("main", table.as_str(), options))
+            .chain(self.schema_table_options.iter().flat_map(|(schema, tables)| tables.iter().map(move |(table, options)| (schema.as_str(), table.as_str(), options))))
+    }
     pub fn options(&self) -> BrowseTableOptions {
         BrowseTableOptions {
             filter: self.filter.clone(),
@@ -215,7 +233,7 @@ impl BrowseTabState {
     // shortcut: remap within the refreshed preview; extend with whole-result virtual selection.
     fn restore_selection(&mut self, previous: &Self) {
         let (Some(row), Some(old), Some(new)) = (previous.sel_row, &previous.result, &self.result) else { return; };
-        if self.table != previous.table || old.columns != new.columns || old.columns.is_empty() { return; }
+        if self.schema != previous.schema || self.table != previous.table || old.columns != new.columns || old.columns.is_empty() { return; }
         let anchor = previous.sel_row_start.unwrap_or(row);
         let end = previous.sel_row_end.unwrap_or(row);
         let first = row.min(anchor).min(end);
@@ -248,9 +266,14 @@ impl BrowseTabState {
     }
 
     pub fn new(table: Option<String>) -> Self {
-        let title = table.clone().unwrap_or_else(|| "Browse".into());
+        Self::new_in("main", table)
+    }
+
+    pub fn new_in(schema: &str, table: Option<String>) -> Self {
+        let title = table.as_ref().map(|name| if schema == "main" { name.clone() } else { db::qualified_name(schema, name) }).unwrap_or_else(|| "Browse".into());
         Self {
             title,
+            schema: schema.into(),
             table,
             filter: String::new(),
             global_filters: Vec::new(),
@@ -263,6 +286,7 @@ impl BrowseTabState {
             frozen_cols: None,
             scroll: (0.0, 0.0),
             table_options: BTreeMap::new(),
+            schema_table_options: BTreeMap::new(),
             result: None,
             rowids: Vec::new(),
             sel_row: None,
@@ -277,6 +301,8 @@ impl BrowseTabState {
     }
 }
 
+fn main_schema() -> String { "main".into() }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditCellMode {
     Text = 0,
@@ -287,6 +313,8 @@ pub enum EditCellMode {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CondFormatRule {
+    #[serde(default = "main_schema")]
+    pub schema: String,
     pub table: Option<String>,
     pub column: String,
     /// 0== 1!= 2contains 3> 4<
@@ -1052,12 +1080,14 @@ impl AppState {
     }
 
     pub fn export_browse(&self, path: &Path, json: bool) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let tab = self.browse();
         let table = tab.table.as_ref().ok_or("Select a table to export")?;
-        let columns = db::table_column_names(conn, table)?;
-        db::export_table(
+        let columns = db::table_column_names_in(conn, &schema, table)?;
+        db::export_table_in(
             conn,
+            &schema,
             table,
             &tab.ordering(),
             Self::composed_where(tab, &columns)?.as_deref(),
@@ -1067,6 +1097,7 @@ impl AppState {
     }
 
     pub fn refresh_browse(&mut self) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.conn.is_none() {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
@@ -1100,16 +1131,16 @@ impl AppState {
             return Ok(());
         };
         if prev_cols.is_empty() {
-            prev_cols = db::table_column_names(self.conn.as_ref().unwrap(), &table)?;
+            prev_cols = db::table_column_names_in(self.conn.as_ref().unwrap(), &schema, &table)?;
         }
         let is_view = self
             .schema
             .iter()
-            .any(|o| o.schema == "main" && o.name == table && o.kind == ObjectKind::View);
+            .any(|o| o.schema == schema && o.name == table && o.kind == ObjectKind::View);
 
         let where_sql = Self::composed_where(self.browse(), &prev_cols)?;
 
-        let total_rows = db::count_browse_rows(self.conn.as_ref().unwrap(), &table, where_sql.as_deref())?;
+        let total_rows = db::count_browse_rows_in(self.conn.as_ref().unwrap(), &schema, &table, where_sql.as_deref())?;
         let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
         let offset = self.browse().offset.min(last_page);
         let (total_rows, result, rowids) = {
@@ -1117,8 +1148,9 @@ impl AppState {
             if is_view {
                 (
                     total_rows,
-                    db::browse_table(
+                    db::browse_table_in(
                         conn,
+                        &schema,
                         &table,
                         &ordering,
                         where_sql.as_deref(),
@@ -1128,8 +1160,9 @@ impl AppState {
                     Vec::new(),
                 )
             } else {
-                match db::browse_with_rowid(
+                match db::browse_with_rowid_in(
                     conn,
+                    &schema,
                     &table,
                     &ordering,
                     where_sql.as_deref(),
@@ -1155,8 +1188,9 @@ impl AppState {
                     }
                     Err(_) => (
                         total_rows,
-                        db::browse_table(
+                        db::browse_table_in(
                             conn,
+                            &schema,
                             &table,
                             &ordering,
                             where_sql.as_deref(),
@@ -1180,7 +1214,7 @@ impl AppState {
             let t = self.browse_mut();
             t.col_filters = col_filters;
             t.offset = offset;
-            t.title = table.clone();
+            t.title = if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) };
             t.rowids = rowids;
             t.total_rows = Some(total_rows);
             t.result = Some(result);
@@ -1189,7 +1223,7 @@ impl AppState {
         self.clear_browse_editor();
         self.status_msg = format!(
             "Browse {} — {} rows {}–{} of {}{}{}",
-            table,
+            if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) },
             nrows,
             if nrows == 0 { 0 } else { offset.saturating_add(1) },
             offset.saturating_add(nrows),
@@ -1244,18 +1278,23 @@ impl AppState {
     }
 
     pub fn switch_browse_table(&mut self, name: &str) -> Result<(), String> {
+        self.switch_browse_table_in("main", name)
+    }
+
+    pub fn switch_browse_table_in(&mut self, schema: &str, name: &str) -> Result<(), String> {
         if self.conn.is_none() { return Err("No database open".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.sql_busy { return Err("Wait for SQL to finish before switching tables".into()); }
-        if !self.table_names().iter().any(|table| table == name) { return Err("Select a valid table or view".into()); }
-        if self.browse().table.as_deref() == Some(name) { return Ok(()); }
+        if !self.schema.iter().any(|o| o.schema == schema && o.name == name && matches!(o.kind, ObjectKind::Table | ObjectKind::View)) { return Err("Select a valid table or view".into()); }
+        if self.browse().schema == schema && self.browse().table.as_deref() == Some(name) { return Ok(()); }
         let previous = self.browse().clone();
-        let mut next = BrowseTabState::new(Some(name.into()));
+        let mut next = BrowseTabState::new_in(schema, Some(name.into()));
         next.table_options = previous.table_options.clone();
+        next.schema_table_options = previous.schema_table_options.clone();
         if let Some(table) = &previous.table {
-            next.table_options.insert(table.clone(), previous.options());
+            next.store_options(&previous.schema, table, previous.options());
         }
-        if let Some(options) = next.table_options.get(name).cloned() {
+        if let Some(options) = next.stored_options(schema, name).cloned() {
             if options.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
                 return Err("Invalid saved table column width".into());
             }
@@ -1363,21 +1402,17 @@ impl AppState {
             });
             self.schema_group = None;
             self.ddl_draft = obj.sql.clone().unwrap_or_default();
-            if obj.schema == "main" && matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
-                let t = self.browse_mut();
-                t.table = Some(obj.name.clone());
-                t.title = obj.name.clone();
-                let _ = self.refresh_browse();
-            } else if obj.schema != "main" {
-                self.status_msg = format!("Selected {}.{}; use Execute SQL for data and definition changes", obj.schema, obj.name);
+            if matches!(obj.kind, ObjectKind::Table | ObjectKind::View) {
+                if let Err(error) = self.switch_browse_table_in(&obj.schema, &obj.name) { self.error_msg = Some(error); }
             }
         }
     }
 
     pub fn open_insert_row(&mut self) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         self.guard_writable()?;
         let table = self.browse().table.as_ref().ok_or("Select a table")?;
-        self.insert_columns = db::table_columns(self.conn.as_ref().unwrap(), table)?;
+        self.insert_columns = db::table_columns_in(self.conn.as_ref().unwrap(), &schema, table)?;
         self.insert_values = vec![String::new(); self.insert_columns.len()];
         self.insert_modes = vec![0; self.insert_columns.len()];
         self.overlay = Some(OverlayKind::InsertRow);
@@ -1385,6 +1420,7 @@ impl AppState {
     }
 
     pub fn apply_insert_row(&mut self) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         self.guard_writable()?;
         let table = self.browse().table.as_ref().ok_or("Select a table")?;
         let mut columns = Vec::new();
@@ -1403,11 +1439,11 @@ impl AppState {
             }
         }
         let sql = if columns.is_empty() {
-            format!("INSERT INTO {} DEFAULT VALUES", db::qualified_name("main", table))
+            format!("INSERT INTO {} DEFAULT VALUES", db::qualified_name(&schema, table))
         } else {
             format!(
                 "INSERT INTO {} ({}) VALUES ({})",
-                db::qualified_name("main", table),
+                db::qualified_name(&schema, table),
                 columns.join(","),
                 vec!["?"; values.len()].join(",")
             )
@@ -1479,10 +1515,7 @@ impl AppState {
     }
 
     pub fn open_create_index_wizard(&mut self) {
-        let table = self
-            .browse()
-            .table
-            .clone()
+        let table = (self.browse().schema == "main").then(|| self.browse().table.clone()).flatten()
             .or_else(|| {
                 self.schema
                     .iter()
@@ -1586,12 +1619,11 @@ impl AppState {
         self.mark_dirty();
         self.overlay = None;
         self.refresh_schema()?;
-        {
-            let t = self.browse_mut();
-            t.table = Some(name.clone());
-            t.title = name.clone();
+        if self.browse().schema == "main" && self.browse().table.as_deref() == Some(&name) {
+            self.refresh_browse()?;
+        } else {
+            self.switch_browse_table(&name)?;
         }
-        self.refresh_browse()?;
         self.status_msg = format!("Table `{name}` saved (unwritten)");
         Ok(())
     }
@@ -1695,12 +1727,17 @@ impl AppState {
     }
 
     pub fn table_names(&self) -> Vec<String> {
-        // shortcut: browse/plot selectors address main; carry schema identity through their models before enabling other databases.
+        // shortcut: plot/wizards address main; carry schema identity through their models before enabling other databases.
         self.schema
             .iter()
             .filter(|o| o.schema == "main" && matches!(o.kind, ObjectKind::Table | ObjectKind::View))
             .map(|o| o.name.clone())
             .collect()
+    }
+
+    pub fn browse_tables(&self) -> Vec<(&str, &str)> {
+        self.schema.iter().filter(|o| matches!(o.kind, ObjectKind::Table | ObjectKind::View))
+            .map(|o| (o.schema.as_str(), o.name.as_str())).collect()
     }
 
     pub fn column_type_names() -> Vec<String> {
@@ -1830,6 +1867,7 @@ impl AppState {
         if self.sql_busy {
             return Err("Wait for SQL to finish".into());
         }
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if Path::new(dst).exists() {
             return Err("Save As requires a new path".into());
         }
@@ -1850,6 +1888,16 @@ impl AppState {
         self.dirty = false;
         self.begin_txn()?;
         self.refresh_schema()?;
+        // The backup replaces the connection; temp and attached databases no longer exist.
+        for tab in &mut self.browse_tabs {
+            tab.schema_table_options.clear();
+            if tab.schema != "main" {
+                let main_options = std::mem::take(&mut tab.table_options);
+                *tab = BrowseTabState::new(None);
+                tab.table_options = main_options;
+            }
+        }
+        self.refresh_browse()?;
         self.push_recent(dst);
         self.status_msg = format!("Saved As {dst}");
         Ok(())
@@ -1951,11 +1999,13 @@ impl AppState {
     pub fn add_browse_tab(&mut self) -> Result<(), String> {
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
-        let table = self.browse().table.clone().or_else(|| {
-            self.schema.iter().find(|o| o.schema == "main" && o.kind == ObjectKind::Table).map(|o| o.name.clone())
-        });
+        let (schema, table) = if let Some(table) = &self.browse().table {
+            (self.browse().schema.clone(), Some(table.clone()))
+        } else {
+            ("main".into(), self.schema.iter().find(|o| o.schema == "main" && o.kind == ObjectKind::Table).map(|o| o.name.clone()))
+        };
         let old_index = self.browse_tab_idx;
-        self.browse_tabs.push(BrowseTabState::new(table));
+        self.browse_tabs.push(BrowseTabState::new_in(&schema, table));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
         if let Err(e) = self.refresh_browse() {
             self.browse_tabs.pop();
@@ -2365,29 +2415,40 @@ impl AppState {
                 pf.browse_tabs.push(tab);
             }
         }
-        for tab in &pf.browse_tabs {
+        for tab in &mut pf.browse_tabs {
+            if tab.schema == "temp" {
+                if let Some(table) = &tab.table {
+                    if db::table_columns_in(conn, "temp", table)?.is_empty() {
+                        let mut empty = BrowseTabState::new(None);
+                        empty.table_options = std::mem::take(&mut tab.table_options);
+                        empty.schema_table_options = std::mem::take(&mut tab.schema_table_options);
+                        *tab = empty;
+                    }
+                }
+            }
             if let Some(table) = &tab.table {
                 if tab.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
                     return Err(format!("Browse tab {}: invalid column width", tab.title));
                 }
                 let result = (|| {
-                    let columns = db::table_column_names(conn, table)?;
-                    db::browse_table(conn, table, &tab.ordering(),
+                    let columns = db::table_column_names_in(conn, &tab.schema, table)?;
+                    db::browse_table_in(conn, &tab.schema, table, &tab.ordering(),
                         Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
                 })();
                 result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
             }
-            for (table, options) in &tab.table_options {
-                if tab.table.as_ref() == Some(table) { continue; }
-                let columns = db::table_column_names(conn, table)?;
+            for (schema, table, options) in tab.saved_options() {
+                if tab.schema == schema && tab.table.as_deref() == Some(table) { continue; }
+                if schema == "temp" && db::table_columns_in(conn, schema, table)?.is_empty() { continue; }
+                let columns = db::table_column_names_in(conn, schema, table)?;
                 if columns.is_empty() { continue; }
                 if options.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
                     return Err(format!("Saved table {table}: invalid column width"));
                 }
-                let mut stored = BrowseTabState::new(Some(table.clone()));
+                let mut stored = BrowseTabState::new_in(schema, Some(table.into()));
                 stored.set_options(options.clone());
                 let result = (|| {
-                    db::browse_table(conn, table, &stored.ordering(),
+                    db::browse_table_in(conn, schema, table, &stored.ordering(),
                         Self::composed_where(&stored, &columns)?.as_deref(), 1, 0)
                 })();
                 result.map_err(|error| format!("Saved table {table}: {error}"))?;
@@ -2482,6 +2543,7 @@ impl AppState {
     }
 
     pub fn apply_cell_draft(&mut self) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         self.guard_writable()?;
         let tab = self.browse();
         let table = tab.table.clone().ok_or("No browse table")?;
@@ -2490,8 +2552,8 @@ impl AppState {
         let column = self.edit_col.trim().to_string();
         if column.is_empty() { return Err("Select a column first".into()); }
         let value = self.edited_cell_value()?;
-        db::update_cell(self.conn.as_ref().unwrap(), &table, rowid, &column, &value)?;
-        self.log_sql(format!("UPDATE {table} SET {column}=… WHERE rowid={rowid}"));
+        db::update_cell_in(self.conn.as_ref().unwrap(), &schema, &table, rowid, &column, &value)?;
+        self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
         self.mark_dirty();
         self.edit_saved = value;
         self.refresh_browse()?;
@@ -2513,11 +2575,12 @@ impl AppState {
             return Err("Selection no longer fits the browse page; refresh and retry".into());
         }
         let cells = result.values.rectangle(first..=last, first_col..=last_col)?;
-        Ok(crate::cell_clipboard::CellClipboard::new(tab.table.as_deref().ok_or("No browse table")?,
+        Ok(crate::cell_clipboard::CellClipboard::new(&tab.schema, tab.table.as_deref().ok_or("No browse table")?,
             &result.columns[first_col..=last_col], cells, headers, sql))
     }
 
     pub fn cut_browse_cells(&mut self) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         self.guard_writable()?;
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let tab = self.browse();
@@ -2535,14 +2598,14 @@ impl AppState {
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let columns = &result.columns[first_col..=last_col];
-        let info = db::table_columns(conn, &table)?;
+        let info = db::table_columns_in(conn, &schema, &table)?;
         let values = columns.iter().map(|col| {
             let column = info.iter().find(|info| info.name == *col).ok_or("Selected column is not editable")?;
             Ok(if column.notnull { db::CellValue::Text(Vec::new()) } else { db::CellValue::Null })
         }).collect::<Result<Vec<_>, String>>()?;
         let updates = tab.rowids[first..=last].iter().map(|id| (*id, values.clone())).collect::<Vec<_>>();
-        db::update_cells(conn, &table, columns, &updates)?;
-        self.log_sql(format!("-- cut {}x{} from {table}", updates.len(), columns.len()));
+        db::update_cells_in(conn, &schema, &table, columns, &updates)?;
+        self.log_sql(format!("-- cut {}x{} from {}", updates.len(), columns.len(), db::qualified_name(&schema, &table)));
         self.mark_dirty();
         self.refresh_browse()?;
         self.status_msg = "Cut cells (unwritten)".into();
@@ -2560,6 +2623,7 @@ impl AppState {
     }
 
     pub fn paste_browse_cells(&mut self, mut rows: Vec<Vec<db::CellValue>>) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         self.guard_writable()?;
         if self.has_cell_draft() {
             return Err("Apply or discard the cell draft first".into());
@@ -2597,8 +2661,8 @@ impl AppState {
             let rowid = *tab.rowids.get(start_row + i).ok_or("Selected rows are not editable")?;
             Ok((rowid, values))
         }).collect::<Result<Vec<_>, String>>()?;
-        db::update_cells(self.conn.as_ref().ok_or("No database open")?, &table, &columns, &updates)?;
-        self.log_sql(format!("-- paste {height}x{width} into {table}"));
+        db::update_cells_in(self.conn.as_ref().ok_or("No database open")?, &schema, &table, &columns, &updates)?;
+        self.log_sql(format!("-- paste {height}x{width} into {}", db::qualified_name(&schema, &table)));
         self.mark_dirty();
         self.refresh_browse()?;
         self.status_msg = format!("Pasted {height}x{width} cells (unwritten)");
@@ -2712,6 +2776,7 @@ impl AppState {
         let rgb =
             u32::from_str_radix(self.cond_color.trim_start_matches('#'), 16).unwrap_or(0xE67E22);
         self.cond_rules.push(CondFormatRule {
+            schema: self.browse().schema.clone(),
             table: self.browse().table.clone(),
             column: col,
             op: self.cond_op_idx,
@@ -2732,7 +2797,7 @@ impl AppState {
                 let val = row.get(ci).map(|s| s.as_str()).unwrap_or("");
                 let mut tint = None;
                 for rule in &self.cond_rules {
-                    if rule.table != self.browse().table || &rule.column != cname {
+                    if rule.schema != self.browse().schema || rule.table != self.browse().table || &rule.column != cname {
                         continue;
                     }
                     let hit = match rule.op {
@@ -2892,6 +2957,7 @@ impl AppState {
     }
 
     pub fn navigate_fk(&mut self) -> Result<(), String> {
+        let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let table = self
             .browse()
@@ -2904,7 +2970,7 @@ impl AppState {
         }
         let fks = {
             let conn = self.conn.as_ref().ok_or("No database open")?;
-            db::list_foreign_keys(conn, &table)?
+            db::list_foreign_keys_in(conn, &schema, &table)?
         };
         let Some(fk) = fks.iter().find(|f| f.from_col == col) else {
             return Err(format!("Column {col} has no foreign key"));
@@ -2922,7 +2988,7 @@ impl AppState {
                     &format!(
                         "SELECT {} FROM {} WHERE rowid=?1",
                         db::quote_ident(&key.from_col),
-                        db::qualified_name("main", &table)
+                        db::qualified_name(&schema, &table)
                     ),
                     [rowid],
                     |row| row.get_ref(0).map(db::CellValue::from),
@@ -2940,7 +3006,7 @@ impl AppState {
         let filter = parts.join(" AND ");
         let old_index = self.browse_tab_idx;
         self.browse_tabs
-            .push(BrowseTabState::new(Some(fk.to_table.clone())));
+            .push(BrowseTabState::new_in(&schema, Some(fk.to_table.clone())));
         self.browse_tab_idx = self.browse_tabs.len() - 1;
         self.browse_mut().filter = filter;
         if let Err(e) = self.refresh_browse() {
@@ -3155,6 +3221,105 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn browse_namespaces_isolate_data_options_formats_and_clipboard_sql() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp');
+            ATTACH ':memory:' AS \"aux.\"\"db\"; CREATE TABLE \"aux.\"\"db\".t(v); INSERT INTO \"aux.\"\"db\".t VALUES('attached');").unwrap();
+        state.refresh_schema().unwrap();
+        state.switch_browse_table("t").unwrap();
+        state.browse_mut().filter = "v='saved'".into();
+        state.browse_mut().column_widths = vec![123.0];
+        state.cond_col = "v".into();
+        state.cond_value = "saved".into();
+        state.add_cond_format_rule();
+        state.switch_browse_table_in("aux.\"db", "t").unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "attached");
+        assert!(state.browse().filter.is_empty());
+        assert!(state.cell_format_colors()[0][0].is_none());
+        state.goto_browse_record(1).unwrap();
+        state.edit_type = 3;
+        state.edit_value = "edited attached".into();
+        assert!(state.switch_browse_table("t").is_err());
+        assert_eq!(state.browse().schema, "aux.\"db");
+        state.apply_cell_draft().unwrap();
+        state.goto_browse_record(1).unwrap();
+        state.paste_browse_cells(vec![vec![db::CellValue::Text(b"pasted attached".to_vec())]]).unwrap();
+        state.browse_mut().sel_row = Some(0);
+        state.browse_mut().sel_col = Some(0);
+        let sql = state.copy_browse_cells(false, true).unwrap().text;
+        assert!(sql.starts_with("INSERT INTO \"aux.\"\"db\".\"t\""));
+        state.browse_mut().filter = "v LIKE 'pasted%'".into();
+        state.browse_mut().column_widths = vec![222.0];
+        state.browse_mut().frozen_cols = Some(1);
+        state.switch_browse_table_in("temp", "t").unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "temp");
+        state.open_insert_row().unwrap();
+        state.insert_modes[0] = 2;
+        state.insert_values[0] = "temp inserted".into();
+        state.apply_insert_row().unwrap();
+        assert_eq!(state.browse().total_rows, Some(2));
+        state.switch_browse_table("t").unwrap();
+        assert_eq!(state.browse().filter, "v='saved'");
+        assert_eq!(state.browse().column_widths, [123.0]);
+        assert!(state.cell_format_colors()[0][0].is_some());
+        state.switch_browse_table_in("aux.\"db", "t").unwrap();
+        assert_eq!(state.browse().filter, "v LIKE 'pasted%'");
+        assert_eq!(state.browse().column_widths, [222.0]);
+        assert_eq!(state.browse().frozen_cols, Some(1));
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "pasted attached");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("attached.json");
+        state.export_browse(&path, true).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&path).unwrap()).unwrap()[0]["v"], "pasted attached");
+        state.add_browse_tab().unwrap();
+        assert_eq!(state.browse().schema, "aux.\"db");
+        state.conn.as_ref().unwrap().execute_batch("COMMIT; DETACH \"aux.\"\"db\";").unwrap();
+        assert!(state.refresh_browse().is_err());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM main.t", [], |r| r.get::<_, String>(0)).unwrap(), "saved");
+    }
+
+    #[test]
+    fn namespace_fk_navigation_and_save_as_keep_connection_identity() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS aux;
+            CREATE TABLE main.parent(main_id PRIMARY KEY, label); INSERT INTO main.parent VALUES(1,'main');
+            CREATE TABLE aux.parent(aux_id PRIMARY KEY, label); INSERT INTO aux.parent VALUES(1,'attached');
+            CREATE TABLE aux.child(parent_id REFERENCES parent); INSERT INTO aux.child VALUES(1);
+            CREATE TEMP TABLE parent(temp_id PRIMARY KEY, label); INSERT INTO temp.parent VALUES(1,'temp');
+            CREATE TEMP TABLE child(parent_id REFERENCES parent); INSERT INTO temp.child VALUES(1);
+            CREATE TEMP TABLE pragma_table_info(shadow);").unwrap();
+        state.refresh_schema().unwrap();
+        for (schema, value) in [("aux", "attached"), ("temp", "temp")] {
+            state.switch_browse_table_in(schema, "child").unwrap();
+            state.goto_browse_record(1).unwrap();
+            state.navigate_fk().unwrap();
+            assert_eq!(state.browse().schema, schema);
+            assert_eq!(state.browse().table.as_deref(), Some("parent"));
+            assert_eq!(state.browse().result.as_ref().unwrap().rows[0][1], value);
+            assert_eq!(state.browse().title, db::qualified_name(schema, "parent"));
+        }
+        state.browse_mut().table = None;
+        state.add_browse_tab().unwrap();
+        assert_eq!(state.browse().schema, "main");
+        state.switch_browse_table_in("aux", "parent").unwrap();
+        state.goto_browse_record(1).unwrap();
+        state.edit_type = 1;
+        state.edit_value = "2".into();
+        let dir = tempfile::tempdir().unwrap();
+        let copy = dir.path().join("copy.db");
+        assert!(state.save_as(copy.to_str().unwrap()).is_err());
+        assert!(!copy.exists());
+        state.discard_cell_draft();
+        state.save_as(copy.to_str().unwrap()).unwrap();
+        assert_eq!(state.schema_names, ["main"]);
+        assert!(state.browse_tabs.iter().all(|tab| tab.schema == "main" && tab.schema_table_options.is_empty()));
+        assert!(state.browse().table.is_none() && state.browse().result.is_none() && state.browse().rowids.is_empty());
+        assert!(state.edit_col.is_empty());
+        state.switch_browse_table("parent").unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][1], "main");
+    }
+
+    #[test]
     fn structure_catalog_includes_attached_and_temp_objects() {
         let mut state = test_state();
         state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE temp_only(x);
@@ -3175,7 +3340,8 @@ mod chart_default_tests {
         assert_eq!(restored.selected.as_ref().unwrap().schema, "aux.\"db");
         assert_eq!(restored.ddl_draft, state.ddl_draft);
         assert!(state.open_modify_table_wizard().is_err());
-        assert!(state.browse().table.is_none());
+        assert_eq!(state.browse().schema, "aux.\"db");
+        assert_eq!(state.browse().table.as_deref(), Some("attached_only"));
         assert!(!state.schema_selection_has_draft(1));
         state.ddl_draft.push_str(" -- retain");
         assert!(state.schema_selection_has_draft(1));
@@ -4337,6 +4503,113 @@ mod chart_default_tests {
         assert!(
             Path::new(&crate::project::ProjectFile::load(&path).unwrap().db_path).is_absolute()
         );
+    }
+
+    #[test]
+    fn attached_project_roundtrip_keeps_active_and_saved_namespace_options() {
+        let dir = tempfile::tempdir().unwrap();
+        for (file, value) in [("main.db", "main"), ("attached.db", "attached")] {
+            Connection::open(dir.path().join(file)).unwrap().execute_batch(&format!(
+                "CREATE TABLE t(v); INSERT INTO t VALUES('{value}');")).unwrap();
+        }
+        let path = dir.path().join("project.sqbpro");
+        let schema = "辅.库";
+        std::fs::write(&path, format!("<sqlb_project><db path='main.db'/>
+            <attached><db schema='{schema}' path='attached.db'/></attached>
+            <tab_browse><table table='{},1:{schema}t' title='附加' unknown='retained'/>
+            <browse_table_settings>
+            <table schema='main' name='t'><column_widths><column index='1' value='124'/></column_widths><filter_values><column index='0' value='=main'/></filter_values></table>
+            <table schema='{schema}' name='t' freeze_columns='2'><column_widths><column index='1' value='248'/></column_widths><filter_values><column index='0' value='=attached'/></filter_values></table>
+            </browse_table_settings></tab_browse></sqlb_project>", schema.len())).unwrap();
+        let mut state = test_state();
+        state.open_project(&path).unwrap();
+        assert_eq!(state.browse().schema, schema);
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "attached");
+        assert_eq!(state.browse().column_widths, [248.0]);
+        assert_eq!(state.browse().frozen_cols, Some(1));
+        state.switch_browse_table("t").unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "main");
+        assert_eq!(state.browse().column_widths, [124.0]);
+        assert_eq!(state.browse().col_filters, ["=main"]);
+        state.switch_browse_table_in(schema, "t").unwrap();
+        assert_eq!(state.browse().col_filters, ["=attached"]);
+        state.add_browse_tab().unwrap();
+        state.browse_mut().column_widths = vec![310.0];
+        state.browse_mut().frozen_cols = Some(0);
+        state.save_project(&path).unwrap();
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(source.contains("unknown=\"retained\""));
+        assert!(source.contains(&format!("table=\"{},1:{schema}t\"", schema.len())));
+        state.open_project(&path).unwrap();
+        assert_eq!(state.browse_tabs.len(), 2);
+        assert_eq!(state.browse_tab_idx, 1);
+        assert_eq!(state.browse().schema, schema);
+        assert_eq!(state.browse().column_widths, [310.0]);
+        assert_eq!(state.browse().frozen_cols, Some(0));
+        state.switch_browse_tab(0).unwrap();
+        assert_eq!(state.browse().schema, schema);
+        assert_eq!(state.browse().column_widths, [248.0]);
+        assert_eq!(state.browse().frozen_cols, Some(1));
+        state.switch_browse_table("t").unwrap();
+        assert_eq!(state.browse().column_widths, [124.0]);
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "main");
+    }
+
+    #[test]
+    fn reopening_a_temporary_browse_project_does_not_read_main_shadow() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("main.db");
+        let conn = db::open_path(database.to_str().unwrap()).unwrap();
+        conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES('main');").unwrap();
+        let mut state = AppState::empty();
+        state.adopt_conn(conn, database.display().to_string(), false).unwrap();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp');").unwrap();
+        state.refresh_schema().unwrap();
+        state.switch_browse_table_in("temp", "t").unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "temp");
+        state.write_changes().unwrap();
+        let path = dir.path().join("temp.sqbpro");
+        state.save_project(&path).unwrap();
+        state.open_project(&path).unwrap();
+        assert!(state.browse().table.is_none() && state.browse().result.is_none());
+        assert!(state.status_msg.contains("temporary table contents"));
+        state.switch_browse_table("t").unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "main");
+    }
+
+    #[test]
+    fn invalid_attached_browse_project_preserves_the_existing_session() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in ["main.db", "attached.db"] {
+            Connection::open(dir.path().join(file)).unwrap().execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(1);").unwrap();
+        }
+        let mut state = test_state();
+        let original_tabs = state.sql_tabs.clone();
+        for (schema, table, filter, inactive) in [
+            ("aux", "t", "v =", false), ("aux", "missing", "", false),
+            ("missing", "t", "", false), ("aux", "t", "v =", true), ("missing", "t", "", true),
+        ] {
+            let mut tab = BrowseTabState::new_in(schema, Some(table.into()));
+            tab.filter = filter.into();
+            if inactive {
+                let options = tab.options();
+                tab = BrowseTabState::new(Some("t".into()));
+                tab.store_options(schema, table, options);
+            }
+            let project = crate::project::ProjectFile {
+                db_path: dir.path().join("main.db").display().to_string(),
+                browse_tabs: vec![tab],
+                db4s_xml: Some("<sqlb_project><db path='main.db'/><attached><db schema='aux' path='attached.db'/></attached></sqlb_project>".into()),
+                ..Default::default()
+            };
+            let path = dir.path().join("invalid.sqbpro");
+            project.save(&path).unwrap();
+            assert!(state.open_project(&path).is_err(), "{schema} {table} {filter} inactive={inactive}");
+            assert_eq!(state.path, ":memory:");
+            assert_eq!(state.sql_tabs, original_tabs);
+            assert!(state.project_path.is_none());
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM main.t", [], |r| r.get::<_, String>(0)).unwrap(), "saved");
+        }
     }
 
     #[test]

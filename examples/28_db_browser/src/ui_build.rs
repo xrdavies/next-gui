@@ -1033,6 +1033,9 @@ pub fn build_ui(
                             c.text("https://sqlitebrowser.org/");
                         }
                         OverlayKind::CondFormat => {
+                            if let Some(table) = &state.browse().table {
+                                c.text(format!("Table: {}", db::qualified_name(&state.browse().schema, table)));
+                            }
                             c.text("Rule: when cell matches, fill cell background");
                             c.row(row, |r| {
                                 r.text("Column");
@@ -1053,7 +1056,7 @@ pub fn build_ui(
                                 r.text("Color #RRGGBB");
                                 ov_cond_color = r.text_input_styled(&state.cond_color, "E67E22", name_s);
                             });
-                            c.text(format!("Rules: {}", state.cond_rules.len()));
+                            c.text(format!("Rules for this table: {}", state.cond_rules.iter().filter(|rule| rule.schema == state.browse().schema && rule.table == state.browse().table).count()));
                         }
                     }
                 });
@@ -1063,20 +1066,21 @@ pub fn build_ui(
         } else {
             // —— Main + docks ——
             let table_names = state.table_names();
-            let browse_opts: Vec<String> = if table_names.is_empty() {
+            let browse_tables = state.browse_tables();
+            let browse_opts: Vec<String> = if browse_tables.is_empty() {
                 vec!["(no tables)".into()]
             } else {
-                table_names.clone()
+                browse_tables.iter().map(|(schema, name)| if *schema == "main" { (*name).into() } else { db::qualified_name(schema, name) }).collect()
             };
             let browse_sel = state
                 .browse()
                 .table
                 .as_ref()
-                .and_then(|t| browse_opts.iter().position(|x| x == t));
+                .and_then(|t| browse_tables.iter().position(|(schema, name)| *schema == state.browse().schema && *name == t));
             let chart_sel = state
                 .chart_table
                 .as_ref()
-                .and_then(|t| browse_opts.iter().position(|x| x == t));
+                .and_then(|t| table_names.iter().position(|x| x == t));
             let browse_cols = state
                 .browse()
                 .result
@@ -1253,7 +1257,7 @@ pub fn build_ui(
             dock_row.padding = 0.0;
 
             let browse_opts_a = browse_opts.clone();
-            let browse_opts_b = browse_opts;
+            let browse_opts_b = if table_names.is_empty() { vec!["(no tables)".into()] } else { table_names };
             let roots_for_tree = roots;
             let visible_docks = state.visible_docks();
             let sql_editor = state.sql_editor().to_string();

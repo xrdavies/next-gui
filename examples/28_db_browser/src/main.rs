@@ -43,6 +43,7 @@ const SCHEMA_NAMESPACE_QA_SQL: &str = "CREATE TABLE customers(id INTEGER PRIMARY
     CREATE TEMP TABLE customers(temp_value TEXT);
     ATTACH ':memory:' AS analytics;
     CREATE TABLE analytics.customers(id INTEGER PRIMARY KEY, region TEXT, revenue REAL);
+    INSERT INTO analytics.customers VALUES(1, 'APAC', 125.5);
     CREATE VIEW analytics.customer_summary AS SELECT region, sum(revenue) FROM customers GROUP BY region;
     CREATE INDEX analytics.customer_region ON customers(region);
     ATTACH ':memory:' AS archive;";
@@ -599,14 +600,14 @@ impl Demo {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
                 }
-                "schema-namespaces" => {
+                "schema-namespaces" | "browse-namespaces" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
                     state.refresh_schema().unwrap();
                     let i = state.schema.iter().position(|o| o.schema == "analytics" && o.name == "customers").unwrap();
                     state.select_schema_node(10_000 + i as u64);
                     state.dock_focus = DockKind::Schema;
-                    MainTab::Structure
+                    if tab == "browse-namespaces" { MainTab::Browse } else { MainTab::Structure }
                 }
                 "schema-scroll" => {
                     state.new_memory_db().unwrap();
@@ -2283,12 +2284,13 @@ impl Demo {
             || modifiers.shift || modifiers.alt { return false; }
         if modifiers.commandish() && matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
             self.snapshot_inputs();
-            let names = self.state.table_names();
+            let names = self.state.browse_tables();
             if names.is_empty() { return true; }
-            let current = names.iter().position(|name| Some(name) == self.state.browse().table.as_ref()).unwrap_or(0);
+            let current = names.iter().position(|(schema, name)| *schema == self.state.browse().schema && Some(*name) == self.state.browse().table.as_deref()).unwrap_or(0);
             let index = if key == KeyCode::PageDown { (current + 1) % names.len() }
                 else if current == 0 { names.len() - 1 } else { current - 1 };
-            match self.state.switch_browse_table(&names[index]) {
+            let (schema, name) = (names[index].0.to_string(), names[index].1.to_string());
+            match self.state.switch_browse_table_in(&schema, &name) {
                 Ok(()) => self.clear_error(),
                 Err(error) => self.set_error(error),
             }
@@ -2834,10 +2836,10 @@ impl Demo {
         if self.ids.browse_select.0 == 0 {
             return Ok(());
         }
-        let opts = self.state.table_names();
+        let opts = self.state.browse_tables();
         if let Some(i) = self.ui.select_selected(self.ids.browse_select) {
-            if let Some(name) = opts.get(i) {
-                self.state.switch_browse_table(name)?;
+            if let Some((schema, name)) = opts.get(i).map(|(s, t)| (s.to_string(), t.to_string())) {
+                self.state.switch_browse_table_in(&schema, &name)?;
             }
         }
         Ok(())
@@ -3013,6 +3015,10 @@ impl Demo {
                                 self.state.mark_dirty();
                                 self.state.selected = None;
                                 if unchanged_definition { self.state.ddl_draft.clear(); }
+                                if self.state.browse().schema == sel.schema && self.state.browse().table.as_deref() == Some(&sel.name)
+                                    && matches!(sel.kind, ObjectKind::Table | ObjectKind::View) {
+                                    self.state.browse_mut().table = None;
+                                }
                                 let _ = self.state.refresh_schema();
                                 let _ = self.state.refresh_browse();
                                 self.state.status_msg = format!("Dropped {}.{} (unwritten)", sel.schema, sel.name);
@@ -3036,10 +3042,10 @@ impl Demo {
                     if let (Some(table), Some(row)) = (table, row) {
                         if let Some(&rowid) = self.state.browse().rowids.get(row) {
                             if let Some(conn) = self.state.conn.as_ref() {
-                                match dbmod::delete_row_by_rowid(conn, &table, rowid) {
+                                match dbmod::delete_row_by_rowid_in(conn, &self.state.browse().schema, &table, rowid) {
                                     Ok(_) => {
                                         self.state.log_sql(format!(
-                                            "DELETE FROM {table} WHERE rowid={rowid}"
+                                            "DELETE FROM {} WHERE rowid={rowid}", dbmod::qualified_name(&self.state.browse().schema, &table)
                                         ));
                                         self.state.mark_dirty();
                                         let _ = self.state.refresh_browse();
@@ -4106,6 +4112,59 @@ mod interaction_tests {
     }
 
     #[test]
+    fn browse_namespace_selector_shortcuts_and_delete_keep_identity() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.tab = MainTab::Browse;
+        demo.state.switch_browse_table("customers").unwrap();
+        demo.do_rebuild();
+        let index = demo.state.browse_tables().iter().position(|pair| *pair == ("analytics", "customers")).unwrap();
+        demo.ui.set_select_selected(demo.ids.browse_select, Some(index));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse().schema, "analytics");
+        assert_eq!(demo.state.browse().title, "\"analytics\".\"customers\"");
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][1], "APAC");
+        demo.ui.set_focus(Some(demo.ids.browse_table));
+        let command = Modifiers { ctrl: true, ..Modifiers::default() };
+        assert!(demo.handle_browse_navigation_key(KeyCode::PageDown, command));
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse().schema, "analytics");
+        assert_eq!(demo.state.browse().table.as_deref(), Some("customer_summary"));
+        assert!(demo.state.browse().rowids.is_empty());
+        demo.ui.set_focus(Some(demo.ids.browse_table));
+        assert!(demo.handle_browse_navigation_key(KeyCode::PageUp, command));
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse().table.as_deref(), Some("customers"));
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                demo.win_w = width;
+                demo.win_h = height;
+                demo.do_rebuild();
+                if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_NAMESPACE_QA_OUT") {
+                    demo.ui.sync(&mut demo.scene);
+                    demo.scene.mark_full_dirty(width as f32, height as f32);
+                    let dirty = demo.scene.take_dirty();
+                    let mut soft = SoftRenderer::new(width, height, clear_color(&demo.theme));
+                    soft.render(&encode_scene(&demo.scene, &dirty), &dirty);
+                    write_ppm(&format!("{prefix}-{name}-{width}.ppm"), soft.frame_pixels().unwrap().0, width, height).unwrap();
+                }
+            }
+        }
+        demo.state.goto_browse_record(1).unwrap();
+        demo.do_rebuild();
+        demo.apply_confirmed_action(ConfirmKind::DeleteRow);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        let conn = demo.state.conn.as_ref().unwrap();
+        for (schema, expected) in [("main", 1), ("temp", 0), ("analytics", 0)] {
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}", dbmod::qualified_name(schema, "customers")), [], |r| r.get::<_, i64>(0)).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn schema_namespace_selection_restores_identity_and_guards_main_actions() {
         let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
         demo.state.new_memory_db().unwrap();
@@ -4135,7 +4194,8 @@ mod interaction_tests {
         let restored = crate::project::ProjectFile::load(&project_path).unwrap();
         assert_eq!(restored.selected_object.as_ref().unwrap().schema, "analytics");
         assert_eq!(restored.ddl_draft, demo.state.ddl_draft);
-        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][1], "Main customer");
+        assert_eq!(demo.state.browse().schema, "analytics");
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][1], "APAC");
         assert!(demo.state.open_modify_table_wizard().is_err());
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_run_ddl), Some(false));
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_struct_modify), Some(false));

@@ -330,17 +330,13 @@ pub fn decode(text: &str) -> Result<ProjectFile, String> {
         let mut tabs = Vec::new();
         for (index, tab) in browse.children().filter(|e| e.name == "table").enumerate() {
             let (schema, name) = object_id(tab.attr("table").unwrap_or("4,0:main"))?;
-            // shortcut: attached-schema browse settings are preserved, apply after schema browsing is implemented.
-            if schema != "main" {
-                continue;
-            }
             let mut b = project
                 .browse_tabs
                 .get(index)
-                .filter(|b| b.table.as_deref() == Some(name))
-                .or_else(|| project.browse_tabs.iter().find(|b| b.table.as_deref() == Some(name)))
+                .filter(|b| b.schema == schema && b.table.as_deref() == Some(name))
+                .or_else(|| project.browse_tabs.iter().find(|b| b.schema == schema && b.table.as_deref() == Some(name)))
                 .cloned()
-                .unwrap_or_else(|| BrowseTabState::new((!name.is_empty()).then(|| name.into())));
+                .unwrap_or_else(|| BrowseTabState::new_in(schema, (!name.is_empty()).then(|| name.into())));
             b.title = tab.attr("title").unwrap_or(name).into();
             tabs.push(b);
         }
@@ -414,20 +410,15 @@ pub fn encode(project: &ProjectFile, path: &Path) -> Result<String, String> {
         .max()
         .unwrap_or(0)
         + 1;
-    browse.retain_elements(|e| {
-        e.name != "table"
-            || e.attr("table")
-                .and_then(|s| object_id(s).ok())
-                .is_some_and(|(schema, _)| schema != "main")
-    });
+    browse.retain_elements(|e| e.name != "table");
     for (index, b) in project.browse_tabs.iter().enumerate() {
         let name = b.table.as_deref().unwrap_or("");
         let mut tab = old_browse
             .iter()
-            .find(|e| e.attr("table").and_then(|s| object_id(s).ok()) == Some(("main", name)))
+            .find(|e| e.attr("table").and_then(|s| object_id(s).ok()) == Some((b.schema.as_str(), name)))
             .cloned()
             .unwrap_or_else(|| Element::new("table"));
-        tab.set("table", format!("4,{}:main{name}", name.len()));
+        tab.set("table", format!("{},{}:{}{name}", b.schema.len(), name.len(), b.schema));
         tab.set("title", &b.title);
         tab.set("custom_title", u8::from(b.title != name));
         if tab.attr("dock_id").is_none() {
@@ -511,19 +502,22 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
     let settings = root.ensure("tab_browse").ensure("browse_table_settings");
     let mut table_options = std::collections::BTreeMap::new();
     for tab in &project.browse_tabs {
-        table_options.extend(tab.table_options.clone());
+        for (schema, table, options) in tab.saved_options() {
+            table_options.insert((schema.to_string(), table.to_string()), options.clone());
+        }
     }
     for tab in &project.browse_tabs {
         if let Some(name) = &tab.table {
-            table_options.insert(name.clone(), tab.options());
+            table_options.insert((tab.schema.clone(), name.clone()), tab.options());
         }
     }
-    for (name, options) in table_options {
-        let columns = db::table_column_names(conn, &name)?;
+    for ((schema, name), options) in table_options {
+        if schema == "temp" && db::table_columns_in(conn, &schema, &name)?.is_empty() { continue; }
+        let columns = db::table_column_names_in(conn, &schema, &name)?;
         if columns.is_empty() { continue; }
-        let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == "main" && e.attr("name") == Some(name.as_str()))).unwrap_or_else(|| {
+        let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == schema && e.attr("name") == Some(name.as_str()))).unwrap_or_else(|| {
             let mut table = Element::new("table");
-            table.set("schema", "main"); table.set("name", &name);
+            table.set("schema", &schema); table.set("name", &name);
             settings.push(table);
             settings.content.len() - 1
         });
@@ -532,7 +526,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         };
         // DB4S viewport settings include the leading row-id column; sort/filter fields do not.
         let frozen = options.frozen_cols.or_else(|| project.browse_tabs.iter()
-            .any(|tab| tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
+            .any(|tab| tab.schema == schema && tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
         if let Some(count) = frozen {
             let count = count.min(columns.len());
             // Keep a row-id-only prefix while that column remains unapplied in e28.
@@ -672,20 +666,22 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
     for tab in &mut project.browse_tabs {
         for table in settings
             .children()
-            .filter(|e| e.name == "table" && e.attr("schema").unwrap_or("main") == "main")
+            .filter(|e| e.name == "table")
         {
             let Some(name) = table.attr("name") else {
                 continue;
             };
-            let columns = db::table_column_names(conn, name)?;
+            let schema = table.attr("schema").unwrap_or("main");
+            if schema == "temp" && db::table_columns_in(conn, schema, name)?.is_empty() { continue; }
+            let columns = db::table_column_names_in(conn, schema, name)?;
             if columns.is_empty() {
                 continue;
             }
-            let active = tab.table.as_deref() == Some(name);
-            let mut stored = BrowseTabState::new(Some(name.into()));
+            let active = tab.schema == schema && tab.table.as_deref() == Some(name);
+            let mut stored = BrowseTabState::new_in(schema, Some(name.into()));
             if active {
                 stored.set_options(tab.options());
-            } else if let Some(options) = tab.table_options.get(name) {
+            } else if let Some(options) = tab.stored_options(schema, name) {
                 stored.set_options(options.clone());
             }
             // Per-tab overrides take precedence over DB4S's shared table setting.
@@ -700,7 +696,7 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
                 tab.set_options(stored.options());
                 project.frozen_cols = tab.frozen_cols.unwrap_or(project.frozen_cols).min(columns.len());
             }
-            tab.table_options.insert(name.into(), stored.options());
+            tab.store_options(schema, name, stored.options());
         }
     }
     Ok(())
@@ -712,6 +708,9 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
     };
     let root = parse(source)?;
     let mut notes = Vec::new();
+    if project.browse_tabs.iter().any(|tab| tab.schema == "temp" && tab.table.is_some()) {
+        notes.push("temporary table contents (connection-only)");
+    }
     if let Some(browse) = root.child("tab_browse") {
         if browse
             .child("dock_state")
@@ -719,13 +718,6 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
             .is_some_and(|s| !s.is_empty())
         {
             notes.push("Qt dock layout");
-        }
-        if browse.children().filter(|e| e.name == "table").any(|e| {
-            e.attr("table")
-                .and_then(|s| object_id(s).ok())
-                .is_some_and(|(schema, _)| schema != "main")
-        }) {
-            notes.push("attached-schema browse tabs");
         }
         if let Some(settings) = browse.child("browse_table_settings") {
             if settings.children().any(|table| table.name == "table" && table.attr("show_row_id").is_some_and(|value| !value.is_empty() && value != "0")) {

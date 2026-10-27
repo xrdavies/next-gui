@@ -120,7 +120,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Frozen columns | partial | Freeze through the active column; per-table/tab overrides, JSON/extension and native XML counts restore. Legacy global counts retained. Header right-click freezing supported; native viewport indices now translate the leading row-id column (caca01e); row-id display remains. |
 | Conditional formatting | partial | Table-scoped background rules persisted in projects (F11 addressed); no rule edit/remove UI or font/alignment controls. |
 | FK click-navigation | partial | Implicit parent PK, composite grouping and stored typed keys supported; NULL reports no parent. Source requires an unshadowed rowid (F05 addressed). |
-| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Per-tab/per-table filters, ordering, widths and frozen counts restore across switches and JSON/XML projects. Hidden/formats and attached/temp schemas remain. |
+| Table selector / cycle | partial | Dropdown and Ctrl/Cmd+PageUp/PageDown share guarded switching through tables/views with wraparound. Query failure restores the previous context and reports errors. Main/temp/attached identity follows selectors, tabs, navigation, edits, typed insert, delete, cut/paste, FK lookup and full filtered export. Per-database/table filters, ordering, widths and frozen counts restore across switches and JSON/XML projects. Missing temp targets reopen empty with a notice; temp contents remain connection-only. Hidden/formats remain. |
 | Record / form view | partial | First/Last and one-based Go to record cover the full filtered/sorted result, preserve the column, reveal the target and guard drafts/busy/query errors. Form arrows cross pages; empty results remain unselected. Previous/Next uses live visible rows minus one. Whole-result virtual scrolling, original whole-row/top alignment and full form controls remain. Plain PageUp/PageDown and Ctrl/Cmd+Home/End reach the full result; Shift ranges remain cache-local. |
 
 ## Edit Pragmas tab
@@ -179,7 +179,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | SQLCipher | partial | Core unlock/encrypted export tested; upstream compatibility controls/rekey/decrypt absent. |
 | Extensions | done | Load Extension… |
 | In-memory DB | done | Isolated connection, shared with worker by ownership transfer |
-| ATTACH DATABASE | partial | Live connection and namespace tree/definition/deletion work; attached data/plot selectors and structured modification remain. Main data helpers explicitly avoid temp shadowing. |
+| ATTACH DATABASE | partial | Live connection, namespace tree/definition/deletion and Browse data workflows preserve explicit database identity; file-backed attachments and their browse settings restore through projects. Plot and structured modification remain main-only. |
 
 ---
 
@@ -206,7 +206,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 - CSV import and index/table changes use savepoints. New databases and Save As never truncate an existing file. File-dialog cancellation has no implicit `/tmp` output.
 - Project/prefs parsing uses serde JSON; project writes and database dumps publish their completed temporary file.
 - macOS Soft screenshots cover all main pages and major dialogs. OS pointer/keyboard/file-picker acceptance is blocked by desktop capture permissions. Native Metal startup alone is not visual acceptance.
-- DB4S XML, cloud sync, arbitrary constraint migrations, multi-table export and attached-schema browse navigation remain compatibility work. Native IME acceptance requires desktop permissions.
+- DB4S XML, cloud sync, arbitrary constraint migrations, multi-table export and attached-schema plot/structured modification remain compatibility work. Native IME acceptance requires desktop permissions.
 
 ## Local workflow completion (2026-10-25)
 
@@ -280,9 +280,8 @@ with backwards-compatible defaults.
   toolbars remain scrollable. Font fallbacks supply missing macOS symbols.
 - `.sqbpro` now uses the DB4S 3.13.1 XML structure. Legacy JSON remains readable.
   Core paths/tabs/file references, access mode, five connection PRAGMAs, attached
-  files, main-schema widths/multi-column sort are supported. Unknown XML is retained.
-  Qt dock state, advanced browse filters/formats/plots and attached-schema browse
-  tabs are reported as retained but unapplied. Extra local state lives in a
+  files, main/attached browse identity and per-database widths/multi-column sort are supported. Unknown XML is retained.
+  Qt dock state and advanced browse filters/formats/plots are reported as retained but unapplied. Temporary table contents remain connection-only; missing temp browse targets reopen empty with a notice. Extra local state lives in a
   next_gui extension ignored by DB4S. This remains partial interoperability.
 - New XML parsing uses the already installed quick-xml version. XML is UTF-8 with
   16 MiB / 64-level bounds; DTD/external entities and malformed identifiers are
