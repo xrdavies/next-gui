@@ -5,7 +5,7 @@ use sqlite3_parser::{
     ast::{
         fmt::ToTokens, Cmd, ColumnConstraint, ColumnDefinition, CreateTableBody, Expr,
         Name, NamedColumnConstraint, NamedTableConstraint, QualifiedName, ResolveType,
-        SortedColumn, Stmt, TabFlags, TableConstraint,
+        SortedColumn, SortOrder, Stmt, TabFlags, TableConstraint,
     },
     lexer::{
         sql::{Parser, TokenType, Tokenizer},
@@ -30,6 +30,7 @@ pub struct TableOptions {
     pub primary_key_conflict: Option<ResolveType>,
     pub checks: Option<Vec<NamedCheck>>,
     pub foreign_keys: Option<Vec<NamedForeignKey>>,
+    pub index_constraints: Option<Vec<NamedIndexConstraint>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -43,6 +44,17 @@ pub struct NamedForeignKey {
     pub name: Option<String>,
     pub columns: String,
     pub clause: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NamedIndexConstraint {
+    pub name: Option<String>,
+    pub columns: String,
+    pub primary: bool,
+    pub conflict: Option<ResolveType>,
+    pub auto_increment: bool,
+    // INTEGER PRIMARY KEY DESC has different rowid semantics when declared inline.
+    pub inline: bool,
 }
 
 pub const PRIMARY_KEY_CONFLICTS: [(&str, Option<ResolveType>); 6] = [
@@ -96,6 +108,7 @@ fn table_options_of(command: &Cmd) -> Result<TableOptions, String> {
         primary_key_conflict,
         checks: None,
         foreign_keys: None,
+        index_constraints: None,
     })
 }
 
@@ -153,7 +166,8 @@ pub fn apply_table_options(sql: &str, options: TableOptions) -> Result<String, S
     };
     flags.set(TabFlags::WithoutRowid, options.without_rowid);
     flags.set(TabFlags::Strict, options.strict);
-    set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
+    if let Some(keys) = options.index_constraints { set_index_constraints(&mut command, &keys)?; }
+    else { set_primary_key_conflict(&mut command, options.primary_key_conflict)?; }
     if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
     if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
     Ok(emit(command))
@@ -258,6 +272,208 @@ pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, 
 
 fn set_table_foreign_keys(command: &mut Cmd, keys: &[NamedForeignKey]) -> Result<(), String> {
     replace_table_constraints(command, keys.iter().map(foreign_key_definition).collect::<Result<Vec<_>, _>>()?, |constraint| matches!(constraint, TableConstraint::ForeignKey { .. }))
+}
+
+fn index_constraint_fields(item: &NamedTableConstraint, inline: bool) -> Option<NamedIndexConstraint> {
+    let (columns, conflict, primary, auto_increment) = match &item.constraint {
+        TableConstraint::PrimaryKey { columns, conflict_clause, auto_increment } => (columns, *conflict_clause, true, *auto_increment),
+        TableConstraint::Unique { columns, conflict_clause } => (columns, *conflict_clause, false, false),
+        _ => return None,
+    };
+    Some(NamedIndexConstraint { name: item.name.as_ref().map(identifier_text),
+        columns: columns.iter().map(|column| SqlFragment(column).to_string()).collect::<Vec<_>>().join(", "),
+        primary, conflict, auto_increment, inline })
+}
+
+pub fn table_index_constraints(sql: &str) -> Result<Vec<NamedIndexConstraint>, String> {
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints, .. }, .. }) = parse(sql)? else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    let mut result = Vec::new();
+    for column in columns.values() {
+        for item in &column.constraints {
+            let constraint = match &item.constraint {
+                ColumnConstraint::PrimaryKey { order, conflict_clause, auto_increment } => TableConstraint::PrimaryKey {
+                    columns: vec![SortedColumn { expr: Expr::Name(column.col_name.clone()), order: *order, nulls: None }],
+                    conflict_clause: *conflict_clause, auto_increment: *auto_increment },
+                ColumnConstraint::Unique(conflict_clause) => TableConstraint::Unique {
+                    columns: vec![SortedColumn { expr: Expr::Name(column.col_name.clone()), order: None, nulls: None }], conflict_clause: *conflict_clause },
+                _ => continue,
+            };
+            result.push(index_constraint_fields(&NamedTableConstraint { name: item.name.clone(), constraint }, true).unwrap());
+        }
+    }
+    result.extend(constraints.iter().flatten().filter_map(|item| index_constraint_fields(item, false)));
+    result.sort_by_key(|key| !index_constraint_requires_inline(key));
+    Ok(result)
+}
+
+pub fn index_constraint_requires_inline(key: &NamedIndexConstraint) -> bool {
+    if !key.inline || !key.primary || key.auto_increment { return false; }
+    match index_constraint_definition(key) {
+        Ok(NamedTableConstraint { constraint: TableConstraint::PrimaryKey { columns, .. }, .. }) => {
+            matches!(columns.as_slice(), [SortedColumn { expr: Expr::Name(_) | Expr::Id(_), order: Some(SortOrder::Desc), .. }])
+        }
+        _ => true,
+    }
+}
+
+fn index_constraint_definition(key: &NamedIndexConstraint) -> Result<NamedTableConstraint, String> {
+    if key.columns.trim().is_empty() { return Err("An index constraint requires at least one column".into()); }
+    if key.auto_increment && !key.primary { return Err("Autoincrement requires an INTEGER primary key".into()); }
+    let name = key.name.as_ref().map(|name| format!("CONSTRAINT {} ", db::quote_ident(name))).unwrap_or_default();
+    let kind = if key.primary { "PRIMARY KEY" } else { "UNIQUE" };
+    let auto = if key.auto_increment { " AUTOINCREMENT" } else { "" };
+    let conflict = key.conflict.map(|action| format!(" ON CONFLICT {}", SqlFragment(action))).unwrap_or_default();
+    let sql = format!("CREATE TABLE __next_gui_key(v, {name}{kind}({}\n{auto}){conflict});", key.columns.trim());
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints: Some(mut constraints), flags }, .. }) = parse(&sql)? else {
+        return Err("An index-constraint field requires one PRIMARY KEY or UNIQUE definition".into());
+    };
+    if columns.len() != 1 || constraints.len() != 1 || !(flags - (TabFlags::HasPrimaryKey | TabFlags::Autoincrement)).is_empty() { return Err("Index-constraint fields cannot add columns, other constraints or table options".into()); }
+    let keys = match &constraints[0].constraint {
+        TableConstraint::PrimaryKey { columns, auto_increment, conflict_clause } if key.primary && *auto_increment == key.auto_increment && *conflict_clause == key.conflict => columns,
+        TableConstraint::Unique { columns, .. } if !key.primary => columns,
+        _ => return Err("Expected a PRIMARY KEY or UNIQUE definition".into()),
+    };
+    if keys.is_empty() || keys.iter().any(|key| key.nulls.is_some() || index_column_name(&key.expr).is_none()) {
+        return Err("Index constraints require column names with optional COLLATE and ASC/DESC".into());
+    }
+    if key.inline && key.primary && !key.auto_increment
+        && matches!(keys.as_slice(), [SortedColumn { expr: Expr::Collate(..), order: Some(SortOrder::Desc), .. }]) {
+        return Err("Set the column collation in Fields to retain an inline PRIMARY KEY DESC's rowid semantics".into());
+    }
+    Ok(constraints.remove(0))
+}
+
+fn index_column_name(expr: &Expr) -> Option<Name> {
+    match expr {
+        Expr::Name(name) => Some(name.clone()),
+        Expr::Id(name) => Some(Name(name.0.clone())),
+        Expr::Literal(sqlite3_parser::ast::Literal::String(name)) => Some(Name(name.clone())),
+        Expr::Collate(expr, _) => index_column_name(expr),
+        _ => None,
+    }
+}
+
+fn rename_index_column(expr: &mut Expr, renames: &[(&str, &str)]) {
+    if let Expr::Collate(expr, _) = expr { rename_index_column(expr, renames); }
+    else if let Some(name) = index_column_name(expr) {
+        if let Some((_, target)) = renames.iter().find(|(source, _)| name.eq(*source)) { *expr = Expr::Name(identifier(target)); }
+    }
+}
+
+pub fn rename_index_constraints(keys: &[NamedIndexConstraint], renames: &[(&str, &str)]) -> Result<Vec<NamedIndexConstraint>, String> {
+    keys.iter().map(|key| {
+        let mut definition = index_constraint_definition(key)?;
+        let original = SqlFragment(&definition).to_string();
+        let columns = match &mut definition.constraint {
+            TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => columns,
+            _ => unreachable!(),
+        };
+        for column in columns { rename_index_column(&mut column.expr, renames); }
+        if SqlFragment(&definition).to_string() == original { return Ok(key.clone()); }
+        Ok(index_constraint_fields(&definition, key.inline).unwrap())
+    }).collect()
+}
+
+pub fn columns_with_index_constraints(columns: &[ColDef], keys: &[NamedIndexConstraint]) -> Result<Vec<ColDef>, String> {
+    if keys.iter().filter(|key| key.primary).count() > 1 { return Err("A table can have only one primary key".into()); }
+    let mut result = columns.to_vec();
+    for column in &mut result { column.pk = false; column.unique = false; column.auto_increment = false; }
+    for key in keys {
+        let definition = index_constraint_definition(key)?;
+        let members = match &definition.constraint {
+            TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => columns,
+            _ => unreachable!(),
+        };
+        for member in members {
+            let name = index_column_name(&member.expr).unwrap();
+            let column = result.iter_mut().find(|column| name.eq(column.name.as_str())).ok_or_else(|| format!("Unknown index-constraint column: {}", identifier_text(&name)))?;
+            if key.primary {
+                if column.generated.is_some() { return Err("Generated columns cannot be part of a primary key".into()); }
+                column.pk = true;
+                column.auto_increment = key.auto_increment;
+                if key.auto_increment && (members.len() != 1 || !column.type_name.eq_ignore_ascii_case("INTEGER")) {
+                    return Err("Autoincrement requires one INTEGER primary-key column".into());
+                }
+            } else if members.len() == 1 { column.unique = true; }
+        }
+    }
+    validate_primary_key(&result)?;
+    Ok(result)
+}
+
+pub fn index_constraints_from_columns(keys: &[NamedIndexConstraint], columns: &[ColDef], conflict: Option<ResolveType>) -> Result<Vec<NamedIndexConstraint>, String> {
+    let mut result = Vec::new();
+    let mut primary = keys.iter().find(|key| key.primary).cloned().unwrap_or_else(|| NamedIndexConstraint { primary: true, ..Default::default() });
+    let mut members = if primary.columns.trim().is_empty() { Vec::new() } else {
+        let definition = index_constraint_definition(&primary)?;
+        let TableConstraint::PrimaryKey { columns, .. } = definition.constraint else { unreachable!() };
+        columns
+    };
+    members.retain(|key| columns.iter().any(|column| column.pk && column_expression(&key.expr, &identifier(&column.name))));
+    for column in columns.iter().filter(|column| column.pk) {
+        if !members.iter().any(|key| column_expression(&key.expr, &identifier(&column.name))) {
+            members.push(SortedColumn { expr: Expr::Name(identifier(&column.name)), order: None, nulls: None });
+        }
+    }
+    primary.columns = members.iter().map(|key| SqlFragment(key).to_string()).collect::<Vec<_>>().join(", ");
+    primary.auto_increment = columns.iter().any(|column| column.auto_increment);
+    primary.conflict = conflict;
+    let mut primary = (!members.is_empty()).then_some(primary);
+    for key in keys {
+        if key.primary { if let Some(key) = primary.take() { result.push(key); } continue; }
+        let definition = index_constraint_definition(key)?;
+        let TableConstraint::Unique { columns: members, .. } = definition.constraint else { unreachable!() };
+        if members.len() != 1 || columns.iter().any(|column| column.unique && column_expression(&members[0].expr, &identifier(&column.name))) { result.push(key.clone()); }
+    }
+    if let Some(key) = primary { result.push(key); }
+    let flags = columns_with_index_constraints(columns, &result)?;
+    for (column, current) in columns.iter().zip(flags) {
+        if column.unique && !current.unique {
+            result.push(NamedIndexConstraint { columns: db::quote_ident(&column.name), ..Default::default() });
+        }
+    }
+    Ok(result)
+}
+
+fn set_index_constraints(command: &mut Cmd, keys: &[NamedIndexConstraint]) -> Result<(), String> {
+    if keys.iter().filter(|key| key.primary).count() > 1 { return Err("A table can have only one primary key".into()); }
+    let replacements = keys.iter().map(index_constraint_definition).collect::<Result<Vec<_>, _>>()?;
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, .. }, .. }) = command else {
+        return Err("Expected an ordinary CREATE TABLE definition".into());
+    };
+    let mut table_keys = Vec::new();
+    let mut inline_keys = Vec::new();
+    for (key, definition) in keys.iter().zip(replacements) {
+        let (members, auto_increment, conflict_clause) = match &definition.constraint {
+            TableConstraint::PrimaryKey { columns, auto_increment, conflict_clause } => (columns, *auto_increment, *conflict_clause),
+            TableConstraint::Unique { columns, conflict_clause } => (columns, false, *conflict_clause),
+            _ => unreachable!(),
+        };
+        for member in members {
+            if !columns.values().any(|column| column_expression(&member.expr, &column.col_name)) { return Err(format!("Unknown index-constraint column: {}", SqlFragment(&member.expr))); }
+        }
+        if let [member] = members.as_slice() {
+            if key.inline && matches!(member.expr, Expr::Name(_) | Expr::Id(_)) && (key.primary || member.order.is_none())
+                && !(auto_increment && member.order == Some(SortOrder::Desc)) {
+                let name = index_column_name(&member.expr).unwrap();
+                let constraint = if key.primary { ColumnConstraint::PrimaryKey { order: member.order, auto_increment, conflict_clause } } else { ColumnConstraint::Unique(conflict_clause) };
+                inline_keys.push((name, NamedColumnConstraint { name: definition.name.clone(), constraint }));
+                continue;
+            }
+        }
+        table_keys.push(definition);
+    }
+    for column in columns.values_mut() {
+        let mut replacements = inline_keys.iter().filter(|(name, _)| name.eq(&column.col_name)).map(|(_, item)| item.clone());
+        column.constraints.retain_mut(|item| {
+            if !matches!(item.constraint, ColumnConstraint::PrimaryKey { .. } | ColumnConstraint::Unique(..)) { return true; }
+            if let Some(replacement) = replacements.next() { *item = replacement; true } else { false }
+        });
+        column.constraints.extend(replacements);
+    }
+    replace_table_constraints(command, table_keys, |constraint| matches!(constraint, TableConstraint::PrimaryKey { .. } | TableConstraint::Unique { .. }))
 }
 
 fn replace_table_constraints(command: &mut Cmd, replacements: Vec<NamedTableConstraint>, matches: impl Fn(&TableConstraint) -> bool) -> Result<(), String> {
@@ -378,12 +594,7 @@ fn emit(mut command: Cmd) -> String {
 }
 
 fn column_expression(expr: &Expr, name: &Name) -> bool {
-    match expr {
-        Expr::Name(value) => value.eq(name),
-        Expr::Id(value) => Name(value.0.clone()).eq(name),
-        Expr::Collate(value, _) => column_expression(value, name),
-        _ => false,
-    }
+    index_column_name(expr).is_some_and(|value| value.eq(name))
 }
 
 fn rename_identifier(name: &mut Name, renames: &[(&str, &str)]) {
@@ -470,7 +681,7 @@ pub fn preview_renames(sql: &str, target: &str, renames: &[(&str, &str)]) -> Res
     for item in constraints.iter_mut().flatten() {
         match &mut item.constraint {
             TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => {
-                for column in columns { rename_table_expression(&mut column.expr, &original_table, Some(target), renames)?; }
+                for column in columns { rename_index_column(&mut column.expr, renames); }
             }
             TableConstraint::Check(expr) => rename_table_expression(expr, &original_table, Some(target), renames)?,
             TableConstraint::ForeignKey { columns, clause, .. } => {
@@ -622,6 +833,11 @@ pub fn rebuild_definition(
     sources: &[Option<String>],
     options: Option<TableOptions>,
 ) -> Result<String, String> {
+    let effective_columns;
+    let draft = if let Some(keys) = options.as_ref().and_then(|options| options.index_constraints.as_deref()) {
+        effective_columns = columns_with_index_constraints(draft, keys)?;
+        effective_columns.as_slice()
+    } else { draft };
     let mut command = parse(sql)?;
     let Cmd::Stmt(Stmt::CreateTable {
         temporary,
@@ -896,7 +1112,8 @@ pub fn rebuild_definition(
     *if_not_exists = false;
     *tbl_name = qualified(schema, temporary_name);
     if let Some(options) = options {
-        set_primary_key_conflict(&mut command, options.primary_key_conflict)?;
+        if let Some(keys) = options.index_constraints { set_index_constraints(&mut command, &keys)?; }
+        else { set_primary_key_conflict(&mut command, options.primary_key_conflict)?; }
         if let Some(checks) = options.checks { set_table_checks(&mut command, &checks)?; }
         if let Some(keys) = options.foreign_keys { set_table_foreign_keys(&mut command, &keys)?; }
     }
@@ -1046,6 +1263,139 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn index_constraints_preserve_inline_semantics_dependencies_and_sequences() {
+        for schema in ["main", "temp", "aux.\"db"] {
+            let conn = Connection::open_in_memory().unwrap();
+            let table = db::qualified_name(schema, "records");
+            conn.execute_batch(&format!("PRAGMA foreign_keys=ON; ATTACH ':memory:' AS \"aux.\"\"db\";
+                CREATE TABLE {table}(id INTEGER CONSTRAINT record_key PRIMARY KEY AUTOINCREMENT,
+                    a TEXT COLLATE NOCASE CONSTRAINT one UNIQUE ON CONFLICT FAIL, b TEXT,
+                    g TEXT AS(a||b) STORED, parent INTEGER REFERENCES records(id),
+                    CONSTRAINT pair UNIQUE(b COLLATE BINARY DESC,a ASC) ON CONFLICT IGNORE,
+                    CONSTRAINT positive CHECK(id>0));
+                INSERT INTO {table}(id,a,b,parent) VALUES(7,'A','west',NULL),(11,'B','east',7),(99,'reserve','sequence',NULL);
+                DELETE FROM {table} WHERE id=99;
+                CREATE TABLE {}(note TEXT); CREATE INDEX {} ON records(b);
+                CREATE VIEW {} AS SELECT id,g FROM records;
+                CREATE TRIGGER {} AFTER INSERT ON records BEGIN INSERT INTO audit VALUES(new.g); END;
+                BEGIN; INSERT INTO {} VALUES('pending');", db::qualified_name(schema,"audit"),db::qualified_name(schema,"by_b"),
+                db::qualified_name(schema,"visible"),db::qualified_name(schema,"audit_insert"),db::qualified_name(schema,"audit"))).unwrap();
+            let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='records'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            let mut keys = table_index_constraints(&sql).unwrap();
+            assert_eq!(keys.len(),3); assert!(keys[0].primary && keys[0].inline && keys[0].auto_increment);
+            assert!(keys[1].inline && !keys[2].inline);
+            keys[0].columns = db::quote_ident("id"); keys[1].columns = db::quote_ident("a");
+            keys[0].name = Some("record.\"主键".into()); keys[0].conflict = Some(ResolveType::Fail);
+            keys[1].name = Some("single unique".into()); keys[1].conflict = Some(ResolveType::Ignore);
+            keys[2].columns = "a COLLATE NOCASE DESC, b ASC".into(); keys[2].conflict = Some(ResolveType::Abort);
+            let mut options = table_options(&sql).unwrap(); options.index_constraints = Some(keys.clone());
+            let columns = db::table_column_defs_in(&conn,schema,"records").unwrap();
+            let sources: Vec<_> = columns.iter().map(|column|Some(column.name.clone())).collect();
+            db::recreate_table_columns_in(&conn,schema,"records","renamed",&columns,&sources,Some(options)).unwrap_or_else(|error|panic!("{schema}: {error}"));
+            let saved: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='renamed'",db::quote_ident(schema)),[],|row|row.get(0)).unwrap();
+            assert_eq!(table_index_constraints(&saved).unwrap(), keys);
+            let target = db::qualified_name(schema,"renamed");
+            let rows = conn.prepare(&format!("SELECT rowid,id,g,parent FROM {target} ORDER BY id")).unwrap().query_map([],|row| Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?,row.get::<_,String>(2)?,row.get::<_,Option<i64>>(3)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+            assert_eq!(rows,vec![(7,7,"Awest".into(),None),(11,11,"Beast".into(),Some(7))]);
+            assert_eq!(conn.query_row(&format!("SELECT seq FROM {} WHERE name='renamed'",db::qualified_name(schema,"sqlite_sequence")),[],|row|row.get::<_,i64>(0)).unwrap(),99);
+            assert_eq!(conn.execute(&format!("INSERT INTO {target}(a,b) VALUES('a','duplicate')"),[]).unwrap(),0);
+            conn.execute(&format!("INSERT INTO {target}(a,b,parent) VALUES('C','north',7)"),[]).unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT id FROM {target} WHERE a='C'"),[],|row|row.get::<_,i64>(0)).unwrap(),101);
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"visible")),[],|row|row.get::<_,i64>(0)).unwrap(),3);
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"audit")),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+            assert!(conn.execute(&format!("DELETE FROM {target} WHERE id=7"),[]).is_err());
+            assert!(!conn.is_autocommit()); conn.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='records'",db::quote_ident(schema)),[],|row|row.get::<_,String>(0)).unwrap(),sql);
+        }
+        for inline in [true,false] {
+            let conn=Connection::open_in_memory().unwrap();
+            let definition=if inline { "id INTEGER CONSTRAINT identity PRIMARY KEY DESC, v TEXT UNIQUE" } else { "id INTEGER,v TEXT UNIQUE,CONSTRAINT identity PRIMARY KEY(id DESC)" };
+            conn.execute_batch(&format!("CREATE TABLE t({definition}); INSERT INTO t(rowid,id,v) VALUES(7,11,'kept'); BEGIN;")).unwrap();
+            let sql: String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
+            let mut keys=table_index_constraints(&sql).unwrap(); keys.iter_mut().find(|key|key.primary).unwrap().name=Some("renamed key".into());
+            let mut options=table_options(&sql).unwrap(); options.index_constraints=Some(keys);
+            let columns=db::table_column_defs_in(&conn,"main","t").unwrap(); let sources:Vec<_>=columns.iter().map(|column|Some(column.name.clone())).collect();
+            db::recreate_table_columns_in(&conn,"main","t","t",&columns,&sources,Some(options)).unwrap();
+            assert_eq!(conn.query_row("SELECT rowid,id FROM t",[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?))).unwrap(),if inline {(7,11)} else {(11,11)});
+        }
+    }
+
+    #[test]
+    fn index_constraints_validate_boundaries_and_never_drop_duplicate_rows() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(a TEXT,b INTEGER); INSERT INTO t(rowid,a,b) VALUES(7,'same',1),(11,'same',2); BEGIN; UPDATE t SET b=b+10;").unwrap();
+        let columns=db::table_column_defs_in(&conn,"main","t").unwrap(); let sources:Vec<_>=columns.iter().map(|column|Some(column.name.clone())).collect();
+        let sql:String=conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get(0)).unwrap();
+        let mut invalid=Vec::new();
+        for text in ["", "a+1", "lower(a)", "missing", "?1", "a NULLS LAST", "a),CHECK(1)", "a)); DROP TABLE t; --", "a),UNIQUE(b"] {
+            invalid.push(vec![NamedIndexConstraint {columns:text.into(), ..Default::default()}]);
+        }
+        invalid.push(vec![NamedIndexConstraint { columns:"a".into(),primary:true,auto_increment:true,..Default::default()}]);
+        invalid.push(vec![NamedIndexConstraint { columns:"b".into(),auto_increment:true,..Default::default()}]);
+        invalid.push(vec![NamedIndexConstraint { columns:"b COLLATE NOCASE DESC".into(),primary:true,inline:true,..Default::default()}]);
+        invalid.push(vec![NamedIndexConstraint { columns:"a".into(),primary:true,..Default::default()},NamedIndexConstraint { columns:"b".into(),primary:true,..Default::default()}]);
+        for keys in invalid {
+            let options=TableOptions {index_constraints:Some(keys.clone()),..Default::default()};
+            assert!(db::recreate_table_columns_in(&conn,"main","t","t",&columns,&sources,Some(options)).is_err(),"{keys:?}");
+            assert_eq!(conn.query_row("SELECT sql FROM sqlite_schema WHERE name='t'",[],|row|row.get::<_,String>(0)).unwrap(),sql);
+            assert_eq!(conn.query_row("SELECT sum(rowid)+sum(b) FROM t",[],|row|row.get::<_,i64>(0)).unwrap(),41); assert!(!conn.is_autocommit());
+        }
+        for (_,conflict) in PRIMARY_KEY_CONFLICTS {
+            let key=NamedIndexConstraint {columns:"a".into(),conflict,..Default::default()};
+            let options=TableOptions {index_constraints:Some(vec![key]),..Default::default()};
+            assert!(db::recreate_table_columns_in(&conn,"main","t","t",&columns,&sources,Some(options)).is_err(),"{conflict:?}");
+            assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|row|row.get::<_,i64>(0)).unwrap(),2); assert!(!conn.is_autocommit());
+        }
+        let keys=vec![NamedIndexConstraint { name:Some("quoted.\"键".into()),columns:"b DESC, a COLLATE NOCASE ASC".into(),conflict:Some(ResolveType::Fail),..Default::default()}];
+        let renamed=rename_index_constraints(&keys,&[("a","b"),("b","a")]).unwrap();
+        assert_eq!(renamed[0].name,keys[0].name); assert_eq!(renamed[0].columns,"\"a\" DESC, \"b\" COLLATE NOCASE ASC");
+        let options=TableOptions {index_constraints:Some(keys),..Default::default()};
+        db::recreate_table_columns_in(&conn,"main","t","t",&columns,&sources,Some(options)).unwrap();
+        assert!(conn.execute("INSERT INTO t VALUES('SAME',11)",[]).is_err());
+        let options=TableOptions {index_constraints:Some(Vec::new()),..Default::default()};
+        db::recreate_table_columns_in(&conn,"main","t","t",&columns,&sources,Some(options)).unwrap();
+        conn.execute("INSERT INTO t VALUES('SAME',11)",[]).unwrap();
+    }
+
+    #[test]
+    fn index_constraint_removal_retains_implicit_not_null_and_insert_conflict_policies() {
+        for schema in ["main","temp","aux.\"db"] {
+            for flags in [" STRICT"," WITHOUT ROWID"," WITHOUT ROWID, STRICT"] {
+                let conn=Connection::open_in_memory().unwrap(); let table=db::qualified_name(schema,"t");
+                conn.execute_batch(&format!("ATTACH ':memory:' AS \"aux.\"\"db\"; CREATE TABLE {table}(a TEXT,b INTEGER,CONSTRAINT identity PRIMARY KEY(a,b)){flags}; INSERT INTO {table} VALUES('kept',7); BEGIN;")).unwrap();
+                let columns=db::table_column_defs_in(&conn,schema,"t").unwrap(); assert!(columns.iter().all(|column|column.notnull));
+                let sources:Vec<_>=columns.iter().map(|column|Some(column.name.clone())).collect();
+                let options=TableOptions {strict:flags.contains("STRICT"),index_constraints:Some(Vec::new()),..Default::default()};
+                db::recreate_table_columns_in(&conn,schema,"t","t",&columns,&sources,Some(options)).unwrap();
+                let saved=db::table_column_defs_in(&conn,schema,"t").unwrap();
+                assert!(saved.iter().all(|column|!column.pk && column.notnull));
+                assert!(conn.execute(&format!("INSERT INTO {table} VALUES(NULL,9)"),[]).is_err());
+                conn.execute(&format!("INSERT INTO {table} VALUES('kept',7)"),[]).unwrap();
+                assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {table}"),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+            }
+        }
+        for (_,conflict) in PRIMARY_KEY_CONFLICTS {
+            let conn=Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t(a TEXT,b INTEGER); INSERT INTO t VALUES('base',0); BEGIN;").unwrap();
+            let columns=db::table_column_defs_in(&conn,"main","t").unwrap(); let sources:Vec<_>=columns.iter().map(|column|Some(column.name.clone())).collect();
+            let options=TableOptions {index_constraints:Some(vec![NamedIndexConstraint { columns:"'a' DESC".into(),conflict,..Default::default()}]),..Default::default()};
+            db::recreate_table_columns_in(&conn,"main","t","t",&columns,&sources,Some(options)).unwrap();
+            let result=conn.execute("INSERT INTO t VALUES('new',1),('base',2),('later',3)",[]);
+            let rows=conn.prepare("SELECT a,b FROM t ORDER BY a").unwrap().query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+            match conflict {
+                Some(ResolveType::Ignore) => { assert_eq!(result.unwrap(),2); assert_eq!(rows,vec![("base".into(),0),("later".into(),3),("new".into(),1)]); }
+                Some(ResolveType::Replace) => { assert_eq!(result.unwrap(),3); assert_eq!(rows,vec![("base".into(),2),("later".into(),3),("new".into(),1)]); }
+                Some(ResolveType::Fail) => { assert!(result.is_err()); assert_eq!(rows,vec![("base".into(),0),("new".into(),1)]); }
+                _ => { assert!(result.is_err()); assert_eq!(rows,vec![("base".into(),0)]); }
+            }
+            assert_eq!(conn.is_autocommit(),conflict==Some(ResolveType::Rollback));
+        }
+        let key=NamedIndexConstraint {columns:"'a' COLLATE NOCASE DESC".into(),..Default::default()};
+        assert_eq!(rename_index_constraints(&[key],&[("a","A")]).unwrap()[0].columns,"\"A\" COLLATE NOCASE DESC");
+        assert!(index_constraint_definition(&NamedIndexConstraint {columns:"a AUTOINCREMENT".into(),primary:true,..Default::default()}).is_err());
+    }
 
     #[test]
     fn check_identity_rewrites_preserve_literals_functions_types_and_unrelated_sessions() {

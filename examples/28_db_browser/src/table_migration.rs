@@ -751,8 +751,9 @@ mod tests {
                 strict: true,
                 without_rowid: false,
                 primary_key_conflict: None,
-            checks: None,
-            foreign_keys: None,
+                checks: None,
+                foreign_keys: None,
+                index_constraints: None,
             };
             db::recreate_table_columns_in(&conn, schema, "t", "t", &draft, &sources, Some(options.clone()))
                 .unwrap();
@@ -874,6 +875,7 @@ mod tests {
             primary_key_conflict: None,
             checks: None,
             foreign_keys: None,
+            index_constraints: None,
         };
         let without_rowid = table_sql::TableOptions {
             strict: false,
@@ -881,6 +883,7 @@ mod tests {
             primary_key_conflict: None,
             checks: None,
             foreign_keys: None,
+            index_constraints: None,
         };
         for (name, options) in [
             ("t", strict.clone()),

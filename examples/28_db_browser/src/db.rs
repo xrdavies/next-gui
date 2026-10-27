@@ -1469,7 +1469,9 @@ pub fn recreate_table_columns_in(
     options: Option<crate::table_sql::TableOptions>,
 ) -> Result<(), String> {
     let mut options = options;
-    let mut draft = cols.to_vec();
+    let mut draft = if let Some(keys) = options.as_ref().and_then(|options| options.index_constraints.as_deref()) {
+        crate::table_sql::columns_with_index_constraints(cols, keys)?
+    } else { cols.to_vec() };
     if old_name != new_name {
         if let Some(keys) = options.as_mut().and_then(|options| options.foreign_keys.as_mut()) {
             *keys = crate::table_sql::rename_foreign_keys(keys, new_name, old_name, &[])?;

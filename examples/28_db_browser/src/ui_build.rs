@@ -191,6 +191,16 @@ pub struct BuiltUi {
     pub ov_check_del: WidgetId,
     pub ov_check_up: WidgetId,
     pub ov_check_down: WidgetId,
+    pub ov_keys_scroll: WidgetId,
+    pub ov_keys_list: WidgetId,
+    pub ov_key_name: WidgetId,
+    pub ov_key_columns: WidgetId,
+    pub ov_key_conflict: WidgetId,
+    pub ov_key_add_pk: WidgetId,
+    pub ov_key_add_unique: WidgetId,
+    pub ov_key_del: WidgetId,
+    pub ov_key_up: WidgetId,
+    pub ov_key_down: WidgetId,
     pub ov_fks_scroll: WidgetId,
     pub ov_fks_list: WidgetId,
     pub ov_fk_name: WidgetId,
@@ -493,6 +503,16 @@ pub fn build_ui(
     let mut ov_check_del = z;
     let mut ov_check_up = z;
     let mut ov_check_down = z;
+    let mut ov_keys_scroll = z;
+    let mut ov_keys_list = z;
+    let mut ov_key_name = z;
+    let mut ov_key_columns = z;
+    let mut ov_key_conflict = z;
+    let mut ov_key_add_pk = z;
+    let mut ov_key_add_unique = z;
+    let mut ov_key_del = z;
+    let mut ov_key_up = z;
+    let mut ov_key_down = z;
     let mut ov_fks_scroll = z;
     let mut ov_fks_list = z;
     let mut ov_fk_name = z;
@@ -996,6 +1016,50 @@ pub fn build_ui(
                                     "Generated expression, e.g. price * quantity", check_style);
                             });
                             });
+                            tabs.page("Index Constraints", |c| {
+                                ov_keys_scroll = c.scroll_area(scroll, |c| {
+                                    c.text(format!("Primary key and UNIQUE constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.row(row, |r| {
+                                        ov_key_add_pk = r.tool_button("Add primary key"); ov_key_add_unique = r.tool_button("Add UNIQUE");
+                                        ov_key_del = r.tool_button("Remove"); ov_key_up = r.tool_button("Up"); ov_key_down = r.tool_button("Down");
+                                    });
+                                    let mut keys_list = list_s; keys_list.width = area_s.width; keys_list.height = 120.0;
+                                    ov_keys_list = c.list(state.wizard_index_constraints.iter().map(|key| format!("{} · {} · ({})", if key.primary { "PRIMARY KEY" } else { "UNIQUE" }, key.name.as_deref().unwrap_or("(unnamed)"), key.columns)).collect::<Vec<_>>(), keys_list);
+                                    let key = state.wizard_index_constraints.get(state.wizard_key_sel);
+                                    c.row(row, |r| {
+                                        r.text("Name"); ov_key_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
+                                    });
+                                    c.row(row, |r| {
+                                        r.text("On conflict"); let mut selector = type_sel; selector.width = 180.0;
+                                        ov_key_conflict = r.select(crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().map(|(label,_)| *label),
+                                            crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().position(|(_,action)| *action == key.and_then(|key| key.conflict)), "Default", selector);
+                                    });
+                                    c.text("Columns · SQL identifiers, COLLATE, ASC / DESC");
+                                    let mut columns = area_s; columns.height = scroll.height.min(100.0);
+                                    ov_key_columns = c.text_area(key.map_or("", |key| key.columns.as_str()), "e.g. customer_id ASC, region COLLATE NOCASE DESC", columns);
+                                });
+                            });
+                            tabs.page("Foreign Keys", |c| {
+                                ov_fks_scroll = c.scroll_area(scroll, |c| {
+                                    c.text(format!("Table foreign keys · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
+                                    c.row(row, |r| {
+                                        ov_fk_add = r.tool_button("Add"); ov_fk_del = r.tool_button("Remove");
+                                        ov_fk_up = r.tool_button("Up"); ov_fk_down = r.tool_button("Down");
+                                    });
+                                    let mut keys_list = list_s; keys_list.width = area_s.width; keys_list.height = 120.0;
+                                    ov_fks_list = c.list(state.wizard_foreign_keys.iter().map(|key| format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), keys_list);
+                                    let key = state.wizard_foreign_keys.get(state.wizard_foreign_key_sel);
+                                    c.row(row, |r| {
+                                        r.text("Name"); ov_fk_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
+                                    });
+                                    c.text("Local columns · SQL identifiers, in order");
+                                    let mut columns = area_s; columns.height = scroll.height.min(56.0);
+                                    ov_fk_columns = c.text_area(key.map_or("", |key| key.columns.as_str()), "e.g. customer_id, region_id", columns);
+                                    c.text("References · SQL");
+                                    let mut clause = area_s; clause.height = scroll.height.min(100.0);
+                                    ov_fk_clause = c.text_area(key.map_or("", |key| key.clause.as_str()), "REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL", clause);
+                                });
+                            });
                             tabs.page("Check Constraints", |c| {
                                 ov_checks_scroll = c.scroll_area(scroll, |c| {
                                     c.text(format!("Table CHECK constraints · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
@@ -1018,27 +1082,6 @@ pub fn build_ui(
                                     let mut expression = area_s;
                                     expression.height = scroll.height.min(100.0);
                                     ov_check_expr = c.text_area(check.map_or("", |check| check.expression.as_str()), "e.g. amount > 0 AND amount < 100", expression);
-                                });
-                            });
-                            tabs.page("Foreign Keys", |c| {
-                                ov_fks_scroll = c.scroll_area(scroll, |c| {
-                                    c.text(format!("Table foreign keys · {}", db::qualified_name(&state.wizard_schema, &state.wizard_table_name)));
-                                    c.row(row, |r| {
-                                        ov_fk_add = r.tool_button("Add"); ov_fk_del = r.tool_button("Remove");
-                                        ov_fk_up = r.tool_button("Up"); ov_fk_down = r.tool_button("Down");
-                                    });
-                                    let mut keys_list = list_s; keys_list.width = area_s.width; keys_list.height = 120.0;
-                                    ov_fks_list = c.list(state.wizard_foreign_keys.iter().map(|key| format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), keys_list);
-                                    let key = state.wizard_foreign_keys.get(state.wizard_foreign_key_sel);
-                                    c.row(row, |r| {
-                                        r.text("Name"); ov_fk_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
-                                    });
-                                    c.text("Local columns · SQL identifiers, in order");
-                                    let mut columns = area_s; columns.height = scroll.height.min(56.0);
-                                    ov_fk_columns = c.text_area(key.map_or("", |key| key.columns.as_str()), "e.g. customer_id, region_id", columns);
-                                    c.text("References · SQL");
-                                    let mut clause = area_s; clause.height = scroll.height.min(100.0);
-                                    ov_fk_clause = c.text_area(key.map_or("", |key| key.clause.as_str()), "REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL", clause);
                                 });
                             });
                             });
@@ -2213,6 +2256,20 @@ pub fn build_ui(
     ui.set_button_enabled(ov_check_del, !state.wizard_checks.is_empty());
     ui.set_button_enabled(ov_check_up, !state.wizard_checks.is_empty() && state.wizard_check_sel > 0);
     ui.set_button_enabled(ov_check_down, state.wizard_check_sel + 1 < state.wizard_checks.len());
+    ui.set_accessible_name(ov_keys_list, "Table index constraints");
+    ui.set_list_selected(ov_keys_list, (!state.wizard_index_constraints.is_empty()).then_some(state.wizard_key_sel));
+    ui.set_list_scroll_offset(ov_keys_list, state.wizard_key_list_scroll);
+    ui.set_accessible_name(ov_key_name, "Index constraint name");
+    ui.set_accessible_name(ov_key_columns, "Index constraint ordered columns SQL");
+    ui.set_accessible_name(ov_key_conflict, "Index constraint conflict action");
+    ui.set_text_area_read_only(ov_key_columns, state.wizard_index_constraints.is_empty() || !state.table_wizard_names_valid());
+    ui.set_accessible_name(ov_key_add_pk, "Add primary key constraint"); ui.set_accessible_name(ov_key_add_unique, "Add UNIQUE constraint");
+    ui.set_accessible_name(ov_key_del, "Remove index constraint"); ui.set_accessible_name(ov_key_up, "Move index constraint up"); ui.set_accessible_name(ov_key_down, "Move index constraint down");
+    ui.set_button_enabled(ov_key_add_pk, !state.wizard_index_constraints.iter().any(|key| key.primary));
+    ui.set_button_enabled(ov_key_del, !state.wizard_index_constraints.is_empty());
+    let movable_key = |index| state.wizard_index_constraints.get(index).is_some_and(|key| !crate::table_sql::index_constraint_requires_inline(key));
+    ui.set_button_enabled(ov_key_up, state.wizard_key_sel > 0 && movable_key(state.wizard_key_sel) && movable_key(state.wizard_key_sel.saturating_sub(1)));
+    ui.set_button_enabled(ov_key_down, movable_key(state.wizard_key_sel) && movable_key(state.wizard_key_sel+1));
     ui.set_accessible_name(ov_fks_list, "Table foreign keys");
     ui.set_list_selected(ov_fks_list, (!state.wizard_foreign_keys.is_empty()).then_some(state.wizard_foreign_key_sel));
     ui.set_list_scroll_offset(ov_fks_list, state.wizard_foreign_key_list_scroll);
@@ -2292,6 +2349,7 @@ pub fn build_ui(
     }
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
+    ui.set_scroll_offset(ov_keys_scroll, state.wizard_key_scroll.0, state.wizard_key_scroll.1);
     ui.set_scroll_offset(ov_fks_scroll, state.wizard_foreign_key_scroll.0, state.wizard_foreign_key_scroll.1);
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
@@ -2315,6 +2373,8 @@ pub fn build_ui(
     crate::sql_syntax::apply(&mut ui, ov_table_preview, &theme);
     if let Some(Some(editor)) = state.wizard_check_states.get(state.wizard_check_sel) { ui.restore_text_area_state(ov_check_expr, editor); }
     crate::sql_syntax::apply(&mut ui, ov_check_expr, &theme);
+    if let Some(Some(editor)) = state.wizard_key_states.get(state.wizard_key_sel) { ui.restore_text_area_state(ov_key_columns, editor); }
+    crate::sql_syntax::apply(&mut ui, ov_key_columns, &theme);
     for (index, area) in [ov_fk_columns, ov_fk_clause].into_iter().enumerate() {
         if let Some(editors) = state.wizard_foreign_key_states.get(state.wizard_foreign_key_sel) {
             if let Some(editor) = &editors[index] { ui.restore_text_area_state(area, editor); }
@@ -2440,6 +2500,16 @@ pub fn build_ui(
         ov_check_del,
         ov_check_up,
         ov_check_down,
+        ov_keys_scroll,
+        ov_keys_list,
+        ov_key_name,
+        ov_key_columns,
+        ov_key_conflict,
+        ov_key_add_pk,
+        ov_key_add_unique,
+        ov_key_del,
+        ov_key_up,
+        ov_key_down,
         ov_fks_scroll,
         ov_fks_list,
         ov_fk_name,

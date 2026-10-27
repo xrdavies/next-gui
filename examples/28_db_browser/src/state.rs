@@ -415,6 +415,11 @@ pub struct AppState {
     pub wizard_table_preview_state: Option<next_gui_ui::TextAreaState>,
     pub wizard_table_page: usize,
     pub wizard_checks: Vec<crate::table_sql::NamedCheck>,
+    pub wizard_index_constraints: Vec<crate::table_sql::NamedIndexConstraint>,
+    pub wizard_key_sel: usize,
+    pub wizard_key_states: Vec<Option<next_gui_ui::TextAreaState>>,
+    pub wizard_key_scroll: (f32, f32),
+    pub wizard_key_list_scroll: f32,
     pub wizard_foreign_keys: Vec<crate::table_sql::NamedForeignKey>,
     pub wizard_foreign_key_sel: usize,
     pub wizard_foreign_key_states: Vec<[Option<next_gui_ui::TextAreaState>; 2]>,
@@ -709,6 +714,11 @@ impl AppState {
             wizard_table_preview_state: None,
             wizard_table_page: 0,
             wizard_checks: Vec::new(),
+            wizard_index_constraints: Vec::new(),
+            wizard_key_sel: 0,
+            wizard_key_states: Vec::new(),
+            wizard_key_scroll: (0.0, 0.0),
+            wizard_key_list_scroll: 0.0,
             wizard_foreign_keys: Vec::new(),
             wizard_foreign_key_sel: 0,
             wizard_foreign_key_states: Vec::new(),
@@ -1585,6 +1595,11 @@ impl AppState {
         self.wizard_original_cols.clear();
         self.wizard_table_preview_state = None;
         self.wizard_table_page = 0;
+        self.wizard_index_constraints = crate::table_sql::index_constraints_from_columns(&[], &self.wizard_cols, None).expect("default table key");
+        self.wizard_key_sel = 0;
+        self.wizard_key_states = vec![None; self.wizard_index_constraints.len()];
+        self.wizard_key_scroll = (0.0, 0.0);
+        self.wizard_key_list_scroll = 0.0;
         self.wizard_checks.clear();
         self.wizard_foreign_keys.clear();
         self.wizard_foreign_key_sel = 0;
@@ -1619,6 +1634,11 @@ impl AppState {
         self.wizard_table_name = sel.name.clone();
         self.wizard_table_options = db::table_options_in(conn, &sel.schema, &sel.name)?;
         let sql: String = conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1", db::quote_ident(&sel.schema)), [&sel.name], |row| row.get(0)).map_err(|error| error.to_string())?;
+        self.wizard_index_constraints = crate::table_sql::table_index_constraints(&sql)?;
+        self.wizard_key_sel = 0;
+        self.wizard_key_states = vec![None; self.wizard_index_constraints.len()];
+        self.wizard_key_scroll = (0.0, 0.0);
+        self.wizard_key_list_scroll = 0.0;
         self.wizard_checks = crate::table_sql::table_checks(&sql)?;
         self.wizard_foreign_keys = crate::table_sql::table_foreign_keys(&sql)?;
         self.wizard_foreign_key_sel = 0;
@@ -1738,10 +1758,26 @@ impl AppState {
         crate::table_sql::rename_foreign_keys(keys, &self.wizard_constraint_table, self.wizard_table_name.trim(), &renames)
     }
 
+    fn renamed_wizard_index_constraints(&self, keys: &[crate::table_sql::NamedIndexConstraint]) -> Result<Vec<crate::table_sql::NamedIndexConstraint>, String> {
+        let renames = self.wizard_constraint_renames()?;
+        if renames.is_empty() { return Ok(keys.to_vec()); }
+        crate::table_sql::rename_index_constraints(keys, &renames)
+    }
+
+    pub fn table_index_constraints_from_columns(&self) -> Result<Vec<crate::table_sql::NamedIndexConstraint>, String> {
+        if !self.table_wizard_names_valid() { return Err("Finish distinct column names before changing key membership".into()); }
+        crate::table_sql::index_constraints_from_columns(&self.renamed_wizard_index_constraints(&self.wizard_index_constraints)?,
+            &self.wizard_cols, self.wizard_table_options.primary_key_conflict)
+    }
+
     fn table_wizard_options(&self) -> Result<crate::table_sql::TableOptions, String> {
         let mut options = self.wizard_table_options.clone();
         if let Some(checks) = &options.checks { options.checks = Some(self.renamed_wizard_checks(checks)?); }
         if let Some(keys) = &options.foreign_keys { options.foreign_keys = Some(self.renamed_wizard_foreign_keys(keys)?); }
+        if let Some(keys) = &options.index_constraints { options.index_constraints = Some(self.renamed_wizard_index_constraints(keys)?); }
+        if options.primary_key_conflict.is_some() && options.index_constraints.as_ref().is_some_and(|keys| !keys.iter().any(|key| key.primary)) {
+            return Err("Select a primary-key column before choosing its conflict action".into());
+        }
         Ok(options)
     }
 
@@ -1750,7 +1786,16 @@ impl AppState {
         if !self.table_wizard_names_valid() { return Ok(false); }
         let checks = self.renamed_wizard_checks(&self.wizard_checks)?;
         let keys = self.renamed_wizard_foreign_keys(&self.wizard_foreign_keys)?;
-        let changed = checks != self.wizard_checks || keys != self.wizard_foreign_keys;
+        let indexes = self.renamed_wizard_index_constraints(&self.wizard_index_constraints)?;
+        let changed = checks != self.wizard_checks || keys != self.wizard_foreign_keys || indexes != self.wizard_index_constraints;
+        for (index, (old, new)) in self.wizard_index_constraints.iter().zip(&indexes).enumerate() {
+            if old.columns != new.columns {
+                // shortcut: reference renames reset key history; transform past edits when adding wizard-wide Undo.
+                if let Some(session) = self.wizard_key_states.get_mut(index) { *session = None; }
+            }
+        }
+        self.wizard_index_constraints = indexes;
+        if self.wizard_table_options.index_constraints.is_some() { self.wizard_table_options.index_constraints = Some(self.wizard_index_constraints.clone()); }
         for (index, (old, new)) in self.wizard_checks.iter().zip(&checks).enumerate() {
             if old.expression != new.expression {
                 // shortcut: reference renames reset CHECK history; transform past edits when adding wizard-wide Undo.
@@ -1773,33 +1818,34 @@ impl AppState {
     }
 
     pub fn table_wizard_sql(&self) -> Result<String, String> {
+        let options = self.table_wizard_options()?;
+        let columns = if let Some(keys) = &options.index_constraints { crate::table_sql::columns_with_index_constraints(&self.wizard_cols, keys)? } else { self.wizard_cols.clone() };
         let name = self.wizard_table_name.trim();
         if name.is_empty() { return Err("Table name required".into()); }
-        if self.wizard_cols.is_empty() { return Err("Add at least one column".into()); }
-        for (index, column) in self.wizard_cols.iter().enumerate() {
+        if columns.is_empty() { return Err("Add at least one column".into()); }
+        for (index, column) in columns.iter().enumerate() {
             if column.name.trim().is_empty() { return Err("Column name required".into()); }
             if self.wizard_cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&column.name)) {
                 return Err(format!("Duplicate column name: {}", column.name));
             }
         }
-        crate::table_sql::validate_primary_key(&self.wizard_cols)?;
+        crate::table_sql::validate_primary_key(&columns)?;
         let Some(original) = &self.wizard_table_original else {
-            for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
-            return crate::table_sql::apply_table_options(&db::create_table_ddl_in(&self.wizard_schema, name, &self.wizard_cols), self.table_wizard_options()?)
+            for column in &columns { crate::table_sql::column_definition(column, None)?; }
+            return crate::table_sql::apply_table_options(&db::create_table_ddl_in(&self.wizard_schema, name, &columns), options)
                 .and_then(|sql| crate::table_sql::format_table_preview(&sql));
         };
         if original.schema != self.wizard_schema { return Err("Moving a table between databases requires an explicit SQL migration".into()); }
-        if self.wizard_col_sources.len() != self.wizard_cols.len() { return Err("Column identities do not match the table draft".into()); }
+        if self.wizard_col_sources.len() != columns.len() { return Err("Column identities do not match the table draft".into()); }
         let sql = self.schema.iter().find(|object| object.schema == original.schema && object.name == original.name && object.kind == ObjectKind::Table)
             .and_then(|object| object.sql.as_deref()).ok_or("Original table definition no longer exists")?;
-        let renames: Vec<_> = self.wizard_cols.iter().zip(&self.wizard_col_sources).filter_map(|(column, source)|
+        let renames: Vec<_> = columns.iter().zip(&self.wizard_col_sources).filter_map(|(column, source)|
             source.as_ref().filter(|source| **source != column.name).map(|source| (source.as_str(), column.name.as_str()))).collect();
         let sql = crate::table_sql::preview_renames(sql, name, &renames)?;
-        let options = self.table_wizard_options()?;
-        let needs_rebuild = crate::table_sql::requires_rebuild(&self.wizard_original_cols, &self.wizard_cols,
+        let needs_rebuild = crate::table_sql::requires_rebuild(&self.wizard_original_cols, &columns,
             &self.wizard_col_sources, &crate::table_sql::table_options(&sql)?, Some(&options));
         let sql = crate::table_sql::rebuild_definition(&sql, &self.wizard_schema, name, &self.wizard_original_cols,
-            &self.wizard_cols, &self.wizard_col_sources, Some(options))?;
+            &columns, &self.wizard_col_sources, Some(options))?;
         let sql = if needs_rebuild { crate::table_sql::unqualify_local_checks(&sql, name)? } else { sql };
         crate::table_sql::format_table_preview(&sql)
     }
@@ -1807,14 +1853,16 @@ impl AppState {
     pub fn apply_table_wizard(&mut self) -> Result<(), String> {
         self.guard_writable()?;
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        let options = self.table_wizard_options()?;
+        let columns = if let Some(keys) = &options.index_constraints { crate::table_sql::columns_with_index_constraints(&self.wizard_cols, keys)? } else { self.wizard_cols.clone() };
         let schema = self.wizard_schema.clone();
         let name = self.wizard_table_name.trim().to_string();
         if name.is_empty() { return Err("Table name required".into()); }
-        if self.wizard_cols.is_empty() { return Err("Add at least one column".into()); }
-        crate::table_sql::validate_primary_key(&self.wizard_cols)?;
-        if self.wizard_cols.iter().any(|c| c.name.trim().is_empty()) { return Err("Column name required".into()); }
+        if columns.is_empty() { return Err("Add at least one column".into()); }
+        crate::table_sql::validate_primary_key(&columns)?;
+        if columns.iter().any(|c| c.name.trim().is_empty()) { return Err("Column name required".into()); }
         let original = self.wizard_table_original.clone();
-        let renames: Vec<_> = self.wizard_cols.iter().zip(&self.wizard_col_sources)
+        let renames: Vec<_> = columns.iter().zip(&self.wizard_col_sources)
             .filter_map(|(col, source)| source.as_ref().filter(|source| **source != col.name).map(|source| (source.clone(), col.name.clone()))).collect();
         if original.as_ref().is_some_and(|o| o.schema != schema) {
             return Err("Moving a table between databases requires an explicit SQL migration".into());
@@ -1823,11 +1871,11 @@ impl AppState {
         let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         if let Some(orig) = original.as_ref() {
-            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &self.wizard_cols, &self.wizard_col_sources, Some(self.table_wizard_options()?))?;
+            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &columns, &self.wizard_col_sources, Some(options))?;
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
-            for column in &self.wizard_cols { crate::table_sql::column_definition(column, None)?; }
-            let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &self.wizard_cols), self.table_wizard_options()?)?;
+            for column in &columns { crate::table_sql::column_definition(column, None)?; }
+            let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &columns), options)?;
             db::execute_single_statement(conn, &ddl)?;
             self.log_sql(ddl);
         }
