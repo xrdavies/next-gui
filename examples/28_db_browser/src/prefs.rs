@@ -9,6 +9,7 @@ pub struct Prefs {
     pub font_size: f32,
     pub default_theme_dark: bool,
     pub confirm_drops: bool,
+    pub sql_completion: bool,
     pub csv_delimiter: char,
     pub frozen_cols_default: usize,
 }
@@ -19,6 +20,7 @@ impl Default for Prefs {
             font_size: 13.0,
             default_theme_dark: true,
             confirm_drops: true,
+            sql_completion: true,
             csv_delimiter: ',',
             frozen_cols_default: 0,
         }
@@ -53,5 +55,17 @@ impl Prefs {
         }
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::write(path, text).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_preferences_enable_completion_and_explicit_false_round_trips() {
+        assert!(serde_json::from_str::<Prefs>("{}").unwrap().sql_completion);
+        let prefs: Prefs = serde_json::from_str(r#"{"sql_completion":false}"#).unwrap();
+        assert!(!serde_json::from_str::<Prefs>(&serde_json::to_string(&prefs).unwrap()).unwrap().sql_completion);
     }
 }

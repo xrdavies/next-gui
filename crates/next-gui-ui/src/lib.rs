@@ -25,6 +25,9 @@ mod p1_rest;
 mod office_p2;
 mod theme;
 mod text_area;
+mod text_completion;
+pub use text_completion::TextAreaCompletionItem;
+use text_completion::TextAreaCompletion;
 mod tabs;
 pub use tabs::TabsState;
 use tabs::TabStripState;
@@ -2256,6 +2259,7 @@ pub struct Ui {
     /// Currently open popup owner (Menu / ContextMenu / Select); at most one.
     open_popup: Option<WidgetId>,
     popup_menu_row: Option<usize>,
+    text_completion: Option<TextAreaCompletion>,
     /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
     pending_menu_action: Option<(WidgetId, u64)>,
     /// Last keyboard-activated Button; drained by [`Ui::take_button_activate`].
@@ -2410,6 +2414,7 @@ impl Ui {
             focus: None,
             open_popup: None,
             popup_menu_row: None,
+            text_completion: None,
             pending_menu_action: None,
             pending_button_activate: None,
             pending_button_group_change: None,
@@ -3491,6 +3496,12 @@ impl Ui {
     pub fn pointer_scroll(&mut self, scene: &Scene, x: f32, y: f32, dx: f32, dy: f32) -> bool {
         if !dx.is_finite() || !dy.is_finite() {
             return false;
+        }
+        if let Some(id) = self.text_completion_popup() {
+            if self.popup_contains(scene, id, x, y) {
+                if dy != 0.0 { self.move_text_completion(if dy > 0.0 { 1 } else { -1 }); }
+                return true;
+            }
         }
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
@@ -4762,6 +4773,7 @@ impl Ui {
 
     /// Deliver a key to the focused widget. Returns true if handled.
     pub fn key_input(&mut self, key: UiKey) -> bool {
+        if let Some(handled) = self.key_text_completion(key) { return handled; }
         if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
             if let Some(id) = self.open_popup {
                 match self.widgets.get(&id).map(|w| &w.kind) {
@@ -8935,7 +8947,11 @@ impl Ui {
                     _ => return false,
                 };
                 if enabled {
-                    self.pending_menu_action = Some((id, item_id));
+                    if self.text_completion_popup() == Some(id) {
+                        self.commit_text_completion(item_id as usize);
+                    } else {
+                        self.pending_menu_action = Some((id, item_id));
+                    }
                 }
                 self.hide_popup_aux_mut(scene, id);
                 self.close_popup_internal();
@@ -9041,6 +9057,7 @@ impl Ui {
     /// Update tooltip and menu hover using scene hit-test.
     pub fn pointer_hover(&mut self, scene: &Scene, x: f32, y: f32) -> bool {
         let previous_row = self.popup_menu_row;
+        let completion_open = self.text_completion_popup().is_some();
         if let Some(Widget { kind, aux, .. }) = self.open_popup.and_then(|id| self.widgets.get(&id))
         {
             let data = match kind {
@@ -9057,6 +9074,7 @@ impl Ui {
                     .filter(|row| items.get(*row).is_some_and(|item| item.enabled));
             }
         }
+        if completion_open && self.popup_menu_row.is_none() { self.popup_menu_row = previous_row; }
         let tip = self
             .hit_widget(scene, x, y)
             .and_then(|id| self.find_tooltip_ancestor(id));
@@ -9236,6 +9254,7 @@ impl Ui {
                 .and_then(|id| self.find_tooltip_ancestor(id));
             self.tooltip_hover = tip;
         }
+        self.sync_text_completion(scene);
         self.paint_open_popups(scene);
         self.paint_notifications(scene);
         self.paint_tooltip_overlay(scene);
@@ -16474,6 +16493,7 @@ impl Ui {
                 let lx = row.x + 10.0;
                 let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
+                scene.set_clip(lab, Some(Rect::new(row.x + 10.0, row.y, (row.width - 20.0).max(0.0), row.height)));
                 scene.set_fill(lab, if !item.enabled { disabled_fg } else if self.popup_menu_row == Some(i) { hover_fg } else { fg });
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
                 scene.set_visible(lab, true);

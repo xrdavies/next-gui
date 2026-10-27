@@ -302,6 +302,7 @@ pub struct AppState {
     pub read_only: bool,
     pub dirty: bool,
     pub schema: Vec<SchemaObject>,
+    pub sql_completion: crate::sql_completion::Catalog,
     pub database_encoding: String,
     pub selected: Option<SelectedObject>,
     pub tab: MainTab,
@@ -426,6 +427,7 @@ pub struct AppState {
     pub prefs_frozen_cols: usize,
     pub prefs_theme_dark: bool,
     pub prefs_confirm_drops: bool,
+    pub prefs_sql_completion: bool,
     pub prefs_csv_delim: String,
     pub cond_col: String,
     pub cond_op_idx: usize,
@@ -545,6 +547,7 @@ impl AppState {
             read_only: false,
             dirty: false,
             schema: Vec::new(),
+            sql_completion: crate::sql_completion::Catalog::default(),
             database_encoding: String::new(),
             selected: None,
             tab: MainTab::Structure,
@@ -658,6 +661,7 @@ impl AppState {
             prefs_font_size: "13".into(),
             prefs_theme_dark: true,
             prefs_confirm_drops: true,
+            prefs_sql_completion: true,
             prefs_csv_delim: ",".into(),
             cond_col: String::new(),
             cond_op_idx: 0,
@@ -982,12 +986,14 @@ impl AppState {
     pub fn refresh_schema(&mut self) -> Result<(), String> {
         let Some(conn) = self.conn.as_ref() else {
             self.schema.clear();
+            self.sql_completion = crate::sql_completion::Catalog::default();
             self.database_encoding.clear();
             return Ok(());
         };
         let schema = db::list_schema(conn)?;
         let encoding = db::read_pragma(conn, "main.encoding")?;
         self.schema = schema;
+        self.sql_completion = crate::sql_completion::Catalog::load(conn);
         self.database_encoding = encoding;
         Ok(())
     }
@@ -1819,6 +1825,7 @@ impl AppState {
             drop(conn);
         }
         self.schema.clear();
+        self.sql_completion = crate::sql_completion::Catalog::default();
         self.database_encoding.clear();
         self.selected = None;
         self.browse_tabs = vec![BrowseTabState::new(None)];
@@ -2175,6 +2182,7 @@ impl AppState {
         self.prefs_font_size = format!("{}", self.prefs.font_size as i32);
         self.prefs_theme_dark = self.prefs.default_theme_dark;
         self.prefs_confirm_drops = self.prefs.confirm_drops;
+        self.prefs_sql_completion = self.prefs.sql_completion;
         self.prefs_csv_delim = self.prefs.csv_delimiter.to_string();
         self.prefs_frozen_cols = self.frozen_cols;
     }
@@ -2191,6 +2199,7 @@ impl AppState {
         self.prefs.font_size = fs.clamp(9.0, 28.0);
         self.prefs.default_theme_dark = self.prefs_theme_dark;
         self.prefs.confirm_drops = self.prefs_confirm_drops;
+        self.prefs.sql_completion = self.prefs_sql_completion;
         if let Some(c) = self.prefs_csv_delim.chars().next() {
             self.prefs.csv_delimiter = if c == 't' { '\t' } else { c };
         }
@@ -2914,6 +2923,7 @@ impl AppState {
         {
             let conn = self.conn.as_ref().ok_or("No database open")?;
             db::load_extension(conn, &path, entry_opt)?;
+            self.sql_completion = crate::sql_completion::Catalog::load(conn);
         }
         self.log_sql(format!("-- load_extension {path}"));
         self.status_msg = format!("Loaded extension {path}");

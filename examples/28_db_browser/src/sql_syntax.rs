@@ -6,7 +6,7 @@ use next_gui_scene::Color;
 use next_gui_ui::{Theme, ThemeMode, Ui, WidgetId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(super) enum Kind {
     Keyword,
     Literal,
     Identifier,
@@ -15,7 +15,7 @@ enum Kind {
     Comment,
 }
 
-fn identifier(ch: char) -> bool {
+pub(super) fn identifier(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' || ch as u32 >= 0x80
 }
 
@@ -52,7 +52,7 @@ fn digits(chars: &[char], mut i: usize, hex: bool) -> usize {
     i
 }
 
-fn tokens(sql: &str) -> Vec<(Range<usize>, Kind)> {
+pub(super) fn tokens(sql: &str) -> Vec<(Range<usize>, Kind)> {
     let chars: Vec<_> = sql.chars().collect();
     let mut spans = Vec::new();
     let mut i = 0;

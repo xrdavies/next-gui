@@ -110,6 +110,13 @@ after editing or finding text. Both renderers use the same selection alpha mask.
 - `text_area_state` / `restore_text_area_state`: opaque in-memory editing session
   for rebuilding widgets. Restore rejects a different document. Keep one session
   per document; project files should save text separately.
+- `show_text_area_completions(id, range, items)`: application-filtered candidate
+  labels/insertion text in a caret-anchored menu. The scalar range contains the
+  unselected caret; acceptance is one undoable replacement. Up/Down, pages,
+  Home/End and wheel reach every candidate; Enter/Tab or click accept; Escape
+  dismisses. Other input continues to the editor; refresh suggestions after edits.
+  Composition/read-only/foreign popups reject opening, and stale focus/document/
+  caret state prevents insertion. Lists are transient across widget rebuilds.
 - Map platform chords to `UiKey::Undo`, `Redo`, `SelectLeft`, `SelectRight`,
   `SelectUp`, `SelectDown`, `SelectHome`, `SelectEnd`. Existing exhaustive matches
   on `UiKey` must handle these variants. `focused_text_for_copy` now returns only
@@ -118,8 +125,8 @@ after editing or finding text. Both renderers use the same selection alpha mask.
 History stores up to 100 snapshots / 8 MiB per undo or redo stack, retaining one
 oversized edit. Snapshots share immutable text across rebuilds. Glyph layout still
 processes the complete document; masks and selection nodes cover the viewport.
-Apps may supply token foreground colors; TextArea has no built-in language lexer
-or completion. Grapheme-cluster navigation, word selection, horizontal scrolling
+Apps supply token colors and completion candidates; TextArea has no built-in
+language lexer or semantic catalog. Grapheme-cluster navigation, word selection, horizontal scrolling
 and text-specific draggable scrollbar thumbs are not provided.
 
 The e21 QA mode `NEXT_GUI_P1_REST_QA=textarea` captures the entry fields with the

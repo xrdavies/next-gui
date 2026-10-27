@@ -15,6 +15,7 @@ mod sql_log;
 mod sql_search;
 mod sql_editor;
 mod sql_syntax;
+mod sql_completion;
 mod state;
 mod ui_build;
 
@@ -181,6 +182,7 @@ struct Demo {
 
 #[allow(dead_code)]
 struct BuiltUiIds {
+    status: WidgetId,
     body_splitter: WidgetId,
     structure_splitter: WidgetId,
     shell_scroll: WidgetId,
@@ -293,6 +295,7 @@ struct BuiltUiIds {
     ov_prefs_font: WidgetId,
     ov_prefs_theme: WidgetId,
     ov_prefs_confirm: WidgetId,
+    ov_prefs_completion: WidgetId,
     ov_prefs_delim: WidgetId,
     ov_frozen: WidgetId,
     ov_export_struct: WidgetId,
@@ -343,6 +346,7 @@ struct BuiltUiIds {
 impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
+            status: b.status,
             body_splitter: b.body_splitter,
             structure_splitter: b.structure_splitter,
             shell_scroll: b.shell_scroll,
@@ -455,6 +459,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_prefs_font: b.ov_prefs_font,
             ov_prefs_theme: b.ov_prefs_theme,
             ov_prefs_confirm: b.ov_prefs_confirm,
+            ov_prefs_completion: b.ov_prefs_completion,
             ov_prefs_delim: b.ov_prefs_delim,
             ov_frozen: b.ov_frozen,
             ov_export_struct: b.ov_export_struct,
@@ -1005,6 +1010,9 @@ impl Demo {
                     if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_confirm) {
                         self.state.prefs_confirm_drops = on;
                     }
+                }
+                if let Some(on) = self.ui.is_checked(self.ids.ov_prefs_completion) {
+                    self.state.prefs_sql_completion = on;
                 }
                 if self.ids.ov_prefs_delim.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_prefs_delim) {
@@ -2049,6 +2057,56 @@ impl Demo {
         self.state.find_message.clear();
         self.state.overlay = Some(OverlayKind::FindReplace);
         self.rebuild = true;
+    }
+
+    fn handle_sql_completion_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if modifiers.commandish() && !modifiers.shift && !modifiers.alt
+            && matches!(key, KeyCode::Space | KeyCode::Char(' '))
+            && self.state.tab == MainTab::ExecuteSql && self.ui.focused() == Some(self.ids.sql_area)
+        {
+            self.show_sql_completions(true);
+            return true;
+        }
+        if !self.ui.text_area_completions_open(self.ids.sql_area) { return false; }
+        if !modifiers.commandish() && !modifiers.alt
+            && matches!(key, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End | KeyCode::Enter | KeyCode::Tab | KeyCode::Escape)
+        {
+            if let Some(key) = map_key(key, modifiers) { self.ui.key_input(key); }
+            return true;
+        }
+        if modifiers.commandish() { self.ui.close_popup(); }
+        false
+    }
+
+    fn input_key_with_sql_completions(&mut self, key: UiKey) -> bool {
+        let was_open = self.ui.text_area_completions_open(self.ids.sql_area);
+        let handled = self.ui.key_input(key);
+        if handled && matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete) {
+            self.show_sql_completions(was_open);
+        }
+        handled
+    }
+
+    fn show_sql_completions(&mut self, explicit: bool) -> bool {
+        let area = self.ids.sql_area;
+        if self.state.tab != MainTab::ExecuteSql || self.state.confirm_open
+            || !matches!(self.state.overlay, None | Some(OverlayKind::FindReplace))
+            || self.ui.focused() != Some(area) || (!explicit && !self.state.prefs.sql_completion)
+        { return false; }
+        let Some(caret) = self.ui.text_area_caret(area) else { return false; };
+        if self.ui.text_area_selection(area) != Some(caret..caret) { return false; }
+        let suggestion = self.state.sql_completion.suggest(self.ui.text_area_value(area).unwrap_or_default(), caret, explicit);
+        let Some((range, items)) = suggestion else {
+            if self.ui.text_area_completions_open(area) { self.ui.close_popup(); }
+            return false;
+        };
+        if explicit {
+            if let Some(warning) = &self.state.sql_completion.warning {
+                self.state.status_msg = format!("Some completion metadata is unavailable: {warning}");
+                self.ui.set_text(self.ids.status, &self.state.status_msg);
+            }
+        }
+        self.ui.show_text_area_completions(area, range, items)
     }
 
     fn handle_browse_navigation_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
@@ -3115,6 +3173,10 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
+                if self.handle_sql_completion_key(key, modifiers) {
+                    self.after_ui(ctx);
+                    return;
+                }
                 if self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) || self.handle_sql_comment_key(key, modifiers) {
                     self.after_ui(ctx);
                     return;
@@ -3229,7 +3291,7 @@ impl AppCallbacks for Demo {
                     }
                 }
                 if let Some(ui_key) = map_key(key, modifiers) {
-                    if self.ui.key_input(ui_key) {
+                    if self.input_key_with_sql_completions(ui_key) {
                         self.after_ui(ctx);
                         return;
                     }
@@ -3271,6 +3333,7 @@ impl AppCallbacks for Demo {
                     }
                     ImeEvent::Commit { text } => {
                         self.ui.ime_commit(text);
+                        self.show_sql_completions(false);
                     }
                     ImeEvent::Disabled => {
                         self.ui.ime_clear_preedit();
@@ -3869,9 +3932,21 @@ mod interaction_tests {
         demo.state.sync_prefs_drafts();
         demo.state.overlay = Some(OverlayKind::Preferences);
         demo.do_rebuild();
+        if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_COMPLETION_QA_OUT") {
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let mut soft = SoftRenderer::new(1400, 860, clear_color(&demo.theme));
+            soft.render(&encode_scene(&demo.scene, &dirty), &dirty);
+            write_ppm(&format!("{prefix}-preferences.ppm"), soft.frame_pixels().unwrap().0, 1400, 860).unwrap();
+        }
         demo.ui.set_text_input(demo.ids.ov_frozen, "8");
+        let completion = demo.state.prefs.sql_completion;
+        demo.ui.set_checked(demo.ids.ov_prefs_completion, !completion);
+        demo.snapshot_inputs();
+        assert_eq!(demo.state.prefs_sql_completion, !completion);
         demo.handle_button(demo.ids.ov_btn_cancel);
         assert_eq!(demo.state.frozen_cols, 2);
+        assert_eq!(demo.state.prefs.sql_completion, completion);
         demo.state.tab = MainTab::Pragmas;
         demo.do_rebuild();
         let b = demo
@@ -4142,6 +4217,124 @@ mod interaction_tests {
         }).max().unwrap();
         assert!(max_delta <= 2, "Soft/GPU editor channel difference {max_delta}");
         eprintln!("Soft/GPU selected-text comparison passed, max channel delta {max_delta}");
+    }
+
+    #[test]
+    fn sql_completion_auto_threshold_manual_keys_and_session_undo_do_not_execute_sql() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.prefs.sql_completion = true;
+        demo.state.sql_tabs[0].clear();
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        for ch in ['S', 'E'] { assert!(demo.input_key_with_sql_completions(UiKey::Char(ch))); }
+        assert!(!demo.ui.has_open_popup());
+        demo.input_key_with_sql_completions(UiKey::Char('L'));
+        assert!(demo.ui.text_area_completions_open(demo.ids.sql_area));
+        assert!(demo.handle_sql_completion_key(KeyCode::Enter, Modifiers::default()));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT"));
+        assert!(!demo.state.sql_busy && !demo.state.dirty && demo.state.sql_result.is_none());
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        demo.input_key_with_sql_completions(UiKey::Undo);
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SEL"));
+        demo.state.prefs.sql_completion = false;
+        demo.input_key_with_sql_completions(UiKey::Backspace);
+        assert!(!demo.ui.has_open_popup());
+        assert!(demo.handle_sql_completion_key(KeyCode::Space, Modifiers { ctrl: true, ..Modifiers::default() }));
+        assert!(demo.ui.text_area_completions_open(demo.ids.sql_area));
+        assert!(demo.handle_sql_completion_key(KeyCode::Tab, Modifiers::default()));
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT"));
+        assert_eq!(demo.ui.focused(), Some(demo.ids.sql_area));
+        demo.state.overlay = Some(OverlayKind::FindReplace);
+        demo.snapshot_inputs();
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        demo.ui.select_text_area_range(demo.ids.sql_area, 3..3);
+        assert!(demo.show_sql_completions(true));
+        demo.handle_sql_completion_key(KeyCode::Tab, Modifiers::default());
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT"), "replace the whole word at a middle caret");
+        demo.ui.set_text_area_value(demo.ids.sql_area, "-- SEL");
+        demo.ui.select_text_area_range(demo.ids.sql_area, 6..6);
+        assert!(!demo.show_sql_completions(true));
+    }
+
+    #[test]
+    fn sql_completion_refreshes_metadata_and_works_from_cache_while_worker_owns_connection() {
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.run_sql_text_sync("CREATE TABLE completion_people(email_address); CREATE VIEW completion_broken AS SELECT * FROM missing").unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        demo.state.sql_tabs[0] = "SELECT completion_people.ema".into();
+        demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.sql_area));
+        let end = demo.state.sql_editor().chars().count();
+        demo.ui.select_text_area_range(demo.ids.sql_area, end..end);
+        demo.state.start_sql_text("SELECT 1".into()).unwrap();
+        assert!(demo.state.conn.is_none() && demo.state.sql_busy);
+        assert!(demo.show_sql_completions(true));
+        assert!(demo.ui.text_content(demo.ids.status).unwrap().contains("completion_broken"));
+        demo.handle_sql_completion_key(KeyCode::Tab, Modifiers::default());
+        assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some("SELECT completion_people.email_address"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !demo.state.poll_sql_job() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        demo.state.close_db();
+        let (_, candidates) = demo.state.sql_completion.suggest("completion_peo", 14, true).unwrap();
+        assert!(candidates.is_empty(), "closed databases must not leak old schema names");
+    }
+
+    #[test]
+    fn sql_completion_popup_dark_light_and_metal_readback() {
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch(
+                "CREATE TABLE subscribers(subscription_id, \"subject line\", \"sub国际\"); ATTACH ':memory:' AS subarchive;"
+            ).unwrap();
+            demo.state.refresh_schema().unwrap();
+            demo.state.tab = MainTab::ExecuteSql;
+            demo.theme = theme;
+            demo.state.sql_tabs[0] = format!("{}SELECT sub", "-- completion demo 中文\n".repeat(25));
+            demo.do_rebuild();
+            demo.ui.set_focus(Some(demo.ids.sql_area));
+            let end = demo.state.sql_editor().chars().count();
+            demo.ui.select_text_area_range(demo.ids.sql_area, end..end);
+            demo.ui.sync(&mut demo.scene);
+            assert!(demo.show_sql_completions(true));
+            demo.ui.sync(&mut demo.scene);
+            let style = demo.ui.context_menu_style();
+            let panel = demo.scene.iter_paint_order().into_iter().rev().find(|n|
+                n.visible && n.fill == style.popup_bg && n.bounds.width >= style.popup_width && n.bounds.height >= style.item_height
+            ).unwrap().bounds;
+            assert!(panel.x >= 0.0 && panel.y >= 0.0 && panel.x + panel.width <= 1400.0 && panel.y + panel.height <= 860.0);
+            demo.scene.mark_full_dirty(1400.0, 860.0);
+            let dirty = demo.scene.take_dirty();
+            let commands = encode_scene(&demo.scene, &dirty);
+            let clear = clear_color(&demo.theme);
+            let mut soft = SoftRenderer::new(1400, 860, clear);
+            soft.render(&commands, &dirty);
+            if let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_COMPLETION_QA_OUT") {
+                write_ppm(&format!("{prefix}-{name}.ppm"), soft.frame_pixels().unwrap().0, 1400, 860).unwrap();
+            }
+            let Ok(mut gpu) = GpuRenderer::try_new(1400, 860, clear) else {
+                eprintln!("completion {name} GPU comparison not_run: adapter unavailable");
+                continue;
+            };
+            gpu.render(&commands, &dirty);
+            let soft_pixels = soft.frame_pixels().unwrap().0;
+            let gpu_pixels = gpu.frame_pixels().unwrap().0;
+            let max_delta = ((panel.y.ceil() as usize + 2)..(panel.y + panel.height).floor() as usize - 2).flat_map(|y|
+                ((panel.x.ceil() as usize + 2)..(panel.x + panel.width).floor() as usize - 2).map(move |x| y * 1400 + x)
+            ).flat_map(|i| [0, 8, 16].map(|shift|
+                (((soft_pixels[i] >> shift) & 255) as i32 - ((gpu_pixels[i] >> shift) & 255) as i32).abs()
+            )).max().unwrap();
+            assert!(max_delta <= 2, "completion {name} channel delta {max_delta}");
+            eprintln!("completion {name} Soft/Metal actual readback max channel delta {max_delta}");
+        }
     }
 
     #[test]
