@@ -3686,6 +3686,10 @@ impl Ui {
                 }
             }
             Kind::Tabs { titles, selected, .. } => titles.get(*selected).cloned(),
+            Kind::Chart { tiles, .. } => {
+                let titles: Vec<_> = tiles.iter().filter(|tile| !tile.title.is_empty()).map(|tile| tile.title.as_str()).collect();
+                (!titles.is_empty()).then(|| titles.join("\n"))
+            }
             Kind::Segmented { options, selected, .. } => options.get(*selected).cloned(),
             Kind::ButtonGroup { labels, selected, .. } => {
                 selected.and_then(|i| labels.get(i).cloned())
@@ -17529,9 +17533,12 @@ impl Ui {
             let b = aux.get(base + 2).copied();
             let c = aux.get(base + 3).copied();
 
-            let title_h = style.title_size + 6.0;
+            let caption = Rect::new(cell.x + 2.0, cell.y + 2.0, (cell.width - 4.0).max(0.0), (cell.height * 0.5 - 4.0).max(0.0));
+            let layout = chart::title_layout(&self.font, &tile.title, style.title_size, caption.width, caption.height);
+            let tmask = self.font.rasterize_layout(&layout, style.title_size);
+            let title_h = (style.title_size + 6.0).max(tmask.height as f32 + 4.0).min(cell.height * 0.5);
+            for child in [a, b, c].into_iter().flatten() { scene.set_clip(child, Some(cell)); }
             if let Some(tn) = title_n {
-                let (_, tmask) = self.font.rasterize_text(&tile.title, style.title_size, None);
                 scene.set_bounds(
                     tn,
                     Rect::new(
@@ -17542,6 +17549,7 @@ impl Ui {
                     ),
                 );
                 scene.set_fill(tn, style.title_fg);
+                scene.set_clip(tn, Some(caption));
                 scene.set_mask(
                     tn,
                     Some(AlphaMask::new(tmask.width, tmask.height, tmask.pixels)),
@@ -21561,6 +21569,46 @@ mod tests {
         assert_eq!(ui.gauge_value(gauge), Some(80.0));
         assert!(ui.set_trend_points(trend, vec![0.0, 1.0, 0.5]));
         ui.sync(&mut scene);
+    }
+
+    #[test]
+    fn chart_captions_stay_in_their_cells_and_keep_full_accessible_titles() {
+        let mut scene = Scene::new();
+        let mut ui = Ui::new();
+        let title = "客户季度营收分析 · Revenue e\u{301} 👩‍💻 ".repeat(10);
+        let mut chart = WidgetId(0);
+        ui.column(ColumnStyle { width: 240.0, height: 360.0, ..ColumnStyle::default() }, |col| {
+            chart = col.chart(vec![
+                ChartTile::trend(&title, vec![1.0, 3.0, 2.0], TrendStyle::default()),
+                ChartTile::trend("Neighbor", vec![2.0, 4.0], TrendStyle::default()),
+            ], ChartStyle { width: 220.0, height: 300.0, columns: 2, ..ChartStyle::default() });
+        });
+        ui.sync(&mut scene);
+        assert_eq!(ui.accessible_name(chart), Some(format!("{title}\nNeighbor")));
+        let w = ui.widgets.get(&chart).unwrap();
+        let bounds = scene.get(w.node.unwrap()).unwrap().bounds;
+        let Kind::Chart { style, .. } = w.kind else { unreachable!() };
+        let cells = chart::chart_tile_rects(style, 2);
+        for (i, &(x, y, width, height)) in cells.iter().enumerate() {
+            let text = scene.get(w.aux[i * 4]).unwrap();
+            let clip = text.clip.unwrap();
+            assert!(clip.x >= bounds.x + x && clip.x + clip.width <= bounds.x + x + width);
+            assert!(clip.y >= bounds.y + y && clip.y + clip.height <= bounds.y + y + height * 0.5);
+            assert!(text.bounds.height <= clip.height + 1.0);
+            let body = scene.get(w.aux[i * 4 + 1]).unwrap();
+            assert!(body.bounds.y >= text.bounds.y + text.bounds.height);
+            assert_eq!(body.clip, Some(Rect::new(bounds.x + x, bounds.y + y, width, height)));
+        }
+        ui.set_chart_tiles(chart, vec![ChartTile::trend("New", vec![], TrendStyle::default())]);
+        ui.sync(&mut scene);
+        assert_eq!(ui.accessible_name(chart).as_deref(), Some("New"));
+        ui.set_accessible_name(chart, "Override");
+        assert_eq!(ui.accessible_name(chart).as_deref(), Some("Override"));
+        ui.clear_accessible_name(chart);
+        ui.set_chart_tiles(chart, vec![]);
+        ui.sync(&mut scene);
+        assert_eq!(ui.accessible_name(chart), None);
+        assert!(ui.widgets.get(&chart).unwrap().aux.iter().all(|id| !scene.get(*id).unwrap().visible));
     }
 
     #[test]

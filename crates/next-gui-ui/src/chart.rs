@@ -4,13 +4,16 @@
 //! Standalone [`crate::Ui`] `gauge` / `trend` builders remain; paint/raster helpers are shared.
 
 use next_gui_scene::Color;
+use next_gui_text::{Font, TextLayout};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{GaugeStyle, TrendStyle};
 
 /// One tile inside a [`Chart`] panel.
 #[derive(Debug, Clone)]
 pub struct ChartTile {
-    /// Short title above the tile body.
+    /// Title above the body; wraps to at most three lines and half the tile height.
+    /// Longer titles use a grapheme-safe ellipsis; the full text remains accessible.
     pub title: String,
     /// Gauge dial or Trend series.
     pub kind: ChartKind,
@@ -114,11 +117,43 @@ impl Default for ChartStyle {
     }
 }
 
+pub(crate) fn title_layout(
+    font: &Font,
+    text: &str,
+    size: f32,
+    width: f32,
+    height: f32,
+) -> TextLayout {
+    let height = height.min(font.metrics(size).line_height * 3.0);
+    let layout = font.layout(text, size, Some(width));
+    if layout.width <= width && layout.height <= height {
+        return layout;
+    }
+    let mut fitted = font.layout("…", size, Some(width));
+    if fitted.width > width || fitted.height > height {
+        return font.layout("", size, None);
+    }
+    let boundaries: Vec<_> = text
+        .grapheme_indices(true)
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let (mut low, mut high) = (0, boundaries.len().saturating_sub(1));
+    while low < high {
+        let mid = low + (high - low).div_ceil(2);
+        let candidate = font.layout(&format!("{}…", &text[..boundaries[mid]]), size, Some(width));
+        if candidate.width <= width && candidate.height <= height {
+            low = mid;
+            fitted = candidate;
+        } else {
+            high = mid - 1;
+        }
+    }
+    fitted
+}
+
 /// Compute grid cell rects inside a Chart panel (local to panel origin).
-pub(crate) fn chart_tile_rects(
-    style: ChartStyle,
-    tile_count: usize,
-) -> Vec<(f32, f32, f32, f32)> {
+pub(crate) fn chart_tile_rects(style: ChartStyle, tile_count: usize) -> Vec<(f32, f32, f32, f32)> {
     let cols = style.columns.max(1);
     let n = tile_count;
     if n == 0 {
@@ -151,6 +186,36 @@ pub(crate) fn chart_tile_rects(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_wraps_and_bounds_ellipsis_without_splitting_graphemes() {
+        let font = next_gui_text::load_default_cjk_font().unwrap();
+        let size = 16.0;
+        let line = font.metrics(size).line_height;
+        let short = title_layout(&font, "Revenue", size, 200.0, line * 3.0);
+        assert_eq!(
+            short.glyphs.iter().map(|g| g.ch).collect::<String>(),
+            "Revenue"
+        );
+        let text = "季度收入 e\u{301} 👩‍💻 🇯🇵 ".repeat(12);
+        let wrapped = title_layout(&font, &text, size, 120.0, line * 2.0 + 0.01);
+        let shown: String = wrapped.glyphs.iter().map(|g| g.ch).collect();
+        assert!(shown.ends_with('…'));
+        let prefix = shown.strip_suffix('…').unwrap();
+        assert!(text.starts_with(prefix));
+        assert!(text.grapheme_indices(true).any(|(i, _)| i == prefix.len()));
+        assert!(wrapped.width <= 120.0 && wrapped.height <= line * 2.0 + 0.01);
+        let three = title_layout(&font, &text, size, 120.0, 1000.0);
+        assert!(three.height <= line * 3.0);
+        assert!(title_layout(&font, &text, size, 1.0, line)
+            .glyphs
+            .is_empty());
+        assert!(title_layout(&font, &text, size, 120.0, 0.0)
+            .glyphs
+            .is_empty());
+        let newline = title_layout(&font, "one\ntwo", size, 200.0, line * 3.0);
+        assert_eq!(newline.height, line * 2.0);
+    }
 
     #[test]
     fn tile_rects_two_by_two() {

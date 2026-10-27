@@ -600,20 +600,26 @@ impl Demo {
                     state.dock_focus = DockKind::Schema;
                     MainTab::Structure
                 }
-                "schema-namespaces" | "browse-namespaces" | "plot-namespaces" => {
+                "schema-namespaces" | "browse-namespaces" | "plot-namespaces" | "plot-caption" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
                     state.refresh_schema().unwrap();
                     let i = state.schema.iter().position(|o| o.schema == "analytics" && o.name == "customers").unwrap();
                     state.select_schema_node(10_000 + i as u64);
                     state.dock_focus = DockKind::Schema;
-                    if tab == "plot-namespaces" {
+                    if tab == "plot-namespaces" || tab == "plot-caption" {
                         state.conn.as_ref().unwrap().execute_batch("WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<15)
                             INSERT INTO analytics.customers SELECT x,'APAC',100+x*12+((x%3)*30) FROM n;").unwrap();
                         state.refresh_browse().unwrap();
                         state.chart_schema = "analytics".into();
                         state.chart_table = Some("customers".into());
                         state.chart_column = "revenue".into();
+                        if tab == "plot-caption" {
+                            state.conn.as_ref().unwrap().execute_batch("CREATE VIEW analytics.\"客户季度营收分析\" AS SELECT revenue AS \"季度客户收入（含税）\" FROM customers;").unwrap();
+                            state.refresh_schema().unwrap();
+                            state.chart_table = Some("客户季度营收分析".into());
+                            state.chart_column = "季度客户收入（含税）".into();
+                        }
                         state.refresh_chart().unwrap();
                         state.dock_plot = true;
                         state.dock_focus = DockKind::Plot;
@@ -4160,6 +4166,19 @@ mod interaction_tests {
                     let mut soft = SoftRenderer::new(width, height, clear_color(&demo.theme));
                     soft.render(&encode_scene(&demo.scene, &dirty), &dirty);
                     write_ppm(&format!("{prefix}-{name}-{width}.ppm"), soft.frame_pixels().unwrap().0, width, height).unwrap();
+                    if let Ok(mut gpu) = GpuRenderer::try_new(width, height, clear_color(&demo.theme)) {
+                        gpu.render(&encode_scene(&demo.scene, &dirty), &dirty);
+                        let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id).is_some_and(|id| demo.ui.is_chart(id))).unwrap().bounds;
+                        let soft_pixels = soft.frame_pixels().unwrap().0;
+                        let gpu_pixels = gpu.frame_pixels().unwrap().0;
+                        let delta = ((bounds.y.ceil() as usize + 2)..(bounds.y + bounds.height).floor() as usize - 2).flat_map(|y|
+                            ((bounds.x.ceil() as usize + 2)..(bounds.x + bounds.width).floor() as usize - 2).map(move |x| y * width as usize + x)
+                        ).flat_map(|i| [0, 8, 16].map(|shift|
+                            (((soft_pixels[i] >> shift) & 255) as i32 - ((gpu_pixels[i] >> shift) & 255) as i32).abs()
+                        )).max().unwrap();
+                        assert!(delta <= 2, "Chart {name}/{width} Soft/Metal channel delta {delta}");
+                        eprintln!("Chart {name}/{width} Soft/Metal actual readback max channel delta {delta}");
+                    } else { eprintln!("Chart {name}/{width} GPU comparison not_run: adapter unavailable"); }
                 }
             }
         }

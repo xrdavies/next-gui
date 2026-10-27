@@ -1113,13 +1113,14 @@ pub fn build_ui(
                     .map(|o| format!("{:?} · {}.{}", o.kind, db::quote_ident(&o.schema), db::quote_ident(&o.name)))
                     .collect()
             };
+            let chart_title = format!(
+                "{} · {} ({} samples)",
+                state.chart_table.as_ref().map(|name| db::qualified_name(&state.chart_schema, name)).unwrap_or_else(|| "—".into()),
+                state.chart_column,
+                state.chart_points.len()
+            );
             let chart_tiles = vec![ChartTile::trend(
-                format!(
-                    "{} · {} ({} samples)",
-                    state.chart_table.as_ref().map(|name| db::qualified_name(&state.chart_schema, name)).unwrap_or_else(|| "—".into()),
-                    state.chart_column,
-                    state.chart_points.len()
-                ),
+                chart_title.clone(),
                 state.chart_points.clone(),
                 TrendStyle::from_theme(&theme),
             )];
@@ -1733,7 +1734,7 @@ pub fn build_ui(
                                                 );
                                                 btn_chart = row.tool_button("Plot");
                                             });
-                                            chart = c.chart(chart_tiles.clone(), chart_style);
+                                            c.tooltip(chart_title.clone(), |t| { chart = t.chart(chart_tiles.clone(), chart_style); });
                                         });
                                     });
                                 }
