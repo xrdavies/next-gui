@@ -14,6 +14,9 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261027-76baeacfe7e5-F03 | open | P2 | grok | e28 / all | incomplete parity | SQL calltips | Runtime signatures/current argument work; original parameter names/descriptions and long overload interaction remain | [F03](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f03) | — | — |
+| R-20261027-76baeacfe7e5-F01 | verified | P2 | grok | shared / all | existing branch | Tooltip painter | Switching hosts hides the previous overlay; bounded wrapping and clipping | [F01](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f01) | 76baeacfe7e5 | 76baeacfe7e5 |
+| R-20261027-76baeacfe7e5-F02 | verified | P2 | grok | e28 / all | 605b048 | Function metadata | PRAGMA reader ignores a same-named user table and fake function rows | [F02](R-20261027-76baeacfe7e5.md#r-20261027-76baeacfe7e5-f02) | 76baeacfe7e5 | 76baeacfe7e5 |
 | 2026-10-27 | `c365bf6..3855f40fe8ba` | Codex | issues — F02 verified: 353 tests/strict checks; original extra words, keyword case/Cancel/defaults, dark/light/Metal delta 1 pass; native acceptance remains unavailable | [Report](R-20261027-3855f40fe8ba.md) |
 | 2026-10-27 | `ba6a66d..605b04835365` | Codex | issues — 351 tests/strict checks; SQL namespace completion, shared suggestion input/Undo and dark/light Metal delta 1 verified; original keyword case/words and native acceptance remain | [Report](R-20261027-605b04835365.md) |
 | R-20261027-605b04835365-F02 | verified | P2 | grok | e28 / all | incomplete parity | SQL completion / Prefs | Original extra words share syntax/completion; output case, defaults and draft Cancel verified | [F02](R-20261027-605b04835365.md#r-20261027-605b04835365-f02) | 3855f40fe8ba | 3855f40fe8ba |
@@ -75,6 +78,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-27 | `a7333b2..76baeacfe7e5` | Codex | issues — 363 tests/strict checks; passive calltips, both-theme Metal delta 1, native SQL/14 Office static inspection pass; descriptive/native interaction gaps remain | [Report](R-20261027-76baeacfe7e5.md) |
 | 2026-10-27 | `103ee81..fdbf1e3c3942` | Codex | issues — 307 tests/clippy/build/features pass; header actions, menu input and contrast verified; Soft/Metal/14 Office renders inspected; native viewport convention finding open | [Report](R-20261027-fdbf1e3c3942.md) |
 | 2026-10-27 | `46ad9d6..5bd5104966ae` | Codex | issues — 299 tests/clippy/build/features pass; per-table frozen prefixes, legacy/native XML and same-table tab recovery verified; Soft/Metal inspected; header/full parity remain | [Report](R-20261027-5bd5104966ae.md) |
 | 2026-10-27 | `ec2ae64..db7f25222647` | Codex | issues — 296 tests/clippy/build/features pass; per-table filters/order/widths and inactive native XML, preflight and Soft/Metal inspected; full settings/native input remain | [Report](R-20261027-db7f25222647.md) |

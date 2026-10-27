@@ -472,3 +472,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Original keyword parity checkpoint (2026-10-27)
 
 [Review](../../docs/reviews/R-20261027-3855f40fe8ba.md): F02 verified after reproducing missing ANY. Eleven original editor/type words now share keyword colors and completion; keyword output case defaults uppercase and has a persisted draft preference. Functions and object spellings stay intact. 353 tests/strict checks, dark/light Soft, preference overlay and actual completion Metal delta 1 pass. Native display remains asleep; function calltips, broader editor/preferences and native/original acceptance remain unfinished.
+
+
+## Runtime function hint checkpoint (2026-10-27)
+
+[Review](../../docs/reviews/R-20261027-76baeacfe7e5.md): shared passive TextArea hints wrap/clip/flip within the window, retain focus, pass pointer/wheel input through and preserve Escape suppression in matching editing sessions. Cached SQLite function arities provide nested-call/current-argument, overload, variadic and zero-argument hints. Stale tooltip-host overlays and shadowed function metadata were reproduced and fixed. 363 tests and strict checks pass; both-theme actual Metal delta 1, Soft views, native e28 and all fourteen Office static windows inspected. Native actuation still shows no app window and activation fails, so key/IME/clipboard acceptance remains open. F03 tracks meaningful argument names/descriptions and long overload/help interaction. Complete editor and full DB4S parity remain unfinished.
