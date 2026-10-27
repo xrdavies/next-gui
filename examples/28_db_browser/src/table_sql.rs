@@ -230,6 +230,10 @@ fn check_definition(check: &NamedCheck) -> Result<NamedTableConstraint, String> 
     Ok(constraints.remove(0))
 }
 
+pub fn check_sql(check: &NamedCheck) -> Result<String, String> {
+    Ok(SqlFragment(check_definition(check)?).to_string())
+}
+
 fn set_table_checks(command: &mut Cmd, checks: &[NamedCheck]) -> Result<(), String> {
     if checks.iter().any(|check| check.column.is_some()) { return Err("Column CHECKs require a column-constraint override".into()); }
     replace_table_constraints(command, checks.iter().map(check_definition).collect::<Result<Vec<_>, _>>()?, |constraint| matches!(constraint, TableConstraint::Check(_)))
@@ -306,6 +310,13 @@ fn foreign_key_definition(key: &NamedForeignKey) -> Result<NamedTableConstraint,
     }
     if clause.columns.as_ref().is_some_and(|parent| parent.len() != columns.len()) { return Err("Local and referenced foreign-key column counts must match".into()); }
     Ok(constraints.remove(0))
+}
+
+pub fn foreign_key_sql(key: &NamedForeignKey) -> Result<String, String> {
+    if key.inline {
+        let (_,constraints)=inline_foreign_key_definition(key)?;
+        Ok(constraints.into_iter().map(|constraint|SqlFragment(constraint).to_string()).collect::<Vec<_>>().join(" "))
+    } else {Ok(SqlFragment(foreign_key_definition(key)?).to_string())}
 }
 
 pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, renames: &[(&str, &str)]) -> Result<Vec<NamedForeignKey>, String> {
@@ -499,6 +510,26 @@ fn index_constraint_definition(key: &NamedIndexConstraint) -> Result<NamedTableC
     Ok(constraints.remove(0))
 }
 
+fn inline_index_constraint(key: &NamedIndexConstraint, definition: &NamedTableConstraint) -> Option<(Name, NamedColumnConstraint)> {
+    let (members,auto_increment,conflict_clause)=match &definition.constraint {
+        TableConstraint::PrimaryKey {columns,auto_increment,conflict_clause}=>(columns,*auto_increment,*conflict_clause),
+        TableConstraint::Unique {columns,conflict_clause}=>(columns,false,*conflict_clause),
+        _=>return None,
+    };
+    let [member]=members.as_slice() else {return None;};
+    if !key.inline || !matches!(member.expr,Expr::Name(_)|Expr::Id(_)) || (!key.primary && member.order.is_some())
+        || (auto_increment && member.order==Some(SortOrder::Desc)) {return None;}
+    let constraint=if key.primary {ColumnConstraint::PrimaryKey {order:member.order,auto_increment,conflict_clause}}
+        else {ColumnConstraint::Unique(conflict_clause)};
+    Some((index_column_name(&member.expr)?,NamedColumnConstraint {name:definition.name.clone(),constraint}))
+}
+
+pub fn index_constraint_sql(key: &NamedIndexConstraint) -> Result<String, String> {
+    let definition=index_constraint_definition(key)?;
+    Ok(if let Some((_,inline))=inline_index_constraint(key,&definition) {SqlFragment(inline).to_string()}
+        else {SqlFragment(definition).to_string()})
+}
+
 fn index_column_name(expr: &Expr) -> Option<Name> {
     match expr {
         Expr::Name(name) => Some(name.clone()),
@@ -600,23 +631,14 @@ fn set_index_constraints(command: &mut Cmd, keys: &[NamedIndexConstraint]) -> Re
     let mut table_keys = Vec::new();
     let mut inline_keys = Vec::new();
     for (key, definition) in keys.iter().zip(replacements) {
-        let (members, auto_increment, conflict_clause) = match &definition.constraint {
-            TableConstraint::PrimaryKey { columns, auto_increment, conflict_clause } => (columns, *auto_increment, *conflict_clause),
-            TableConstraint::Unique { columns, conflict_clause } => (columns, false, *conflict_clause),
+        let members = match &definition.constraint {
+            TableConstraint::PrimaryKey { columns, .. } | TableConstraint::Unique { columns, .. } => columns,
             _ => unreachable!(),
         };
         for member in members {
             if !columns.values().any(|column| column_expression(&member.expr, &column.col_name)) { return Err(format!("Unknown index-constraint column: {}", SqlFragment(&member.expr))); }
         }
-        if let [member] = members.as_slice() {
-            if key.inline && matches!(member.expr, Expr::Name(_) | Expr::Id(_)) && (key.primary || member.order.is_none())
-                && !(auto_increment && member.order == Some(SortOrder::Desc)) {
-                let name = index_column_name(&member.expr).unwrap();
-                let constraint = if key.primary { ColumnConstraint::PrimaryKey { order: member.order, auto_increment, conflict_clause } } else { ColumnConstraint::Unique(conflict_clause) };
-                inline_keys.push((name, NamedColumnConstraint { name: definition.name.clone(), constraint }));
-                continue;
-            }
-        }
+        if let Some(inline)=inline_index_constraint(key,&definition) {inline_keys.push(inline);continue;}
         table_keys.push(definition);
     }
     for column in columns.values_mut() {
@@ -1416,6 +1438,28 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn constraint_grid_sql_fragments_keep_inline_semantics_names_and_deferrals() {
+        let mut primary=super::NamedIndexConstraint {name:Some("primary \"key".into()),columns:"id".into(),primary:true,auto_increment:true,inline:true,..Default::default()};
+        let unique=super::NamedIndexConstraint {name:Some("compound unique".into()),columns:"a COLLATE NOCASE DESC,b ASC".into(),conflict:Some(sqlite3_parser::ast::ResolveType::Fail),..Default::default()};
+        let check=super::NamedCheck {column:Some("name".into()),name:Some("check\nname".into()),expression:"length(name)>0 AND name <> 'line\nbreak'".into()};
+        let inline=super::NamedForeignKey {name:Some("parent \"reference".into()),columns:"p".into(),clause:"REFERENCES parent(id) ON UPDATE CASCADE CONSTRAINT deadline DEFERRABLE INITIALLY DEFERRED".into(),inline:true};
+        let table=super::NamedForeignKey {name:Some("compound parent".into()),columns:"a,b".into(),clause:"REFERENCES parent(code,region) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED".into(),inline:false};
+        let pk=super::index_constraint_sql(&primary).unwrap();assert!(pk.contains("AUTOINCREMENT"));assert!(!pk.contains("(id"));
+        let fk=super::foreign_key_sql(&inline).unwrap();assert!(fk.contains("deadline") && fk.contains("INITIALLY DEFERRED"));assert!(!fk.contains("FOREIGN KEY"));
+        let conn=rusqlite::Connection::open_in_memory().unwrap();conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY,code TEXT,region INTEGER,UNIQUE(code,region)); INSERT INTO parent VALUES(1,'a',7);").unwrap();
+        conn.execute_batch(&format!("CREATE TABLE records(id INTEGER {pk},name TEXT {},p INTEGER {fk},a TEXT,b INTEGER,{},{});",super::check_sql(&check).unwrap(),super::index_constraint_sql(&unique).unwrap(),super::foreign_key_sql(&table).unwrap())).unwrap();
+        conn.execute("INSERT INTO records(name,p,a,b) VALUES('ok',1,'a',7)",[]).unwrap();assert_eq!(conn.last_insert_rowid(),1);
+        assert!(conn.execute("INSERT INTO records(name) VALUES('')",[]).is_err());assert!(conn.execute("INSERT INTO records(name) VALUES('line'||char(10)||'break')",[]).is_err());assert!(conn.execute("INSERT INTO records(name,a,b) VALUES('ok','A',7)",[]).is_err());
+        conn.execute_batch("BEGIN; INSERT INTO records(name,p) VALUES('pending',2); INSERT INTO parent VALUES(2,'b',8); COMMIT;").unwrap();
+        primary.auto_increment=false;primary.columns="id DESC".into();let sql=super::index_constraint_sql(&primary).unwrap();assert!(sql.contains("PRIMARY KEY DESC"));
+        conn.execute_batch(&format!("CREATE TABLE descending(id INTEGER {sql},value); INSERT INTO descending(id,value) VALUES(900,'kept');")).unwrap();assert_eq!(conn.query_row("SELECT rowid FROM descending",[],|row|row.get::<_,i64>(0)).unwrap(),1);
+        primary.columns="id); DROP TABLE parent; --".into();assert!(super::index_constraint_sql(&primary).is_err());
+        let mut bad=check;bad.expression="1); DROP TABLE parent; --".into();assert!(super::check_sql(&bad).is_err());
+        let mut bad=table;bad.clause="REFERENCES parent(id)); DROP TABLE parent; --".into();assert!(super::foreign_key_sql(&bad).is_err());
+        assert_eq!(conn.query_row("SELECT count(*) FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),2);
+    }
+
     use super::*;
     use rusqlite::Connection;
 

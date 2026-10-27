@@ -13,6 +13,13 @@ use crate::db::{
     COLUMN_TYPES,
 };
 
+#[derive(Debug, Clone, Default)]
+pub struct ConstraintTableView {
+    pub scroll: (f32, f32),
+    pub widths: Vec<f32>,
+    pub column: Option<usize>,
+}
+
 #[derive(Debug,Clone)]
 pub struct FieldCellEdit {
     pub column: usize,
@@ -433,18 +440,16 @@ pub struct AppState {
     pub wizard_key_sel: usize,
     pub wizard_key_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub wizard_key_scroll: (f32, f32),
-    pub wizard_key_list_scroll: f32,
+    pub wizard_constraint_views: [ConstraintTableView; 3],
     pub wizard_foreign_keys: Vec<crate::table_sql::NamedForeignKey>,
     pub wizard_foreign_key_sel: usize,
     pub wizard_foreign_key_states: Vec<[Option<next_gui_ui::TextAreaState>; 2]>,
     pub wizard_foreign_key_scroll: (f32, f32),
-    pub wizard_foreign_key_list_scroll: f32,
     pub wizard_constraint_columns: Vec<String>,
     pub wizard_constraint_table: String,
     pub wizard_check_sel: usize,
     pub wizard_check_states: Vec<Option<next_gui_ui::TextAreaState>>,
     pub wizard_check_scroll: (f32, f32),
-    pub wizard_check_list_scroll: f32,
     pub wizard_column_edit_states: Vec<[Option<next_gui_ui::TextAreaState>; 3]>,
     pub wizard_col_sel: usize,
     pub wizard_index_name: String,
@@ -738,18 +743,16 @@ impl AppState {
             wizard_key_sel: 0,
             wizard_key_states: Vec::new(),
             wizard_key_scroll: (0.0, 0.0),
-            wizard_key_list_scroll: 0.0,
+            wizard_constraint_views: Default::default(),
             wizard_foreign_keys: Vec::new(),
             wizard_foreign_key_sel: 0,
             wizard_foreign_key_states: Vec::new(),
             wizard_foreign_key_scroll: (0.0, 0.0),
-            wizard_foreign_key_list_scroll: 0.0,
             wizard_constraint_columns: Vec::new(),
             wizard_constraint_table: String::new(),
             wizard_check_sel: 0,
             wizard_check_states: Vec::new(),
             wizard_check_scroll: (0.0, 0.0),
-            wizard_check_list_scroll: 0.0,
             wizard_column_edit_states: Vec::new(),
             wizard_col_sel: 0,
             wizard_index_name: "idx_name".into(),
@@ -1625,19 +1628,17 @@ impl AppState {
         self.wizard_key_sel = 0;
         self.wizard_key_states = vec![None; self.wizard_index_constraints.len()];
         self.wizard_key_scroll = (0.0, 0.0);
-        self.wizard_key_list_scroll = 0.0;
+        self.wizard_constraint_views = Default::default();
         self.wizard_checks.clear();
         self.wizard_foreign_keys.clear();
         self.wizard_foreign_key_sel = 0;
         self.wizard_foreign_key_states.clear();
         self.wizard_foreign_key_scroll = (0.0, 0.0);
-        self.wizard_foreign_key_list_scroll = 0.0;
         self.wizard_constraint_columns = self.wizard_cols.iter().map(|column| column.name.clone()).collect();
         self.wizard_constraint_table = self.wizard_table_name.clone();
         self.wizard_check_sel = 0;
         self.wizard_check_states.clear();
         self.wizard_check_scroll = (0.0, 0.0);
-        self.wizard_check_list_scroll = 0.0;
         self.wizard_column_edit_states = vec![[None, None, None]; self.wizard_cols.len()];
         self.wizard_col_sel = 0;
         self.overlay = Some(OverlayKind::EditTable);
@@ -1668,7 +1669,7 @@ impl AppState {
         self.wizard_key_sel = 0;
         self.wizard_key_states = vec![None; self.wizard_index_constraints.len()];
         self.wizard_key_scroll = (0.0, 0.0);
-        self.wizard_key_list_scroll = 0.0;
+        self.wizard_constraint_views = Default::default();
         self.wizard_checks = crate::table_sql::table_checks(&sql)?;
         self.wizard_checks.extend(crate::table_sql::inline_checks(&sql)?);
         self.wizard_foreign_keys = crate::table_sql::inline_foreign_keys(&sql)?;
@@ -1676,13 +1677,11 @@ impl AppState {
         self.wizard_foreign_key_sel = 0;
         self.wizard_foreign_key_states = vec![[None, None]; self.wizard_foreign_keys.len()];
         self.wizard_foreign_key_scroll = (0.0, 0.0);
-        self.wizard_foreign_key_list_scroll = 0.0;
         self.wizard_constraint_columns = cols.iter().map(|column| column.name.clone()).collect();
         self.wizard_constraint_table = sel.name.clone();
         self.wizard_check_sel = 0;
         self.wizard_check_states = vec![None; self.wizard_checks.len()];
         self.wizard_check_scroll = (0.0, 0.0);
-        self.wizard_check_list_scroll = 0.0;
         self.wizard_table_page = 0;
         self.wizard_table_advanced = false;
         self.wizard_table_original = Some(sel);

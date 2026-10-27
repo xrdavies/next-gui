@@ -177,6 +177,10 @@ with virtual data must load further rows themselves (e28 plain PageUp/PageDown
 uses its guarded full-result navigation). This is keyboard behavior, not an OS
 accessibility-tree bridge or native input acceptance.
 
+`focused_text_for_copy` includes selected Table cells as quoted TSV; embedded
+quotes and line breaks retain their original content. Cut does not delete table
+cells. Cell painting folds tabs/newlines to spaces and clips to its own row.
+
 Tables can opt into checkable cells with `set_table_check_cells`. Click the visible
 box or press Space on the selected cell to toggle it; ordinary cells keep their
 selection behavior. Drain `take_table_check_change` and refresh copied row text

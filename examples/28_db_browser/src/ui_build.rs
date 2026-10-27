@@ -189,7 +189,7 @@ pub struct BuiltUi {
     pub ov_table_tabs: WidgetId,
     pub ov_table_advanced: WidgetId,
     pub ov_checks_scroll: WidgetId,
-    pub ov_checks_list: WidgetId,
+    pub ov_checks_table: WidgetId,
     pub ov_check_name: WidgetId,
     pub ov_check_expr: WidgetId,
     pub ov_check_add: WidgetId,
@@ -198,7 +198,7 @@ pub struct BuiltUi {
     pub ov_check_up: WidgetId,
     pub ov_check_down: WidgetId,
     pub ov_keys_scroll: WidgetId,
-    pub ov_keys_list: WidgetId,
+    pub ov_keys_table: WidgetId,
     pub ov_key_name: WidgetId,
     pub ov_key_columns: WidgetId,
     pub ov_key_conflict: WidgetId,
@@ -208,7 +208,7 @@ pub struct BuiltUi {
     pub ov_key_up: WidgetId,
     pub ov_key_down: WidgetId,
     pub ov_fks_scroll: WidgetId,
-    pub ov_fks_list: WidgetId,
+    pub ov_fks_table: WidgetId,
     pub ov_fk_name: WidgetId,
     pub ov_fk_columns: WidgetId,
     pub ov_fk_clause: WidgetId,
@@ -320,6 +320,24 @@ fn schema_tree(state: &AppState) -> Vec<TreeNode> {
             }).collect();
         TreeNode::new(root, name.clone(), groups)
     }).collect()
+}
+
+pub fn table_index_rows(state: &AppState) -> Vec<Vec<String>> {
+    state.wizard_index_constraints.iter().map(|key|vec![key.columns.clone(),
+        format!("{}{}",if key.primary {"PRIMARY KEY"} else {"UNIQUE"},if key.inline {" · column"} else {""}),
+        key.name.clone().unwrap_or_default(),crate::table_sql::index_constraint_sql(key).unwrap_or_else(|error|format!("-- {error}"))]).collect()
+}
+
+pub fn table_foreign_key_rows(state: &AppState) -> Vec<Vec<String>> {
+    state.wizard_foreign_keys.iter().map(|key|vec![format!("{}{}",key.columns,if key.inline {" · column"} else {""}),
+        key.name.clone().unwrap_or_default(),key.clause.clone(),
+        crate::table_sql::foreign_key_sql(key).unwrap_or_else(|error|format!("-- {error}"))]).collect()
+}
+
+pub fn table_check_rows(state: &AppState) -> Vec<Vec<String>> {
+    state.wizard_checks.iter().map(|check|vec![check.column.as_ref().map_or_else(||check.expression.clone(),
+        |owner|format!("Column {} · {}",db::quote_ident(owner),check.expression)),check.name.clone().unwrap_or_default(),
+        crate::table_sql::check_sql(check).unwrap_or_else(|error|format!("-- {error}"))]).collect()
 }
 
 pub fn table_field_rows(state: &AppState) -> Vec<Vec<String>> {
@@ -520,7 +538,7 @@ pub fn build_ui(
     let mut ov_table_tabs = z;
     let mut ov_table_advanced = z;
     let mut ov_checks_scroll = z;
-    let mut ov_checks_list = z;
+    let mut ov_checks_table = z;
     let mut ov_check_name = z;
     let mut ov_check_expr = z;
     let mut ov_check_add = z;
@@ -529,7 +547,7 @@ pub fn build_ui(
     let mut ov_check_up = z;
     let mut ov_check_down = z;
     let mut ov_keys_scroll = z;
-    let mut ov_keys_list = z;
+    let mut ov_keys_table = z;
     let mut ov_key_name = z;
     let mut ov_key_columns = z;
     let mut ov_key_conflict = z;
@@ -539,7 +557,7 @@ pub fn build_ui(
     let mut ov_key_up = z;
     let mut ov_key_down = z;
     let mut ov_fks_scroll = z;
-    let mut ov_fks_list = z;
+    let mut ov_fks_table = z;
     let mut ov_fk_name = z;
     let mut ov_fk_columns = z;
     let mut ov_fk_clause = z;
@@ -1047,8 +1065,8 @@ pub fn build_ui(
                                         ov_key_add_pk = r.tool_button("Add primary key"); ov_key_add_unique = r.tool_button("Add UNIQUE");
                                         ov_key_del = r.tool_button("Remove"); ov_key_up = r.tool_button("Up"); ov_key_down = r.tool_button("Down");
                                     });
-                                    let mut keys_list = list_s; keys_list.width = area_s.width; keys_list.height = 120.0;
-                                    ov_keys_list = c.list(state.wizard_index_constraints.iter().map(|key| format!("{} · {} · ({})", if key.primary { "PRIMARY KEY" } else { "UNIQUE" }, key.name.as_deref().unwrap_or("(unnamed)"), key.columns)).collect::<Vec<_>>(), keys_list);
+                                    let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
+                                    ov_keys_table=c.table([("Columns",240.0),("Type",180.0),("Name",180.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_index_rows(state),grid);
                                     let key = state.wizard_index_constraints.get(state.wizard_key_sel);
                                     c.row(row, |r| {
                                         r.text("Name"); ov_key_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
@@ -1070,8 +1088,8 @@ pub fn build_ui(
                                         ov_fk_add = r.tool_button("Add"); ov_fk_del = r.tool_button("Remove");
                                         ov_fk_up = r.tool_button("Up"); ov_fk_down = r.tool_button("Down");
                                     });
-                                    let mut keys_list = list_s; keys_list.width = area_s.width; keys_list.height = 120.0;
-                                    ov_fks_list = c.list(state.wizard_foreign_keys.iter().map(|key| format!("{} · ({}) · {}", key.name.as_deref().unwrap_or("(unnamed)"), key.columns, key.clause.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), keys_list);
+                                    let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
+                                    ov_fks_table=c.table([("Columns",240.0),("Name",180.0),("References",400.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_foreign_key_rows(state),grid);
                                     let key = state.wizard_foreign_keys.get(state.wizard_foreign_key_sel);
                                     c.row(row, |r| {
                                         r.text("Name"); ov_fk_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
@@ -1095,10 +1113,8 @@ pub fn build_ui(
                                         ov_check_up = r.tool_button("Up");
                                         ov_check_down = r.tool_button("Down");
                                     });
-                                    let mut checks_list = list_s;
-                                    checks_list.width = area_s.width;
-                                    checks_list.height = 120.0;
-                                    ov_checks_list = c.list(state.wizard_checks.iter().map(|check| format!("{} · {} · {}", check.column.as_ref().map(|owner|format!("Column {}",db::quote_ident(owner))).unwrap_or_else(||"Table".into()), check.name.as_deref().unwrap_or("(unnamed)"), check.expression.split_whitespace().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>(), checks_list);
+                                    let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
+                                    ov_checks_table=c.table([("Check",400.0),("Name",180.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_check_rows(state),grid);
                                     let check = state.wizard_checks.get(state.wizard_check_sel);
                                     c.row(row, |r| {
                                         r.text("Name");
@@ -2286,9 +2302,13 @@ pub fn build_ui(
     if state.overlay==Some(OverlayKind::EditTable) { ui.set_accessible_name(ov_name,"Table name"); }
     ui.set_accessible_name(ov_table_advanced,if state.wizard_table_advanced { "Hide advanced table options" } else { "Show advanced table options" });
     ui.set_tabs_selected(ov_table_tabs, state.wizard_table_page);
-    ui.set_accessible_name(ov_checks_list, "Table and column CHECK constraints");
-    ui.set_list_selected(ov_checks_list, (!state.wizard_checks.is_empty()).then_some(state.wizard_check_sel));
-    ui.set_list_scroll_offset(ov_checks_list, state.wizard_check_list_scroll);
+    for (index,table) in [ov_keys_table,ov_fks_table,ov_checks_table].into_iter().enumerate() {
+        let view=&state.wizard_constraint_views[index];
+        ui.set_table_frozen_cols(table,1);ui.set_table_selected_col(table,view.column);
+        for (column,&width) in view.widths.iter().enumerate() {ui.set_table_column_width(table,column,width);}
+    }
+    ui.set_accessible_name(ov_checks_table, "Table and column CHECK constraints");
+    ui.set_table_selected_row(ov_checks_table, (!state.wizard_checks.is_empty()).then_some(state.wizard_check_sel));
     ui.set_accessible_name(ov_check_name, "CHECK constraint name");
     ui.set_accessible_name(ov_check_expr, "CHECK expression");
     ui.set_text_area_read_only(ov_check_expr, state.wizard_checks.is_empty() || !state.table_wizard_names_valid());
@@ -2302,9 +2322,8 @@ pub fn build_ui(
     let check_can_swap = |target| state.wizard_checks.get(state.wizard_check_sel).zip(state.wizard_checks.get(target)).is_some_and(|(a,b)|crate::table_sql::checks_can_swap(a,b));
     ui.set_button_enabled(ov_check_up, state.wizard_check_sel>0 && check_can_swap(state.wizard_check_sel.saturating_sub(1)));
     ui.set_button_enabled(ov_check_down, check_can_swap(state.wizard_check_sel+1));
-    ui.set_accessible_name(ov_keys_list, "Table index constraints");
-    ui.set_list_selected(ov_keys_list, (!state.wizard_index_constraints.is_empty()).then_some(state.wizard_key_sel));
-    ui.set_list_scroll_offset(ov_keys_list, state.wizard_key_list_scroll);
+    ui.set_accessible_name(ov_keys_table, "Table index constraints");
+    ui.set_table_selected_row(ov_keys_table, (!state.wizard_index_constraints.is_empty()).then_some(state.wizard_key_sel));
     ui.set_accessible_name(ov_key_name, "Index constraint name");
     ui.set_accessible_name(ov_key_columns, "Index constraint ordered columns SQL");
     ui.set_accessible_name(ov_key_conflict, "Index constraint conflict action");
@@ -2316,9 +2335,8 @@ pub fn build_ui(
     let movable_key = |index| state.wizard_index_constraints.get(index).is_some_and(|key| !crate::table_sql::index_constraint_requires_inline(key));
     ui.set_button_enabled(ov_key_up, state.wizard_key_sel > 0 && movable_key(state.wizard_key_sel) && movable_key(state.wizard_key_sel.saturating_sub(1)));
     ui.set_button_enabled(ov_key_down, movable_key(state.wizard_key_sel) && movable_key(state.wizard_key_sel+1));
-    ui.set_accessible_name(ov_fks_list, "Table and column foreign keys");
-    ui.set_list_selected(ov_fks_list, (!state.wizard_foreign_keys.is_empty()).then_some(state.wizard_foreign_key_sel));
-    ui.set_list_scroll_offset(ov_fks_list, state.wizard_foreign_key_list_scroll);
+    ui.set_accessible_name(ov_fks_table, "Table and column foreign keys");
+    ui.set_table_selected_row(ov_fks_table, (!state.wizard_foreign_keys.is_empty()).then_some(state.wizard_foreign_key_sel));
     ui.set_accessible_name(ov_fk_name, "Foreign key constraint name");
     ui.set_accessible_name(ov_fk_columns, "Foreign key local columns SQL");
     ui.set_accessible_name(ov_fk_clause, "Foreign key REFERENCES clause");
@@ -2395,6 +2413,9 @@ pub fn build_ui(
         }
     }
     ui.set_table_scroll_offset(ov_fields_table,state.wizard_field_scroll.0,state.wizard_field_scroll.1);
+    for (index,table) in [ov_keys_table,ov_fks_table,ov_checks_table].into_iter().enumerate() {
+        let (x,y)=state.wizard_constraint_views[index].scroll;ui.set_table_scroll_offset(table,x,y);
+    }
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
     ui.set_scroll_offset(ov_keys_scroll, state.wizard_key_scroll.0, state.wizard_key_scroll.1);
@@ -2549,7 +2570,7 @@ pub fn build_ui(
         ov_table_tabs,
         ov_table_advanced,
         ov_checks_scroll,
-        ov_checks_list,
+        ov_checks_table,
         ov_check_name,
         ov_check_expr,
         ov_check_add,
@@ -2558,7 +2579,7 @@ pub fn build_ui(
         ov_check_up,
         ov_check_down,
         ov_keys_scroll,
-        ov_keys_list,
+        ov_keys_table,
         ov_key_name,
         ov_key_columns,
         ov_key_conflict,
@@ -2568,7 +2589,7 @@ pub fn build_ui(
         ov_key_up,
         ov_key_down,
         ov_fks_scroll,
-        ov_fks_list,
+        ov_fks_table,
         ov_fk_name,
         ov_fk_columns,
         ov_fk_clause,

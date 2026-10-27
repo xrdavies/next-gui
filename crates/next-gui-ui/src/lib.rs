@@ -4022,10 +4022,10 @@ impl Ui {
     }
 
 
-    /// Text to place on the OS clipboard from the focused TextInput / TextArea / Autocomplete.
+    /// Text to place on the OS clipboard from the focused input or Table.
     ///
     /// TextArea returns only its selection. TextInput / Autocomplete return their full non-secret
-    /// value. `None` when no copyable text is selected.
+    /// value. Table returns its selected cells as quoted TSV. `None` when no copyable text is selected.
     pub fn focused_text_for_copy(&self) -> Option<String> {
         let id = self.focus?;
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -4035,6 +4035,7 @@ impl Ui {
                 ..
             } | Kind::Autocomplete { value, .. }) if !value.is_empty() => Some(value.clone()),
             Some(Kind::TextArea { .. }) => self.text_area_selected_text(id),
+            Some(Kind::Table { .. }) => self.table_selected_text(id),
             _ => None,
         }
     }
@@ -12317,7 +12318,7 @@ impl Ui {
                 let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
                 let fmt = cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c);
                 let (ox, clip) = cells[ci];
-                let clip = clip.intersect(&body_clip);
+                let clip = clip.intersect(&body_clip).intersect(&Rect::new(ox,y,col.width.max(0.0),style.row_height));
                 let visible = !clip.is_empty();
                 let col_sel = selected_col_range.map_or(selected_col == Some(ci), |(start, end)| ci >= start.min(end) && ci <= start.max(end));
                 let is_sel = row_sel && (!has_col_selection || col_sel);
@@ -12374,7 +12375,10 @@ impl Ui {
                     continue;
                 }
                 if let Some(tick) = tick { scene.set_visible(tick, false); }
-                let (_, mask) = self.font.rasterize_text(cell, style.size, None);
+                // A table row stays one line; copied cell text retains its original whitespace.
+                let single_line;
+                let display=if cell.contains(['\r','\n','\t']) {single_line=cell.replace(['\r','\n','\t']," ");single_line.as_str()} else {cell};
+                let (_, mask) = self.font.rasterize_text(display, style.size, None);
                 if let Some(&lab) = aux.get(base + 1 + ncols + ci) {
                     scene.set_corner_radius(lab,0.0);
                     scene.set_clip(lab, Some(clip));
@@ -21014,6 +21018,30 @@ mod tests {
             (f32::NAN, bounds.y),
         ] {
             assert_eq!(ui.table_header_column_at(&scene, table, x, y), None);
+        }
+    }
+
+    #[test]
+    fn table_multiline_cells_stay_inside_their_row_and_copy_original_text() {
+        for virtualized in [false,true] {
+            let mut ui=Ui::new();let mut scene=Scene::new();let mut table=WidgetId(0);
+            let original="CHECK (value > 0\r\n AND value < 10)\t-- comment";
+            let style=TableStyle {width:280.0,height:140.0,row_height:28.0,header_height:28.0,..Default::default()};
+            ui.column(ColumnStyle::default(),|c| {
+                let columns=vec![TableColumn::new("Owner",100.0),TableColumn::new("SQL",240.0)];
+                let rows=(0..12).map(|_|vec!["field".into(),original.into()]).collect();
+                table=if virtualized {c.virtual_table(columns,rows,style)} else {c.table(columns,rows,style)};
+            });
+            ui.set_table_frozen_cols(table,1);ui.set_table_scroll_offset(table,20.0,14.0);
+            ui.set_table_selected_row(table,Some(0));ui.set_table_selected_col(table,Some(1));ui.set_focus(Some(table));ui.sync(&mut scene);
+            assert_eq!(ui.focused_text_for_copy(),Some(format!("\"{original}\"")));
+            assert!(!ui.delete_focused_text_selection());assert_eq!(ui.focused_text_for_copy(),Some(format!("\"{original}\"")));
+            let w=&ui.widgets[&table];let bounds=scene.get(w.node.unwrap()).unwrap().bounds;
+            let label=scene.get(w.aux[2+1+2+1]).unwrap();let clip=label.clip.unwrap();
+            assert!(clip.x>=bounds.x+100.0 && clip.y>=bounds.y+28.0);
+            assert!(clip.y+clip.height<=bounds.y+42.0);assert!(label.bounds.height<=28.0);
+            let (_,mask)=ui.font.rasterize_text(&original.replace(['\r','\n','\t']," "),style.size,None);
+            assert_eq!(label.bounds.height,mask.height as f32);
         }
     }
 
