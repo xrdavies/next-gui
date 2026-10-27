@@ -1972,6 +1972,7 @@ pub fn build_ui(
         let len = ui.text_area_value(log_area).map_or(0, |s| s.chars().count());
         ui.select_text_area_range(log_area, len..len);
     }
+    crate::sql_syntax::apply(&mut ui, sql_area, &theme);
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
 

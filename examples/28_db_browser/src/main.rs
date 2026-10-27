@@ -14,6 +14,7 @@ mod project_xml;
 mod sql_log;
 mod sql_search;
 mod sql_editor;
+mod sql_syntax;
 mod state;
 mod ui_build;
 
@@ -2932,6 +2933,7 @@ impl Demo {
         if self.rebuild {
             self.do_rebuild();
         } else {
+            sql_syntax::apply(&mut self.ui, self.ids.sql_area, &self.theme);
             self.ui.sync(&mut self.scene);
             self.needs_paint = true;
         }
@@ -4113,6 +4115,7 @@ mod interaction_tests {
             area = c.text_area(text, "SQL", next_gui_ui::TextAreaStyle { width: 400.0, height: 200.0, ..next_gui_ui::TextAreaStyle::default() });
         });
         ui.set_text_area_line_numbers(area, true);
+        sql_syntax::apply(&mut ui, area, &Theme::dark());
         ui.select_text_area_range(area, 0..0);
         ui.find_in_text_area(area, "SELECT 40");
         let mut search = sql_search::Search::default();
@@ -4145,7 +4148,11 @@ mod interaction_tests {
     fn numbered_sql_editor_retains_search_selection_and_undo_through_find_overlay() {
         let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
         demo.state.tab = MainTab::ExecuteSql;
-        demo.state.sql_tabs[0] = (1..=80).map(|i| format!("SELECT {i}, '中文 {i}';\n")).collect();
+        demo.state.sql_tabs[0] = (1..=80).map(|i| match i {
+            41 => format!("SELECT lower('中文 {i}'), :value, X'0102';\n"),
+            42 => format!("/* 中文注释 */ SELECT {i};\n"),
+            _ => format!("SELECT {i}, '中文 {i}';\n"),
+        }).collect();
         demo.state.sql_result = None;
         demo.do_rebuild();
         demo.ui.set_focus(Some(demo.ids.sql_area));
@@ -4166,6 +4173,8 @@ mod interaction_tests {
             write_ppm(&path, renderer.frame_pixels().unwrap().0, demo.win_w, demo.win_h).unwrap();
         }
         demo.ui.replace_text_area_selection(demo.ids.sql_area, "東京");
+        sql_syntax::apply(&mut demo.ui, demo.ids.sql_area, &demo.theme);
+        demo.ui.sync(&mut demo.scene);
         demo.snapshot_inputs();
         demo.state.overlay = Some(OverlayKind::FindReplace);
         demo.do_rebuild();
@@ -4176,6 +4185,11 @@ mod interaction_tests {
         assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(selected));
         let (x, y, _, _) = demo.ui.ime_cursor_area(&demo.scene).unwrap();
         assert!(x.is_finite() && y.is_finite());
+        demo.snapshot_inputs();
+        demo.theme = Theme::light();
+        demo.do_rebuild();
+        assert!(demo.scene.iter_paint_order().iter().any(|n| n.visible && n.fill == Color::rgb(104, 48, 156)),
+            "theme rebuild reapplies the light keyword color after session restoration");
         assert!(!demo.state.dirty);
     }
 

@@ -9,6 +9,7 @@ pub(super) struct TextAreaEdit {
     redo: Vec<EditSnapshot>,
     pub(super) reveal: bool,
     highlights: Option<(Color, Vec<Range<usize>>)>,
+    foregrounds: Vec<(Range<usize>, Color)>,
 }
 
 #[derive(Debug, Clone)]
@@ -250,6 +251,19 @@ impl Ui {
         true
     }
 
+    /// Color disjoint Unicode scalar ranges without changing document, selection or history.
+    /// Overlapping/out-of-bounds ranges reject atomically; edits clear stale colors.
+    pub fn set_text_area_foregrounds(&mut self, id: WidgetId, mut spans: Vec<(Range<usize>, Color)>) -> bool {
+        let Some(Widget { kind: Kind::TextArea { value, edit, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let len = value.chars().count();
+        if spans.iter().any(|(range, _)| range.start > range.end || range.end > len) { return false; }
+        spans.retain(|(range, _)| !range.is_empty());
+        spans.sort_by_key(|(range, _)| (range.start, range.end));
+        if spans.windows(2).any(|pair| pair[0].0.end > pair[1].0.start) { return false; }
+        edit.foregrounds = spans;
+        true
+    }
+
     /// Replace selection (or insert at caret) as one undoable edit. Read-only areas reject edits.
     pub fn replace_text_area_selection(&mut self, id: WidgetId, text: &str) -> bool {
         let Some(range) = self.text_area_selection(id) else { return false; };
@@ -290,6 +304,7 @@ impl Ui {
             edit.redo.clear();
             value.replace_range(start..end, text);
             edit.highlights = None;
+            edit.foregrounds.clear();
         }
         *caret = range.start + text.chars().count();
         edit.anchor = None;
@@ -521,6 +536,7 @@ impl Ui {
                     );
                     *value = snapshot.value.to_string();
                     edit.highlights = None;
+                    edit.foregrounds.clear();
                     *caret = snapshot.caret;
                     edit.anchor = snapshot.anchor;
                     edit.goal_x = None;
@@ -611,6 +627,7 @@ impl Ui {
             0..0
         };
         let marks = if preedit.is_empty() { edit.highlights.clone() } else { None };
+        let foregrounds = if preedit.is_empty() { edit.foregrounds.clone() } else { Vec::new() };
         let (value, caret) = display_text(value, *caret, edit, preedit, *preedit_cursor);
         let placeholder = placeholder.clone();
         let style = *style;
@@ -654,7 +671,7 @@ impl Ui {
         let mut rectangles = Vec::new();
         let (mark_color, marks) = marks.unwrap_or((style.focus_border, Vec::new()));
         let ranges = marks.into_iter().map(|range| (range, mark_color))
-            .chain((!range.is_empty()).then_some((range, style.focus_border)));
+            .chain((!range.is_empty()).then_some((range.clone(), style.focus_border)));
         for (range, color) in ranges {
             let mut segment: Option<(f32, f32, f32)> = None;
             let mut append = |x: f32, end: f32, y: f32| {
@@ -683,8 +700,39 @@ impl Ui {
                 let y = points[start].1;
                 (y + layout.line_height > scroll && y < scroll + view_h).then_some((i + 1, y))
             }).collect() } else { Vec::new() };
+        let placeholder_visible = value.is_empty() && !focused;
+        let top = first as f32 * layout.line_height;
+        let mut visible_layout = if placeholder_visible {
+            self.font.layout(&placeholder, style.size, Some(content.width))
+        } else { layout.clone() };
+        let mut colored_layouts: Vec<(Color, next_gui_text::TextLayout)> = Vec::new();
+        if !placeholder_visible && !foregrounds.is_empty() {
+            visible_layout.glyphs.clear();
+            let mut span = 0;
+            for ((index, _), glyph) in value.chars().enumerate().filter(|(_, ch)| *ch != '\n').zip(&layout.glyphs) {
+                while span < foregrounds.len() && foregrounds[span].0.end <= index { span += 1; }
+                if glyph.baseline_y < top || glyph.baseline_y - layout.line_height >= scroll + view_h { continue; }
+                let color = foregrounds.get(span).filter(|(r, _)| r.contains(&index) && !range.contains(&index)).map(|(_, c)| *c);
+                let mut glyph = *glyph;
+                glyph.baseline_y -= top;
+                if let Some(color) = color.filter(|color| *color != style.fg) {
+                    let group = if let Some(i) = colored_layouts.iter().position(|(c, _)| *c == color) { i } else {
+                        let group = next_gui_text::TextLayout { width: layout.width,
+                            height: view_h + layout.line_height, line_height: layout.line_height, glyphs: Vec::new() };
+                        colored_layouts.push((color, group));
+                        colored_layouts.len() - 1
+                    };
+                    colored_layouts[group].1.glyphs.push(glyph);
+                } else { visible_layout.glyphs.push(glyph); }
+            }
+        } else {
+            visible_layout.glyphs.retain(|g| g.baseline_y >= top && g.baseline_y - layout.line_height < scroll + view_h);
+            for g in &mut visible_layout.glyphs { g.baseline_y -= top; }
+        }
+        visible_layout.height = view_h + layout.line_height;
         let marks_count = rectangles.len();
-        self.ensure_aux_nodes(scene, host, id, marks_count + if gutter > 0.0 { numbers.len() + 1 } else { 0 });
+        let color_start = marks_count + if gutter > 0.0 { numbers.len() + 1 } else { 0 };
+        self.ensure_aux_nodes(scene, host, id, color_start + colored_layouts.len());
         let aux = self.widgets.get(&id).unwrap().aux.clone();
         if gutter > 0.0 {
             let clip = Rect::new(bounds.x + style.padding_x, content.y, gutter, view_h);
@@ -694,6 +742,8 @@ impl Ui {
             scene.set_mask(bg, None);
             scene.set_clip(bg, Some(bounds));
             scene.set_visible(bg, true);
+            // Aux nodes change roles as marks/colors change; restore gutter paint order.
+            scene.raise(bg);
             for (i, (number, y)) in numbers.into_iter().enumerate() {
                 let (_, mask) = self.font.rasterize_text(&number.to_string(), style.size, None);
                 let n = aux[marks_count + i + 1];
@@ -703,6 +753,7 @@ impl Ui {
                 scene.set_clip(n, Some(clip));
                 scene.set_mask(n, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
                 scene.set_visible(n, true);
+                scene.raise(n);
             }
         }
         for (i, ((a, b, y), color)) in rectangles.into_iter().enumerate() {
@@ -720,21 +771,6 @@ impl Ui {
             scene.set_fill(n, color);
         }
         if let Some(label) = label {
-            let placeholder_visible = value.is_empty() && !focused;
-            let mut visible_layout = if placeholder_visible {
-                self.font
-                    .layout(&placeholder, style.size, Some(content.width))
-            } else {
-                layout.clone()
-            };
-            let top = first as f32 * layout.line_height;
-            visible_layout.glyphs.retain(|g| {
-                g.baseline_y >= top && g.baseline_y - layout.line_height < scroll + view_h
-            });
-            for g in &mut visible_layout.glyphs {
-                g.baseline_y -= top;
-            }
-            visible_layout.height = view_h + layout.line_height;
             let mask = self.font.rasterize_layout(&visible_layout, style.size);
             scene.set_bounds(
                 label,
@@ -760,6 +796,16 @@ impl Ui {
             );
             scene.set_visible(label, true);
             scene.raise(label);
+        }
+        for (i, (color, layout)) in colored_layouts.into_iter().enumerate() {
+            let mask = self.font.rasterize_layout(&layout, style.size);
+            let n = aux[color_start + i];
+            scene.set_bounds(n, Rect::new(content.x, content.y + top - scroll, mask.width as f32, mask.height as f32));
+            scene.set_clip(n, Some(content));
+            scene.set_fill(n, color);
+            scene.set_mask(n, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(n, true);
+            scene.raise(n);
         }
         if let Some(chrome) = chrome {
             let (x, y) = points[caret.min(points.len() - 1)];
@@ -809,6 +855,93 @@ mod tests {
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         (ui, scene, area)
+    }
+
+    #[test]
+    fn text_foregrounds_validate_atomically_and_keep_document_selection_and_history() {
+        let text = "SELECT 中文\nSELECT 2";
+        let (mut ui, mut scene, area) = editor(text);
+        let red = Color::rgb(240, 100, 100);
+        let green = Color::rgb(100, 220, 120);
+        ui.select_text_area_range(area, 0..0);
+        assert!(!ui.set_text_area_foregrounds(WidgetId(0), vec![(0..1, red)]));
+        assert!(ui.set_text_area_foregrounds(area, vec![(7..9, green), (0..6, red), (6..6, red)]));
+        for spans in [vec![(0..7, red), (6..9, green)], vec![(Range { start: 9, end: 8 }, red)], vec![(0..99, red)]] {
+            assert!(!ui.set_text_area_foregrounds(area, spans));
+        }
+        ui.set_text_area_line_numbers(area, true);
+        ui.sync(&mut scene);
+        let colored = |ui: &Ui, scene: &Scene, color| ui.widgets[&area].aux.iter()
+            .filter(|id| { let n = scene.get(**id).unwrap(); n.visible && n.fill == color }).count();
+        assert_eq!(colored(&ui, &scene, red), 1);
+        assert_eq!(colored(&ui, &scene, green), 1, "Unicode scalar range colors Chinese text");
+        ui.select_text_area_range(area, 0..6);
+        ui.sync(&mut scene);
+        assert_eq!(colored(&ui, &scene, red), 0, "selected text retains the normal readable foreground");
+        assert_eq!(colored(&ui, &scene, green), 1);
+        assert_eq!(ui.focused_text_for_copy().as_deref(), Some("SELECT"));
+        let state = ui.text_area_state(area).unwrap();
+        let (mut rebuilt, mut rebuilt_scene, other) = editor(text);
+        assert!(rebuilt.restore_text_area_state(other, &state));
+        rebuilt.sync(&mut rebuilt_scene);
+        let Kind::TextArea { edit, .. } = &rebuilt.widgets[&other].kind else { unreachable!() };
+        assert_eq!(edit.foregrounds.len(), 2);
+        ui.replace_text_area_selection(area, "UPDATE");
+        let Kind::TextArea { edit, .. } = &ui.widgets[&area].kind else { unreachable!() };
+        assert!(edit.foregrounds.is_empty(), "edits discard stale offsets");
+        assert!(ui.key_input(UiKey::Undo));
+        assert_eq!(ui.text_area_value(area), Some(text));
+        assert_eq!(ui.text_area_selection(area), Some(0..6));
+        assert!(ui.set_text_area_foregrounds(area, Vec::new()));
+        assert!(ui.key_input(UiKey::Redo));
+        assert_eq!(ui.text_area_value(area), Some("UPDATE 中文\nSELECT 2"));
+    }
+
+    #[test]
+    fn text_foregrounds_reused_nodes_keep_gutter_numbers_above_the_background() {
+        let text = "abc def ghi jkl mno pqr stu vwx yz \n".repeat(12);
+        let (mut ui, mut scene, area) = editor(&text);
+        ui.set_text_area_line_numbers(area, true);
+        ui.select_text_area_range(area, 0..0);
+        for count in [18].into_iter().chain((0..18).flat_map(|count| [0, count])) {
+            ui.set_text_area_highlights(area, (0..count).map(|i| i * 2..i * 2 + 1).collect(), Color::rgb(200, 180, 60));
+            ui.set_text_area_foregrounds(area, vec![(0..text.chars().count(), Color::rgb(210, 80, 90))]);
+            ui.sync(&mut scene);
+            let widget = &ui.widgets[&area];
+            let background = widget.aux.iter().filter_map(|id| scene.get(*id))
+                .find(|n| n.visible && n.mask.is_none()).unwrap();
+            let order = scene.iter_paint_order();
+            let bg_index = order.iter().position(|n| n.id == background.id).unwrap();
+            for number in widget.aux.iter().filter_map(|id| scene.get(*id)).filter(|n| {
+                n.visible && n.mask.is_some() && n.clip.is_some_and(|c| c.x < background.bounds.x + background.bounds.width)
+            }) {
+                assert!(order.iter().position(|n| n.id == number.id).unwrap() > bg_index,
+                    "reused number node must paint above gutter background, marks count {count}");
+            }
+        }
+    }
+
+    #[test]
+    fn text_foregrounds_clip_visible_rows_and_suspend_during_ime_preedit() {
+        let text = "SELECT 1;\n".repeat(80);
+        let (mut ui, mut scene, area) = editor(&text);
+        let red = Color::rgb(220, 80, 90);
+        ui.select_text_area_range(area, 0..0);
+        ui.set_text_area_read_only(area, true);
+        assert!(ui.set_text_area_foregrounds(area, vec![(0..text.chars().count(), red)]));
+        ui.set_text_area_scroll(area, 200.0);
+        ui.sync(&mut scene);
+        let n = ui.widgets[&area].aux.iter().filter_map(|id| scene.get(*id))
+            .find(|n| n.visible && n.fill == red).unwrap();
+        assert!(n.bounds.height < 120.0 && n.clip.is_some(), "masks are viewport-sized");
+        ui.set_text_area_read_only(area, false);
+        assert!(ui.ime_preedit("候选", None));
+        ui.sync(&mut scene);
+        assert!(!ui.widgets[&area].aux.iter().filter_map(|id| scene.get(*id)).any(|n| n.visible && n.fill == red));
+        assert!(ui.ime_clear_preedit());
+        ui.sync(&mut scene);
+        assert!(ui.widgets[&area].aux.iter().filter_map(|id| scene.get(*id)).any(|n| n.visible && n.fill == red));
+        assert_eq!(ui.text_area_value(area), Some(text.as_str()));
     }
 
     #[test]

@@ -97,6 +97,12 @@ after editing or finding text. Both renderers use the same selection alpha mask.
   selects and reveals the next match without changing focus.
 - `text_area_scroll` / `set_text_area_scroll`: vertical pixel offset; invalid
   floats are rejected and the offset is clamped to the document.
+- `set_text_area_foregrounds(id, spans)`: disjoint Unicode scalar ranges with
+  per-range colors; rejects overlap/out-of-bounds ranges atomically. Empty
+  ranges are ignored. Selection uses the normal foreground for readability.
+  Same-document sessions retain colors; edits/Undo/Redo clear stale offsets.
+  Preedit composition temporarily uses the normal foreground. Supply fresh
+  spans after edits/theme changes; this is presentation, not a language parser.
 - `set_text_area_line_numbers(id, bool)`: optional physical line-number gutter;
   DSL `TextArea { line_numbers: true }`. LF/CRLF, wrapped continuations, empty
   lines and digit-width changes follow the same text layout as pointer/IME and
