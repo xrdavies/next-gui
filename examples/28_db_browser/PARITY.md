@@ -59,7 +59,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default/Collation/first column CHECK, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
+| Create Table… | partial | Main/temp/attached schema selection; editable declared types with suggestions and genuine untyped columns, PK/AI/NN/Unique/Default/Collation/first column CHECK, STRICT/WITHOUT ROWID, bounded scrolling form; full DB4S constraints/migrations/moving tables remain. |
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
 | Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. Primary-key membership can also be added/changed/removed; AI can be enabled/disabled with type/key synchronization and sequence-safe rebuild; options/full constraint editing and moving tables remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
@@ -581,3 +581,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Column CHECK editing progress (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-716541440405.md): first column CHECK reads/edits/removes through the safe rebuild, retains names and all untouched constraints/dependencies, validates data and rejects SQL tails atomically. Multiline SQL sessions follow column switch/reorder/add/remove. Shared TextArea now retains active composition, with focused CHECK/SQL/index restoration and current theme colors. 451 tests/strict checks, four Soft/Metal pairs and two native static forms inspected. Advanced column/table CHECK/FK/composite/generated/options editors, move, original grid/tab/preview layout and native acceptance remain.
+
+### Table option editing progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-afe386bb71d9.md): STRICT and WITHOUT ROWID switches load/save real flags through CREATE/rebuild and reset for new tables. Qualified conversions preserve data/dependencies/settings/pending transactions, ordinary rowids and requested PK nullability; incompatible values/types/keys/AI and ambiguous FK identities roll back. No-op options preserve custom type spelling; errors show actual table/column. 454 tests/strict checks, four Soft/Metal pairs and native static forms inspected. Primary-key conflict policy, full advanced constraints/generated/move, original grid/tabs/preview/polish and native input acceptance remain.
