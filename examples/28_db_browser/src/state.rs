@@ -1704,6 +1704,18 @@ impl AppState {
         let _ = self.refresh_browse();
     }
 
+    pub fn close_browse_tab(&mut self) {
+        if self.browse_tabs.len() <= 1 {
+            self.browse_tabs[0] = BrowseTabState::new(None);
+            self.browse_tab_idx = 0;
+        } else {
+            self.browse_tabs.remove(self.browse_tab_idx);
+            self.browse_tab_idx = self.browse_tab_idx.min(self.browse_tabs.len() - 1);
+        }
+        let _ = self.refresh_browse();
+        self.status_msg = "Browse tab closed".into();
+    }
+
     pub fn apply_attach(&mut self) -> Result<(), String> {
         self.guard_writable()?;
         let path = self.attach_path.trim().to_string();
@@ -3460,6 +3472,22 @@ mod chart_default_tests {
         assert_eq!(state.browse().offset, 500);
         state.browse_page(false).unwrap();
         assert_eq!(state.browse().offset, 0);
+    }
+
+    #[test]
+    fn closing_browse_tabs_keeps_one_empty_tab() {
+        let mut state = test_state();
+        state.browse_tabs = vec![
+            BrowseTabState::new(Some("t".into())),
+            BrowseTabState::new(Some("other".into())),
+        ];
+        state.browse_tab_idx = 1;
+        state.close_browse_tab();
+        assert_eq!(state.browse_tabs.len(), 1);
+        assert_eq!(state.browse().table.as_deref(), Some("t"));
+        state.close_browse_tab();
+        assert_eq!(state.browse_tabs.len(), 1);
+        assert!(state.browse().table.is_none());
     }
 
     #[test]

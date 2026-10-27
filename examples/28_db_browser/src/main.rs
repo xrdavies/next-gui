@@ -195,6 +195,7 @@ struct BuiltUiIds {
     btn_struct_refresh: WidgetId,
     btn_run_ddl: WidgetId,
     btn_browse_new_tab: WidgetId,
+    btn_browse_close_tab: WidgetId,
     browse_select: WidgetId,
     browse_filter: WidgetId,
     browse_global_filter: WidgetId,
@@ -350,6 +351,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_struct_refresh: b.btn_struct_refresh,
             btn_run_ddl: b.btn_run_ddl,
             btn_browse_new_tab: b.btn_browse_new_tab,
+            btn_browse_close_tab: b.btn_browse_close_tab,
             browse_select: b.browse_select,
             browse_filter: b.browse_filter,
             browse_global_filter: b.browse_global_filter,
@@ -2144,6 +2146,11 @@ impl Demo {
         }
         if id == self.ids.btn_browse_new_tab {
             self.state.add_browse_tab();
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_browse_close_tab {
+            self.state.close_browse_tab();
             self.rebuild = true;
             return;
         }

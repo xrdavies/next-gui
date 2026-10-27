@@ -104,6 +104,7 @@ pub struct BuiltUi {
     pub btn_run_ddl: WidgetId,
     pub browse_tabs: WidgetId,
     pub btn_browse_new_tab: WidgetId,
+    pub btn_browse_close_tab: WidgetId,
     pub browse_select: WidgetId,
     pub browse_filter: WidgetId,
     pub browse_global_filter: WidgetId,
@@ -378,6 +379,7 @@ pub fn build_ui(
     let mut btn_run_ddl = z;
     let mut browse_tabs = z;
     let mut btn_browse_new_tab = z;
+    let mut btn_browse_close_tab = z;
     let mut browse_select = z;
     let mut browse_filter = z;
     let mut browse_global_filter = z;
@@ -1326,6 +1328,7 @@ pub fn build_ui(
                                     };
                                     browse_tab_btns.push(row.tool_button(label));
                                 }
+                                btn_browse_close_tab = row.tool_button("Close Tab");
                             });
                             browse_tabs = WidgetId(0);
                             p.scroll_row(tool_row, |row| {
@@ -1960,6 +1963,7 @@ pub fn build_ui(
         btn_run_ddl,
         browse_tabs,
         btn_browse_new_tab,
+        btn_browse_close_tab,
         browse_select,
         browse_filter,
         browse_global_filter,

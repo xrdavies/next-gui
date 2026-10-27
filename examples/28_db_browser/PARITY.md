@@ -112,7 +112,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Data grid | partial | 500-row pages with filtered total counts and page ranges; shared column resize/clip/scroll fix added. Shared visible scrollbars and focus reveal are available. Shift+Arrow selects a contiguous row/column range, Cmd/Ctrl+C copies the selected rectangle (or full selected rows) as TSV, and Cmd/Ctrl+V pastes a bounded TSV matrix into rowid-backed pages. Pointer drag ranges, inline editor, hiding/reorder and full bulk-edit semantics remain. |
 | Header-click sort | partial | Scroll-aware hit testing and literal identifiers fixed; single-column sort only, no clear/multi-sort UI. |
 | Filter-per-column | partial | Shared inputs align with resized/scrolled/frozen columns. DB4S comparisons, numeric ranges, NULL/empty text, wildcards and Unicode PCRE2 REGEXP are supported. Escape preference and automatic debounce remain. |
-| Multi browse tabs | partial | Add/switch with scrollable tab strip; no close/reorder. |
+| Multi browse tabs | partial | Add/switch/close with scrollable tab strip; reorder and close affordances per tab remain. |
 | Add / Delete row | done | New Record form supports Value/NULL/Default and required fields; Delete uses unshadowed rowid |
 | Edit cell → Edit Cell dock | partial | Explicit NULL/INTEGER/REAL/TEXT/BLOB and multiline editing; numeric types retained; Hex validation errors preserve the draft (F06 addressed). SQLite affinity still applies. |
 | Frozen columns | done | `Table::{frozen_cols,scroll_x}` + Freeze toggle |
