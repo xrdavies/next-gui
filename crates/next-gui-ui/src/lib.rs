@@ -364,7 +364,7 @@ fn constrained_splitter_ratio(ratio:f32,span:f32,minimums:(f32,f32))->f32 {
     if span<=0.0 {return ratio;}
     let total=minimums.0+minimums.1;
     if total>span {minimums.0/total}
-    else {ratio.clamp(minimums.0/span,1.0-minimums.1/span)}
+    else {let lower=minimums.0/span;ratio.clamp(lower,(1.0-minimums.1/span).max(lower))}
 }
 
 
@@ -21586,6 +21586,18 @@ mod tests {
         let button=rect(&ui,&scene,last);assert!(scroll_rect.contains(button.x+10.0,button.y+button.height*0.5));assert_eq!(ui.hit_widget(&scene,button.x+10.0,button.y+button.height*0.5),Some(last));
         ui.set_focus(Some(input));ui.set_tabs_selected(tabs,1);ui.sync(&mut scene);assert_eq!(ui.focused(),Some(tabs));assert!(!ui.key_input(UiKey::Char('x')));assert_eq!(ui.text_input_value(input),Some("draft"));assert!(!scene.get(ui.widgets[&first].node.unwrap()).unwrap().visible);assert!(!ui.focusable_widgets().contains(&input));assert_eq!(rect(&ui,&scene,second),scroll_rect);
         ui.set_splitter_ratio(splitter,0.8);ui.sync(&mut scene);ui.set_tabs_selected(tabs,0);ui.sync(&mut scene);assert!(ui.focusable_widgets().contains(&input));assert!(rect(&ui,&scene,first).height>48.0);assert!(ui.scroll_offset(first).unwrap().1>0.0);
+    }
+
+    #[test]
+    fn exact_fit_splitter_minimums_tolerate_ratio_rounding() {
+        for minimums in [(1.0,2.0),(2.0,1.0),(999.9,0.1)] {
+            let span=minimums.0+minimums.1;
+            for ratio in [0.0,0.5,1.0] {
+                let actual=constrained_splitter_ratio(ratio,span,minimums);
+                assert!(actual.is_finite() && (0.0..=1.0).contains(&actual));
+                assert!((actual-minimums.0/span).abs()<=f32::EPSILON);
+            }
+        }
     }
 
     #[test]
