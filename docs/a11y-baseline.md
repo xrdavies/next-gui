@@ -200,7 +200,7 @@ when applying or rejecting the edit. Replacing rows clears this metadata.
 
 Editable tables opt in with `set_table_editable_columns`. Enter/F2, typing or
 clicking a selected cell queues `take_table_cell_edit`; applications snapshot the
-previous draft, build a standard TextInput/Autocomplete/Select with `table_cell_editor`,
+previous draft, build a standard TextInput/Autocomplete/Select or a Row of controls with `table_cell_editor`,
 then focus it. The child follows frozen/resized/scrolled geometry. Enter commits,
 Escape requests cancellation, and Tab/BackTab requests the next editable cell.
 IME composition and open suggestions keep their ordinary key handling first.
@@ -240,6 +240,13 @@ the dialog. Close/backdrop/Escape emit `take_dialog_dismiss`; programmatic closi
 restores prior focus without emitting a dismissal. Nested custom dialogs are
 supported; an existing Modal/Drawer decision must finish before opening one. Hosts
 check `active_dialog` before running application shortcuts.
+
+Composite table-cell rows share cell clipping and layout with their controls.
+Tab/BackTab visit the row's focusable controls before moving to an adjacent editable
+cell; Enter activates a focused button, otherwise commits the cell. Popup and IME
+Escape handling precedes whole-cell cancellation. `table_cell_editor_contains`
+allows hosts to distinguish movement within the editor from leaving it. Hosts retain
+each control's edit session and restore the focused control after rebuilding.
 
 Lists can opt into Enter and primary double-click activation with
 `set_list_activatable` / `take_list_activate`. Single clicks and navigation retain

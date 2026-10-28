@@ -3236,7 +3236,7 @@ impl Ui {
 
         if let Some(dialog)=self.dialog_focus_scope() {
             if id==dialog {return self.pointer_dialog(scene,dialog,x,y,secondary);}
-            if !self.dialog_contains(dialog,id) {return true;}
+            if !self.widget_contains(dialog,id) {return true;}
         }
         if secondary {
             // Right-click: open context menu if host (or ancestor) is ContextMenu.
@@ -3604,7 +3604,7 @@ impl Ui {
         }
         if self.wheel_text_area_hint(scene, x, y, dy) { return true; }
         if let Some(dialog)=self.dialog_focus_scope() {
-            if !self.hit_widget(scene,x,y).is_some_and(|id|id!=dialog && self.dialog_contains(dialog,id)) {return true;}
+            if !self.hit_widget(scene,x,y).is_some_and(|id|id!=dialog && self.widget_contains(dialog,id)) {return true;}
         }
         let Some(id) = self.hit_widget(scene, x, y) else {
             return false;
@@ -3666,7 +3666,7 @@ impl Ui {
 
     /// Set focus explicitly.
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
-        if id.is_some_and(|id|self.dialog_focus_scope().is_some_and(|dialog|!self.dialog_contains(dialog,id))) {return;}
+        if id.is_some_and(|id|self.dialog_focus_scope().is_some_and(|dialog|!self.widget_contains(dialog,id))) {return;}
         self.focus = id.filter(|id| self.button_enabled(*id) != Some(false));
     }
 
@@ -4517,7 +4517,7 @@ impl Ui {
     pub fn take_list_activate(&mut self) -> Option<(WidgetId, usize)> {
         let (id, row) = self.pending_list_activate.take()?;
         let valid = matches!(self.widgets.get(&id).map(|widget| &widget.kind), Some(Kind::List { items, .. }) if row < items.len());
-        (valid && self.dialog_focus_scope().is_none_or(|dialog| self.dialog_contains(dialog, id))).then_some((id, row))
+        (valid && self.dialog_focus_scope().is_none_or(|dialog| self.widget_contains(dialog, id))).then_some((id, row))
     }
 
     /// Set list selection.

@@ -102,7 +102,7 @@ impl Ui {
             if self.open_popup.is_some_and(|popup| {
                 closed
                     .iter()
-                    .any(|entry| self.dialog_contains(entry.0, popup))
+                    .any(|entry| self.widget_contains(entry.0, popup))
             }) {
                 self.close_popup_internal();
             }
@@ -121,7 +121,7 @@ impl Ui {
                         && self.button_enabled(*id) != Some(false)
                         && self
                             .dialog_focus_scope()
-                            .is_none_or(|dialog| self.dialog_contains(dialog, *id))
+                            .is_none_or(|dialog| self.widget_contains(dialog, *id))
                 });
                 if self.focus.is_none() && self.active_dialog().is_some() {
                     self.focus = self
@@ -157,13 +157,13 @@ impl Ui {
         }
     }
 
-    pub(super) fn dialog_contains(&self, root: WidgetId, target: WidgetId) -> bool {
+    pub(super) fn widget_contains(&self, root: WidgetId, target: WidgetId) -> bool {
         let target = self.text_completion_owner(target).unwrap_or(target);
         root == target
             || self.widgets.get(&root).is_some_and(|widget| {
                 Self::widget_children_ids(&widget.kind)
                     .iter()
-                    .any(|&child| self.dialog_contains(child, target))
+                    .any(|&child| self.widget_contains(child, target))
             })
     }
 
@@ -173,13 +173,13 @@ impl Ui {
         };
         if self
             .open_popup
-            .is_some_and(|popup| !self.dialog_contains(dialog, popup))
+            .is_some_and(|popup| !self.widget_contains(dialog, popup))
         {
             self.close_popup_internal();
         }
         if self
             .focus
-            .is_some_and(|id| !self.dialog_contains(dialog, id))
+            .is_some_and(|id| !self.widget_contains(dialog, id))
         {
             self.focus = self.focusable_widgets().first().copied().or(Some(dialog));
         }

@@ -326,6 +326,64 @@ pub fn foreign_key_columns(key: &NamedForeignKey) -> Result<Vec<(String, String)
     Ok(columns.into_iter().map(|column| (identifier_text(&column.col_name), SqlFragment(column.col_name).to_string())).collect())
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForeignKeyReference {
+    pub table: String,
+    pub columns: String,
+    pub suffix: String,
+}
+
+#[test]
+fn reference_parts_preserve_composites_named_deferrals_and_reject_other_sql() {
+    for sql in ["REFERENCES \"a.b\"(\"x,y\", \"z\"\"key\") ON DELETE SET NULL ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED",
+        "REFERENCES parent MATCH simple ON UPDATE NO ACTION",
+        "REFERENCES parent(id) CONSTRAINT \"later check\" DEFERRABLE INITIALLY DEFERRED"] {
+        let parts=foreign_key_reference(sql).unwrap();
+        assert_eq!(foreign_key_reference(&parts.sql()).unwrap(),parts);
+    }
+    assert_eq!(foreign_key_reference("REFERENCES \"a.b\"(\"x,y\", \"z\"\"key\")").unwrap().table,"a.b");
+    assert_eq!(foreign_key_reference("REFERENCES parent").unwrap().columns,"");
+    for sql in ["REFERENCES p(id) CHECK(v>0)","REFERENCES p(id), extra TEXT","REFERENCES p(id)) STRICT;--",
+        "TEXT REFERENCES p(id)","DEFAULT 1 REFERENCES p(id)","REFERENCES p(id DESC)","REFERENCES p(id); DROP TABLE records;--"] {
+        assert!(foreign_key_reference(sql).is_err(),"{sql}");
+    }
+}
+
+pub fn foreign_key_reference(sql: &str) -> Result<ForeignKeyReference, String> {
+    if sql.trim().is_empty() { return Ok(ForeignKeyReference::default()); }
+    // Parse independently of local arity so an incomplete composite draft remains editable.
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, constraints, flags }, .. }) =
+        parse(&format!("CREATE TABLE __next_gui_reference(v BLOB {sql}\n)"))? else {
+        return Err("Expected a REFERENCES clause".into());
+    };
+    if columns.len()!=1 || constraints.as_ref().is_some_and(|items|!items.is_empty()) || !flags.is_empty() {
+        return Err("A reference cannot add columns, constraints or table options".into());
+    }
+    let column=columns.values().next().unwrap();
+    if column.col_type.as_ref().is_none_or(|kind|kind.name!="BLOB" || kind.size.is_some()) { return Err("Expected a REFERENCES clause".into()); }
+    let Some(first)=column.constraints.first() else {return Err("Expected a REFERENCES clause".into());};
+    let ColumnConstraint::ForeignKey {clause,deref_clause}=&first.constraint else {return Err("Expected a REFERENCES clause".into());};
+    if first.name.is_some() || column.constraints.iter().skip(1).any(|item|!matches!(item.constraint,ColumnConstraint::Defer(..)))
+        || clause.columns.iter().flatten().any(|column|column.order.is_some() || column.collation_name.is_some()) {
+        return Err("A reference requires column names and foreign-key clauses only".into());
+    }
+    let mut suffix=clause.args.iter().map(|arg|SqlFragment(arg).to_string()).collect::<Vec<_>>();
+    if let Some(defer)=deref_clause {suffix.push(SqlFragment(defer).to_string());}
+    suffix.extend(column.constraints.iter().skip(1).map(|item|SqlFragment(item).to_string()));
+    Ok(ForeignKeyReference { table:identifier_text(&clause.tbl_name),
+        columns:clause.columns.iter().flatten().map(|column|SqlFragment(&column.col_name).to_string()).collect::<Vec<_>>().join(", "),
+        suffix:suffix.join(" "), })
+}
+
+impl ForeignKeyReference {
+    pub fn sql(&self) -> String {
+        if self.table.is_empty() {return String::new();}
+        format!("REFERENCES {}{}{}",db::quote_ident(&self.table),
+            if self.columns.trim().is_empty() {String::new()} else {format!("({}\n)",self.columns)},
+            if self.suffix.trim().is_empty() {String::new()} else {format!(" {}",self.suffix)})
+    }
+}
+
 pub fn rename_foreign_keys(keys: &[NamedForeignKey], table: &str, target: &str, renames: &[(&str, &str)]) -> Result<Vec<NamedForeignKey>, String> {
     keys.iter().map(|key| {
         if key.inline {

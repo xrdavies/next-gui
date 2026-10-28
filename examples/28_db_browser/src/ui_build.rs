@@ -84,6 +84,7 @@ pub mod mid {
 pub struct BuiltUi {
     pub ui: Ui,
     pub column_picker: crate::column_picker::Controls,
+    pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
     pub structure_splitter: WidgetId,
     pub shell_scroll: WidgetId,
@@ -476,6 +477,7 @@ pub fn build_ui(
     let mut ui = Ui::with_font(font);
     ui.set_theme(theme);
     ui.set_viewport(width as f32, height as f32);
+    let reference_reset_width=ui.font().measure_line("Reset",theme.typography.button_sm.round().max(1.0)).0.max(0.0)+32.0;
 
     let z = WidgetId(0);
     let mut body_splitter = z;
@@ -565,6 +567,7 @@ pub fn build_ui(
     let mut ov_fields_table = z;
     let mut ov_field_editor = z;
     let mut ov_constraint_editor = z;
+    let mut reference_editor = crate::reference_editor::Controls::default();
     let mut ov_field_top = z;
     let mut ov_field_bottom = z;
     let mut ov_col_name = z;
@@ -1137,7 +1140,13 @@ pub fn build_ui(
                                     });
                                     let mut grid=next_gui_ui::TableStyle::from_theme(&theme);grid.width=area_s.width;grid.height=144.0;
                                     ov_fks_table=c.table([("Columns",240.0),("Name",180.0),("References",400.0),("SQL",620.0)].into_iter().map(|(name,width)|TableColumn::new(name,width)).collect(),table_foreign_key_rows(state),grid);
-                                    if state.wizard_constraint_edit.as_ref().is_some_and(|edit| edit.page == 1) { ov_constraint_editor=constraint_cell_editor(c,ov_fks_table,state,&theme); }
+                                    if let Some(edit)=state.wizard_constraint_edit.as_ref().filter(|edit|edit.page==1) {
+                                        if let Some(draft)=&edit.reference {
+                                            let width=state.wizard_constraint_views[1].widths.get(2).copied().unwrap_or(400.0);
+                                            reference_editor=crate::reference_editor::build(c,ov_fks_table,(edit.row,edit.column),width,reference_reset_width.max(64.0),draft,&theme);
+                                            ov_constraint_editor=reference_editor.root;
+                                        } else {ov_constraint_editor=constraint_cell_editor(c,ov_fks_table,state,&theme);}
+                                    }
                                     let key = state.wizard_foreign_keys.get(state.wizard_foreign_key_sel);
                                     c.row(row, |r| {
                                         r.text("Name"); ov_fk_name = r.text_input_styled(key.and_then(|key| key.name.as_deref()).unwrap_or(""), "Optional constraint name", wide_s);
@@ -2446,6 +2455,7 @@ pub fn build_ui(
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     ui.sync(&mut scene);
     crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
+    if let Some(draft)=state.wizard_constraint_edit.as_ref().and_then(|edit|edit.reference.as_ref()) {crate::reference_editor::restore(&mut ui,reference_editor,draft);}
     ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
     if state.overlay == Some(OverlayKind::EditIndex) {
         for (index, list) in [ov_list, ov_idx_available].into_iter().enumerate() {
@@ -2456,6 +2466,7 @@ pub fn build_ui(
     for (index,table) in [ov_keys_table,ov_fks_table,ov_checks_table].into_iter().enumerate() {
         let (x,y)=state.wizard_constraint_views[index].scroll;ui.set_table_scroll_offset(table,x,y);
     }
+    if state.wizard_constraint_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {ui.reveal_table_selection(ov_fks_table);}
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
     ui.set_scroll_offset(ov_keys_scroll, state.wizard_key_scroll.0, state.wizard_key_scroll.1);
@@ -2504,6 +2515,7 @@ pub fn build_ui(
     BuiltUi {
         ui,
         column_picker,
+        reference_editor,
         body_splitter,
         structure_splitter,
         shell_scroll,

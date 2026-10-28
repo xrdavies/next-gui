@@ -10,6 +10,7 @@ mod file_dlg;
 mod index_sql;
 mod table_sql;
 mod column_picker;
+mod reference_editor;
 mod table_migration;
 mod filters;
 mod prefs;
@@ -215,6 +216,7 @@ struct Demo {
 #[allow(dead_code)]
 struct BuiltUiIds {
     column_picker: column_picker::Controls,
+    reference_editor: reference_editor::Controls,
     status: WidgetId,
     body_splitter: WidgetId,
     structure_splitter: WidgetId,
@@ -435,6 +437,7 @@ impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
             column_picker: b.column_picker,
+            reference_editor: b.reference_editor,
             status: b.status,
             body_splitter: b.body_splitter,
             structure_splitter: b.structure_splitter,
@@ -1110,12 +1113,13 @@ impl Demo {
             if let Some((page,row,column))=target {
                 let original=state.constraint_cell_value(page,row,column).unwrap().to_string();
                 let original=if (page,column)==(0,1) {state::ConstraintCellOriginal::Index(state.wizard_index_constraints[row].clone())} else {state::ConstraintCellOriginal::Text(original)};
-                state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None});
+                let reference=if (page,column)==(1,2) {reference_editor::Draft::new(&state,&state.wizard_foreign_keys[row].clause).ok()} else {None};
+                state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None,reference});
             }
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
-        if let Some(edit)=&state.wizard_constraint_edit {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});built.ui.sync(&mut built.scene);}
+        if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
         if state.wizard_field_edit.is_some() {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);built.ui.sync(&mut built.scene);}
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
@@ -1753,9 +1757,45 @@ impl Demo {
         }
     }
 
+    fn remove_reference_key(&mut self,row:usize) {
+        if row>=self.state.wizard_foreign_keys.len() {return;}
+        let selected=self.ui.table_selected_row(self.ids.ov_fks_table).unwrap_or(self.state.wizard_foreign_key_sel);
+        self.state.wizard_foreign_keys.remove(row);
+        self.state.wizard_foreign_key_states.remove(row);
+        self.state.wizard_foreign_key_sel=(selected-usize::from(selected>row)).min(self.state.wizard_foreign_keys.len().saturating_sub(1));
+        self.ui.set_table_selected_row(self.ids.ov_fks_table,(!self.state.wizard_foreign_keys.is_empty()).then_some(self.state.wizard_foreign_key_sel));
+        self.state.store_wizard_foreign_keys();self.state.sync_wizard_foreign_key_fields();
+        let key=self.state.wizard_foreign_keys.get(self.state.wizard_foreign_key_sel);
+        self.ui.set_text_input(self.ids.ov_fk_name,key.and_then(|key|key.name.as_deref()).unwrap_or(""));
+        self.ui.set_text_area_value(self.ids.ov_fk_columns,key.map_or("",|key|key.columns.as_str()));
+        self.ui.set_text_area_value(self.ids.ov_fk_clause,key.map_or("",|key|key.clause.as_str()));
+        self.refresh_table_foreign_key_controls();self.rebuild=true;
+    }
+
+    fn snapshot_reference_cell(&mut self,finish_on_blur:bool) {
+        let Some(edit)=&mut self.state.wizard_constraint_edit else {return;};
+        let Some(draft)=&mut edit.reference else {return;};
+        let changed=draft.snapshot(&mut self.ui,self.ids.reference_editor);
+        let value=draft.sql();
+        self.set_constraint_cell_value(1,2,&value);
+        if finish_on_blur && !self.ui.focused().is_some_and(|id|self.ui.table_cell_editor_contains(self.ids.ov_fks_table,id)) {
+            self.finish_reference_cell(false);
+        } else if changed {self.rebuild=true;}
+    }
+
+    fn finish_reference_cell(&mut self,cancel:bool)->Option<usize> {
+        self.flush_table_foreign_key();
+        let edit=self.state.wizard_constraint_edit.take()?;
+        if cancel {
+            if let state::ConstraintCellOriginal::Text(original)=edit.original {self.set_constraint_cell_value(1,2,&original);self.flush_table_foreign_key();}
+        } else if edit.reference.as_ref().is_some_and(|draft|draft.value.table.is_empty()) {self.remove_reference_key(edit.row);return Some(edit.row);}
+        self.rebuild=true;None
+    }
+
     fn snapshot_constraint_cell_editor(&mut self) {
         let id=self.ids.ov_constraint_editor;
         if id.0==0 {return;}
+        if self.state.wizard_constraint_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {self.snapshot_reference_cell(true);return;}
         let Some(edit)=&mut self.state.wizard_constraint_edit else {return;};
         edit.input=self.ui.text_input_state(id);
         let (page,row,column)=(edit.page,edit.row,edit.column);
@@ -1765,8 +1805,25 @@ impl Demo {
         if self.ui.focused()!=Some(id) {self.state.wizard_constraint_edit=None;self.rebuild=true;}
     }
 
-    fn handle_constraint_cell_edit(&mut self,page:usize,event:next_gui_ui::TableCellEditEvent) {
+    fn handle_constraint_cell_edit(&mut self,page:usize,mut event:next_gui_ui::TableCellEditEvent) {
         let previous=self.state.wizard_constraint_edit.clone();
+        if let next_gui_ui::TableCellEditEvent::End {cancel}=event {
+            if previous.as_ref().is_some_and(|edit|edit.reference.is_some()) {
+                self.snapshot_reference_cell(false);self.finish_reference_cell(cancel);
+                self.do_rebuild();self.ui.set_focus(Some(self.ids.ov_fks_table));self.ui.sync(&mut self.scene);return;
+            }
+        }
+        if page==1 && previous.as_ref().is_some_and(|edit|edit.reference.is_some()) {
+            if let next_gui_ui::TableCellEditEvent::Begin {mut row,column,key}=event {
+                self.snapshot_reference_cell(false);
+                if let Some(removed)=self.finish_reference_cell(false) {
+                    if row==removed {self.do_rebuild();self.ui.set_focus(Some(self.ids.ov_fks_table));self.ui.sync(&mut self.scene);return;}
+                    if row>removed {row-=1;}
+                }
+                self.state.wizard_foreign_key_sel=row;self.do_rebuild();
+                event=next_gui_ui::TableCellEditEvent::Begin {row,column,key};
+            }
+        }
         if !self.rebuild {self.snapshot_inputs();}
         if self.rebuild {self.do_rebuild();}
         match event {
@@ -1775,8 +1832,10 @@ impl Demo {
                 if page < 2 && column == 0 {self.open_column_picker(page,row);self.do_rebuild();return;}
                 let Some(original)=self.state.constraint_cell_value(page,row,column).map(str::to_owned) else {return;};
                 let original=if (page,column)==(0,1) {state::ConstraintCellOriginal::Index(self.state.wizard_index_constraints[row].clone())} else {state::ConstraintCellOriginal::Text(original)};
-                self.state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None});
-                self.do_rebuild();let id=self.ids.ov_constraint_editor;self.ui.set_focus(Some(id));self.ui.key_input(if (page,column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});
+                let reference=if (page,column)==(1,2) {reference_editor::Draft::new(&self.state,&self.state.wizard_foreign_keys[row].clause).ok()} else {None};
+                self.state.wizard_constraint_edit=Some(state::ConstraintCellEdit {page,row,column,original,input:None,reference});
+                self.do_rebuild();let id=self.ids.ov_constraint_editor;
+                if self.state.wizard_constraint_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {self.ids.reference_editor.focus(&mut self.ui,0);} else {self.ui.set_focus(Some(id));self.ui.key_input(if (page,column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}
                 if let Some(key)=key {self.ui.key_input(key);}
             }
             next_gui_ui::TableCellEditEvent::End {cancel} => {
@@ -3567,6 +3626,10 @@ impl Demo {
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
         if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
+        if id==self.ids.reference_editor.reset {
+            if let Some(draft)=self.state.wizard_constraint_edit.as_mut().and_then(|edit|edit.reference.as_mut()) {draft.reset();}
+            self.do_rebuild();self.snapshot_reference_cell(false);self.flush_table_foreign_key();return;
+        }
         self.snapshot_inputs();
         if id == self.ids.log_clear {
             self.state.sql_log.clear(crate::sql_log::Source::from_filter(self.state.sql_log_filter));
@@ -7858,7 +7921,7 @@ mod interaction_tests {
                 let table=[demo.ids.ov_keys_table,demo.ids.ov_fks_table,demo.ids.ov_checks_table][page];
                 demo.ui.set_table_selected_row(table,Some(row));demo.ui.set_table_selected_col(table,Some(column));demo.ui.set_focus(Some(table));demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}
                 let table=[demo.ids.ov_keys_table,demo.ids.ov_fks_table,demo.ids.ov_checks_table][page];demo.ui.set_focus(Some(table));assert!(demo.ui.key_input(key));finish(demo);
-                assert_eq!(demo.ui.focused(),Some(demo.ids.ov_constraint_editor));assert_eq!(demo.state.wizard_constraint_edit.as_ref().map(|edit|(edit.page,edit.row,edit.column)),Some((page,row,column)));
+                assert_eq!(demo.ui.focused(),Some(if (page,column)==(1,2) {demo.ids.reference_editor.parent} else {demo.ids.ov_constraint_editor}));assert_eq!(demo.state.wizard_constraint_edit.as_ref().map(|edit|(edit.page,edit.row,edit.column)),Some((page,row,column)));
             };
             let unique=demo.state.wizard_index_constraints.iter().position(|key|!key.primary).unwrap();let original=demo.state.wizard_index_constraints[unique].clone();
             begin(&mut demo,0,unique,2,UiKey::Edit);demo.ui.paste_into_focused_text("unique \"updated\"");demo.snapshot_inputs();
@@ -7868,13 +7931,15 @@ mod interaction_tests {
             begin(&mut demo,0,unique,2,UiKey::Char('u'));demo.ui.paste_into_focused_text("nique_final");finish(&mut demo);assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert_eq!(demo.state.wizard_index_constraints[unique].name.as_deref(),Some("unique_final"));
             begin(&mut demo,1,0,1,UiKey::Enter);demo.ui.paste_into_focused_text("parent_final");finish(&mut demo);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_constraint_edit.as_ref().unwrap().column,2);
             let clause="REFERENCES parents(p,q)\nON UPDATE CASCADE ON DELETE CASCADE\nDEFERRABLE INITIALLY DEFERRED";
-            demo.ui.paste_into_focused_text(clause);finish(&mut demo);assert_eq!(demo.state.wizard_foreign_keys[0].clause,clause);assert!(!demo.state.wizard_foreign_keys[0].inline);
+            let suffix="ON UPDATE CASCADE ON DELETE CASCADE\nDEFERRABLE INITIALLY DEFERRED";
+            demo.ui.key_input(UiKey::Tab);demo.ui.key_input(UiKey::Tab);demo.ui.key_input(UiKey::SelectAll);
+            demo.ui.paste_into_focused_text(suffix);finish(&mut demo);assert_eq!(table_sql::foreign_key_reference(&demo.state.wizard_foreign_keys[0].clause).unwrap(),table_sql::foreign_key_reference(clause).unwrap());assert!(!demo.state.wizard_foreign_keys[0].inline);
             if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_CONSTRAINT_EDIT_QA_OUT") {
                 demo.scene.mark_full_dirty(1400.0,1000.0);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(1400,1000,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-references.ppm"),soft.frame_pixels().unwrap().0,1400,1000).unwrap();
                 if let Ok(mut gpu)=GpuRenderer::try_new(1400,1000,clear) {gpu.render(&commands,&dirty);let delta=soft.frame_pixels().unwrap().0.iter().zip(gpu.frame_pixels().unwrap().0).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}: {delta}");eprintln!("Constraint references {theme_name}: Soft/Metal delta {delta}");} else {eprintln!("Constraint references GPU comparison not_run: adapter unavailable");}
             }
-            demo.win_w=800;demo.win_h=600;demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.ov_constraint_editor));assert_eq!(demo.ui.text_input_value(demo.ids.ov_constraint_editor),Some(clause));assert!(demo.ui.key_input(UiKey::Undo));finish(&mut demo);assert_ne!(demo.state.wizard_foreign_keys[0].clause,clause);demo.ui.key_input(UiKey::Redo);finish(&mut demo);
-            let node=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(demo.ids.ov_constraint_editor)).unwrap();assert!(node.clip.unwrap().width>30.0);demo.win_w=1400;demo.win_h=1000;demo.do_rebuild();demo.ui.key_input(UiKey::Enter);finish(&mut demo);
+            demo.win_w=800;demo.win_h=600;demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.reference_editor.clauses));assert_eq!(demo.ui.text_input_value(demo.ids.reference_editor.clauses),Some(suffix));assert!(demo.ui.key_input(UiKey::Undo));finish(&mut demo);assert_ne!(table_sql::foreign_key_reference(&demo.state.wizard_foreign_keys[0].clause).unwrap(),table_sql::foreign_key_reference(clause).unwrap());demo.ui.key_input(UiKey::Redo);finish(&mut demo);
+            let node=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(demo.ids.reference_editor.parent)).unwrap();assert!(node.bounds.width>30.0);demo.win_w=1400;demo.win_h=1000;demo.do_rebuild();demo.ui.key_input(UiKey::Enter);finish(&mut demo);
             let inline=demo.state.wizard_checks.iter().position(|check|check.column.is_some()).unwrap();let original=demo.state.wizard_checks[inline].clone();
             begin(&mut demo,2,inline,0,UiKey::Edit);demo.ui.paste_into_focused_text("(");finish(&mut demo);assert!(demo.ui.text_area_value(demo.ids.ov_table_preview).unwrap().starts_with("--"));
             demo.ui.key_input(UiKey::Escape);finish(&mut demo);assert_eq!(demo.state.wizard_checks[inline],original);assert!(!demo.ui.text_area_value(demo.ids.ov_table_preview).unwrap().starts_with("--"));

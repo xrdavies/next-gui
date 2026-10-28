@@ -40,6 +40,7 @@ pub struct ConstraintCellEdit {
     pub row: usize,
     pub column: usize,
     pub original: ConstraintCellOriginal,
+    pub reference: Option<crate::reference_editor::Draft>,
     pub input: Option<next_gui_ui::TextInputState>,
 }
 
