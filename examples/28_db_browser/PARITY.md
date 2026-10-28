@@ -753,3 +753,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Cartesian plotting checkpoint (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-c987810c86e8.md): shared Chart now supports dual axes, ISO date/time/categories, six line styles,15 point shapes, bars, source highlighting, zoom/pan/keyboard/session state and bounded RGBA rendering. Dense straight-line extrema/gaps and retained image caching are regression-tested. The example uses500-row f64 numeric previews with original source positions;659 tests/strict checks, four actual Metal comparisons and four browser+14 Office native static captures pass. A verified official3.13.1 original four-page baseline is now available. Current Browse/SQL binding, column matrix/style/color controls, linked table selection, Load All, plot file export, original settings and full native/product/interface parity remain unfinished.
+
+
+## Current result Plot checkpoint (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-ac9530d409ef.md): current typed Browse/SQL previews now feed the X/Y1/Y2 column matrix, line/marker/RGB/legend controls and linked table selection with cell-draft protection. Source order, NULL/nonfinite gaps, named settings, tab/rename lifecycles, shared buffers and matching views are verified. Shared ColorPicker text layering and empty-palette hex editing are fixed.666 tests/strict checks, eight Metal comparisons and four browser+14 Office native static captures pass. Preview500/within-page selection, full-data loading, native Plot project tags, export/clipboard/print, date/conversion details, partial control sessions and full original/product/native/platform parity remain unfinished; F02 stays in_progress.
