@@ -77,6 +77,20 @@ use icon::rasterize_icon;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WidgetId(pub u64);
 
+/// Presentation of a button which has an icon; its accessible name is unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ButtonIconLayout {
+    /// Show only the icon in a square button.
+    #[default]
+    IconOnly,
+    /// Show only the label using normal text button sizing.
+    TextOnly,
+    /// Place the label to the right of the icon.
+    TextBesideIcon,
+    /// Center the label below the icon.
+    TextUnderIcon,
+}
+
 impl WidgetId {
     /// Raw id for debugging.
     pub fn raw(self) -> u64 {
@@ -1755,6 +1769,7 @@ enum Kind {
     Button {
         label: String,
         icon: Option<IconName>,
+        icon_layout: ButtonIconLayout,
         enabled: bool,
         bg: Color,
         fg: Color,
@@ -3151,12 +3166,22 @@ impl Ui {
         false
     }
 
-    /// Display a centered icon instead of the button's text; its accessible label is retained.
+    /// Add an icon, displayed alone by default; its accessible label is retained.
+    /// Use [`Ui::set_button_icon_layout`] to display the label alongside it.
     /// `None` restores the authored text sizing. Sync after changing it.
     pub fn set_button_icon(&mut self, id: WidgetId, icon: Option<IconName>) -> bool {
         let Some(Widget { kind: Kind::Button { icon: current, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
         if *current == icon { return false; }
         *current = icon;
+        true
+    }
+
+    /// Change an icon button's presentation; buttons without icons retain text sizing.
+    /// Call [`Ui::sync`] afterwards. Focus and accessibility are preserved.
+    pub fn set_button_icon_layout(&mut self, id: WidgetId, layout: ButtonIconLayout) -> bool {
+        let Some(Widget { kind: Kind::Button { icon_layout, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        if *icon_layout == layout { return false; }
+        *icon_layout = layout;
         true
     }
 
@@ -10124,16 +10149,24 @@ impl Ui {
             Some(Kind::Button {
                 label,
                 icon,
+                icon_layout,
                 size,
                 min_width,
                 height,
                 ..
             }) => {
-                if icon.is_some() {
+                if icon.is_some() && *icon_layout == ButtonIconLayout::IconOnly {
                     let side = (*height).max(*size + 12.0);
                     return ChildMeasure::new(side, side);
                 }
                 let (tw, th) = self.font.measure_line(label, *size);
+                let icon_size = (*size * 1.4).max(16.0).ceil();
+                if icon.is_some() && *icon_layout == ButtonIconLayout::TextBesideIcon {
+                    return ChildMeasure::new((*min_width).max(tw + icon_size + 32.0), (*height).max(th.max(icon_size) + 10.0));
+                }
+                if icon.is_some() && *icon_layout == ButtonIconLayout::TextUnderIcon {
+                    return ChildMeasure::new((*min_width).max(tw.max(icon_size) + 24.0), (*height).max(th + icon_size + 16.0));
+                }
                 let pad_x = 16.0;
                 // Keep authored height, but never shorter than font line box + padding
                 // (avoids clipping after correct baseline placement).
@@ -11810,6 +11843,7 @@ impl Ui {
             Kind::Button {
                 label,
                 icon,
+                icon_layout,
                 fg,
                 size,
                 bg,
@@ -11818,20 +11852,39 @@ impl Ui {
             } => {
                 let label = label.clone();
                 let icon = *icon;
+                let icon_layout = *icon_layout;
                 let fg = if *enabled { *fg } else { self.theme.colors.disabled };
                 let size = *size;
                 let bg = if *enabled { *bg } else { self.theme.colors.muted };
                 scene.set_fill(node, bg);
                 scene.set_mask(node, None);
                 self.apply_corner_radius(scene, node, false);
-                let mask = if let Some(icon) = icon {
-                    rasterize_icon(icon, (size * 1.4).max(16.0).min((bounds.width.min(bounds.height) - 8.0).max(8.0)))
-                } else {
+                let mask = if icon.is_none() || icon_layout == ButtonIconLayout::TextOnly {
                     let (_, mask) = self.font.rasterize_text(&label, size, None);
                     AlphaMask::new(mask.width, mask.height, mask.pixels)
+                } else {
+                    let glyph = rasterize_icon(icon.unwrap(), (size * 1.4).max(16.0).min((bounds.width.min(bounds.height) - 8.0).max(8.0)));
+                    if icon_layout == ButtonIconLayout::IconOnly { glyph } else {
+                        let (_, text) = self.font.rasterize_text(&label, size, None);
+                        let (width, height, gx, gy, tx, ty) = if icon_layout == ButtonIconLayout::TextBesideIcon {
+                            let height = glyph.height.max(text.height);
+                            (glyph.width + 8 + text.width, height, 0, (height-glyph.height)/2, glyph.width+8, (height-text.height)/2)
+                        } else {
+                            let width = glyph.width.max(text.width);
+                            (width, glyph.height+4+text.height, (width-glyph.width)/2, 0, (width-text.width)/2, glyph.height+4)
+                        };
+                        let mut pixels = vec![0; width as usize * height as usize];
+                        for (w, h, data, x, y) in [(glyph.width, glyph.height, &*glyph.pixels, gx, gy), (text.width, text.height, &*text.pixels, tx, ty)] {
+                            for row in 0..h {
+                                let start = ((y+row)*width+x) as usize;
+                                pixels[start..start+w as usize].copy_from_slice(&data[(row*w) as usize..((row+1)*w) as usize]);
+                            }
+                        }
+                        AlphaMask::new(width, height, pixels)
+                    }
                 };
                 if let Some(lid) = label_node {
-                    let lx = bounds.x + if icon.is_some() { ((bounds.width - mask.width as f32) * 0.5).max(0.0) } else { 16.0 };
+                    let lx = bounds.x + if icon.is_some() && icon_layout != ButtonIconLayout::TextOnly { ((bounds.width - mask.width as f32) * 0.5).max(0.0) } else { 16.0 };
                     let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
                     scene.set_bounds(
                         lid,
@@ -18073,6 +18126,7 @@ impl FlexBuilder<'_> {
                 kind: Kind::Button {
                     label: label.into(),
                     icon: None,
+                    icon_layout: ButtonIconLayout::IconOnly,
                     enabled: true,
                     bg,
                     fg,
@@ -18109,6 +18163,7 @@ impl FlexBuilder<'_> {
                 kind: Kind::Button {
                     label: label.into(),
                     icon: None,
+                    icon_layout: ButtonIconLayout::IconOnly,
                     enabled: true,
                     bg,
                     fg,

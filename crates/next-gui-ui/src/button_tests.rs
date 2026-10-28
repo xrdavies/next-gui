@@ -147,3 +147,52 @@ fn icon_buttons_keep_live_help_focus_activation_disabled_colors_and_reversible_t
         }
     }
 }
+
+#[test]
+fn icon_label_layouts_fit_cjk_large_fonts_keep_live_names_and_restore_plain_buttons() {
+    let font = Ui::new().font().clone();
+    for mut theme in [Theme::light(), Theme::dark()] {
+        for size in [13.0, 28.0] {
+            theme.typography.button_sm = size;
+            for density in [UiDensity::Compact, UiDensity::Default, UiDensity::Comfortable] {
+                let mut ui = Ui::with_font(font.clone()); ui.set_theme(theme); ui.set_config(UiConfig { density, ..UiConfig::default() });
+                ui.set_viewport(900.0, 400.0); let mut scene = Scene::new(); let mut id = WidgetId(0);
+                ui.column(ColumnStyle { width: 880.0, height: 380.0, ..ColumnStyle::default() }, |col| {
+                    id = col.tool_icon_button(IconName::Save, "Save 数据库");
+                });
+                ui.sync(&mut scene);
+                let (node, label) = (ui.widgets[&id].node.unwrap(), ui.widgets[&id].label_node.unwrap());
+                let square = scene.get(node).unwrap().bounds;
+                let mut dimensions = Vec::new();
+                for layout in [ButtonIconLayout::IconOnly, ButtonIconLayout::TextOnly, ButtonIconLayout::TextBesideIcon, ButtonIconLayout::TextUnderIcon] {
+                    ui.set_button_icon_layout(id, layout); ui.sync(&mut scene);
+                    let bounds = scene.get(node).unwrap().bounds; let content = scene.get(label).unwrap();
+                    assert!(content.bounds.x >= bounds.x && content.bounds.y >= bounds.y);
+                    assert!(content.bounds.x+content.bounds.width <= bounds.x+bounds.width);
+                    assert!(content.bounds.y+content.bounds.height <= bounds.y+bounds.height);
+                    assert!(content.mask.as_ref().unwrap().pixels.iter().any(|&p| p != 0));
+                    assert_eq!(ui.hit_widget(&scene, bounds.x+bounds.width*0.5, bounds.y+bounds.height*0.5), Some(id));
+                    assert_eq!(ui.accessible_name(id).as_deref(), Some("Save 数据库"));
+                    ui.set_focus(Some(id)); assert!(ui.key_input(UiKey::Enter)); assert_eq!(ui.take_button_activate(), Some(id));
+                    ui.set_button_enabled(id, false); ui.sync(&mut scene);
+                    assert_eq!(scene.get(label).unwrap().fill, theme.colors.disabled);
+                    assert_eq!(scene.get(node).unwrap().bounds, bounds);
+                    ui.set_button_enabled(id, true); ui.sync(&mut scene);
+                    dimensions.push(bounds);
+                }
+                assert_eq!(dimensions[0], square);
+                assert!(dimensions[2].width > dimensions[1].width);
+                assert!(dimensions[3].height > dimensions[2].height);
+                ui.set_button_label(id, "Save a longer database name"); ui.sync(&mut scene);
+                assert!(scene.get(node).unwrap().bounds.width > dimensions[3].width);
+                assert_eq!(ui.accessible_name(id).as_deref(), Some("Save a longer database name"));
+                ui.set_button_label(id, ""); ui.sync(&mut scene);
+                assert!(scene.get(label).unwrap().mask.as_ref().unwrap().pixels.iter().any(|&p| p != 0));
+                ui.set_button_label(id, "Save 数据库"); ui.set_button_icon(id, None); ui.sync(&mut scene);
+                assert_eq!(scene.get(node).unwrap().bounds, dimensions[1]);
+                assert!(!ui.set_button_icon_layout(id, ButtonIconLayout::TextUnderIcon));
+                assert!(!ui.set_button_icon_layout(WidgetId(0), ButtonIconLayout::TextOnly));
+            }
+        }
+    }
+}

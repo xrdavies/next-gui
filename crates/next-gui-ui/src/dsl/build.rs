@@ -508,6 +508,16 @@ fn build_widget(
                 }
                 builder.ui.set_button_icon(id, Some(icon));
             }
+            if let Some(layout) = prop_string(&w.props, "icon_layout").map_err(|m| err_at(w.line, w.column, m))? {
+                let layout = match layout.as_str() {
+                    "icon_only" => crate::ButtonIconLayout::IconOnly,
+                    "text_only" => crate::ButtonIconLayout::TextOnly,
+                    "text_beside_icon" => crate::ButtonIconLayout::TextBesideIcon,
+                    "text_under_icon" => crate::ButtonIconLayout::TextUnderIcon,
+                    _ => return Err(err_at(w.line, w.column, "icon_layout: expected icon_only, text_only, text_beside_icon or text_under_icon")),
+                };
+                builder.ui.set_button_icon_layout(id, layout);
+            }
             register(names, &w.name, id);
         }
         "Icon" => {

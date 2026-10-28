@@ -93,6 +93,12 @@ Rust toolbar builders `tool_icon_button(IconName::Save, "Save database")` and
 `tool_icon_button_styled` automatically show a tooltip from the current accessible
 name, including later `set_button_label` changes. They return the actual button ID.
 `Ui::set_button_icon(id, None)` restores the authored text sizing after `sync`.
+
+`Ui::set_button_icon_layout` selects `ButtonIconLayout::IconOnly`, `TextOnly`,
+`TextBesideIcon` or `TextUnderIcon`. Measurement includes both the icon and font;
+the label, focus, disabled state and live tooltip retain their usual behavior.
+The equivalent `.ngui` property is `icon_layout: icon_only | text_only |
+text_beside_icon | text_under_icon`. Without an icon, normal text sizing applies.
 The new house glyphs are `database`, `undo`, `step` and `code`; consumers matching
 `IconName` exhaustively need corresponding arms. Existing button style structs and
 text builders are unchanged.

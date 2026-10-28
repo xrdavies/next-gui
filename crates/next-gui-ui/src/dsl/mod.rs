@@ -207,6 +207,16 @@ Column {
         for value in ["missing", "blank", "123"] {
             assert!(load_ngui(&format!("Column {{ Button(\"Save\") {{ icon: {value} }} }}")).is_err());
         }
+        for (name, expected) in [("icon_only", crate::ButtonIconLayout::IconOnly), ("text_only", crate::ButtonIconLayout::TextOnly),
+            ("text_beside_icon", crate::ButtonIconLayout::TextBesideIcon), ("text_under_icon", crate::ButtonIconLayout::TextUnderIcon)] {
+            let loaded = load_ngui(&format!("Column {{ Button(\"Save\") @save {{ icon: save\nicon_layout: {name} }} }}")).unwrap();
+            let crate::Kind::Button { icon_layout, .. } = loaded.ui.widgets[&loaded.widget("save").unwrap()].kind else { panic!() };
+            assert_eq!(icon_layout, expected);
+        }
+        for value in ["missing", "true", "123"] {
+            let error = load_ngui(&format!("Column {{ Button(\"Save\") {{ icon: save\nicon_layout: {value} }} }}")).unwrap_err();
+            assert!(error.message.contains("icon_layout"));
+        }
     }
 
     #[test]
