@@ -260,3 +260,10 @@ range remains selected through e28 rebuilds and is copied as TSV with Cmd/Ctrl+C
 copying a text editor still uses the existing Unicode selection path. Cell-level
 ranges, TSV paste/bulk updates, inline editing, column hide/reorder and total-count
 navigation remain open parity work.
+
+
+Numeric PRAGMA fields use next-gui's exact signed integer steppers: click the
+right-side arrows, use Up/Down for one or PageUp/PageDown for ten, or edit/paste
+the integer directly. Changes retain Undo/Redo and focus through resizing.
+The original form's labels share a measured alignment column; compact forms
+stack labels above controls. Validation still runs before applying any setting.

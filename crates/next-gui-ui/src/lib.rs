@@ -1763,6 +1763,7 @@ enum Kind {
         content_h: f32,
     },
     TextInput {
+        integer_range: Option<(i64, i64)>,
         enabled: bool,
         value: String,
         edit: InputEdit,
@@ -3323,6 +3324,7 @@ impl Ui {
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::TextInput { .. }) => {
                 self.focus = Some(id);
+                if self.pointer_integer_input(scene, id, x, y) { return true; }
                 if let Some(w) = self.widgets.get_mut(&id) {
                     if let Kind::TextInput {
                         value,
@@ -4079,12 +4081,13 @@ impl Ui {
     /// Mask a password input and exclude its value from copy and accessible labels.
     pub fn set_text_input_secret(&mut self, id: WidgetId, secret: bool) {
         if let Some(Widget {
-            kind: Kind::TextInput { secret: value, edit, .. },
+            kind: Kind::TextInput { secret: value, edit, integer_range, .. },
             ..
         }) = self.widgets.get_mut(&id)
         {
             if *value != secret { *edit = InputEdit::default(); }
             *value = secret;
+            if secret { *integer_range = None; }
         }
     }
 
@@ -4215,7 +4218,7 @@ impl Ui {
         let (display,caret,_) = self.single_line_input_display(id)?;
         let prefix:String=display.chars().take(caret).collect();
         let (width,_) = self.font.measure_line(&prefix,style.size);
-        let visible=(bounds.width-2.0*style.padding_x-2.0).max(0.0);
+        let visible=(bounds.width-self.integer_input_step_width(id,bounds.width)-2.0*style.padding_x-2.0).max(0.0);
         Some((bounds.x+style.padding_x+width.min(visible),bounds.y+4.0,2.0,(bounds.height-8.0).max(8.0)))
     }
 
@@ -5292,6 +5295,10 @@ impl Ui {
     fn key_text_input(&mut self, id: WidgetId, key: UiKey) -> bool {
         if self.text_input_enabled(id)==Some(false) {return false;}
         if matches!(key, UiKey::Undo | UiKey::Redo) { return self.input_history(id, key); }
+        if self.text_input_integer_range(id).is_some() {
+            let delta = match key { UiKey::Up => Some(1), UiKey::Down => Some(-1), UiKey::PageUp => Some(10), UiKey::PageDown => Some(-10), _ => None };
+            if let Some(delta) = delta { return self.step_integer_input(id, delta); }
+        }
         let before = matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete).then(|| self.input_snapshot(id)).flatten();
         let handled = self.edit_text_input(id, key);
         self.remember_input_change(id, before);
@@ -11728,7 +11735,8 @@ impl Ui {
                 let prefix: String = display.chars().take(caret_chars).collect();
                 let (cw, _) = self.font.measure_line(&prefix, style.size);
 
-                let viewport=(bounds.width-2.0*style.padding_x-2.0).max(0.0);
+                let step_width = self.integer_input_step_width(id, bounds.width);
+                let viewport=(bounds.width-step_width-2.0*style.padding_x-2.0).max(0.0);
                 let scroll=if focused {(cw-viewport).max(0.0)} else {0.0};
                 let lx = bounds.x + style.padding_x-scroll;
                 let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
@@ -11737,6 +11745,7 @@ impl Ui {
                         lid,
                         Rect::new(lx, ly, mask.width as f32, mask.height as f32),
                     );
+                    scene.set_clip(lid, Some(Rect::new(bounds.x, bounds.y, (bounds.width-step_width).max(0.0), bounds.height)));
                     scene.set_fill(lid, fg);
                     if selected {
                         scene.set_fill(lid, Color::rgb(0xff, 0xff, 0xff));
@@ -11777,6 +11786,7 @@ impl Ui {
                         scene.set_visible(cid, false);
                     }
                 }
+                self.paint_integer_input_steps(scene, id, bounds);
                 scene.set_visible(node, true);
             }
             Kind::Checkbox {
@@ -18126,6 +18136,7 @@ impl FlexBuilder<'_> {
             id,
             Widget {
                 kind: Kind::TextInput {
+                    integer_range: None,
                     enabled: true,
                     value,
                     edit: InputEdit::default(),

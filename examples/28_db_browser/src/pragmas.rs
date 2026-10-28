@@ -64,6 +64,16 @@ pub fn choices(key: &str) -> &'static [(&'static str, &'static str)] {
     }
 }
 
+pub fn integer_range(key: &str) -> Option<(i64, i64)> {
+    match key {
+        "journal_size_limit" => Some((-1, i64::MAX)),
+        "max_page_count" => Some((1, 4_294_967_294)),
+        "cache_size" => Some((i32::MIN as i64, i32::MAX as i64)),
+        "user_version" | "wal_autocheckpoint" | "busy_timeout" => Some((0, i32::MAX as i64)),
+        _ => None,
+    }
+}
+
 pub fn normalize(key: &str, value: &str) -> Result<String, String> {
     if !FIELDS.iter().any(|(name, _)| *name == key) {
         return Err("Unsupported pragma".into());
@@ -89,12 +99,7 @@ pub fn normalize(key: &str, value: &str) -> Result<String, String> {
     let number = value
         .parse::<i64>()
         .map_err(|_| format!("PRAGMA {key} needs an integer"))?;
-    let (min, max) = match key {
-        "journal_size_limit" => (-1, i64::MAX),
-        "max_page_count" => (1, 4_294_967_294),
-        "cache_size" => (i32::MIN as i64, i32::MAX as i64),
-        _ => (0, i32::MAX as i64),
-    };
+    let (min, max) = integer_range(key).ok_or_else(|| "Unsupported integer pragma".to_string())?;
     if !(min..=max).contains(&number) {
         return Err(format!("PRAGMA {key} must be between {min} and {max}"));
     }
@@ -368,6 +373,59 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn numeric_controls_step_save_exact_integers_and_align_in_the_original_form() {
+        use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
+        use next_gui_ui::{Theme, UiKey};
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                demo.state.tab = crate::state::MainTab::Pragmas;
+                demo.state.dock_edit = false;
+                demo.do_rebuild();
+                let index = |key: &str| demo.state.pragmas.iter().position(|(name, _)| name == key).unwrap();
+                let version = index("user_version");
+                let journal = index("journal_size_limit");
+                let max_page = index("max_page_count");
+                assert_eq!(demo.ui.text_input_integer_range(demo.ids.pragma_inputs[journal]), Some((-1, i64::MAX)));
+                let mut lefts = Vec::new();
+                for (i, _) in demo.state.pragmas.iter().enumerate() {
+                    let id = [demo.ids.pragma_inputs[i], demo.ids.pragma_selects[i], demo.ids.pragma_switches[i]].into_iter().find(|id| id.0 != 0).unwrap();
+                    let node = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(id)).unwrap();
+                    lefts.push(node.bounds.x);
+                }
+                assert!(lefts.iter().all(|x| (x-lefts[0]).abs() < 0.1), "unaligned {lefts:?}");
+                demo.ui.set_focus(Some(demo.ids.pragma_inputs[version]));
+                demo.ui.key_input(UiKey::Up);
+                demo.ui.key_input(UiKey::PageUp);
+                assert_eq!(demo.ui.text_input_value(demo.ids.pragma_inputs[version]), Some("11"));
+                demo.snapshot_inputs();
+                demo.do_rebuild();
+                demo.ui.key_input(UiKey::Undo);
+                assert_eq!(demo.ui.text_input_value(demo.ids.pragma_inputs[version]), Some("1"));
+                demo.ui.key_input(UiKey::Up);
+                demo.ui.set_text_input(demo.ids.pragma_inputs[journal], "9007199254740993");
+                demo.ui.set_focus(Some(demo.ids.pragma_inputs[journal]));
+                demo.ui.key_input(UiKey::Up);
+                demo.ui.set_focus(Some(demo.ids.pragma_inputs[max_page]));
+                demo.ui.key_input(UiKey::Up);
+                assert_eq!(demo.ui.text_input_value(demo.ids.pragma_inputs[max_page]), Some("4294967294"));
+                demo.handle_button(demo.ids.btn_pragma_apply);
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                let conn = demo.state.conn.as_ref().unwrap();
+                assert_eq!(crate::db::read_pragma(conn, "user_version").unwrap(), "2");
+                assert_eq!(crate::db::read_pragma(conn, "journal_size_limit").unwrap(), "9007199254740994");
+                demo.do_rebuild();
+                demo.ui.set_scroll_offset(demo.ids.pragma_scroll, 0.0, 10000.0);
+                demo.ui.set_focus(Some(demo.ids.pragma_inputs[version]));
+                demo.ui.sync(&mut demo.scene);
+                capture(&mut demo, theme_name, width, "pragmas-steppers");
+            }
+        }
+    }
+
     #[test]
     fn original_fields_validate_without_losing_fast_mode_or_numeric_limits() {
         assert_eq!(FIELDS.len(), 20);

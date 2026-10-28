@@ -34,6 +34,78 @@ pub struct TextInputState {
 }
 
 impl Ui {
+    /// Add exact signed integer steppers to a TextInput, or remove them with None.
+    /// Up/Down step by one, PageUp/PageDown by ten; changes share Undo/Redo.
+    /// Draft text remains editable; hosts validate it before applying it.
+    /// Invalid ranges, secret inputs and other widget kinds are rejected.
+    pub fn set_text_input_integer_range(&mut self, id: WidgetId, range: Option<(i64, i64)>) -> bool {
+        if range.is_some_and(|(min, max)| min > max) { return false; }
+        let Some(widget) = self.widgets.get_mut(&id) else { return false; };
+        let Kind::TextInput { integer_range, secret, .. } = &mut widget.kind else { return false; };
+        if *secret && range.is_some() { return false; }
+        *integer_range = range;
+        true
+    }
+
+    /// Configured integer bounds; None for ordinary inputs or other widget kinds.
+    pub fn text_input_integer_range(&self, id: WidgetId) -> Option<(i64, i64)> {
+        match &self.widgets.get(&id)?.kind { Kind::TextInput { integer_range, .. } => *integer_range, _ => None }
+    }
+
+    pub(super) fn integer_input_step_width(&self, id: WidgetId, width: f32) -> f32 {
+        if self.text_input_integer_range(id).is_some() { 24.0f32.min(width * 0.5) } else { 0.0 }
+    }
+
+    pub(super) fn step_integer_input(&mut self, id: WidgetId, delta: i64) -> bool {
+        let Some((min, max)) = self.text_input_integer_range(id) else { return false; };
+        let before = self.input_snapshot(id);
+        let Kind::TextInput { value, enabled, preedit, caret, select_all, .. } = &mut self.widgets.get_mut(&id).unwrap().kind else { return false; };
+        if !*enabled || !preedit.is_empty() { return false; }
+        let Ok(current) = value.trim().parse::<i64>() else { return true; };
+        if !(min..=max).contains(&current) { return true; }
+        *value = current.saturating_add(delta).clamp(min, max).to_string();
+        *caret = value.len();
+        *select_all = false;
+        self.remember_input_change(id, before);
+        true
+    }
+
+    pub(super) fn pointer_integer_input(&mut self, scene: &crate::Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        let Some(bounds) = self.widgets[&id].node.and_then(|n| scene.get(n).map(|n| n.bounds)) else { return false; };
+        let width = self.integer_input_step_width(id, bounds.width);
+        if width == 0.0 || x < bounds.x + bounds.width - width { return false; }
+        self.step_integer_input(id, if y < bounds.y + bounds.height * 0.5 { 1 } else { -1 });
+        true
+    }
+
+    pub(super) fn paint_integer_input_steps(&mut self, scene: &mut crate::Scene, id: WidgetId, bounds: crate::Rect) {
+        let range = self.text_input_integer_range(id);
+        let needed = if range.is_some() { 5 } else { 1 };
+        let host = self.widgets[&id].node.unwrap();
+        self.ensure_aux_nodes(scene, host, id, needed);
+        let Some((min, max)) = range else { return; };
+        let Kind::TextInput { style, value, enabled, preedit, .. } = &self.widgets[&id].kind else { return; };
+        let (style, enabled) = (*style, *enabled && preedit.is_empty());
+        let current = value.trim().parse::<i64>().ok();
+        let width = self.integer_input_step_width(id, bounds.width);
+        let aux = self.widgets[&id].aux.clone();
+        for (slot, label) in [(0, "▴"), (1, "▾")] {
+            let area = crate::Rect::new(bounds.x + bounds.width - width, bounds.y + slot as f32 * bounds.height * 0.5, width, bounds.height * 0.5);
+            let background = aux[1 + slot * 2];
+            let text = aux[2 + slot * 2];
+            scene.set_bounds(background, area);
+            scene.set_fill(background, if enabled { self.theme.colors.strip_bg } else { self.theme.colors.muted });
+            scene.set_mask(background, None);
+            scene.set_visible(background, true);
+            let mask = self.font.rasterize_text(label, style.size.min(area.height), None).1;
+            scene.set_bounds(text, crate::Rect::new(area.x + (area.width-mask.width as f32)*0.5, area.y + (area.height-mask.height as f32)*0.5, mask.width as f32, mask.height as f32));
+            let can_step = enabled && current.is_some_and(|n| (min..=max).contains(&n) && if slot == 0 { n < max } else { n > min });
+            scene.set_fill(text, if can_step { style.fg } else { self.theme.colors.disabled });
+            scene.set_mask(text, Some(crate::AlphaMask::new(mask.width, mask.height, mask.pixels)));
+            scene.set_visible(text, true);
+        }
+    }
+
     pub(super) fn single_line_input_display(&self, id: WidgetId) -> Option<(String, usize, std::ops::Range<usize>)> {
         let (value,caret,select_all,preedit,preedit_cursor,secret)=match &self.widgets.get(&id)?.kind {
             Kind::TextInput {value,caret,select_all,preedit,preedit_cursor,secret,..} => (value,caret,select_all,preedit,preedit_cursor,*secret),
@@ -199,6 +271,101 @@ impl Ui {
 mod tests {
     use super::*;
     use crate::{AutocompleteStyle, ColumnStyle, Scene, TextInputStyle};
+
+    #[test]
+    fn integer_input_steps_exact_bounds_history_clipboard_and_composition() {
+        let (mut ui, id) = field(false, "9223372036854775806");
+        assert!(ui.set_text_input_integer_range(id, Some((i64::MIN, i64::MAX))));
+        assert!(!ui.set_text_input_integer_range(id, Some((2, 1))));
+        assert!(ui.key_input(UiKey::Up));
+        assert_eq!(ui.text_input_value(id), Some("9223372036854775807"));
+        assert!(ui.key_input(UiKey::PageUp));
+        assert!(ui.key_input(UiKey::Undo));
+        assert_eq!(ui.text_input_value(id), Some("9223372036854775806"));
+        assert!(ui.key_input(UiKey::Redo));
+        ui.set_text_input(id, "-9223372036854775808");
+        ui.key_input(UiKey::Down);
+        assert_eq!(ui.text_input_value(id), Some("-9223372036854775808"));
+        ui.key_input(UiKey::PageUp);
+        assert_eq!(ui.text_input_value(id), Some("-9223372036854775798"));
+        ui.key_input(UiKey::SelectAll);
+        ui.paste_into_focused_text("9007199254740993");
+        ui.key_input(UiKey::Up);
+        assert_eq!(ui.text_input_value(id), Some("9007199254740994"));
+        ui.set_text_input(id, "-");
+        ui.key_input(UiKey::Up);
+        assert_eq!(ui.text_input_value(id), Some("-"));
+        ui.set_text_input(id, "42");
+        ui.ime_preedit("123", Some((3, 3)));
+        assert!(!ui.key_input(UiKey::Up));
+        assert_eq!(ui.text_input_value(id), Some("42"));
+        assert!(matches!(&ui.widgets[&id].kind, Kind::TextInput { preedit, .. } if preedit == "123"));
+        ui.key_input(UiKey::Escape);
+        let session = ui.text_input_state(id).unwrap();
+        let (mut rebuilt, fresh) = field(false, "42");
+        rebuilt.set_text_input_integer_range(fresh, Some((0, 100)));
+        assert!(rebuilt.restore_text_input_state(fresh, &session));
+        rebuilt.key_input(UiKey::Down);
+        assert_eq!(rebuilt.text_input_value(fresh), Some("41"));
+        rebuilt.key_input(UiKey::Undo);
+        assert_eq!(rebuilt.text_input_value(fresh), Some("42"));
+        rebuilt.set_text_input(fresh, "101");
+        rebuilt.key_input(UiKey::Up);
+        rebuilt.key_input(UiKey::Down);
+        assert_eq!(rebuilt.text_input_value(fresh), Some("101"));
+        rebuilt.set_text_input(fresh, "42");
+        rebuilt.set_text_input_enabled(fresh, false);
+        assert!(!rebuilt.step_integer_input(fresh, 1));
+        assert_eq!(rebuilt.text_input_value(fresh), Some("42"));
+        rebuilt.set_text_input_secret(fresh, true);
+        assert_eq!(rebuilt.text_input_integer_range(fresh), None);
+        assert!(!rebuilt.set_text_input_integer_range(fresh, Some((0, 10))));
+    }
+
+    #[test]
+    fn integer_input_pointer_steps_keep_editor_focus_and_reserve_text_space() {
+        for theme in [crate::Theme::dark(), crate::Theme::light()] {
+            let (mut ui, id) = field(false, "9007199254740993");
+            ui.set_theme(theme);
+            ui.set_text_input_integer_range(id, Some((0, i64::MAX)));
+            ui.set_viewport(640.0, 480.0);
+            let mut scene = Scene::new();
+            ui.sync(&mut scene);
+            let widget = &ui.widgets[&id];
+            let bounds = scene.get(widget.node.unwrap()).unwrap().bounds;
+            let x = bounds.x + bounds.width - 12.0;
+            let top = bounds.y + bounds.height * 0.25;
+            assert!(ui.pointer_press(&mut scene, x, top, false));
+            assert_eq!(ui.focused(), Some(id));
+            assert_eq!(ui.text_input_value(id), Some("9007199254740994"));
+            assert!(ui.pointer_press(&mut scene, x, bounds.y + bounds.height * 0.75, false));
+            assert_eq!(ui.text_input_value(id), Some("9007199254740993"));
+            ui.sync(&mut scene);
+            let label = scene.get(ui.widgets[&id].label_node.unwrap()).unwrap();
+            assert!(label.clip.unwrap().x + label.clip.unwrap().width <= bounds.x + bounds.width - 24.0);
+            let candidate = ui.ime_cursor_area(&scene).unwrap();
+            assert!(candidate.0 + candidate.2 <= bounds.x + bounds.width - 24.0);
+            assert_eq!(ui.widgets[&id].aux.len(), 5);
+            assert!(ui.widgets[&id].aux[1..].iter().all(|n| scene.get(*n).unwrap().visible));
+            ui.set_text_input_integer_range(id, Some((0, 100)));
+            ui.set_text_input(id, "101");
+            ui.sync(&mut scene);
+            for n in [ui.widgets[&id].aux[2], ui.widgets[&id].aux[4]] {
+                assert_eq!(scene.get(n).unwrap().fill, theme.colors.disabled);
+            }
+            ui.pointer_press(&mut scene, x, top, false);
+            assert_eq!(ui.text_input_value(id), Some("101"));
+            ui.set_text_input(id, "42");
+            ui.ime_preedit("123", Some((3, 3)));
+            ui.pointer_press(&mut scene, x, top, false);
+            assert_eq!(ui.text_input_value(id), Some("42"));
+            assert!(matches!(&ui.widgets[&id].kind, Kind::TextInput { preedit, .. } if preedit == "123"));
+            ui.key_input(UiKey::Escape);
+            ui.set_text_input_integer_range(id, None);
+            ui.sync(&mut scene);
+            assert!(ui.widgets[&id].aux[1..].iter().all(|n| !scene.get(*n).unwrap().visible));
+        }
+    }
 
     fn field(autocomplete: bool, value: &str) -> (Ui, WidgetId) {
         let mut ui = Ui::new();

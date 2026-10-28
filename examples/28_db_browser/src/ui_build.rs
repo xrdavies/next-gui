@@ -497,6 +497,10 @@ pub fn build_ui(
     ui.set_viewport(width as f32, height as f32);
     let reference_reset_width=ui.font().measure_line("Reset",theme.typography.button_sm.round().max(1.0)).0.max(0.0)+32.0;
 
+    let pragma_label_widths: std::collections::HashMap<_, _> = crate::pragmas::FIELDS.iter()
+        .map(|(key, label)| (*key, ui.font().measure_line(label, 13.0).0)).collect();
+    let pragma_label_width = pragma_label_widths.values().copied().fold(0.0f32, f32::max).ceil() + 12.0;
+
     let z = WidgetId(0);
     let mut body_splitter = z;
     let mut structure_splitter = z;
@@ -1995,8 +1999,11 @@ pub fn build_ui(
                                         let mut field = tool_row; field.width = pragma_col.width - 16.0;
                                         field.height = 38.0; field.padding = 4.0; field.background = None;
                                         c.row(field, |row| {
-                                            let mut name = field; name.width = 230.0; name.padding = 0.0;
-                                            row.row(name, |name| { name.text_styled(label, theme.colors.text_primary, 13.0); });
+                                            let mut name = field; name.width = pragma_label_width; name.padding = 0.0; name.gap = 0.0;
+                                            row.row(name, |name| {
+                                                name.text_styled(label, theme.colors.text_primary, 13.0);
+                                                name.spacer((pragma_label_width - pragma_label_widths.get(key.as_str()).copied().unwrap_or(pragma_label_width)).max(0.0), 1.0);
+                                            });
                                             control(row);
                                         });
                                     }
@@ -2537,6 +2544,9 @@ pub fn build_ui(
     }
     for (index, (key, _)) in state.pragmas.iter().enumerate() {
         let label = crate::pragmas::FIELDS.iter().find(|(name, _)| *name == key).map_or(key.as_str(), |(_, label)| *label);
+        if let Some(id) = pragma_inputs.get(index).filter(|id| id.0 != 0) {
+            ui.set_text_input_integer_range(*id, crate::pragmas::integer_range(key));
+        }
         for ids in [&pragma_inputs, &pragma_selects, &pragma_switches] {
             if let Some(id) = ids.get(index).filter(|id| id.0 != 0) { ui.set_accessible_name(*id, label); }
         }

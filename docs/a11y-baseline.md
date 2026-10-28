@@ -266,3 +266,13 @@ Undo history remain; programmatic setters still work. Sync paints theme disabled
 text/muted background. `text_input_enabled` returns None for other widget kinds.
 Dialog close does not restore focus to an input disabled while the dialog was open.
 Composite cell Tab navigation skips disabled inputs.
+
+
+TextInput can opt into exact signed integer stepping with
+`set_text_input_integer_range(id, Some((min, max)))`; None removes it. Right-side
+up/down hit areas and Up/Down change by one, PageUp/PageDown by ten, saturating at
+the configured bounds without f64 conversion. The editor keeps focus and shares
+text Undo/Redo, clipboard and same-document sessions. Composition/disabled inputs
+do not step; secret inputs reject this option. Text/candidate geometry reserves
+the step area. Draft text stays editable, so hosts must validate before applying
+it. Invalid drafts remain for repair rather than being silently replaced.
