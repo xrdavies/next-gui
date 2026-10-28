@@ -631,6 +631,7 @@ pub struct SqlSelection {
 
 enum EditCellSource {
     Browse,
+    BrowseReadOnly,
     SqlEmpty,
     Sql { identity: Arc<()>, row: usize, column: usize },
 }
@@ -1147,7 +1148,7 @@ impl AppState {
     }
 
     pub fn has_cell_draft(&self) -> bool {
-        if self.edit_col.is_empty() || self.sql_cell_read_only() {
+        if self.edit_col.is_empty() || !matches!(self.edit_source, EditCellSource::Browse) {
             return false;
         }
         if self.edit_mode == EditCellMode::Image {
@@ -3228,6 +3229,9 @@ impl AppState {
 
     pub fn apply_cell_draft(&mut self) -> Result<(), String> {
         if self.sql_cell_read_only() { return Err("SQL result cells are read-only".into()); }
+        if self.tab != MainTab::Browse || matches!(self.edit_source, EditCellSource::BrowseReadOnly) {
+            return Err("This cell is read-only; select an editable Browse cell".into());
+        }
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
         let tab = self.browse();
@@ -3439,7 +3443,7 @@ impl AppState {
     }
 
     pub fn discard_cell_draft(&mut self) {
-        if self.sql_cell_read_only() {
+        if !matches!(self.edit_source, EditCellSource::Browse) {
             self.edit_original = self.edit_saved.clone(); self.show_edit_value(); return;
         }
         self.edit_col.clear();
@@ -3543,12 +3547,12 @@ impl AppState {
         if self.has_cell_draft() { self.error_msg = Some("Apply or discard the cell draft first".into()); return; }
         let b = self.browse();
         let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
-            if self.sql_cell_read_only() { self.clear_browse_editor(); }
+            if !matches!(self.edit_source, EditCellSource::Browse) { self.clear_browse_editor(); }
             return;
         };
         let ci = b.sel_col.unwrap_or(0);
         let Some(col) = res.columns.get(ci).cloned() else {
-            if self.sql_cell_read_only() { self.clear_browse_editor(); }
+            if !matches!(self.edit_source, EditCellSource::Browse) { self.clear_browse_editor(); }
             return;
         };
         let cell = match res.values.cell(ri, ci) {
@@ -3563,7 +3567,35 @@ impl AppState {
     }
 
     pub fn sql_cell_read_only(&self) -> bool {
-        !matches!(self.edit_source, EditCellSource::Browse)
+        matches!(self.edit_source, EditCellSource::SqlEmpty | EditCellSource::Sql { .. })
+    }
+
+    fn browse_cell_read_only(&self) -> bool {
+        self.read_only || self.browse().sel_row.and_then(|row| self.browse().rowids.get(row)).is_none()
+            || self.edit_cell_generated()
+    }
+
+    pub fn edit_cell_read_only(&self) -> bool {
+        self.tab != MainTab::Browse || !matches!(self.edit_source, EditCellSource::Browse)
+            || self.browse_cell_read_only()
+    }
+
+    pub fn sync_edit_cell_for_page(&mut self) -> Result<bool, String> {
+        if self.has_cell_draft() { return Ok(false); }
+        match self.tab {
+            MainTab::ExecuteSql => self.sync_edit_cell_from_sql_selection(),
+            MainTab::Browse if self.sql_cell_read_only()
+                || (matches!(self.edit_source, EditCellSource::BrowseReadOnly) && !self.browse_cell_read_only()) => {
+                self.sync_edit_cell_from_selection(); Ok(true)
+            }
+            MainTab::Browse if matches!(self.edit_source, EditCellSource::Browse) && self.browse_cell_read_only() => {
+                self.edit_source = EditCellSource::BrowseReadOnly; Ok(true)
+            }
+            MainTab::Structure | MainTab::Pragmas if matches!(self.edit_source, EditCellSource::Browse) => {
+                self.edit_source = EditCellSource::BrowseReadOnly; Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     pub fn sync_edit_cell_from_sql_selection(&mut self) -> Result<bool, String> {
@@ -3627,6 +3659,7 @@ impl AppState {
         self.edit_image_kind.clear();
         self.edit_saved = value.clone();
         self.edit_original = value;
+        if self.browse_cell_read_only() { self.edit_source = EditCellSource::BrowseReadOnly; }
         self.edit_mode = mode;
         self.show_edit_value();
         Ok(())
@@ -3707,7 +3740,10 @@ impl AppState {
     }
 
     pub fn set_edit_mode(&mut self, mode: EditCellMode) -> Result<(), String> {
-        if !self.sql_cell_read_only() && self.edit_mode != EditCellMode::Image {
+        if self.edit_cell_read_only() && self.has_cell_draft() {
+            return Err("Return to Browse to apply or discard the cell draft first".into());
+        }
+        if !self.edit_cell_read_only() && self.edit_mode != EditCellMode::Image {
             self.edit_original = self.edited_cell_value()?;
         }
         self.edit_mode = mode;
@@ -3965,6 +4001,7 @@ mod chart_default_tests {
 
     fn test_state() -> AppState {
         let mut state = AppState::empty();
+        state.tab = MainTab::Browse;
         let mut conn = LoggedConnection::new(Connection::open_in_memory().unwrap()).unwrap();
         conn.bind_log(&state.sql_log);
         state.conn = Some(conn);

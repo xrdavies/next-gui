@@ -1303,7 +1303,7 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow" | "cell-structure" | "cell-pragmas" | "cell-structure-narrow" | "cell-pragmas-narrow") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
@@ -1324,12 +1324,14 @@ impl Demo {
                     state.plot.invalidate();
                 }
                 state.sync_current_plot().unwrap();
-                if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") {
+                if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") || tab.starts_with("cell-") {
                     state.browse_mut().sel_row=Some(0);state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();
                 }
-                state.body_ratio = if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") {0.45}else{0.52};
+                state.body_ratio = if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") || tab.starts_with("cell-") {0.45}else{0.52};
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
+                if tab.starts_with("cell-structure") { state.tab = MainTab::Structure; }
+                if tab.starts_with("cell-pragmas") { state.tab = MainTab::Pragmas; }
             }
             if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end" | "sql-results-end-narrow" | "plot-image-clipboard" | "plot-image-clipboard-narrow") {
                 state.new_memory_db().unwrap();
@@ -1409,8 +1411,8 @@ impl Demo {
             }
         }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
-        if state.tab == MainTab::ExecuteSql && state.dock_edit {
-            if let Err(error) = state.sync_edit_cell_from_sql_selection() { state.error_msg = Some(error); }
+        if state.dock_edit {
+            if let Err(error) = state.sync_edit_cell_for_page() { state.error_msg = Some(error); }
         }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
@@ -1572,17 +1574,19 @@ impl Demo {
                 tab.col_filters[i] = v.to_string();
             }
         }
-        if self.ids.edit_col.0 != 0 {
-            if let Some(v) = self.ui.text_input_value(self.ids.edit_col) {
-                self.state.edit_col = v.to_string();
+        if !self.state.edit_cell_read_only() {
+            if self.ids.edit_col.0 != 0 {
+                if let Some(v) = self.ui.text_input_value(self.ids.edit_col) {
+                    self.state.edit_col = v.to_string();
+                }
             }
-        }
-        if let Some(t) = self.ui.select_selected(self.ids.edit_type) {
-            self.state.edit_type = t;
-        }
-        if self.ids.edit_value.0 != 0 {
-            if let Some(v) = self.ui.text_area_value(self.ids.edit_value) {
-                self.state.edit_value = v.to_string();
+            if let Some(t) = self.ui.select_selected(self.ids.edit_type) {
+                self.state.edit_type = t;
+            }
+            if self.ids.edit_value.0 != 0 {
+                if let Some(v) = self.ui.text_area_value(self.ids.edit_value) {
+                    self.state.edit_value = v.to_string();
+                }
             }
         }
         if self.ids.sql_area.0 != 0 {
@@ -4710,14 +4714,10 @@ impl Demo {
 
     fn sync_cell_selection(&mut self) -> bool {
         if !self.state.dock_edit || self.state.has_cell_draft() { return false; }
-        if self.state.tab == MainTab::ExecuteSql {
-            match self.state.sync_edit_cell_from_sql_selection() {
-                Ok(changed) => changed,
-                Err(error) => { self.set_error(error); true }
-            }
-        } else if self.state.tab == MainTab::Browse && self.state.sql_cell_read_only() {
-            self.state.sync_edit_cell_from_selection(); true
-        } else { false }
+        match self.state.sync_edit_cell_for_page() {
+            Ok(changed) => changed,
+            Err(error) => { self.set_error(error); true }
+        }
     }
 
     fn poll_header_sort(&mut self, append: bool) {
@@ -5523,7 +5523,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow")) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow")) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

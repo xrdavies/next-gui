@@ -10,6 +10,76 @@ fn bounds(demo: &Demo, id: WidgetId) -> next_gui_scene::Rect {
 }
 
 #[test]
+fn cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_draft_loss() {
+    use crate::state::EditCellMode;
+    let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();
+    demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE cells(id INTEGER PRIMARY KEY, value TEXT, n INTEGER, computed AS(n*2)); INSERT INTO cells VALUES(1,'{\"b\":2,\"a\":1}',3); CREATE VIEW cell_view AS SELECT * FROM cells; CREATE TABLE keyed(id TEXT PRIMARY KEY,value TEXT) WITHOUT ROWID; INSERT INTO keyed VALUES('k','kept');").unwrap();
+    demo.state.refresh_schema().unwrap();
+    demo.state.switch_browse_table_in("main", "cells").unwrap();
+    demo.state.tab = MainTab::Browse;
+    demo.state.goto_browse_record(1).unwrap(); demo.state.browse_mut().sel_col = Some(1);
+    demo.state.sync_edit_cell_from_selection();
+    let saved = demo.state.edit_saved.clone(); let original = demo.state.edit_value.clone();
+    demo.state.dock_focus = DockKind::Plot; demo.state.sync_current_plot().unwrap(); demo.state.plot.check(2, 1, true);
+    let folder = std::env::var("NEXT_GUI_CELL_POLICY_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder) = &folder { std::fs::create_dir_all(folder).unwrap(); }
+    for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+        demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+        for (width, height) in [(1400, 1000), (800, 600)] {
+            demo.win_w = width; demo.win_h = height;
+            for (page, tab) in [("structure", MainTab::Structure), ("pragmas", MainTab::Pragmas)] {
+                demo.state.tab = tab; demo.do_rebuild();
+                assert_eq!(demo.ui.text_input_enabled(demo.ids.edit_col), Some(false));
+                assert_eq!(demo.ids.edit_type, WidgetId(0));
+                assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell), Some(false));
+                assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_discard), Some(false));
+                demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.key_input(UiKey::SelectAll);
+                assert_eq!(demo.ui.focused_text_for_copy().as_deref(), Some(original.as_str()));
+                for key in [UiKey::Char('9'), UiKey::Backspace, UiKey::Delete] { demo.ui.key_input(key); }
+                demo.ui.paste_into_focused_text("unsafe"); demo.ui.ime_commit("替换"); demo.snapshot_inputs();
+                assert_eq!(demo.state.edit_value, original); assert!(!demo.state.has_cell_draft());
+                assert!(demo.state.apply_cell_draft().unwrap_err().contains("read-only"));
+                let button = demo.ids.btn_edit_json; demo.handle_button(button); demo.do_rebuild();
+                assert!(demo.state.edit_value.contains('\n')); assert!(!demo.state.has_cell_draft());
+                demo.do_rebuild(); assert_eq!(demo.state.edit_mode, EditCellMode::Json);
+                if let Some(folder) = &folder { crate::plot_export::capture(&mut demo, folder, &format!("cell-policy-{name}-{page}-{width}")); }
+                demo.state.set_edit_mode(EditCellMode::Hex).unwrap();
+                demo.state.discard_cell_draft(); assert_eq!(demo.state.edit_saved, saved);
+                demo.state.tab = MainTab::Browse; demo.do_rebuild();
+                assert_eq!(demo.state.edit_value, original); assert!(!demo.state.has_cell_draft());
+                assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell), Some(true));
+            }
+        }
+    }
+    for table in ["cells", "cell_view", "keyed"] {
+        demo.state.switch_browse_table_in("main", table).unwrap(); demo.state.goto_browse_record(1).unwrap();
+        demo.state.browse_mut().sel_col = Some(if table == "cells" {3} else {1}); demo.state.sync_edit_cell_from_selection();
+        demo.do_rebuild(); assert!(demo.state.edit_cell_read_only());
+        demo.state.set_edit_mode(EditCellMode::Json).unwrap(); assert!(!demo.state.has_cell_draft());
+        demo.state.edit_col = "value".into(); demo.state.edit_value = "unsafe".into();
+        assert!(demo.state.apply_cell_draft().unwrap_err().contains("read-only")); demo.state.discard_cell_draft();
+    }
+    demo.state.switch_browse_table_in("main", "cells").unwrap(); demo.state.goto_browse_record(1).unwrap();
+    demo.state.browse_mut().sel_col = Some(1); demo.state.read_only = true; demo.state.sync_edit_cell_from_selection();
+    demo.do_rebuild(); assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell), Some(false));
+    demo.state.set_edit_mode(EditCellMode::Json).unwrap(); assert!(!demo.state.has_cell_draft());
+    assert!(demo.state.apply_cell_draft().is_err());
+    demo.state.read_only = false; demo.do_rebuild(); assert_eq!(demo.state.edit_value, original);
+    demo.ui.set_text_area_value(demo.ids.edit_value, "kept draft"); demo.snapshot_inputs();
+    assert!(demo.state.has_cell_draft());
+    demo.ui.set_tabs_selected(demo.ids.tabs, MainTab::Pragmas.index()); demo.snapshot_inputs();
+    assert_eq!(demo.state.tab, MainTab::Pragmas);
+    assert!(demo.state.set_edit_mode(EditCellMode::Json).is_err());
+    assert_eq!(demo.state.edit_value, "kept draft"); assert!(demo.state.has_cell_draft());
+    demo.poll_selection_changes(); demo.do_rebuild();
+    assert_eq!(demo.state.tab, MainTab::Browse); assert_eq!(demo.state.edit_value, "kept draft");
+    assert!(demo.state.has_cell_draft()); demo.state.discard_cell_draft();
+    assert_eq!(demo.state.edit_value, original);
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM cells", [], |row| row.get::<_,String>(0)).unwrap(), original);
+}
+
+#[test]
 fn independent_cell_and_plot_docks_keep_drafts_scrolls_ratios_and_project_layout() {
     let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
     demo.state.new_memory_db().unwrap();
