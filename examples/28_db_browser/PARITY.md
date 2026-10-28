@@ -729,3 +729,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Exact integer PRAGMA editors — 2026-10-28
 
 [Review](../../docs/reviews/R-20261028-680be34446cf.md): shared next-gui opt-in i64 TextInput stepping avoids floating conversion, retains clipboard/Undo/sessions and protects composition/disabled/invalid drafts. All numeric PRAGMAs share bounds, text/candidate geometry reserves arrows, and measured labels align controls.629 tests/strict checks,16 render pairs and six browser/14 rebuilt Office native windows verified. Press-and-hold repetition, native OS input and complete original/product parity remain.
+
+### Original SQL export options and progress (2026-10-28)
+
+[Review](../../docs/reviews/R-20261028-fff58fe35415.md): main table/view chooser, original content/schema/column-name/multi-row/original-CREATE settings, safe suggested filenames and connection-owned cancellable progress verified. Selected sequence restoration preserves source and destination high-water marks; typed/generated/trigger ordering and guarded atomic publication retain pending edits and existing files. Final396 example tests, workspace634/43,16 render pairs and eight native static windows pass. Selected virtual tables, original binary/native input/picker/platform and broader product parity remain unfinished.
