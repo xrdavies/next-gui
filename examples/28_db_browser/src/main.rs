@@ -59,6 +59,8 @@ const CURRENT_PLOT_QA_SQL: &str = "CREATE TABLE quarterly_revenue(observed TEXT,
 WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<18)
 INSERT INTO quarterly_revenue SELECT printf('2026-10-%02d',x), CASE WHEN x=9 THEN NULL ELSE 1200+x*150+(x%3)*80 END, 520+x*64, CASE WHEN x%2=0 THEN 'APAC' ELSE 'EMEA' END FROM n;";
 
+const BAR_PLOT_QA_SQL: &str = "CREATE TABLE quarterly_revenue(observed TEXT,revenue REAL,expenses REAL,region TEXT);
+INSERT INTO quarterly_revenue VALUES ('Q1',12,8,'EMEA'),('Q2',18,11,'APAC'),('Q3',-7,-4,'EMEA'),('Q4',9,-3,'APAC');";
 const NATIVE_PLOT_QA_XML: &str = r##"<sqlb_project><db path=':memory:'/><tab_browse><browse_table_settings>
     <table schema='main' name='quarterly_revenue' plot_x_axis='observed'><plot_y_axes>
     <y_axis name='revenue' line_style='2' point_shape='5' colour='#3385eb' active='1'/>
@@ -1289,9 +1291,9 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow") {
                 state.new_memory_db().unwrap();
-                state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+                state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
                 state.tab = if tab.ends_with("sql") { MainTab::ExecuteSql } else { MainTab::Browse };
@@ -1301,7 +1303,8 @@ impl Demo {
                 }
                 state.plot.settings.manual = false;
                 state.sync_current_plot().unwrap();
-                for (row, axis) in [(1, 1), (2, 2), (3, 3)] { assert!(state.plot.check(row, axis, true)); }
+                for (row, axis) in [(1, 1), (2, 2), (3, if tab.starts_with("plot-bars-") {2}else{3})] { assert!(state.plot.check(row, axis, true)); }
+                state.plot.settings.stacked_bars=tab.starts_with("plot-bars-stacked");
                 state.plot.set_styles(1, 4);
                 if tab == "plot-native-settings" {
                     let native = project_xml::decode(NATIVE_PLOT_QA_XML).unwrap();
@@ -1422,7 +1425,7 @@ impl Demo {
             built.ui.key_input(UiKey::SelectWordRight);
             built.ui.sync(&mut built.scene);
         }
-        if matches!(std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref(),Ok("plot-image-clipboard" | "plot-image-clipboard-narrow")) {
+        if matches!(std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref(),Ok("plot-image-clipboard" | "plot-image-clipboard-narrow" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow")) {
             built.ui.set_focus(Some(built.chart)); built.ui.sync(&mut built.scene);
         }
         if qa_calltip {
@@ -3225,6 +3228,7 @@ impl Demo {
             next_gui_ui::MenuItem::new(mid::PLOT_FIT,"Fit to Data"),
             next_gui_ui::MenuItem::new(mid::PLOT_LEGEND,"Show legend").checked(self.state.plot.settings.show_legend),
             next_gui_ui::MenuItem::new(mid::PLOT_FIXED_FORMAT,"Fixed number format").checked(self.state.plot.settings.fixed_number_format),
+            next_gui_ui::MenuItem::new(mid::PLOT_STACKED_BARS,"Stacked bars").checked(self.state.plot.settings.stacked_bars),
             next_gui_ui::MenuItem::new(mid::PLOT_HELP,"Help"),
         ],x,y)
     }
@@ -3247,6 +3251,7 @@ impl Demo {
             mid::PLOT_SAVE=>self.save_plot(),
             mid::PLOT_FIT=>self.fit_plot(),
             mid::PLOT_HELP=>self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/wiki/Plot-Dock"),
+            mid::PLOT_STACKED_BARS=>{self.state.plot.settings.stacked_bars = !self.state.plot.settings.stacked_bars;self.rebuild=true;}
             mid::PLOT_LEGEND=>{self.state.plot.settings.show_legend = !self.state.plot.settings.show_legend;self.rebuild=true;}
             mid::PLOT_FIXED_FORMAT=>{self.state.plot.settings.fixed_number_format = !self.state.plot.settings.fixed_number_format;self.rebuild=true;}
             _=>return false,
@@ -5438,7 +5443,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("plot-image-clipboard-narrow") {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow")) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

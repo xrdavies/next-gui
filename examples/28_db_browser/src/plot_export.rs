@@ -176,6 +176,53 @@ mod tests {
     }
 
     #[test]
+    fn grouped_and_stacked_plot_menu_keeps_view_source_and_project_settings() {
+        use next_gui_ui::UiKey;
+        let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(crate::BAR_PLOT_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
+        demo.state.tab=MainTab::Browse;demo.state.sync_current_plot().unwrap();
+        for (row,axis) in [(1,1),(2,2),(3,2)] {assert!(demo.state.plot.check(row,axis,true));}
+        demo.state.sync_current_plot().unwrap();
+        assert!(demo.state.plot.data.series.iter().all(|s|s.line==next_gui_ui::PlotLine::Bars));
+        demo.state.dock_focus=DockKind::Plot;demo.state.dock_plot=true;demo.state.body_ratio=0.52;
+        let points=demo.state.plot.data.series[0].points.clone();
+        let folder=std::env::var("NEXT_GUI_PLOT_BARS_QA_OUT").ok().map(std::path::PathBuf::from);
+        if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+        for (name,theme) in [("dark",next_gui_ui::Theme::dark()),("light",next_gui_ui::Theme::light())] {
+            demo.theme=crate::ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            for (width,height) in [(1400,1000),(800,600)] {
+                demo.win_w=width;demo.win_h=height;demo.do_rebuild();
+                let grouped=demo.visible_plot_image().unwrap();
+                if let Some(folder)=&folder {capture(&mut demo,folder,&format!("grouped-{name}-{width}"));}
+                demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);
+                assert!(demo.handle_plot_context_key(crate::KeyCode::Function(10),crate::Modifiers{shift:true,..crate::Modifiers::default()}));
+                demo.ui.key_input(UiKey::Home);for _ in 0..5 {demo.ui.key_input(UiKey::Down);}demo.ui.key_input(UiKey::Enter);
+                let (_,item)=demo.ui.take_menu_action().unwrap();assert_eq!(item,crate::mid::PLOT_STACKED_BARS);
+                assert!(demo.handle_plot_menu_action(item));demo.do_rebuild();
+                assert!(demo.state.plot.settings.stacked_bars && demo.state.plot.data.stacked_bars);
+                assert_ne!(grouped.pixels(),demo.visible_plot_image().unwrap().pixels());
+                assert!(demo.state.plot.data.auto_view().y1.1>29.0 && demo.state.plot.data.auto_view().y1.0< -11.0);
+                if let Some(folder)=&folder {capture(&mut demo,folder,&format!("stacked-{name}-{width}"));}
+                let data=demo.ui.chart_plot_mut(demo.ids.chart,0).unwrap();assert!(data.zoom(0.8,0.5,0.5));data.select_row(1,false);
+                let view=data.view();demo.snapshot_inputs();
+                assert!(demo.handle_plot_menu_action(item));demo.do_rebuild();assert!(!demo.state.plot.data.stacked_bars);
+                assert_eq!(demo.ui.chart_plot(demo.ids.chart,0).unwrap().view(),view);
+                assert!(demo.ui.chart_plot(demo.ids.chart,0).unwrap().state.selected_rows.contains(&1));
+                assert!(std::sync::Arc::ptr_eq(&points,&demo.state.plot.data.series[0].points));
+                demo.fit_plot();demo.do_rebuild();
+            }
+        }
+        demo.handle_plot_menu_action(crate::mid::PLOT_STACKED_BARS);demo.do_rebuild();
+        let project=crate::project::ProjectFile::from_state(&demo.state);
+        let json:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();assert!(json.plot_settings.stacked_bars);
+        let xml=crate::project_xml::encode(&project,Path::new("/tmp/next-gui-bars.sqbpro")).unwrap();
+        assert!(crate::project_xml::decode(&xml).unwrap().plot_settings.stacked_bars);
+        assert!(!serde_json::from_str::<plot::Settings>("{}").unwrap().stacked_bars);
+    }
+
+    #[test]
     fn plot_context_menu_preserves_full_data_view_and_project_format_settings() {
         use next_gui_ui::UiKey;
         let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);

@@ -118,6 +118,7 @@ pub struct Settings {
     pub marker: usize,
     pub show_legend: bool,
     pub fixed_number_format: bool,
+    pub stacked_bars: bool,
     pub configs: Vec<Config>,
 }
 impl Default for Settings {
@@ -128,6 +129,7 @@ impl Default for Settings {
             marker: 0,
             show_legend: false,
             fixed_number_format: false,
+            stacked_bars: false,
             configs: Vec::new(),
         }
     }
@@ -406,8 +408,10 @@ impl Model {
         if self.full_matches(&source, result) {
             self.data.show_legend = self.settings.show_legend;
             self.data.fixed_number_format = self.settings.fixed_number_format;
+            self.data.stacked_bars = self.settings.stacked_bars;
             self.full.as_mut().unwrap().settings.show_legend = self.settings.show_legend;
             self.full.as_mut().unwrap().settings.fixed_number_format = self.settings.fixed_number_format;
+            self.full.as_mut().unwrap().settings.stacked_bars = self.settings.stacked_bars;
             self.summary = format!("{} rows · all loaded", self.full.as_ref().unwrap().result.values.len());
             return if self.dirty { Err("Full plot changes require a background rebuild".into()) } else { Ok(()) };
         }
@@ -498,6 +502,7 @@ impl Model {
         check(0)?;
         self.data.show_legend = self.settings.show_legend;
         self.data.fixed_number_format = self.settings.fixed_number_format;
+        self.data.stacked_bars = self.settings.stacked_bars;
         let identity = result.values.identity();
         self.summary = if let Some(total) = total {
             format!(
@@ -562,6 +567,7 @@ impl Model {
         let mut data = PlotData {
             show_legend: self.settings.show_legend,
             fixed_number_format: self.settings.fixed_number_format,
+            stacked_bars: self.settings.stacked_bars,
             ..PlotData::default()
         };
         if let Some(x_index) = x_index {

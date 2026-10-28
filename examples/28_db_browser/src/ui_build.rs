@@ -75,6 +75,7 @@ pub mod mid {
     pub const PLOT_HELP: u64 = 83;
     pub const PLOT_LEGEND: u64 = 84;
     pub const PLOT_FIXED_FORMAT: u64 = 85;
+    pub const PLOT_STACKED_BARS: u64 = 86;
 
     pub const HELP_ABOUT: u64 = 60;
     pub const HELP_WIKI: u64 = 61;
@@ -1612,6 +1613,7 @@ pub fn build_ui(
                 if !state.plot.settings.manual { state.plot.data.clone() } else { PlotData {
                     show_legend: state.plot.settings.show_legend,
                     fixed_number_format: state.plot.settings.fixed_number_format,
+                    stacked_bars: state.plot.settings.stacked_bars,
                     x_label: "Source row".into(),
                     y1_label: state.chart_column.clone(),
                     series: vec![PlotSeries {
