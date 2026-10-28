@@ -101,7 +101,16 @@ fn csv_value(value: ValueRef<'_>) -> String {
     match value {
         ValueRef::Null => String::new(),
         ValueRef::Integer(v) => v.to_string(),
-        ValueRef::Real(v) => v.to_string(),
+        ValueRef::Real(v) => {
+            let mut buffer = [0 as std::ffi::c_char; 32];
+            // Match SQLite's numeric column conversion, with its fixed bounded ASCII format.
+            unsafe {
+                rusqlite::ffi::sqlite3_snprintf(32, buffer.as_mut_ptr(), c"%!.15g".as_ptr(), v);
+                std::ffi::CStr::from_ptr(buffer.as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
         ValueRef::Text(bytes) | ValueRef::Blob(bytes) => match std::str::from_utf8(bytes) {
             Ok(text)
                 if text.chars().all(|ch| {
@@ -449,6 +458,41 @@ pub fn export_progress(
 mod tests {
     use super::*;
     #[test]
+    fn csv_real_values_match_sqlite_column_text_including_rounding_and_exponents() {
+        let conn = Connection::open_in_memory().unwrap();
+        let mut statement = conn.prepare("SELECT CAST(?1 AS TEXT)").unwrap();
+        let mut values = vec![
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            28.799999999999997,
+            1e-20,
+            1e20,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        let mut bits = 0x123456789abcdef0u64;
+        for _ in 0..200 {
+            bits = bits.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let value = f64::from_bits(bits);
+            if value.is_finite() {
+                values.push(value);
+            }
+        }
+        for value in values {
+            let expected: String = statement.query_row([value], |row| row.get(0)).unwrap();
+            assert_eq!(
+                csv_value(ValueRef::Real(value)),
+                expected,
+                "value={value:?}"
+            );
+        }
+    }
+    #[test]
     fn export_progress_modal_cancel_keeps_workspace_transaction_and_allows_retry() {
         use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
         use next_gui_ui::{Theme, UiKey};
@@ -567,7 +611,7 @@ mod tests {
         export_query(&conn, &source, &path, false, &options, false).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "9223372036854775807§AB§AP8=§AP8=§gA==§inf§§«a§b«\r\n"
+            "9223372036854775807§AB§AP8=§AP8=§gA==§Inf§§«a§b«\r\n"
         );
         export_query(&conn, &source, &path, true, &options, true).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
