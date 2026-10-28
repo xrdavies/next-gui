@@ -585,6 +585,7 @@ impl crate::state::AppState {
 
     fn finish_csv_insert(&mut self, work: &mut Work, rows: u64) {
         let table = work.target().to_string();
+        work.accepted.insert(table.to_ascii_lowercase());
         self.mark_dirty();
         self.log_sql(format!("-- import csv → {table} ({rows} rows)"));
         work.rows += rows;
@@ -1253,6 +1254,61 @@ mod interaction_tests {
                 assert_eq!(crate::db::count_rows(conn, "second").unwrap(), 1);
                 assert_eq!(crate::db::count_rows(conn, "keeper").unwrap(), 1);
                 assert!(crate::db::table_columns(conn, "first").unwrap().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn csv_original_preview_and_worker_import_keep_missing_cells_and_expanded_headers() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("records.csv");
+                std::fs::write(
+                    &path,
+                    "name,note\none\n\"quoted\" tail,\"x\"suffix\npre\"middle\"post,value,9\n",
+                )
+                .unwrap();
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                assert!(demo.state.open_csv_files(vec![path]));
+                demo.state.csv_has_header = true;
+                demo.do_rebuild();
+                assert_ne!(demo.ids.ov_csv_preview.0, 0);
+                assert_eq!(demo.ui.table_visible_rows(demo.ids.ov_csv_preview), Some(3));
+                capture(&mut demo, theme_name, width, "ragged");
+                demo.handle_button(demo.ids.ov_btn_ok);
+                demo.settle_csv_test();
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert!(demo.state.overlay.is_none());
+                let conn = demo.state.conn.as_ref().unwrap();
+                assert_eq!(crate::db::count_rows(conn, "records").unwrap(), 3);
+                assert!(conn
+                    .query_row(
+                        "SELECT note IS NULL AND field3 IS NULL FROM records WHERE name='one'",
+                        [],
+                        |row| row.get::<_, bool>(0)
+                    )
+                    .unwrap());
+                assert_eq!(
+                    conn.query_row(
+                        "SELECT note||':'||field3 FROM records WHERE name='premiddlepost'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                    "value:9"
+                );
+                assert_eq!(
+                    conn.query_row(
+                        "SELECT note FROM records WHERE name='quoted tail'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                    "xsuffix"
+                );
             }
         }
     }

@@ -30,6 +30,8 @@ CSV imports validate and write on background workers with byte/record progress.
 Cancel stops after the current read or record and rolls back the current file;
 completed files and earlier pending edits remain available for Write Changes or
 Revert. Other database actions wait until import or cancellation finishes.
+The first20 records determine columns; shorter records retain missing cells as
+NULL, while explicit empty cells follow the selected default/missing-value policy.
 
 Native file pickers use `rfd`. Cancel means no operation.
 

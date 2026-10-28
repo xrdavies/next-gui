@@ -1714,15 +1714,25 @@ pub fn import_csv_rows(conn: &Connection, table: &str, headers: &[String], types
         let mut count = 0;
         for (row_index, row) in rows.into_iter().enumerate() {
             let row = row?;
-            if row.len() != columns.len() { return Err(format!("CSV row {} has the wrong number of fields", row_index + 1)); }
+            if row.len() > columns.len() { return Err(format!("CSV row {} has more fields than the target table", row_index + 1)); }
             let mut names = Vec::new(); let mut values = Vec::new();
-            for (column, text) in columns.iter().zip(&row) {
-                let value = if !text.is_empty() { rusqlite::types::Value::Text(text.clone()) }
-                    else if exists && !options.ignore_defaults && column.default_value.is_some() { continue; }
-                    else if exists && column.notnull {
-                        if options.fail_on_missing { return Err(format!("CSV row {}: missing value for NOT NULL column {}", row_index + 1, column.name)); }
-                        if column.type_name.to_ascii_uppercase().contains("INT") { rusqlite::types::Value::Integer(0) } else { rusqlite::types::Value::Text(String::new()) }
-                    } else { rusqlite::types::Value::Null };
+            for (index, column) in columns.iter().enumerate() {
+                let value = match row.get(index) {
+                    None => rusqlite::types::Value::Null,
+                    Some(text) if !text.is_empty() => rusqlite::types::Value::Text(text.clone()),
+                    Some(_) if exists && !options.ignore_defaults && column.default_value.is_some() => continue,
+                    Some(_) if exists && column.notnull => {
+                        if options.fail_on_missing {
+                            return Err(format!("CSV row {}: missing value for NOT NULL column {}", row_index + 1, column.name));
+                        }
+                        if column.type_name.to_ascii_uppercase().contains("INT") {
+                            rusqlite::types::Value::Integer(0)
+                        } else {
+                            rusqlite::types::Value::Text(String::new())
+                        }
+                    }
+                    Some(_) => rusqlite::types::Value::Null,
+                };
                 names.push(quote_ident(&column.name)); values.push(value);
             }
             let target = qualified_name("main", table);
@@ -2255,6 +2265,29 @@ mod tests {
     }
 
     #[test]
+    fn csv_original_missing_fields_bind_null_without_taking_explicit_empty_defaults() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('saved');CREATE TABLE existing(id INTEGER, value TEXT DEFAULT 'default', tail TEXT DEFAULT 'tail');CREATE TABLE required(id INTEGER, value TEXT NOT NULL DEFAULT 'default', tail TEXT);BEGIN;INSERT INTO keeper VALUES('pending')").unwrap();
+        let options = CsvImportOptions::default();
+        let data = crate::csv_import::text("id,value,tail\n1,,\n2\n3,,last\n", &options, 0).unwrap();
+        assert_eq!(import_csv_data(&conn, "existing", &data, &options).unwrap(), 3);
+        let rows = conn.prepare("SELECT id,value,tail FROM existing ORDER BY id").unwrap().query_map([], |row| Ok((row.get::<_,i64>(0)?, row.get::<_,Option<String>>(1)?, row.get::<_,Option<String>>(2)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert_eq!(rows, [(1,Some("default".into()),Some("tail".into())), (2,None,None), (3,Some("default".into()),Some("last".into()))]);
+        let error = import_csv_data(&conn, "required", &data, &options).unwrap_err();
+        assert!(error.contains("NOT NULL"), "{error}");
+        assert_eq!(count_rows(&conn, "required").unwrap(), 0);
+        assert_eq!(count_rows(&conn, "existing").unwrap(), 3);
+        assert_eq!(count_rows(&conn, "keeper").unwrap(), 2);
+        assert_eq!(import_csv_data(&conn, "required", &data, &CsvImportOptions {conflict:CsvConflict::Ignore,..options.clone()}).unwrap(), 2);
+        assert_eq!(import_csv_data(&conn, "new_table", &data, &options).unwrap(), 3);
+        assert!(conn.query_row("SELECT value IS NULL AND tail IS NULL FROM new_table WHERE id=2", [], |row| row.get::<_,bool>(0)).unwrap());
+        assert!(!conn.is_autocommit());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count_rows(&conn, "keeper").unwrap(), 1);
+        assert!(table_columns(&conn, "new_table").unwrap().is_empty());
+    }
+
+    #[test]
     fn csv_multiline_and_atomic_import() {
         let options = CsvImportOptions::default();
         let (cols, rows) = import_csv_from_text(
@@ -2265,7 +2298,7 @@ mod tests {
         assert_eq!(rows[0][1], "line 1\nline 2");
         assert_eq!(rows[1][1], "");
         assert!(import_csv_from_text("a,b\n\"unterminated", &options).is_err());
-        assert!(import_csv_from_text("a,b\n1,2,3", &options).is_err());
+        assert_eq!(import_csv_from_text("a,b\n1,2,3", &options).unwrap().0, ["a", "b", "field3"]);
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE t(name TEXT UNIQUE, note TEXT); BEGIN;")
             .unwrap();

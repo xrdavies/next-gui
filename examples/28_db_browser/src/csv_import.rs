@@ -21,6 +21,7 @@ struct Parser<'a> {
     skip_lf: bool,
     limit: usize,
     count: usize,
+    width: usize,
     sink: Option<&'a mut RecordSink<'a>>,
 }
 
@@ -43,6 +44,7 @@ impl<'a> Parser<'a> {
             skip_lf: false,
             limit,
             count: 0,
+            width: 0,
             sink: None,
         })
     }
@@ -87,11 +89,10 @@ impl<'a> Parser<'a> {
                 if self.limit != 0 && self.count >= self.limit {
                     return Ok(false);
                 }
-            } else if self.closed {
-                return Err("Unexpected text after CSV closing quote".into());
-            } else if Some(ch) == self.options.quote && self.field.is_empty() {
+            } else if Some(ch) == self.options.quote {
                 self.quoted = true;
             } else {
+                self.closed = false;
                 self.field.push(ch);
             }
         }
@@ -100,6 +101,14 @@ impl<'a> Parser<'a> {
 
     fn record(&mut self) -> Result<(), String> {
         let row = std::mem::take(&mut self.record);
+        if self.count < 20 {
+            self.width = self.width.max(row.len());
+        } else if row.len() > self.width {
+            return Err(format!(
+                "CSV record {} has more fields than the first 20 records",
+                self.count + 1
+            ));
+        }
         self.count += 1;
         if let Some(sink) = &mut self.sink {
             sink(&row)?;
@@ -128,6 +137,7 @@ impl<'a> Parser<'a> {
         } else {
             vec![String::new(); self.records[0].len()]
         };
+        columns.resize(self.width, String::new());
         for (index, column) in columns.iter_mut().enumerate() {
             if column.is_empty() {
                 *column = format!("field{}", index + 1);
@@ -137,11 +147,8 @@ impl<'a> Parser<'a> {
             columns[..index]
                 .iter()
                 .any(|prior| prior.eq_ignore_ascii_case(name))
-        }) || self.records.iter().any(|row| row.len() != columns.len())
-        {
-            return Err(
-                "CSV needs unique headers and the same number of fields in every row".into(),
-            );
+        }) {
+            return Err("CSV needs unique headers".into());
         }
         let sample = 20 - usize::from(self.options.has_header);
         let types = (0..columns.len())
@@ -151,7 +158,10 @@ impl<'a> Parser<'a> {
                 }
                 let mut kind = "";
                 for row in self.records.iter().take(sample) {
-                    let value = row[column].trim();
+                    let Some(value) = row.get(column) else {
+                        continue;
+                    };
+                    let value = value.trim();
                     let next = if value.parse::<i64>().is_ok() {
                         "INTEGER"
                     } else if value.parse::<f64>().is_ok_and(f64::is_finite) {
@@ -275,14 +285,8 @@ pub fn prepare(reader: impl std::io::Read, options: &CsvImportOptions) -> Result
     // Anonymous files are removed by the OS when handles close, including process crashes.
     let mut file = tempfile::tempfile().map_err(|error| error.to_string())?;
     let mut writer = std::io::BufWriter::new(&mut file);
-    let mut width = None;
     let mut count = 0;
     let mut sink = |row: &[String]| {
-        if *width.get_or_insert(row.len()) != row.len() {
-            return Err(
-                "CSV needs unique headers and the same number of fields in every row".into(),
-            );
-        }
         serde_json::to_writer(&mut writer, row).map_err(|error| error.to_string())?;
         writer.write_all(b"\n").map_err(|error| error.to_string())?;
         count += 1;
@@ -381,7 +385,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
-            assert_eq!(snapshot.file.metadata().unwrap().nlink(),0);
+            assert_eq!(snapshot.file.metadata().unwrap().nlink(), 0);
             assert_eq!(
                 snapshot.file.metadata().unwrap().permissions().mode() & 0o077,
                 0
@@ -502,6 +506,63 @@ mod tests {
     }
 
     #[test]
+    fn csv_original_quotes_and_variable_width_rows_match_preview_and_snapshot() {
+        let options = CsvImportOptions::default();
+        let input = "name,note\none\n\"quoted\" tail,\"x\"suffix\npre\"middle\"post,value,9\n";
+        let data = read(Fragmented(input.as_bytes()), &options, 0).unwrap();
+        assert_eq!(data.columns, ["name", "note", "field3"]);
+        assert_eq!(
+            data.rows,
+            [
+                vec!["one"],
+                vec!["quoted tail", "xsuffix"],
+                vec!["premiddlepost", "value", "9"]
+            ]
+        );
+        assert_eq!(data.types, ["TEXT", "TEXT", "INTEGER"]);
+        let prepared = prepare(Fragmented(input.as_bytes()), &options).unwrap();
+        assert_eq!(prepared.preview.columns, data.columns);
+        assert_eq!(prepared.preview.rows, data.rows);
+        assert_eq!(
+            prepared
+                .rows()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            data.rows
+        );
+        let no_header = text(
+            input,
+            &CsvImportOptions {
+                has_header: false,
+                ..options.clone()
+            },
+            20,
+        )
+        .unwrap();
+        assert_eq!(no_header.columns, ["field1", "field2", "field3"]);
+        let late_short = format!("a,b\n{}tail\n", "1,2\n".repeat(25));
+        let snapshot = prepare_text(&late_short, &options).unwrap();
+        assert_eq!(snapshot.row_count, 26);
+        assert_eq!(snapshot.rows().unwrap().last().unwrap().unwrap(), ["tail"]);
+        let custom = CsvImportOptions {
+            delimiter: '§',
+            quote: Some('「'),
+            ..options
+        };
+        assert_eq!(
+            read(
+                Fragmented("a§b\nx「日本「y§「tail「after\n".as_bytes()),
+                &custom,
+                0
+            )
+            .unwrap()
+            .rows[0],
+            ["x日本y", "tailafter"]
+        );
+    }
+
+    #[test]
     fn chunk_boundaries_preserve_boms_quotes_crlf_unicode_and_trim() {
         let input = ",amount,note\r\n 日本 ,1,\" line 1\r\n\"\"quoted\"\" \"\r\nlast,2.5,end\r\n";
         let options = CsvImportOptions {
@@ -578,8 +639,11 @@ mod tests {
             text("a§b\n1§「x§y「\n", &custom, 0).unwrap().rows[0],
             ["1", "x§y"]
         );
-        assert!(text("a,b\n1,\"x\"oops", &options, 0).is_err());
-        assert!(text("a,b\n1", &options, 0).is_err());
+        assert_eq!(
+            text("a,b\n1,\"x\"oops", &options, 0).unwrap().rows[0],
+            ["1", "xoops"]
+        );
+        assert_eq!(text("a,b\n1", &options, 0).unwrap().rows[0], ["1"]);
     }
 
     #[test]

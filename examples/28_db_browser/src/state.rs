@@ -4908,9 +4908,7 @@ mod chart_default_tests {
         assert!(state.prefs.csv_separate_tables);assert!(state.prefs.csv_import.as_ref().unwrap().has_header);
         let (_directory,mut merged)=csv_batch_state(&[("one.csv","v\none\n"),("two.csv","v\ntwo\n"),("three.csv","v\nthree\n")]);
         merged.csv_files.as_mut().unwrap().separate=false;merged.csv_table="merged".into();
-        merged.start_csv_import_work().and_then(|_| merged.settle_csv_test()).unwrap();assert_eq!(merged.csv_work.as_ref().unwrap().target(),"merged");
-        assert_eq!(db::count_rows(merged.conn.as_ref().unwrap(),"merged").unwrap(),1);
-        merged.continue_csv_import_work(Some(Answer::Yes)).and_then(|_| merged.settle_csv_test()).unwrap();
+        merged.start_csv_import_work().and_then(|_| merged.settle_csv_test()).unwrap();
         assert!(merged.csv_work.is_none());assert!(merged.overlay.is_none());
         assert_eq!(merged.conn.as_ref().unwrap().query_row("SELECT group_concat(v,',') FROM merged",[],|row|row.get::<_,String>(0)).unwrap(),"one,two,three");
     }

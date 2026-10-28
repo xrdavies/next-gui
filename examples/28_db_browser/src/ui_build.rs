@@ -1358,7 +1358,7 @@ pub fn build_ui(
                                             let mut grid = TableStyle::from_theme(&theme); grid.width = preview_w; grid.height = (body_h - 82.0).max(80.0);
                                             let mut columns = vec![TableColumn::new("#", 44.0)];
                                             columns.extend(data.columns.iter().map(|name| TableColumn::new(name, ((preview_w - 44.0 - grid.padding * 2.0 - 1.0) / data.columns.len() as f32).clamp(110.0, 220.0))));
-                                            let rows = data.rows.iter().enumerate().map(|(index, row)| std::iter::once((index + 1).to_string()).chain(row.iter().map(|value| value.chars().take(1024).collect::<String>())).collect()).collect();
+                                            let rows = data.rows.iter().enumerate().map(|(index, row)| std::iter::once((index + 1).to_string()).chain((0..data.columns.len()).map(|column| row.get(column).map(|value| value.chars().take(1024).collect::<String>()).unwrap_or_default())).collect()).collect();
                                             ov_csv_preview = c.table(columns, rows, grid);
                                             let types = data.columns.iter().zip(&data.types).map(|(name, kind)| format!("{name}: {}", if kind.is_empty() { "untyped" } else { kind })).collect::<Vec<_>>().join(" · ");
                                             c.text_styled(types, theme.colors.text_secondary, 12.0);
