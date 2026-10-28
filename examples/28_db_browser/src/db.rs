@@ -1706,7 +1706,7 @@ pub fn import_csv_data(conn: &Connection, table: &str, data: &crate::csv_import:
         }
         let columns = table_columns(conn, table)?;
         if columns.len() != data.columns.len() { return Err("Import into an existing table requires the same number of writable columns".into()); }
-        let strategy = match options.conflict { CsvConflict::Abort => "", CsvConflict::Ignore => " OR IGNORE", CsvConflict::Replace => " OR REPLACE" };
+        let strategy = match options.conflict { CsvConflict::Abort => " OR ABORT", CsvConflict::Ignore => " OR IGNORE", CsvConflict::Replace => " OR REPLACE" };
         let mut count = 0;
         for (row_index, row) in data.rows.iter().enumerate() {
             if row.len() != columns.len() { return Err(format!("CSV row {} has the wrong number of fields", row_index + 1)); }
@@ -2202,6 +2202,17 @@ mod tests {
         .unwrap();
         assert!(import_sql_file(&conn, &path).is_err());
         assert!(count_rows(&conn, "broken").is_err());
+    }
+
+    #[test]
+    fn csv_abort_import_overrides_rollback_constraints_and_keeps_earlier_pending_changes() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('saved');CREATE TABLE target(v TEXT UNIQUE ON CONFLICT ROLLBACK);INSERT INTO target VALUES('saved');BEGIN;INSERT INTO keeper VALUES('pending');").unwrap();
+        let options=CsvImportOptions::default();let data=crate::csv_import::text("v\nnew\nsaved\n",&options,0).unwrap();
+        assert!(import_csv_data(&conn,"target",&data,&options).is_err());
+        assert!(!conn.is_autocommit(),"Abort import must not use the table's ROLLBACK conflict policy");
+        assert_eq!(count_rows(&conn,"keeper").unwrap(),2);assert_eq!(count_rows(&conn,"target").unwrap(),1);
+        conn.execute_batch("ROLLBACK").unwrap();assert_eq!(count_rows(&conn,"keeper").unwrap(),1);
     }
 
     #[test]
