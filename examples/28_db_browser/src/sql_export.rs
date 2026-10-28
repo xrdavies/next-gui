@@ -14,9 +14,8 @@ impl Draft {
         options: &ExportSqlOptions,
         selection: Option<&str>,
     ) -> Result<Self, String> {
-        let mut objects: Vec<_> = db::list_schema(conn)?
+        let mut objects: Vec<_> = db::sql_export_objects(conn)?
             .into_iter()
-            .filter(|object| matches!(object.kind, ObjectKind::Table | ObjectKind::View))
             .map(|object| (object.name, object.kind, false))
             .collect();
         objects.sort_by_key(|entry| entry.0.to_lowercase());
@@ -191,6 +190,7 @@ pub fn build(
                 error = body.text_area(message, "", text);
             }
             body.text("Tables and views");
+            body.text("Virtual tables include indexes. Restore into new or replaced tables.");
             let mut grid = TableStyle::from_theme(theme);
             grid.width = inner - 12.0;
             grid.height = (style.height * 0.3).clamp(132.0, 216.0);
@@ -651,6 +651,81 @@ mod tests {
                 assert!(db::list_schema(demo.state.conn.as_ref().unwrap())
                     .unwrap()
                     .is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn virtual_export_dialog_hides_internal_tables_and_preserves_failed_draft() {
+        use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
+        use next_gui_ui::Theme;
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch("CREATE VIRTUAL TABLE documents USING fts5(v,content=''); CREATE VIRTUAL TABLE locations USING rtree(id,x0,x1,y0,y1); INSERT INTO documents(rowid,v) VALUES(9007199254740993,'pending alpha'); INSERT INTO locations VALUES(8,1,2,3,4);").unwrap();
+                demo.state.refresh_schema().unwrap();
+                demo.state.selected = None;
+                demo.action_export_sql();
+                demo.do_rebuild();
+                assert_eq!(demo.state.sql_export.as_ref().unwrap().objects.len(), 2);
+                assert!(demo
+                    .state
+                    .sql_export
+                    .as_ref()
+                    .unwrap()
+                    .objects
+                    .iter()
+                    .all(|(name, _, checked)| *checked
+                        && matches!(name.as_str(), "documents" | "locations")));
+                capture(&mut demo, theme_name, width, "sql-export-virtual");
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("out.sql");
+                std::fs::write(&path, "previous").unwrap();
+                demo.ui.set_select_selected(demo.ids.sql_export.what, Some(2));
+                demo.snapshot_sql_export();
+                demo.do_rebuild();
+                demo.perform_sql_export(path.clone());
+                demo.settle_export_test();
+                demo.do_rebuild();
+                assert!(demo.state.error_msg.as_ref().unwrap().contains("data-only"));
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+                assert!(
+                    demo.state.sql_export.is_some()
+                        && !demo.state.conn.as_ref().unwrap().is_autocommit()
+                );
+                capture(&mut demo, theme_name, width, "sql-export-virtual-error");
+                demo.ui.set_select_selected(demo.ids.sql_export.what, Some(0));
+                demo.snapshot_sql_export();
+                demo.do_rebuild();
+                demo.perform_sql_export(path.clone());
+                demo.settle_export_test();
+                demo.do_rebuild();
+                assert!(demo.state.error_msg.is_none() && demo.state.sql_export.is_none());
+                let restored = Connection::open_in_memory().unwrap();
+                restored
+                    .execute_batch(&std::fs::read_to_string(path).unwrap())
+                    .unwrap();
+                assert_eq!(
+                    restored
+                        .query_row(
+                            "SELECT rowid FROM documents WHERE documents MATCH 'alpha'",
+                            [],
+                            |r| r.get::<_, i64>(0)
+                        )
+                        .unwrap(),
+                    9007199254740993
+                );
+                assert_eq!(db::count_rows(&restored, "locations").unwrap(), 1);
+                assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
+                demo.state
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .execute_batch("ROLLBACK")
+                    .unwrap();
+                assert!(db::list_schema(demo.state.conn.as_ref().unwrap()).unwrap().is_empty());
             }
         }
     }

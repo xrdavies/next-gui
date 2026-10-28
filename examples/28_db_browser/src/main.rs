@@ -1094,7 +1094,7 @@ impl Demo {
                     state.overlay = Some(OverlayKind::Preferences);
                     MainTab::Structure
                 }
-                "exportsql" | "export" | "sql-export-data" | "sql-export-progress" | "sql-export-canceling" => {
+                "exportsql" | "export" | "sql-export-virtual" | "sql-export-data" | "sql-export-progress" | "sql-export-canceling" => {
                     state.overlay = Some(OverlayKind::ExportSql);
                     MainTab::Structure
                 }
@@ -1223,6 +1223,11 @@ impl Demo {
         }
         if matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) { state.refresh_csv_preview(); }
         if state.overlay==Some(OverlayKind::ExportSql) {
+            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("sql-export-virtual") {
+                state.new_memory_db().unwrap();
+                state.conn.as_ref().unwrap().execute_batch("CREATE VIRTUAL TABLE documents USING fts5(v,content=''); CREATE VIRTUAL TABLE locations USING rtree(id,x0,x1,y0,y1); INSERT INTO documents(rowid,v) VALUES(9007199254740993,'pending alpha'); INSERT INTO locations VALUES(8,1,2,3,4);").unwrap();
+                state.refresh_schema().unwrap();state.overlay=Some(OverlayKind::ExportSql);
+            }
             state.sql_export=Some(sql_export::Draft::new(state.conn.as_ref().unwrap(), &state.prefs.sql_export, None).unwrap());
             let qa_tab=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap_or_default();
             if qa_tab=="sql-export-data" { state.sql_export.as_mut().unwrap().options.structure=false; }

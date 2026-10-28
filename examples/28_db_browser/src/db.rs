@@ -2447,6 +2447,162 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn virtual_dump_preserves_pending_contentless_index_and_rtree() {
+        let source = Connection::open_in_memory().unwrap();
+        source.execute_batch("CREATE TABLE content(id INTEGER PRIMARY KEY,v); CREATE VIRTUAL TABLE docs USING fts5(v); CREATE VIRTUAL TABLE empty_docs USING fts5(v,content=''); CREATE VIRTUAL TABLE external_docs USING fts5(v,content='content',content_rowid='id'); CREATE VIRTUAL TABLE boxes USING rtree(id,x0,x1,y0,y1); BEGIN; INSERT INTO content VALUES(31,'external alpha'); INSERT INTO docs(rowid,v) VALUES(19,'normal alpha'); INSERT INTO empty_docs(rowid,v) VALUES(27,'hidden alpha'); INSERT INTO external_docs(rowid,v) VALUES(31,'external alpha'); INSERT INTO boxes VALUES(8,1,2,3,4);").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for drop_if_exists in [false, true] {
+            let path = dir.path().join("virtual.sql");
+            export_sql_dump_opts(
+                &source,
+                &path,
+                &ExportSqlOptions {
+                    drop_if_exists,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(!source.is_autocommit());
+            let sql = fs::read_to_string(&path).unwrap();
+            assert!(!sql.contains("writable_schema"));
+            let restored = Connection::open_in_memory().unwrap();
+            restored.execute_batch(&sql).unwrap();
+            for (table, rowid) in [("docs", 19), ("empty_docs", 27), ("external_docs", 31)] {
+                assert_eq!(
+                    restored
+                        .query_row(
+                            &format!("SELECT rowid FROM {table} WHERE {table} MATCH 'alpha'"),
+                            [],
+                            |r| r.get::<_, i64>(0)
+                        )
+                        .unwrap(),
+                    rowid
+                );
+            }
+            assert_eq!(
+                restored
+                    .query_row("SELECT id FROM boxes WHERE x0>=1 AND x1<=2", [], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                8
+            );
+            assert_eq!(
+                restored
+                    .query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            restored.execute_batch("INSERT INTO docs(rowid,v) VALUES(42,'later beta'); INSERT INTO docs(docs) VALUES('integrity-check'); INSERT INTO empty_docs(empty_docs) VALUES('integrity-check'); INSERT INTO external_docs(external_docs,rank) VALUES('integrity-check',1);").unwrap();
+        }
+        source.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count_rows(&source, "docs").unwrap(), 0);
+        assert_eq!(count_rows(&source, "boxes").unwrap(), 0);
+    }
+
+    #[test]
+    fn virtual_dump_selection_formats_and_existing_target_safety() {
+        let source = Connection::open_in_memory().unwrap();
+        source.execute_batch("CREATE VIRTUAL TABLE search USING fts3(v); CREATE VIRTUAL TABLE search_extra USING fts4(v); CREATE TABLE search_extra_notes(v); INSERT INTO search VALUES('unselected beta'); INSERT INTO search_extra(rowid,v) VALUES(9007199254740993,'selected alpha'); INSERT INTO search_extra_notes VALUES('ordinary prefix');").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for names in [false, true] {
+            for original in [false, true] {
+                for multiple in [false, true] {
+                    let options = ExportSqlOptions {
+                        selected: Some(vec!["search_extra".into()]),
+                        insert_column_names: names,
+                        keep_original_create: original,
+                        multiple_rows: multiple,
+                        ..Default::default()
+                    };
+                    let path = dir.path().join("selected.sql");
+                    export_sql_dump_opts(&source, &path, &options).unwrap();
+                    let sql = fs::read_to_string(&path).unwrap();
+                    let dest = Connection::open_in_memory().unwrap();
+                    dest.execute_batch(&sql).unwrap();
+                    assert_eq!(
+                        dest.query_row(
+                            "SELECT rowid FROM search_extra WHERE search_extra MATCH 'alpha'",
+                            [],
+                            |r| r.get::<_, i64>(0)
+                        )
+                        .unwrap(),
+                        9007199254740993
+                    );
+                    assert!(dest.prepare("SELECT * FROM search").is_err());
+                    assert!(dest.prepare("SELECT * FROM search_extra_notes").is_err());
+                    let error = dest.execute_batch(&sql).unwrap_err().to_string();
+                    assert!(error.contains("Virtual table exists"), "{error}");
+                    assert!(dest.is_autocommit());
+                    assert_eq!(count_rows(&dest, "search_extra").unwrap(), 1);
+                    assert_eq!(
+                        dest.query_row(
+                            "SELECT rowid FROM search_extra WHERE search_extra MATCH 'alpha'",
+                            [],
+                            |r| r.get::<_, i64>(0)
+                        )
+                        .unwrap(),
+                        9007199254740993
+                    );
+                    let replacement = ExportSqlOptions {
+                        drop_if_exists: true,
+                        ..options.clone()
+                    };
+                    export_sql_dump_opts(&source, &path, &replacement).unwrap();
+                    dest.execute_batch(&fs::read_to_string(&path).unwrap())
+                        .unwrap();
+                    assert_eq!(count_rows(&dest, "search_extra").unwrap(), 1);
+                }
+            }
+        }
+        let objects = sql_export_objects(&source).unwrap();
+        assert_eq!(objects.len(), 3);
+        assert!(objects.iter().any(|o| o.name == "search_extra_notes"));
+    }
+
+    #[test]
+    fn virtual_dump_schema_only_and_failure_keep_destination_and_transaction() {
+        let source = Connection::open_in_memory().unwrap();
+        source.execute_batch("CREATE VIRTUAL TABLE \"quoted '日本語\" USING fts5(v,content=''); BEGIN; INSERT INTO \"quoted '日本語\"(rowid,v) VALUES(27,'alpha');").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keep.sql");
+        let structure = ExportSqlOptions {
+            data: false,
+            ..Default::default()
+        };
+        export_sql_dump_opts(&source, &path, &structure).unwrap();
+        let dest = Connection::open_in_memory().unwrap();
+        dest.execute_batch(&fs::read_to_string(&path).unwrap())
+            .unwrap();
+        assert_eq!(count_rows(&dest, "quoted '日本語").unwrap(), 0);
+        for options in [
+            ExportSqlOptions {
+                structure: false,
+                ..Default::default()
+            },
+            ExportSqlOptions {
+                selected: Some(vec!["quoted '日本語_data".into()]),
+                ..Default::default()
+            },
+        ] {
+            fs::write(&path, "keep prior destination").unwrap();
+            assert!(export_sql_dump_opts(&source, &path, &options).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), "keep prior destination");
+            assert!(!source.is_autocommit());
+            assert_eq!(source.query_row("SELECT rowid FROM \"quoted '日本語\" WHERE \"quoted '日本語\" MATCH 'alpha'",[],|r|r.get::<_,i64>(0)).unwrap(),27);
+        }
+        let progress = crate::export_jobs::Progress::default();
+        progress.cancel();
+        assert!(
+            export_sql_dump_progress(&source, &path, &ExportSqlOptions::default(), &progress)
+                .is_err()
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "keep prior destination");
+        assert!(!source.is_autocommit());
+        source.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count_rows(&source, "quoted '日本語").unwrap(), 0);
+    }
     #[test]
     fn dump_roundtrip_preserves_all_rows_types_triggers_and_sequence() {
         let dir = tempfile::tempdir().unwrap();
@@ -2686,12 +2842,50 @@ pub fn export_sql_dump_opts(
     export_sql_dump_progress(conn, path, opts, &crate::export_jobs::Progress::default())
 }
 
+fn sql_table_kinds(conn: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut statement = conn
+        .prepare("PRAGMA main.table_list")
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))
+        .map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())
+}
+
+pub fn sql_export_objects(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
+    let kinds = sql_table_kinds(conn)?;
+    Ok(list_schema(conn)?
+        .into_iter()
+        .filter(|object| {
+            matches!(object.kind, ObjectKind::Table | ObjectKind::View)
+                && !kinds
+                    .iter()
+                    .any(|(name, kind)| name == &object.name && kind == "shadow")
+        })
+        .collect())
+}
+
 pub fn export_sql_dump_progress(
     conn: &Connection,
     path: &Path,
     opts: &ExportSqlOptions,
     progress: &crate::export_jobs::Progress,
 ) -> Result<(), String> {
+    // A savepoint flushes virtual-module pending index buffers without committing user edits.
+    let file = with_savepoint(conn, || stage_sql_dump(conn, path, opts, progress))?;
+    progress.staged();
+    progress.begin_publish()?;
+    file.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn stage_sql_dump(
+    conn: &Connection,
+    path: &Path,
+    opts: &ExportSqlOptions,
+    progress: &crate::export_jobs::Progress,
+) -> Result<tempfile::NamedTempFile, String> {
     progress.check()?;
     if !opts.structure && !opts.data {
         return Err("Select structure and/or data".into());
@@ -2705,12 +2899,34 @@ pub fn export_sql_dump_progress(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let restore_guard = file
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let mut f = std::io::BufWriter::new(file.as_file_mut());
-    let snapshot = if conn.is_autocommit() {
-        Some(conn.unchecked_transaction().map_err(|e| e.to_string())?)
-    } else {
-        None
-    };
+    let kinds = sql_table_kinds(conn)?;
+    let roots: Vec<_> = kinds
+        .iter()
+        .filter(|(_, kind)| kind == "virtual")
+        .map(|(name, _)| name.clone())
+        .collect();
+    let mut shadows = Vec::new();
+    for (name, kind) in &kinds {
+        if kind != "shadow" {
+            continue;
+        }
+        let owner = roots
+            .iter()
+            .filter(|root| {
+                name.to_ascii_lowercase()
+                    .starts_with(&format!("{}_", root.to_ascii_lowercase()))
+            })
+            .max_by_key(|root| root.len())
+            .ok_or_else(|| format!("Cannot identify virtual table for {name}"))?;
+        shadows.push((name.clone(), owner.clone()));
+    }
     let mut schema = list_schema(conn)?;
     if let Some(selected) = &opts.selected {
         for name in selected {
@@ -2720,33 +2936,65 @@ pub fn export_sql_dump_progress(
                 return Err(format!("Export table or view no longer exists: {name}"));
             }
         }
+        if selected
+            .iter()
+            .any(|name| shadows.iter().any(|(shadow, _)| shadow == name))
+        {
+            return Err(
+                "Select the owning virtual table instead of its internal shadow tables".into(),
+            );
+        }
+        let mut included = selected.clone();
+        included.extend(
+            shadows
+                .iter()
+                .filter(|(_, root)| selected.contains(root))
+                .map(|(name, _)| name.clone()),
+        );
         schema.retain(|object| {
             if matches!(object.kind, ObjectKind::Table | ObjectKind::View) {
-                selected.contains(&object.name)
+                included.contains(&object.name)
             } else {
                 object
                     .tbl_name
                     .as_ref()
-                    .is_some_and(|table| selected.contains(table))
+                    .is_some_and(|table| included.contains(table))
             }
         });
     }
-    if schema.iter().any(|o| {
-        o.sql
-            .as_deref()
-            .unwrap_or("")
-            .to_ascii_uppercase()
-            .starts_with("CREATE VIRTUAL TABLE")
-    }) {
-        return Err("SQL dump of virtual tables is unsupported; use Save Database As".into());
+    let roots: Vec<_> = roots
+        .into_iter()
+        .filter(|name| schema.iter().any(|o| &o.name == name))
+        .collect();
+    let is_shadow = |name: &str| shadows.iter().any(|(shadow, _)| shadow == name);
+    if opts.data {
+        if let Some(root) = roots
+            .iter()
+            .find(|root| !shadows.iter().any(|(_, owner)| owner == *root))
+        {
+            return Err(format!("Virtual table {root} exposes no persistent shadow tables; use a row export instead"));
+        }
+    }
+    if !roots.is_empty() && !opts.structure {
+        return Err("Virtual table indexes require Everything or Structure only; data-only export cannot preserve them".into());
     }
     if opts.keep_fk {
         writeln!(f, "PRAGMA foreign_keys=OFF;").map_err(|e| e.to_string())?;
     }
     writeln!(f, "BEGIN TRANSACTION;").map_err(|e| e.to_string())?;
+    if opts.structure && opts.data && !opts.drop_if_exists && !roots.is_empty() {
+        // Never replace an existing virtual index under the ordinary append/keep policy.
+        let guard = quote_ident(&format!("e28_virtual_restore_{}", restore_guard));
+        writeln!(f, "CREATE TEMP TABLE {guard}(ok INTEGER CONSTRAINT \"Virtual table exists; restore into a new database or select Replace\" CHECK(ok=1));").map_err(|e| e.to_string())?;
+        for root in &roots {
+            let name = sql_literal(rusqlite::types::ValueRef::Text(root.as_bytes()));
+            writeln!(f, "INSERT OR ROLLBACK INTO temp.{guard} SELECT 0 WHERE EXISTS(SELECT 1 FROM main.sqlite_schema WHERE name={name} COLLATE NOCASE);").map_err(|e| e.to_string())?;
+        }
+        writeln!(f, "DROP TABLE temp.{guard};").map_err(|e| e.to_string())?;
+    }
     if opts.structure {
         if opts.drop_if_exists {
-            for obj in schema.iter().rev() {
+            for obj in schema.iter().rev().filter(|o| !is_shadow(&o.name)) {
                 writeln!(
                     f,
                     "DROP {} IF EXISTS {};",
@@ -2756,7 +3004,10 @@ pub fn export_sql_dump_progress(
                 .map_err(|e| e.to_string())?;
             }
         }
-        for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
+        for obj in schema
+            .iter()
+            .filter(|o| o.kind == ObjectKind::Table && !is_shadow(&o.name))
+        {
             progress.check()?;
             if let Some(sql) = &obj.sql {
                 let create = crate::table_sql::export_create(
@@ -2770,7 +3021,14 @@ pub fn export_sql_dump_progress(
         }
     }
     if opts.data {
-        for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
+        for obj in schema.iter().filter(|o| is_shadow(&o.name)) {
+            writeln!(f, "DELETE FROM {};", qualified_name("main", &obj.name))
+                .map_err(|e| e.to_string())?;
+        }
+        for obj in schema
+            .iter()
+            .filter(|o| o.kind == ObjectKind::Table && !roots.contains(&o.name))
+        {
             progress.check()?;
             // Generated columns are recomputed and cannot be inserted into.
             let mut cols: Vec<String> = table_columns(conn, &obj.name)?
@@ -2889,14 +3147,10 @@ pub fn export_sql_dump_progress(
     if opts.keep_fk {
         writeln!(f, "PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
     }
-    drop(snapshot);
     f.flush().map_err(|e| e.to_string())?;
     drop(f);
     file.as_file().sync_all().map_err(|e| e.to_string())?;
-    progress.staged();
-    progress.begin_publish()?;
-    file.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(file)
 }
 
 pub(crate) fn sql_literal(value: rusqlite::types::ValueRef<'_>) -> String {

@@ -70,7 +70,15 @@ a background worker with row progress and cooperative cancellation; completed
 output replaces the destination atomically. Cancel keeps the original file and
 pending database edits. Export settings persist after success; table selection
 stays specific to the current database. Without INSERT column names, implicit
-rowids cannot be included. Selected virtual tables still require Save Database As.
+rowids cannot be included.
+Virtual tables are selected as complete units with their internal index tables.
+Everything and Structure only support FTS3/4/5 and RTree; Everything preserves
+contentless/external-content indexes and pending rows without committing edits.
+Restore Everything into a new database or select Replace: Keep rejects existing
+virtual table names before changing data. Data only and virtual modules without
+persistent shadow tables are explicitly rejected. Restoring indexes requires
+compatible SQLite modules and permission to write shadow tables; no connection
+security setting is changed by export.
 
 Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. File CSV/JSON commands export all selected tables/views; SQL result exports include every captured row beyond the 500-row display preview. Use SQL dumps for a type-preserving round trip.
 
