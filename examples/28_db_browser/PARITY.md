@@ -733,3 +733,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Original SQL export options and progress (2026-10-28)
 
 [Review](../../docs/reviews/R-20261028-fff58fe35415.md): main table/view chooser, original content/schema/column-name/multi-row/original-CREATE settings, safe suggested filenames and connection-owned cancellable progress verified. Selected sequence restoration preserves source and destination high-water marks; typed/generated/trigger ordering and guarded atomic publication retain pending edits and existing files. Final396 example tests, workspace634/43,16 render pairs and eight native static windows pass. Selected virtual tables, original binary/native input/picker/platform and broader product parity remain unfinished.
+
+### Long confirmations and GPU text limits —2026-10-28
+
+[Review](../../docs/reviews/R-20261028-14e5b79b9315.md): shared modal prose scrolls by wheel/keys/thumb within a clipped viewport above fixed actions, preserves matching reading/action state across rebuild/resize and exposes its complete accessible description. Oversized alpha masks now tile beyond actual adapter limits, avoiding a reproduced long-name native GPU abort.640 workspace tests/strict checks, eight render pairs (max2), six browser and14 rebuilt Office native windows inspected. Native OS input/original binary/platform acceptance, complete text shaping and broader product parity remain unfinished.
