@@ -1,0 +1,156 @@
+{
+  "reviewed_commit": "716afa8e3e77cad16fbd9851fbeb292aea697049",
+  "shared_commit": "65c1ab054f9ba575ba2f6edbfd1ecd94e33c5e09",
+  "tests": 705,
+  "test_groups": 43,
+  "checks": {
+    "clippy": {
+      "exit": 0,
+      "log": "/tmp/next-gui-icon-buttons-v6-clippy-final.log"
+    },
+    "workspace": {
+      "exit": 0,
+      "log": "/tmp/next-gui-icon-buttons-v6-workspace-final.log"
+    },
+    "build": {
+      "exit": 0,
+      "log": "/tmp/next-gui-icon-buttons-v6-build-final.log"
+    },
+    "macos": {
+      "exit": 0,
+      "log": "/tmp/next-gui-icon-buttons-v6-macos-final.log"
+    },
+    "windows": {
+      "exit": 0,
+      "log": "/tmp/next-gui-icon-buttons-v6-windows-final.log"
+    }
+  },
+  "whole_frame_comparisons": {
+    "window-toolbar-dark-browse-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-toolbar-dark-browse-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-toolbar-dark-sql-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-dark-sql-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-light-browse-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-light-browse-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-toolbar-light-sql-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-light-sql-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    }
+  },
+  "native_windows": {
+    "dark-toolbar-browse": {
+      "exit": 0
+    },
+    "dark-toolbar-browse-narrow": {
+      "exit": 0
+    },
+    "dark-toolbar-sql": {
+      "exit": 0
+    },
+    "dark-toolbar-sql-narrow": {
+      "exit": 0
+    },
+    "light-toolbar-browse": {
+      "exit": 0
+    },
+    "light-toolbar-browse-narrow": {
+      "exit": 0
+    },
+    "light-toolbar-sql": {
+      "exit": 0
+    },
+    "light-toolbar-sql-narrow": {
+      "exit": 0
+    }
+  },
+  "native_keyboard": {
+    "cell_region_changed_channels": 0,
+    "comment_changed_channels": 3790,
+    "height": 678,
+    "plot_results_region_changed_channels": 0,
+    "redo_editor_region_changed_channels": 0,
+    "undo_editor_region_changed_channels": 0,
+    "width": 846
+  },
+  "native_keyboard_owner": {
+    "pid": 95906,
+    "window": 6013,
+    "previous": 608
+  },
+  "source_sha256": {
+    "crates/next-gui-ui/src/button_tests.rs": "2db1b0794f460cff9f3072e218c8bebee9a1596f517999910b00d040a2425051",
+    "crates/next-gui-ui/src/dsl/build.rs": "1fe8b71a12184ccd5f1431eb99fee73be9515e6db0e7c83d16138e5610e842fe",
+    "crates/next-gui-ui/src/dsl/mod.rs": "eac82ffd96d013bc64299a95d2a308473d771ec4feeabe5748a1d8f3714ff4e2",
+    "crates/next-gui-ui/src/icon.rs": "6d2fde5c632203e50fc46080acf658cad497f40ae28e75fef0d3b920e6f40df5",
+    "crates/next-gui-ui/src/lib.rs": "430d505b070bdd913c76400164238edf78c78b3064bb46c9bd490f652799b7e9",
+    "crates/next-gui-ui/src/text_area_hint.rs": "b4ad45d980155b42ec34e1049d070414c3cc10e77d4360614b4ebe3d4a1d54b0",
+    "docs/ngui-widgets.md": "12c6ca002d3353c253e58d6fb2760de8f95383bb010b61e72a1f14740f4b9988",
+    "examples/28_db_browser/src/main.rs": "ca76f0576b405f5a84be805539595424df36ff4f469379fd3413aa2ef1121062",
+    "examples/28_db_browser/src/ui_build.rs": "74322d1b6488759d84df3e046f8cf4822b2b5b8c1f6996586a43278a3fdade25"
+  },
+  "final_binaries_sha256": {
+    "e10_office_panel": "b2c35357e5695ee530700d52ff57ec78ee7de9e924e44cc7e7d8963f3d21024d",
+    "e11_office_shell": "552fe23475f84043065b495cd46c2ea63664d0e7f4fb47f16b24a3496b058e3f",
+    "e12_office_inputs": "8e09293606e79d5506f0b16950a0f7e7f53110e29c64e691066eab8a57aea2ca",
+    "e13_office_data": "4b7f4cc9b8461b0bae926c4015f88b2b15f46445953bc99ef6132e12fe02973b",
+    "e14_office_nav": "a0545b4d3b3b69a9c544c8e45dcb9e3086d11ab69ae98a2cdca6945d24109071",
+    "e15_office_feedback": "668e0203f7dbca73718c555f4a51a0fb410244608c801b6720b72fd92ed5f3cf",
+    "e20_office_industrial": "fcd234ae329275f6c25ea64faac66dad0550638b08efafa613b797ad7e261d5b",
+    "e21_office_p1_rest": "d9a9f28e71c731f79d3f63a58909b78ce3d73e64cfa8dd16aa15b50c1d59f2df",
+    "e22_office_p1_deferred": "28e3ce1456d5caa72727f6c21c7057e09f25e407923b53d40496c7f0a364f08f",
+    "e23_office_charts": "19e64a6225613563e0b7896c56920e892ff03a2e9c3e6f99e75252e5951e5e21",
+    "e24_profile_dual": "6b7c81ad7d5c26e91b1a68f46f8bb7e9c7de750a61492352b1a8ddc02ca293ff",
+    "e25_immediate_viewport": "035fe577fd733bff2a93e757b53124cdedc83b2790a44fc3c663ad2b301197c3",
+    "e26_office_p2": "7a6d1429b13ada8425989910f5cbb11249f8c9a49e8332d7aeb162f46dd26b3d",
+    "e27_theme_tokens": "c9bf7de414725a2cd28f784551ebf68ac3b8de3402da81a24ce362a8298ebd3b",
+    "e28_db_browser": "287dbdf432e46f1746fff1f3484c3778fa51b1a1a65b338d573836a6e1216a5c"
+  },
+  "asset_sha256": {
+    "soft-contact.png": "d232d6bc8fcd7aaf03d93d6be36c0056c7c863b5bfddab1b926004aaee2a297e",
+    "metal-contact.png": "7de7a61815123678f88580f817c30890c41c370e76554a493c8a43b955dfab07",
+    "native-contact.png": "c30142df32c707bd218dc74e96bf508df5a06e832ab77153228fd461b6a99b24",
+    "native-light-sql-narrow.png": "3ab5f59ff2de37783145c92c5a1104b3983d4c59053e3a90559251f61e96bc55",
+    "native-keyboard-contact.png": "42aaca2bbe8c5ff586c5b29fef571a44573d5cba5780f1a105e8c8bd3eabf60d",
+    "office-contact-1.png": "0281a4258aaa24855039602666cb9ddd199b83837dc6d70b14e61a185533e817",
+    "office-contact-2.png": "2c5bf507d5091cb442a6096bc55ae85ee25ad72768b5658d4030a6eb5fd05e8e"
+  },
+  "original_MainWindow_ui_git_blob": "bf2dd590c0bbb3c68606e3505c17872fb1e55991"
+}
