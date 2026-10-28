@@ -808,6 +808,8 @@ pub struct MenuItem {
     pub label: String,
     /// When false, item is drawn muted and not activatable.
     pub enabled: bool,
+    /// Optional controlled check state; activation still emits the item's id.
+    pub checked: Option<bool>,
 }
 
 impl MenuItem {
@@ -817,6 +819,7 @@ impl MenuItem {
             id,
             label: label.into(),
             enabled: true,
+            checked: None,
         }
     }
 
@@ -826,7 +829,14 @@ impl MenuItem {
             id,
             label: label.into(),
             enabled: false,
+            checked: None,
         }
+    }
+
+    /// Show a checkable entry; the application updates its state after activation.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked=Some(checked);
+        self
     }
 }
 
@@ -882,7 +892,7 @@ pub struct ContextMenuStyle {
     pub width: f32,
     /// Host height.
     pub height: f32,
-    /// Popup width.
+    /// Minimum popup width; labels and check indicators fit within the viewport.
     pub popup_width: f32,
     /// Item row height.
     pub item_height: f32,
@@ -6441,6 +6451,11 @@ impl Ui {
     /// Whether a popup currently owns input.
     pub fn has_open_popup(&self) -> bool {
         self.open_popup.is_some()
+    }
+
+    /// Widget that currently owns popup input (menu, select, or other popup).
+    pub fn popup_owner(&self) -> Option<WidgetId> {
+        self.open_popup
     }
 
     fn close_popup_internal(&mut self) -> bool {
@@ -16134,7 +16149,7 @@ impl Ui {
         let popup_w = style
             .popup_width
             .max(host_bounds.width)
-            .max(label_w + 28.0)
+            .max(label_w + 28.0 + if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0})
             .max(style.min_width);
         let popup_h = style.item_height * items.len().max(1) as f32;
         let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, popup_w, popup_h);
@@ -16158,7 +16173,9 @@ impl Ui {
             _ => return,
         };
         let popup_h = style.item_height * items.len().max(1) as f32;
-        let width = style.popup_width.min(self.viewport.0);
+        let check_space=if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0};
+        let label_width=items.iter().map(|item|self.font.measure_line(&item.label,style.size).0).fold(0.0f32,f32::max);
+        let width = style.popup_width.max(label_width+20.0+check_space).min(self.viewport.0);
         let panel = Rect::new(
             ax.clamp(0.0, (self.viewport.0 - width).max(0.0)),
             ay.clamp(0.0, (self.viewport.1 - popup_h).max(0.0)),
@@ -16808,7 +16825,8 @@ impl Ui {
         hover_bg: Color,
         hover_fg: Color,
     ) {
-        self.ensure_overlay_aux(scene, id, 1 + items.len() * 2);
+        let check_space=if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0};
+        self.ensure_overlay_aux(scene, id, 1 + items.len() * if check_space>0.0 {3} else {2});
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         if let Some(&bg) = aux.first() {
             scene.set_bounds(bg, panel);
@@ -16830,13 +16848,23 @@ impl Ui {
             }
             let (_, mask) = self.font.rasterize_text(&item.label, size, None);
             if let Some(&lab) = aux.get(1 + i * 2 + 1) {
-                let lx = row.x + 10.0;
+                let lx = row.x + 10.0 + check_space;
                 let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-                scene.set_clip(lab, Some(Rect::new(row.x + 10.0, row.y, (row.width - 20.0).max(0.0), row.height)));
+                scene.set_clip(lab, Some(Rect::new(lx, row.y, (row.width - 20.0 - check_space).max(0.0), row.height)));
                 scene.set_fill(lab, if !item.enabled { disabled_fg } else if self.popup_menu_row == Some(i) { hover_fg } else { fg });
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
                 scene.set_visible(lab, true);
+            }
+            if let Some(&mark)=aux.get(1+items.len()*2+i) {
+                scene.set_visible(mark,item.checked==Some(true));
+                if item.checked==Some(true) {
+                    let mask=icon::rasterize_icon(IconName::Check,(size+1.0).min(item_height-8.0).max(1.0));
+                    scene.set_bounds(mark,Rect::new(row.x+8.0,row.y+(row.height-mask.height as f32)*0.5,mask.width as f32,mask.height as f32));
+                    scene.set_clip(mark,Some(row));scene.set_corner_radius(mark,0.0);
+                    scene.set_fill(mark,if !item.enabled {disabled_fg} else if self.popup_menu_row==Some(i) {hover_fg} else {fg});
+                    scene.set_mask(mark,Some(mask));self.node_to_widget.insert(mark,id);
+                }
             }
         }
     }
@@ -21162,6 +21190,46 @@ mod tests {
         assert_eq!(ui.focus_next(), Some(fields[1]));
         ui.sync(&mut scene);
         assert!(!field_bounds(&scene, &ui, 1).clip.unwrap().is_empty());
+    }
+
+    #[test]
+    fn checked_menu_items_use_house_icons_keep_label_alignment_and_controlled_state() {
+        for theme in [Theme::dark(),Theme::light()] {
+            for dropdown in [false,true] {
+                let mut ui=Ui::new();ui.set_theme(theme);let mut scene=Scene::new();ui.set_viewport(400.0,200.0);
+                let items=vec![MenuItem::new(1,"On").checked(true),MenuItem::new(2,"Off").checked(false),MenuItem::disabled(3,"Disabled").checked(true),MenuItem::new(4,"Action")];
+                let menu=if dropdown {
+                    let mut menu=WidgetId(0);ui.column(ColumnStyle::default(),|c|{menu=c.menu("View",items.clone(),MenuStyle::from_theme(&theme));});ui.sync(&mut scene);
+                    let bounds=ui.widgets[&menu].node.and_then(|id|scene.get(id)).unwrap().bounds;
+                    assert!(ui.pointer_pressed(&mut scene,bounds.x+4.0,bounds.y+4.0));menu
+                }else{
+                    let menu=ui.context_menu_popup(ContextMenuStyle::from_theme(&theme));
+                    assert!(ui.open_context_menu(menu,items.clone(),395.0,195.0));menu
+                };
+                ui.sync(&mut scene);let aux=ui.widgets[&menu].aux.clone();
+                let panel=scene.get(aux[0]).unwrap().bounds;
+                let tick=scene.get(aux[9]).unwrap();let off=scene.get(aux[10]).unwrap();let disabled=scene.get(aux[11]).unwrap();
+                assert!(tick.visible && disabled.visible && !off.visible);
+                let expected=icon::rasterize_icon(IconName::Check,tick.bounds.width);
+                assert_eq!(tick.mask.as_ref().unwrap().pixels,expected.pixels,"No font glyph fallback may supply menu checks");
+                let foreground=if dropdown {MenuStyle::from_theme(&theme).fg}else{ContextMenuStyle::from_theme(&theme).fg};
+                let muted=if dropdown {MenuStyle::from_theme(&theme).disabled_fg}else{ContextMenuStyle::from_theme(&theme).disabled_fg};
+                assert_eq!(tick.fill,foreground);assert_eq!(disabled.fill,muted);
+                for index in 0..4 {assert_eq!(scene.get(aux[2+index*2]).unwrap().bounds.x,panel.x+30.0);}
+                assert!(ui.key_input(UiKey::Home));ui.sync(&mut scene);
+                let selected=if dropdown {MenuStyle::from_theme(&theme).hover_fg}else{ContextMenuStyle::from_theme(&theme).hover_fg};
+                assert_eq!(scene.get(aux[9]).unwrap().fill,selected);
+                assert!(ui.key_input(UiKey::Enter));assert_eq!(ui.take_menu_action(),Some((menu,1)));
+                let actual=match &ui.widgets[&menu].kind {Kind::Menu{items,..}|Kind::ContextMenu{items,..}=>items,_=>unreachable!()};
+                assert_eq!(actual[0].checked,Some(true),"Only the application changes a controlled check");
+                ui.sync(&mut scene);assert!(aux.iter().all(|id|!scene.get(*id).unwrap().visible));
+                if !dropdown {
+                    assert!(ui.open_context_menu(menu,vec![MenuItem::new(5,"Plain")],0.0,0.0));ui.sync(&mut scene);
+                    assert_eq!(scene.get(aux[2]).unwrap().bounds.x,10.0);
+                    assert!(aux[3..].iter().all(|id|!scene.get(*id).unwrap().visible),"Reusing a popup must hide old check marks");
+                }
+            }
+        }
     }
 
     #[test]
