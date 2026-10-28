@@ -74,12 +74,25 @@ fn save_with(conn: &rusqlite::Connection, path: &Path, write: impl FnOnce(&mut s
 }
 
 impl Demo {
+    pub(crate) fn visible_plot_image(&self) -> Result<RgbaImage,String> {
+        let (width,height)=self.ui.chart_plot_size(self.ids.chart,0).ok_or("No visible plot to copy or save")?;
+        self.ui.chart_plot_image(self.ids.chart,0,width,height).ok_or_else(||"Plot image exceeds the 128 MiB image budget".into())
+    }
+
+    pub(crate) fn copy_plot(&mut self,ctx:&mut next_gui_platform::WindowCtx<'_>) {
+        let result=self.visible_plot_image().and_then(|image|ctx.clipboard_set_image(&image).map_err(|error|error.to_string()));
+        match result {
+            Ok(())=>{self.clear_error();self.state.status_msg="Plot image copied".into();}
+            Err(error)=>self.set_error(error),
+        }
+        self.rebuild=true;
+    }
+
     pub(crate) fn save_plot(&mut self) {
         let result = (|| {
             self.state.guard_background_idle()?;
             let Some(path) = crate::file_dlg::pick_save_plot() else { return Ok(None); };
-            let (width, height) = self.ui.chart_plot_size(self.ids.chart, 0).ok_or("No visible plot to save")?;
-            let image = self.ui.chart_plot_image(self.ids.chart, 0, width, height).ok_or("Plot image exceeds the 128 MiB image budget")?;
+            let image = self.visible_plot_image()?;
             let conn = self.state.conn.as_ref().ok_or("No idle database connection")?;
             save(conn, &path, &image).map(Some)
         })();
@@ -177,6 +190,12 @@ mod tests {
         demo.state.dock_focus=DockKind::Plot; demo.state.dock_plot=true;
         demo.do_rebuild();
         assert_eq!(demo.ui.accessible_name(demo.ids.plot.save).as_deref(),Some("Save plot as PNG, JPEG, BMP or PDF"));
+        assert_eq!(demo.ui.accessible_name(demo.ids.plot.copy).as_deref(),Some("Copy plot image to the clipboard"));
+        demo.ui.set_focus(Some(demo.ids.plot.copy));
+        assert!(demo.ui.key_input(next_gui_ui::UiKey::Space));
+        assert_eq!(demo.ui.take_button_activate(),Some(demo.ids.plot.copy));
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(),Some(demo.ids.plot.copy));
         let data = demo.ui.chart_plot_mut(demo.ids.chart,0).unwrap();
         assert!(data.zoom(0.7,0.5,0.5)); assert!(data.select_row(101,false));
         let view = data.view();
@@ -194,6 +213,7 @@ mod tests {
                 assert!(demo.ui.button_enabled(demo.ids.plot.save).unwrap());
                 let size = demo.ui.chart_plot_size(demo.ids.chart,0).unwrap();
                 let image = demo.ui.chart_plot_image(demo.ids.chart,0,size.0,size.1).unwrap();
+                assert_eq!(demo.visible_plot_image().unwrap().pixels(),image.pixels());
                 assert!(image.pixels().chunks_exact(4).any(|p|p[..3]!=image.pixels()[..3]));
                 assert_eq!(demo.ui.chart_plot(demo.ids.chart,0).unwrap().view(),view);
                 for extension in ["png","jpg","bmp","pdf"] {

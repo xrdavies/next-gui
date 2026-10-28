@@ -12,7 +12,7 @@
 | Field (industrial / embedded) | **Not required** on macOS |
 | OS order | Linux (done) → Windows (P6c Soft) → **macOS (Office)** |
 | Input for first pass | Pointer + keyboard + IME (same as Linux); `Event::Touch` stub (winit macOS does not emit touch); full HMI touch is P6 |
-| Clipboard | UTF-8 text via `WindowCtx::clipboard_*` (`arboard`) |
+| Clipboard | UTF-8 text, HTML and RGBA8 images via `WindowCtx::clipboard_*` (`arboard`); images limited to 128 MiB |
 | Full windowing | **Implemented** with `winit` + optional softbuffer; `PresentBackend::GpuSurface` supported (same as Linux); do not block Linux demos |
 
 macOS must implement the **same public platform contract** as Linux (`AppCallbacks`, `WindowAttrs`, `WindowCtx`, `Event`, `present` of XRGB8888). Upper layers (`scene` / `ui` / soft render) must not grow macOS-specific branches.

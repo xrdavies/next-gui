@@ -10,7 +10,7 @@
 //! - [`PresentBackend::GpuSurface`] — no softbuffer; window is free for `wgpu::Surface`
 //!   (Office native GPU present). Soft apps must not use this mode for `present()`.
 //!
-//! Clipboard: thin UTF-8 text API on [`WindowCtx`] (see [`clipboard`]).
+//! Clipboard: text, HTML and RGBA images on [`WindowCtx`] (see [`clipboard`]).
 //! Touch: [`Event::Touch`] is always forwarded; P6a [`touch_synth`] maps the primary
 //! finger into [`Event::PointerMoved`] / [`Event::PointerButton`] for HMI.
 //!
@@ -489,6 +489,16 @@ impl WindowCtx<'_> {
         self.inner.clipboard_set_html(html, text)
     }
 
+    /// Read a straight RGBA8 clipboard image, or `Ok(None)` when unavailable.
+    pub fn clipboard_get_image(&mut self) -> Result<Option<next_gui_scene::RgbaImage>, PlatformError> {
+        self.inner.clipboard_get_image()
+    }
+
+    /// Replace the clipboard with straight RGBA8 pixels (maximum 128 MiB).
+    pub fn clipboard_set_image(&mut self, image: &next_gui_scene::RgbaImage) -> Result<(), PlatformError> {
+        self.inner.clipboard_set_image(image)
+    }
+
     /// Clone of the underlying winit window (for creating a `wgpu::Surface`).
     ///
     /// Available on Linux / macOS / Windows backends built with winit.
@@ -514,6 +524,8 @@ pub(crate) trait WindowHost {
     fn clipboard_set_text(&mut self, text: &str) -> Result<(), PlatformError>;
     fn clipboard_get_html(&mut self) -> Result<Option<String>, PlatformError>;
     fn clipboard_set_html(&mut self, html: &str, text: &str) -> Result<(), PlatformError>;
+    fn clipboard_get_image(&mut self) -> Result<Option<next_gui_scene::RgbaImage>, PlatformError>;
+    fn clipboard_set_image(&mut self, image: &next_gui_scene::RgbaImage) -> Result<(), PlatformError>;
     #[cfg(any(feature = "linux", feature = "macos", feature = "windows", target_os = "macos", target_os = "windows"))]
     fn winit_window(&self) -> std::sync::Arc<winit::window::Window>;
 }
@@ -639,6 +651,10 @@ mod tests {
     #[test]
     #[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
     fn clipboard_roundtrip_smoke() {
+        if std::env::var("NEXT_GUI_CLIPBOARD_QA").as_deref()!=Ok("1") {
+            eprintln!("clipboard_roundtrip_smoke: not_run (opt in with NEXT_GUI_CLIPBOARD_QA=1 on a disposable clipboard)");
+            return;
+        }
         // May fail without a display / clipboard provider — treat that as skip.
         let Ok(mut cb) = clipboard::Clipboard::open() else {
             eprintln!("clipboard_roundtrip_smoke: open failed (no display?); skip");

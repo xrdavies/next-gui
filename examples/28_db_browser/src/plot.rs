@@ -744,6 +744,7 @@ pub struct Controls {
     pub legend: WidgetId,
     pub load_all: WidgetId,
     pub save: WidgetId,
+    pub copy: WidgetId,
 }
 impl Default for Controls {
     fn default() -> Self {
@@ -757,6 +758,7 @@ impl Default for Controls {
             legend: WidgetId(0),
             load_all: WidgetId(0),
             save: WidgetId(0),
+            copy: WidgetId(0),
         }
     }
 }
@@ -837,7 +839,7 @@ pub fn build(
     row.height = 34.0;
     builder.row(row, |r| {
         let mut style = select;
-        style.width = ((width - 236.0) / 2.0).max(64.0);
+        style.width = ((width - 302.0) / 2.0).max(64.0);
         let (line, marker) = model.styles();
         ids.line = r.select(
             LINE_NAMES,
@@ -853,6 +855,7 @@ pub fn build(
         );
         ids.fit = r.tool_button("Fit");
         ids.save = r.tool_button("Save…");
+        ids.copy = r.tool_button("Copy");
         if let Some(color) = model.selected_color() {
             let mut style = ColorPickerStyle::from_theme(theme);
             style.width = 84.0;
@@ -929,6 +932,7 @@ pub fn configure(ui: &mut next_gui_ui::Ui, ids: Controls, model: &Model, bg: Col
         (ids.legend, "Show plot legend"),
         (ids.load_all, "Load all rows for the current plot"),
         (ids.save, "Save plot as PNG, JPEG, BMP or PDF"),
+        (ids.copy, "Copy plot image to the clipboard"),
     ] {
         if id.0 != 0 {
             ui.set_accessible_name(id, name);

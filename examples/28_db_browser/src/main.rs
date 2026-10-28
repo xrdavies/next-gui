@@ -1313,7 +1313,7 @@ impl Demo {
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
-            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end") {
+            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end" | "plot-image-clipboard") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(FULL_PLOT_QA_SQL).unwrap();
                 let gate = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<plot_load::Progress>>));
@@ -1331,7 +1331,7 @@ impl Demo {
                 } else { "telemetry" };
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", table).unwrap();
-                state.tab = if tab.ends_with("sql") || tab == "sql-results-end" { MainTab::ExecuteSql } else { MainTab::Browse };
+                state.tab = if tab.ends_with("sql") || matches!(tab.as_str(), "sql-results-end" | "plot-image-clipboard") { MainTab::ExecuteSql } else { MainTab::Browse };
                 if state.tab == MainTab::ExecuteSql {
                     *state.sql_editor_mut() = "SELECT sequence,measured,reference,region\nFROM telemetry ORDER BY sequence DESC;".into();
                     state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
@@ -1421,6 +1421,9 @@ impl Demo {
             built.ui.key_input(UiKey::WordLeft);
             built.ui.key_input(UiKey::SelectWordRight);
             built.ui.sync(&mut built.scene);
+        }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("plot-image-clipboard") {
+            built.ui.set_focus(Some(built.chart)); built.ui.sync(&mut built.scene);
         }
         if qa_calltip {
             let caret = state.sql_editor().chars().count();
@@ -2589,7 +2592,7 @@ impl Demo {
         let plot_focused=self.ui.focused()==Some(self.ids.chart);
         let plot_source = self.state.plot.source.clone();
         let plot_scroll = self.ui.table_scroll_offset(self.ids.plot.columns);
-        let plot_focus = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend, self.ids.plot.save].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
+        let plot_focus = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend, self.ids.plot.save, self.ids.plot.copy].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
         let pragma_scroll = self.ui.scroll_offset(self.ids.pragma_scroll);
         let pragma_session = if self.state.tab == MainTab::Pragmas && self.last_tab == MainTab::Pragmas.index() && self.state.overlay.is_none() {
             self.snapshot_inputs();
@@ -2704,7 +2707,7 @@ impl Demo {
         if plot_source == self.state.plot.source {
             if let Some((x, y)) = plot_scroll { self.ui.set_table_scroll_offset(self.ids.plot.columns, x, y); }
             if let Some(index) = plot_focus {
-                let id = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend, self.ids.plot.save][index];
+                let id = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend, self.ids.plot.save, self.ids.plot.copy][index];
                 if id.0 != 0 { self.ui.set_focus(Some(id)); }
             }
         }
@@ -4832,6 +4835,7 @@ impl Demo {
         self.handle_table_cell_edit();
         while let Some(id) = self.ui.take_button_activate() {
             self.snapshot_inputs();
+            if id.0 != 0 && id == self.ids.plot.copy { self.copy_plot(ctx); continue; }
             self.handle_button(id);
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
@@ -5127,6 +5131,9 @@ impl AppCallbacks for Demo {
                             return;
                         }
                         KeyCode::Char('c' | 'C' | 'x' | 'X') => {
+                            if matches!(key, KeyCode::Char('c' | 'C')) && self.ui.focused() == Some(self.ids.chart) {
+                                self.copy_plot(ctx); self.after_ui(ctx); return;
+                            }
                             if self.ui.focused() == Some(self.ids.browse_table) {
                                 let cut = matches!(key, KeyCode::Char('x' | 'X'));
                                 let result = self.state.copy_browse_cells(!cut && modifiers.shift, !cut && modifiers.alt)

@@ -15,7 +15,7 @@
 | Present (P6c) | **Softbuffer Soft path required** |
 | GPU Surface | Optional later; not required to start |
 | Input | Pointer + keyboard; IME best-effort (same winit forward as linux/macos) |
-| Clipboard | UTF-8 text via `WindowCtx::clipboard_*` (`arboard`) |
+| Clipboard | UTF-8 text, HTML and RGBA8 images via `WindowCtx::clipboard_*` (`arboard`); images limited to 128 MiB |
 | Touch / DPI | P6a `TouchPointerSynth` + P6b `scale_factor` / `ScaleFactorChanged` (shared) |
 | OS order | Linux (done) → **Windows (P6c Soft)** → macOS (Office) |
 

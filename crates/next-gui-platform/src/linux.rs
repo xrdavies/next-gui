@@ -152,6 +152,16 @@ impl WindowHost for Host {
         self.clipboard.as_mut().expect("clipboard just opened").set_html(html, text)
     }
 
+    fn clipboard_get_image(&mut self) -> Result<Option<next_gui_scene::RgbaImage>, PlatformError> {
+        if self.clipboard.is_none() { self.clipboard = Some(Clipboard::open()?); }
+        self.clipboard.as_mut().expect("clipboard just opened").get_image()
+    }
+
+    fn clipboard_set_image(&mut self, image: &next_gui_scene::RgbaImage) -> Result<(), PlatformError> {
+        if self.clipboard.is_none() { self.clipboard = Some(Clipboard::open()?); }
+        self.clipboard.as_mut().expect("clipboard just opened").set_image(image)
+    }
+
     fn winit_window(&self) -> Arc<WinitWindow> {
         self.window.clone()
     }

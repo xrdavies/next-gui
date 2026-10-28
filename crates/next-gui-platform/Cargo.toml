@@ -7,17 +7,19 @@ description = "Windowing, input, and frame present abstraction for next-gui"
 
 [features]
 default = ["linux"]
-linux = ["dep:winit", "dep:softbuffer", "dep:arboard"]
+linux = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:image"]
 # Enables the macOS backend on any host for compile-check; the real windowing path is target_os = "macos".
-macos = ["dep:winit", "dep:softbuffer", "dep:arboard"]
+macos = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:image"]
 # Enables the Windows backend on any host for compile-check; the real windowing path is target_os = "windows".
-windows = ["dep:winit", "dep:softbuffer", "dep:arboard"]
+windows = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:image"]
 
 [dependencies]
 winit = { workspace = true, optional = true }
 softbuffer = { workspace = true, optional = true }
-# Text and HTML clipboard (no image-data) — avoids heavy `image` / newer MSRV deps.
-arboard = { workspace = true, optional = true, default-features = false }
+arboard = { workspace = true, optional = true, default-features = false, features = ["image-data"] }
+# shortcut: pin arboard's image version for Rust 1.86; relax when the workspace MSRV advances.
+image = { version = "=0.25.8", default-features = false, optional = true }
+next-gui-scene = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
