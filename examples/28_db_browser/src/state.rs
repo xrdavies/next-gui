@@ -2021,14 +2021,13 @@ impl AppState {
             return crate::table_sql::apply_table_options(&db::create_table_ddl_in(&self.wizard_schema, name, &columns), options)
                 .and_then(|sql| crate::table_sql::format_table_preview(&sql));
         };
-        if original.schema != self.wizard_schema { return Err("Moving a table between databases requires an explicit SQL migration".into()); }
         if self.wizard_col_sources.len() != columns.len() { return Err("Column identities do not match the table draft".into()); }
         let sql = self.schema.iter().find(|object| object.schema == original.schema && object.name == original.name && object.kind == ObjectKind::Table)
             .and_then(|object| object.sql.as_deref()).ok_or("Original table definition no longer exists")?;
         let renames: Vec<_> = columns.iter().zip(&self.wizard_col_sources).filter_map(|(column, source)|
             source.as_ref().filter(|source| **source != column.name).map(|source| (source.as_str(), column.name.as_str()))).collect();
         let sql = crate::table_sql::preview_renames(sql, name, &renames)?;
-        let needs_rebuild = crate::table_sql::requires_rebuild(&self.wizard_original_cols, &columns,
+        let needs_rebuild = original.schema != self.wizard_schema || crate::table_sql::requires_rebuild(&self.wizard_original_cols, &columns,
             &self.wizard_col_sources, &crate::table_sql::table_options(&sql)?, Some(&options));
         let sql = crate::table_sql::rebuild_definition(&sql, &self.wizard_schema, name, &self.wizard_original_cols,
             &columns, &self.wizard_col_sources, Some(options))?;
@@ -2050,15 +2049,12 @@ impl AppState {
         let original = self.wizard_table_original.clone();
         let renames: Vec<_> = columns.iter().zip(&self.wizard_col_sources)
             .filter_map(|(col, source)| source.as_ref().filter(|source| **source != col.name).map(|source| (source.clone(), col.name.clone()))).collect();
-        if original.as_ref().is_some_and(|o| o.schema != schema) {
-            return Err("Moving a table between databases requires an explicit SQL migration".into());
-        }
         let previous_source = self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.schema == s.schema && o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.clone());
         let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
         if let Some(orig) = original.as_ref() {
-            db::recreate_table_columns_in(conn, &schema, &orig.name, &name, &columns, &self.wizard_col_sources, Some(options))?;
-            self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&schema, &orig.name), db::qualified_name(&schema, &name)));
+            db::recreate_table_columns_between(conn, (&orig.schema, &orig.name), (&schema, &name), &columns, &self.wizard_col_sources, Some(options))?;
+            self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&orig.schema, &orig.name), db::qualified_name(&schema, &name)));
         } else {
             for column in &columns { crate::table_sql::column_definition(column, None)?; }
             let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &columns), options)?;
@@ -2067,20 +2063,21 @@ impl AppState {
         }
         self.mark_dirty();
         self.overlay = None;
-        if let Some(orig) = original.as_ref().filter(|o| o.name != name) {
+        if let Some(orig) = original.as_ref().filter(|o| o.schema != schema || o.name != name) {
             for tab in &mut self.browse_tabs {
-                let saved = if schema == "main" { tab.table_options.remove(&orig.name) }
-                    else { tab.schema_table_options.get_mut(&schema).and_then(|tables| tables.remove(&orig.name)) };
+                let saved = if orig.schema == "main" { tab.table_options.remove(&orig.name) }
+                    else { tab.schema_table_options.get_mut(&orig.schema).and_then(|tables| tables.remove(&orig.name)) };
                 if let Some(options) = saved { tab.store_options(&schema, &name, options); }
-                if tab.schema == schema && tab.table.as_deref() == Some(&orig.name) {
+                if tab.schema == orig.schema && tab.table.as_deref() == Some(&orig.name) {
+                    tab.schema = schema.clone();
                     tab.table = Some(name.clone());
                     tab.title = if schema == "main" { name.clone() } else { db::qualified_name(&schema, &name) };
                 }
             }
             for rule in &mut self.cond_rules {
-                if rule.schema == schema && rule.table.as_deref() == Some(&orig.name) { rule.table = Some(name.clone()); }
+                if rule.schema == orig.schema && rule.table.as_deref() == Some(&orig.name) { rule.schema = schema.clone(); rule.table = Some(name.clone()); }
             }
-            if self.chart_schema == schema && self.chart_table.as_deref() == Some(&orig.name) { self.chart_table = Some(name.clone()); }
+            if self.chart_schema == orig.schema && self.chart_table.as_deref() == Some(&orig.name) { self.chart_schema = schema.clone(); self.chart_table = Some(name.clone()); }
         }
         if original.is_some() && !renames.is_empty() {
             for tab in &mut self.browse_tabs {
@@ -4132,6 +4129,40 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn table_moves_follow_qualified_browse_plot_format_and_project_identities() {
+        for source in ["main", "temp", "aux"] {
+            for target in ["main", "temp", "aux"].into_iter().filter(|target| *target != source) {
+                let mut state = test_state();
+                state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS aux;
+                    CREATE TABLE main.records(a INTEGER,b INTEGER);CREATE TABLE temp.records(a INTEGER,b INTEGER);CREATE TABLE aux.records(a INTEGER,b INTEGER);
+                    INSERT INTO main.records VALUES(99,100);INSERT INTO temp.records VALUES(99,100);INSERT INTO aux.records VALUES(99,100);").unwrap();
+                state.conn.as_ref().unwrap().execute_batch(&format!("DELETE FROM {};INSERT INTO {} VALUES(25,50),(26,51)",db::qualified_name(source,"records"),db::qualified_name(source,"records"))).unwrap();
+                state.refresh_schema().unwrap();
+                let index=state.schema.iter().position(|object|object.schema==source && object.name=="records").unwrap();
+                state.select_schema_node(10_000+index as u64);
+                let options=BrowseTableOptions {column_names:vec!["a".into(),"b".into()],col_filters:vec!["=25".into(),"=50".into()],column_widths:vec![211.0,322.0],frozen_cols:Some(1),ordering:vec![db::OrderBy {column:"a".into(),descending:true}],..Default::default()};
+                state.browse_mut().set_options(options.clone());state.refresh_browse().unwrap();state.browse_mut().store_options(source,"records",options.clone());
+                state.add_browse_tab().unwrap();state.browse_mut().set_options(options.clone());state.browse_mut().store_options(source,"records",options.clone());state.refresh_browse().unwrap();
+                let other=["main","temp","aux"].into_iter().find(|schema|*schema!=source && *schema!=target).unwrap();
+                let mut inactive=BrowseTabState::new(Some("t".into()));inactive.store_options(source,"records",options.clone());inactive.store_options(other,"records",options.clone());state.browse_tabs.push(inactive);
+                state.chart_schema=source.into();state.chart_table=Some("records".into());state.chart_column="b".into();state.cond_col="a".into();state.cond_value="25".into();state.add_cond_format_rule();
+                let mut other_rule=state.cond_rules[0].clone();other_rule.schema=other.into();state.cond_rules.push(other_rule);
+                state.open_modify_table_wizard().unwrap();state.wizard_schema=target.into();state.wizard_table_name="archive.\"t".into();state.wizard_cols[0].name="label".into();
+                let preview=state.table_wizard_sql().unwrap();assert!(preview.contains(&db::qualified_name(target,"archive.\"t")),"{preview}");
+                state.apply_table_wizard().unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
+                let mut expected=options.clone();expected.column_names[0]="label".into();expected.ordering[0].column="label".into();
+                for tab in &state.browse_tabs {assert_eq!(tab.stored_options(target,"archive.\"t"),Some(&expected));assert!(tab.stored_options(source,"records").is_none());}
+                assert_eq!(state.browse_tabs.last().unwrap().stored_options(other,"records"),Some(&options));
+                assert_eq!(state.browse().schema,target);assert_eq!(state.browse().table.as_deref(),Some("archive.\"t"));assert_eq!(state.browse().options(),expected);assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),1);
+                assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("archive.\"t"));assert_eq!(state.chart_points,[50.0,51.0]);
+                assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,other);assert_eq!(state.cond_rules[1].column,"a");
+                let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap()).unwrap();assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(),expected);
+                assert_eq!(state.conn.as_ref().unwrap().query_row(&format!("SELECT a FROM {}",db::qualified_name(target,"records")),[],|row|row.get::<_,i64>(0)).unwrap(),99);
+            }
+        }
+    }
+
+    #[test]
     fn column_rename_reports_saved_schema_when_a_raw_filter_needs_manual_update() {
         let mut state = test_state();
         state.refresh_schema().unwrap();
@@ -4215,8 +4246,9 @@ mod chart_default_tests {
         assert!(state.schema.iter().any(|o| o.schema == "temp" && o.name == "created"));
         state.open_modify_table_wizard().unwrap();
         state.wizard_schema = "main".into();
-        assert!(state.apply_table_wizard().unwrap_err().contains("Moving"));
-        assert_eq!(db::table_columns_in(state.conn.as_ref().unwrap(), "temp", "created").unwrap().len(), 2);
+        state.apply_table_wizard().unwrap();
+        assert_eq!(db::table_columns_in(state.conn.as_ref().unwrap(), "main", "created").unwrap().len(), 2);
+        assert!(!state.schema.iter().any(|object|object.schema=="temp" && object.name=="created"));
     }
 
     #[test]

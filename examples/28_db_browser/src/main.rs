@@ -793,6 +793,16 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
+                "table-move" | "table-move-saved" => {
+                    state.new_memory_db().unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS analytics;
+                        CREATE TABLE main.records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL CHECK(length(name)>0),amount REAL DEFAULT 0,total REAL AS(amount*1.2) STORED);
+                        INSERT INTO main.records(id,name,amount) VALUES(7,'First customer',12.5),(11,'Second customer',24);
+                        CREATE INDEX main.by_name ON records(name COLLATE NOCASE);").unwrap();
+                    state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_schema="analytics".into();state.wizard_table_name="customer_archive".into();state.wizard_scroll=(0.0,0.0);state.wizard_table_advanced=true;
+                    if tab.ends_with("-saved") {state.apply_table_wizard().unwrap();}
+                    MainTab::Structure
+                }
                 "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-reference-editor" | "table-field-reference-empty" | "table-field-check-editor" | "table-field-remove-confirm" | "table-advanced" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE DEFAULT 'customer' CHECK(length(name)>0) COLLATE NOCASE,parent_id INTEGER REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL,amount REAL DEFAULT 0 CHECK(amount>=0),total REAL AS(amount*1.2) STORED); INSERT INTO records(name,parent_id,amount) VALUES('First customer',1,12.5),('Second customer',1,24);").unwrap();state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_col_sel=1;state.wizard_scroll=(0.0,180.0);state.wizard_field_column=Some(if tab=="table-fields-references" {9} else {0});state.wizard_field_scroll=(if tab=="table-fields-references" {10000.0} else {0.0},0.0);
@@ -7025,6 +7035,37 @@ mod interaction_tests {
         assert_eq!(demo.ui.button_enabled(demo.ids.ov_btn_add), Some(false));
         demo.handle_button(demo.ids.ov_btn_add);
         assert_eq!(demo.state.wizard_index_cols, "coalesce(");
+    }
+
+    #[test]
+    fn table_move_schema_selector_preview_failure_and_save_keep_the_draft_and_rows() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS analytics;
+                CREATE TABLE main.records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL CHECK(length(name)>0),amount REAL DEFAULT 0,total REAL AS(amount*1.2) STORED);
+                INSERT INTO main.records(id,name,amount) VALUES(7,'First customer',12.5),(11,'Second customer',24);
+                CREATE INDEX main.by_name ON records(name COLLATE NOCASE);
+                CREATE TABLE analytics.occupied(untouched);INSERT INTO analytics.occupied VALUES(42);").unwrap();
+            demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.do_rebuild();
+            demo.handle_button(demo.ids.ov_table_advanced);demo.do_rebuild();
+            let schema=demo.state.table_schemas().iter().position(|name|*name=="analytics").unwrap();assert_ne!(demo.ids.ov_schema.0,0);demo.ui.set_select_selected(demo.ids.ov_schema,Some(schema));demo.ui.set_text_input(demo.ids.ov_name,"occupied");demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}
+            assert_eq!(demo.state.wizard_schema,"analytics");assert!(demo.state.table_wizard_sql().unwrap().contains("\"analytics\".\"occupied\""));demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.as_deref().unwrap().contains("Target already exists"));assert!(demo.state.overlay.is_some());assert_eq!(demo.state.wizard_table_name,"occupied");assert_eq!(demo.state.wizard_col_sources.len(),4);
+            demo.state.error_msg=None;demo.do_rebuild();demo.ui.set_text_input(demo.ids.ov_name,"customer_archive");demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}
+            for (width,height) in [(1400,1000),(800,600)] {
+                demo.win_w=width;demo.win_h=height;demo.do_rebuild();
+                assert_eq!(demo.ui.select_selected(demo.ids.ov_schema),Some(schema));assert!(demo.state.table_wizard_sql().unwrap().contains("\"analytics\".\"customer_archive\""));
+                let bounds=|id|demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(id)).unwrap().bounds;
+                let grid=bounds(demo.ids.ov_fields_table);let tabs=bounds(demo.ids.ov_table_tabs);let style=next_gui_ui::TableStyle::from_theme(&demo.theme);
+                assert!(grid.y+style.header_height+style.row_height<=tabs.y+tabs.height,"{theme_name} {width}: first row clipped: {grid:?}, {tabs:?}");
+                if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_TABLE_MOVE_QA_OUT") {
+                    demo.scene.mark_full_dirty(width as f32,height as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(width,height,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-{width}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
+                    if let Ok(mut gpu)=GpuRenderer::try_new(width,height,clear) {gpu.render(&commands,&dirty);let delta=soft.frame_pixels().unwrap().0.iter().zip(gpu.frame_pixels().unwrap().0).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name} {width}: {delta}");eprintln!("Table move {theme_name} {width}: Soft/Metal delta {delta}");}else{eprintln!("Table move GPU comparison not_run: adapter unavailable");}
+                }
+            }
+            demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert_eq!(demo.state.browse().schema,"analytics");assert_eq!(demo.state.browse().table.as_deref(),Some("customer_archive"));assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(),2);
+            let conn=demo.state.conn.as_ref().unwrap();assert!(conn.prepare("SELECT * FROM main.records").is_err());assert_eq!(conn.query_row("SELECT untouched FROM analytics.occupied",[],|row|row.get::<_,i64>(0)).unwrap(),42);assert_eq!(conn.query_row("SELECT sum(id) FROM analytics.customer_archive",[],|row|row.get::<_,i64>(0)).unwrap(),18);assert!(conn.execute("UPDATE analytics.customer_archive SET name=''",[]).is_err());assert_eq!(conn.query_row("SELECT total FROM analytics.customer_archive WHERE id=7",[],|row|row.get::<_,f64>(0)).unwrap(),15.0);
+        }
     }
 
     #[test]

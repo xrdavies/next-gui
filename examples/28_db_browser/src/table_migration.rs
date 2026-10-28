@@ -128,6 +128,14 @@ fn sequence(conn: &Connection, schema: &str, table: &str) -> Result<Option<i64>,
     .map_err(|error| error.to_string())
 }
 
+fn mutation_probes(conn: &Connection, schema: &str, table: &str) -> Result<[String; 3], String> {
+    let target = db::qualified_name(schema, table);
+    let writable = db::table_columns_in(conn, schema, table)?.iter().map(|column| {
+        let name = db::quote_ident(&column.name); format!("{name}={name}")
+    }).collect::<Vec<_>>().join(",");
+    Ok([format!("EXPLAIN INSERT INTO {target} DEFAULT VALUES"), format!("EXPLAIN UPDATE {target} SET {writable} WHERE 0"), format!("EXPLAIN DELETE FROM {target} WHERE 0")])
+}
+
 pub fn rebuild(
     conn: &Connection,
     schema: &str,
@@ -137,6 +145,20 @@ pub fn rebuild(
     sources: &[Option<String>],
     options: Option<table_sql::TableOptions>,
 ) -> Result<(), String> {
+    rebuild_to_schema(conn, (schema, table), schema, original, draft, sources, options)
+}
+
+pub fn rebuild_to_schema(
+    conn: &Connection,
+    source: (&str, &str),
+    target_schema: &str,
+    original: &[ColDef],
+    draft: &[ColDef],
+    sources: &[Option<String>],
+    options: Option<table_sql::TableOptions>,
+) -> Result<(), String> {
+    let (schema, table) = source;
+    let moving = !schema.eq_ignore_ascii_case(target_schema);
     let old_without_rowid = without_rowid(conn, schema, table)?;
     let schema_sql = format!(
         "SELECT sql FROM {}.sqlite_schema WHERE type='table' AND name=?1",
@@ -152,7 +174,7 @@ pub fn rebuild(
             .query_row(
                 &format!(
                     "SELECT EXISTS(SELECT 1 FROM {}.sqlite_schema WHERE name=?1 COLLATE NOCASE)",
-                    db::quote_ident(schema)
+                    db::quote_ident(target_schema)
                 ),
                 [&name],
                 |row| row.get(0),
@@ -164,12 +186,16 @@ pub fn rebuild(
         number += 1;
     };
     let definition = table_sql::unqualify_local_checks(
-        &table_sql::rebuild_definition(&sql, schema, &temporary, original, draft, sources, options)?, table)?;
+        &table_sql::rebuild_definition(&sql, target_schema, &temporary, original, draft, sources, options)?, table)?;
     let mut stmt = conn.prepare(&format!("SELECT sql FROM {}.sqlite_schema WHERE tbl_name=?1 AND type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type,name", db::quote_ident(schema))).map_err(|error| error.to_string())?;
     let mut dependencies = stmt
         .query_map([table], |row| row.get::<_, String>(0))
         .map_err(|error| error.to_string())?
-        .map(|sql| table_sql::qualify_dependency(&sql.map_err(|error| error.to_string())?, schema))
+        .map(|sql| {
+            let sql = sql.map_err(|error| error.to_string())?;
+            if !moving { table_sql::qualify_dependency(&sql, schema) }
+            else { table_sql::relocate_dependency(&sql, target_schema, target_schema) }
+        })
         .collect::<Result<Vec<_>, String>>()?;
     if !schema.eq_ignore_ascii_case("temp") {
         let mut stmt = conn
@@ -181,25 +207,65 @@ pub fn rebuild(
         for trigger in triggers {
             let sql = trigger.map_err(|error| error.to_string())?;
             match table_sql::trigger_table_schema(&sql)? {
-                Some(name) if name.eq(schema) => dependencies.push(table_sql::qualify_dependency(&sql, "temp")?),
+                Some(name) if name.eq(schema) => dependencies.push(if !moving {
+                    table_sql::qualify_dependency(&sql, "temp")?
+                } else { table_sql::relocate_dependency(&sql, "temp", target_schema)? }),
                 Some(_) => {}
                 None => return Err("Qualify the target database of temporary triggers before rebuilding this table".into()),
             }
         }
     }
+    let objects = db::list_all_schemas(conn)?;
+    let mut trigger_probes = Vec::new();
+    if moving {
+        let triggered = objects.iter().filter(|object| object.kind == db::ObjectKind::Trigger).filter_map(|object| object.tbl_name.as_ref()).collect::<HashSet<_>>();
+        // A TEMP trigger can belong to a main/attached table; probe its real candidate owners.
+        let owners = objects.iter().filter(|object| matches!(object.kind, db::ObjectKind::Table | db::ObjectKind::View) && triggered.contains(&object.name) && !object.name.eq_ignore_ascii_case(table))
+            .map(|object| (object.schema.clone(), object.name.clone()))
+            .collect::<HashSet<_>>();
+        for (owner_schema, owner) in owners {
+            for query in mutation_probes(conn, &owner_schema, &owner)? {
+                if conn.prepare(&query).is_ok() { trigger_probes.push(query); }
+            }
+        }
+    }
     let mut views = Vec::new();
-    for object in db::list_schema(conn)? {
+    for object in objects {
         if object.kind == db::ObjectKind::View {
             let query = format!(
                 "SELECT * FROM {} LIMIT 0",
                 db::qualified_name(&object.schema, &object.name)
             );
-            if conn.prepare(&query).is_ok() {
+            let dependent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            if moving && !object.schema.eq_ignore_ascii_case("temp") {
+                let flag = dependent.clone(); let source_schema = schema.to_string(); let source_table = table.to_string();
+                conn.authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
+                    if matches!(context.action, rusqlite::hooks::AuthAction::Read { table_name, .. } if table_name.eq_ignore_ascii_case(&source_table))
+                        && context.database_name.is_some_and(|name| name.eq_ignore_ascii_case(&source_schema)) {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    rusqlite::hooks::Authorization::Allow
+                }));
+            }
+            let valid = conn.prepare(&query).is_ok();
+            if moving && !object.schema.eq_ignore_ascii_case("temp") {
+                conn.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>);
+            }
+            if valid && dependent.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(format!("Move dependent view {} with the table using an explicit SQL migration", db::qualified_name(&object.schema, &object.name)));
+            }
+            if valid {
                 views.push(query);
             }
         }
     }
     let prior_violations = foreign_key_violations(conn, schema)?;
+    let target_violations = if !moving { None } else {
+        let mut prior = foreign_key_violations(conn, target_schema)?;
+        // Pending deferred violations travel with their rows; unrelated destination violations still count as new.
+        prior.extend(prior_violations.iter().filter(|violation| violation.0.eq_ignore_ascii_case(table)).cloned());
+        Some(prior)
+    };
     // SQLite reports no row identity for WITHOUT ROWID violations.
     if prior_violations
         .iter()
@@ -237,8 +303,8 @@ pub fn rebuild(
                 .collect();
             let mut from = columns.clone();
             let mut copy_order = String::new();
-            let new_primary = integer_primary_key(conn, schema, &temporary)?;
-            let new_without_rowid = without_rowid(conn, schema, &temporary)?;
+            let new_primary = integer_primary_key(conn, target_schema, &temporary)?;
+            let new_without_rowid = without_rowid(conn, target_schema, &temporary)?;
             let old_primary = integer_primary_key(conn, schema, table)?;
             if new_primary.is_some()
                 && new_primary != old_primary
@@ -256,7 +322,7 @@ pub fn rebuild(
                     .ok_or(
                         "All original rowid aliases are shadowed; provide an explicit migration",
                     )?;
-                let target = rowid_alias(conn, schema, &temporary)?
+                let target = rowid_alias(conn, target_schema, &temporary)?
                     .ok_or("All new rowid aliases are shadowed; provide an explicit migration")?;
                 columns.insert(0, db::quote_ident(&target));
                 from.insert(0, db::quote_ident(&source));
@@ -316,7 +382,7 @@ pub fn rebuild(
                 conn,
                 &format!(
                     "INSERT OR ABORT INTO {} ({}) SELECT {} FROM {}{}",
-                    db::qualified_name(schema, &temporary),
+                    db::qualified_name(target_schema, &temporary),
                     columns.join(","),
                     from.join(","),
                     db::qualified_name(schema, table),
@@ -327,7 +393,7 @@ pub fn rebuild(
                 .query_row(
                     &format!(
                         "SELECT count(*) FROM {}",
-                        db::qualified_name(schema, &temporary)
+                        db::qualified_name(target_schema, &temporary)
                     ),
                     [],
                     |row| row.get(0),
@@ -344,23 +410,31 @@ pub fn rebuild(
                 conn,
                 &format!(
                     "ALTER TABLE {} RENAME TO {}",
-                    db::qualified_name(schema, &temporary),
+                    db::qualified_name(target_schema, &temporary),
                     db::quote_ident(table)
                 ),
             )?;
             for dependency in &dependencies {
                 db::execute_single_statement(conn, dependency)?;
             }
+            if moving && !dependencies.is_empty() {
+                for sql in mutation_probes(conn, target_schema, table)? {
+                    conn.prepare(&sql).map_err(|error| format!("Validate moved triggers: {error}"))?;
+                }
+            }
+            for query in &trigger_probes {
+                conn.prepare(query).map_err(|error| format!("Moving the table would invalidate another trigger: {error}"))?;
+            }
             if let Some(sequence) = old_sequence {
                 conn.execute(
                     &format!(
                         "UPDATE {}.sqlite_sequence SET seq=max(seq,?2) WHERE name=?1",
-                        db::quote_ident(schema)
+                        db::quote_ident(target_schema)
                     ),
                     rusqlite::params![table, sequence],
                 )
                 .map_err(|error| error.to_string())?;
-                conn.execute(&format!("INSERT INTO {}.sqlite_sequence(name,seq) SELECT ?1,?2 WHERE NOT EXISTS(SELECT 1 FROM {}.sqlite_sequence WHERE name=?1)", db::quote_ident(schema), db::quote_ident(schema)), rusqlite::params![table, sequence]).map_err(|error| error.to_string())?;
+                conn.execute(&format!("INSERT INTO {}.sqlite_sequence(name,seq) SELECT ?1,?2 WHERE NOT EXISTS(SELECT 1 FROM {}.sqlite_sequence WHERE name=?1)", db::quote_ident(target_schema), db::quote_ident(target_schema)), rusqlite::params![table, sequence]).map_err(|error| error.to_string())?;
             }
             for view in &views {
                 conn.prepare(view).map_err(|error| error.to_string())?;
@@ -372,11 +446,16 @@ pub fn rebuild(
             {
                 return Err("Table rebuild introduced a foreign key violation".into());
             }
+            if let Some(prior) = &target_violations {
+                if foreign_key_violations(conn, target_schema)?.difference(prior).next().is_some() {
+                    return Err("Moving the table introduced a target foreign key violation".into());
+                }
+            }
             Ok(())
         })
     })();
     let result = result
-        .map_err(|error: String| error.replace(&temporary, &db::qualified_name(schema, table)));
+        .map_err(|error: String| error.replace(&temporary, &db::qualified_name(target_schema, table)));
     let mut restoration = Vec::new();
     if let Err(error) =
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE, legacy_alter)
@@ -399,6 +478,179 @@ pub fn rebuild(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_moves_keep_sparse_rowids_and_without_rowid_composite_keys() {
+        for source in ["main","temp","aux"] {
+            for target in ["main","temp","aux"].into_iter().filter(|target|*target!=source) {
+                for without_rowid in [false,true] {
+                    let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");let to=db::qualified_name(target,"archive");
+                    conn.execute_batch(&format!("ATTACH ':memory:' AS aux;CREATE TABLE {from}(a TEXT,b INTEGER,PRIMARY KEY(a,b)){};",if without_rowid {"WITHOUT ROWID"}else{""})).unwrap();
+                    let insert=if without_rowid {format!("INSERT INTO {from} VALUES('first',7),('second',11)")}else{format!("INSERT INTO {from}(rowid,a,b) VALUES(-7,'first',7),(91,'second',11)")};conn.execute_batch(&insert).unwrap();
+                    let old=db::table_column_defs_in(&conn,source,"records").unwrap();let draft=vec![old[1].clone(),old[0].clone()];let identities=vec![Some("b".into()),Some("a".into())];
+                    db::recreate_table_columns_between(&conn,(source,"records"),(target,"archive"),&draft,&identities,None).unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
+                    assert_eq!(db::table_column_names_in(&conn,target,"archive").unwrap(),["b","a"]);assert_eq!(conn.query_row(&format!("SELECT sum(b) FROM {to}"),[],|row|row.get::<_,i64>(0)).unwrap(),18);
+                    if without_rowid {assert!(conn.prepare(&format!("SELECT rowid FROM {to}")).is_err());}else{assert_eq!(conn.query_row(&format!("SELECT sum(rowid) FROM {to}"),[],|row|row.get::<_,i64>(0)).unwrap(),84);}
+                    assert!(conn.execute(&format!("INSERT INTO {to}(a,b) VALUES('first',7)"),[]).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_moves_to_readonly_attachments_preserve_source_and_pending_edits() {
+        let directory=tempfile::tempdir().unwrap();let path=directory.path().join("destination.db");
+        {let destination=Connection::open(&path).unwrap();destination.execute_batch("CREATE TABLE untouched(value);INSERT INTO untouched VALUES(42)").unwrap();}
+        for source in ["main","temp","aux"] {
+            let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");
+            conn.execute_batch("ATTACH ':memory:' AS aux").unwrap();conn.execute("ATTACH ?1 AS readonly",[format!("file:{}?mode=ro",path.display())]).unwrap();
+            conn.execute_batch(&format!("CREATE TABLE {from}(id INTEGER PRIMARY KEY,value TEXT);INSERT INTO {from} VALUES(7,'original');BEGIN;INSERT INTO {from} VALUES(13,'pending');")).unwrap();
+            let before=format!("{:?}",db::list_all_schemas(&conn).unwrap());let columns=db::table_column_defs_in(&conn,source,"records").unwrap();let identities=columns.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+            let error=db::recreate_table_columns_between(&conn,(source,"records"),("readonly","archive"),&columns,&identities,None).unwrap_err();assert!(error.contains("readonly"),"{error}");
+            assert_eq!(format!("{:?}",db::list_all_schemas(&conn).unwrap()),before);assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {from}"),[],|row|row.get::<_,i64>(0)).unwrap(),20);assert_eq!(conn.query_row("SELECT value FROM readonly.untouched",[],|row|row.get::<_,i64>(0)).unwrap(),42);assert!(!conn.is_autocommit());
+            conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {from}"),[],|row|row.get::<_,i64>(0)).unwrap(),1);
+        }
+    }
+
+    #[test]
+    fn table_moves_preserve_pending_deferred_foreign_keys_until_the_destination_is_repaired() {
+        for source in ["main","temp","aux"] {
+            for target in ["main","temp","aux"].into_iter().filter(|target|*target!=source) {
+                let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");let to=db::qualified_name(target,"archive");
+                conn.execute_batch(&format!("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS aux;
+                    CREATE TABLE {}(id INTEGER PRIMARY KEY);INSERT INTO {} VALUES(1);
+                    CREATE TABLE {}(id INTEGER PRIMARY KEY);INSERT INTO {} VALUES(1);
+                    CREATE TABLE {from}(id INTEGER PRIMARY KEY,p INTEGER REFERENCES parents(id) DEFERRABLE INITIALLY DEFERRED);INSERT INTO {from} VALUES(7,1);
+                    BEGIN;INSERT INTO {from} VALUES(13,2);",db::qualified_name(source,"parents"),db::qualified_name(source,"parents"),db::qualified_name(target,"parents"),db::qualified_name(target,"parents"))).unwrap();
+                let columns=db::table_column_defs_in(&conn,source,"records").unwrap();let identities=columns.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+                db::recreate_table_columns_between(&conn,(source,"records"),(target,"archive"),&columns,&identities,None).unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
+                assert!(!conn.is_autocommit());assert!(conn.execute_batch("COMMIT").is_err());assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {to}"),[],|row|row.get::<_,i64>(0)).unwrap(),20);
+                conn.execute(&format!("INSERT INTO {} VALUES(2)",db::qualified_name(target,"parents")),[]).unwrap();conn.execute_batch("COMMIT").unwrap();assert_eq!(foreign_key_violations(&conn,target).unwrap().len(),0);
+            }
+        }
+    }
+
+    #[test]
+    fn table_moves_reject_collisions_broken_dependencies_and_invalid_rows_atomically() {
+        for source in ["main", "temp", "aux"] {
+            for target in ["main", "temp", "aux"].into_iter().filter(|target| *target != source) {
+                for case in ["table", "view", "index", "trigger", "external-trigger", "parent", "parent-data", "incoming", "dependent-view", "not-null", "temp-shadow"] {
+                    if case=="temp-shadow" && source!="temp" {continue;}
+                    // TEMP triggers may legitimately resolve their body tables in another database.
+                    if case=="trigger" && target=="temp" {continue;}
+                    let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");let to=db::qualified_name(target,"archive");
+                    conn.execute_batch(&format!("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS aux;
+                        CREATE TABLE {}(id INTEGER PRIMARY KEY);INSERT INTO {} VALUES(1);
+                        CREATE TABLE {from}(id INTEGER PRIMARY KEY AUTOINCREMENT,v TEXT,p INTEGER REFERENCES parents(id));INSERT INTO {from} VALUES(7,NULL,1);
+                        CREATE TABLE {}(value);CREATE TRIGGER {} AFTER UPDATE ON records BEGIN INSERT INTO audit VALUES(new.id);END;
+                        CREATE INDEX {} ON records(v) WHERE id>0;",
+                        db::qualified_name(source,"parents"),db::qualified_name(source,"parents"),db::qualified_name(source,"audit"),db::qualified_name(source,"changed"),db::qualified_name(source,"by_value"))).unwrap();
+                    if case!="parent" {conn.execute_batch(&format!("CREATE TABLE {}(id INTEGER PRIMARY KEY);INSERT INTO {} VALUES({})",db::qualified_name(target,"parents"),db::qualified_name(target,"parents"),if case=="parent-data" {2}else{1})).unwrap();}
+                    if case!="trigger" {conn.execute_batch(&format!("CREATE TABLE {}(value)",db::qualified_name(target,"audit"))).unwrap();}
+                    let sql=match case {
+                        "table"=>format!("CREATE TABLE {to}(untouched);INSERT INTO {to} VALUES(42)"),
+                        "view"=>format!("CREATE VIEW {to} AS SELECT 42"),
+                        "index"=>format!("CREATE TABLE {}(v);CREATE INDEX {} ON unrelated(v)",db::qualified_name(target,"unrelated"),db::qualified_name(target,"by_value")),
+                        "incoming"=>format!("CREATE TABLE {}(p INTEGER REFERENCES records(id));INSERT INTO {} VALUES(7)",db::qualified_name(source,"child"),db::qualified_name(source,"child")),
+                        "external-trigger"=>format!("CREATE TABLE {}(v);CREATE TRIGGER {} AFTER INSERT ON other BEGIN UPDATE records SET v=new.v;END",db::qualified_name(source,"other"),db::qualified_name(source,"elsewhere")),
+                        "dependent-view"=>format!("CREATE VIEW {} AS SELECT id,v FROM records",db::qualified_name(source,"visible")),
+                        "temp-shadow"=>"CREATE TABLE temp.archive(untouched);INSERT INTO temp.archive VALUES(42)".into(),
+                        _=>String::new(),
+                    };
+                    conn.execute_batch(&sql).unwrap();conn.execute_batch(&format!("BEGIN;INSERT INTO {from} VALUES(13,'pending',1);PRAGMA legacy_alter_table=ON")).unwrap();
+                    let before=format!("{:?}",db::list_all_schemas(&conn).unwrap());let columns=db::table_column_defs_in(&conn,source,"records").unwrap();let mut draft=columns.clone();if case=="not-null" {draft[1].notnull=true;}
+                    let identities=columns.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+                    let result=db::recreate_table_columns_between(&conn,(source,"records"),(target,"archive"),&draft,&identities,None);
+                    if case=="dependent-view" && source=="temp" {
+                        // TEMP views can follow their table into an attached database.
+                        result.unwrap();assert_eq!(conn.query_row("SELECT sum(id) FROM temp.visible",[],|row|row.get::<_,i64>(0)).unwrap(),20);
+                        conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row("SELECT sum(id) FROM temp.visible",[],|row|row.get::<_,i64>(0)).unwrap(),7);continue;
+                    }
+                    if case=="external-trigger" && source=="temp" {
+                        result.unwrap();conn.execute("INSERT INTO temp.other VALUES('changed')",[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {to} WHERE v='changed'"),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+                        conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row("SELECT count(*) FROM temp.other",[],|row|row.get::<_,i64>(0)).unwrap(),0);continue;
+                    }
+                    let Err(error)=result else {panic!("{source} → {target}: {case} unexpectedly succeeded");};
+                    assert!(!error.is_empty());assert_eq!(format!("{:?}",db::list_all_schemas(&conn).unwrap()),before,"{source} → {target}: {case}: {error}");
+                    assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {from}"),[],|row|row.get::<_,i64>(0)).unwrap(),20);
+                    assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap());assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE).unwrap());assert!(!conn.is_autocommit());
+                    conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {from}"),[],|row|row.get::<_,i64>(0)).unwrap(),1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_moves_combine_renamed_inherited_constraints_generated_fields_and_deletions() {
+        for source in ["main", "temp", "aux.\"db"] {
+            for target in ["main", "temp", "aux.\"db"] {
+                let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");let name=if source==target {"records"}else{"archive"};let to=db::qualified_name(target,name);
+                conn.execute_batch(&format!("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS \"aux.\"\"db\";
+                    CREATE TABLE {from}(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT CHECK(length(name)>0),previous INTEGER REFERENCES records(id) ON UPDATE CASCADE,discard TEXT,g INTEGER AS(length(name)) STORED);
+                    INSERT INTO {from}(id,name,previous,discard) VALUES(7,'first',NULL,'old'),(11,'second',7,'old');
+                    CREATE TABLE {}(value);CREATE TRIGGER {} AFTER UPDATE OF name ON records BEGIN INSERT INTO audit VALUES(new.name);END;
+                    CREATE INDEX {} ON records(name) WHERE id>0;UPDATE {}.sqlite_sequence SET seq=99 WHERE name='records';",
+                    db::qualified_name(source,"audit"),db::qualified_name(source,"changed"),db::qualified_name(source,"record_index"),db::quote_ident(source))).unwrap();
+                if source!=target {
+                    conn.execute_batch(&format!("CREATE TABLE {}(value);",db::qualified_name(target,"audit"))).unwrap();
+                    if source != "temp" { conn.execute_batch(&format!("CREATE TABLE {}(untouched);INSERT INTO {} VALUES(42);",db::qualified_name(source,"archive"),db::qualified_name(source,"archive"))).unwrap(); }
+                }
+                conn.execute_batch(&format!("BEGIN;INSERT INTO {from}(id,name,previous,discard) VALUES(14,'pending',11,'old')")).unwrap();
+                let old=db::table_column_defs_in(&conn,source,"records").unwrap();let mut draft=vec![old[0].clone(),old[1].clone(),old[2].clone(),old[4].clone(),ColDef::new("extra","TEXT")];draft[1].name="label".into();draft[1].type_name="VARCHAR(48)".into();draft[4].default_value="'new'".into();
+                let sources=vec![Some("id".into()),Some("name".into()),Some("previous".into()),Some("g".into()),None];
+                if source == "temp" {
+                    // SQLite rejects renaming NEW.column references on TEMP tables; the savepoint must preserve the original.
+                    assert!(db::recreate_table_columns_between(&conn,(source,"records"),(target,name),&draft,&sources,None).is_err());
+                    assert_eq!(conn.query_row(&format!("SELECT count(name) FROM {from} WHERE discard='old'"),[],|row|row.get::<_,i64>(0)).unwrap(),3);
+                    conn.execute_batch("DROP TRIGGER temp.changed;CREATE TRIGGER temp.changed AFTER UPDATE OF name ON records BEGIN INSERT INTO audit VALUES('changed');END;").unwrap();
+                }
+                db::recreate_table_columns_between(&conn,(source,"records"),(target,name),&draft,&sources,None).unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
+                assert_eq!(conn.query_row(&format!("SELECT sum(id)+sum(g) FROM {to}"),[],|row|row.get::<_,i64>(0)).unwrap(),50);
+                assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {to} WHERE extra='new'"),[],|row|row.get::<_,i64>(0)).unwrap(),3);
+                assert!(conn.execute(&format!("UPDATE {to} SET label='' WHERE id=7"),[]).is_err());conn.execute(&format!("UPDATE {to} SET label='changed' WHERE id=7"),[]).unwrap();
+                assert_eq!(conn.query_row(&format!("SELECT value FROM {}",db::qualified_name(target,"audit")),[],|row|row.get::<_,String>(0)).unwrap(),"changed");
+                conn.execute(&format!("UPDATE {to} SET id=8 WHERE id=7"),[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT previous FROM {to} WHERE id=11"),[],|row|row.get::<_,i64>(0)).unwrap(),8);
+                conn.execute(&format!("INSERT INTO {to}(label) VALUES('next')"),[]).unwrap();assert_eq!(conn.last_insert_rowid(),100);
+                if source!=target && source!="temp" {assert_eq!(conn.query_row(&format!("SELECT untouched FROM {}",db::qualified_name(source,"archive")),[],|row|row.get::<_,i64>(0)).unwrap(),42);}
+                conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {from} WHERE discard='old'"),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+            }
+        }
+    }
+
+    #[test]
+    fn table_moves_keep_qualified_data_self_links_indexes_triggers_sequence_and_pending_rollback() {
+        for source in ["main", "temp", "aux.\"db"] {
+            for target in ["main", "temp", "aux.\"db"].into_iter().filter(|target| *target != source) {
+                let conn = Connection::open_in_memory().unwrap();
+                let source_table = db::qualified_name(source,"records"); let target_table = db::qualified_name(target,"records");
+                conn.execute_batch(&format!("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS \"aux.\"\"db\";
+                    CREATE TABLE {source_table}(id INTEGER PRIMARY KEY AUTOINCREMENT,x TEXT NOT NULL,previous INTEGER REFERENCES records(id) ON UPDATE CASCADE ON DELETE SET NULL,g INTEGER AS(length(x)) STORED);
+                    INSERT INTO {source_table}(id,x,previous) VALUES(7,'first',NULL),(11,'second',7);
+                    CREATE INDEX {} ON records(lower(x)) WHERE id>0;
+                    CREATE TABLE {}(value);CREATE TABLE {}(value);
+                    CREATE TRIGGER {} AFTER UPDATE OF x ON records BEGIN INSERT INTO audit VALUES(new.x);END;
+                    UPDATE {}.sqlite_sequence SET seq=99 WHERE name='records';",
+                    db::qualified_name(source,"record_index"),db::qualified_name(source,"audit"),db::qualified_name(target,"audit"),db::qualified_name(source,"changed"),db::quote_ident(source))).unwrap();
+                if source != "temp" {
+                    conn.execute_batch(&format!("CREATE TEMP TABLE session_audit(value);CREATE TEMP TRIGGER session_changed AFTER UPDATE OF x ON {source_table} BEGIN INSERT INTO session_audit VALUES(new.x);END")).unwrap();
+                }
+                conn.execute_batch(&format!("BEGIN;INSERT INTO {source_table}(id,x,previous) VALUES(14,'pending',11)")).unwrap();
+                let columns = db::table_column_defs_in(&conn,source,"records").unwrap();let sources=columns.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+                rebuild_to_schema(&conn,(source,"records"),target,&columns,&columns,&sources,None).unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
+                assert!(conn.prepare(&format!("SELECT * FROM {source_table}")).is_err());
+                assert_eq!(conn.query_row(&format!("SELECT sum(id)+sum(g) FROM {target_table}"),[],|row|row.get::<_,i64>(0)).unwrap(),50);
+                assert!(conn.prepare(&format!("SELECT x FROM {target_table} INDEXED BY record_index WHERE id>0")).is_ok());
+                conn.execute(&format!("UPDATE {target_table} SET x='moved' WHERE id=7"),[]).unwrap();
+                assert_eq!(conn.query_row(&format!("SELECT value FROM {}",db::qualified_name(target,"audit")),[],|row|row.get::<_,String>(0)).unwrap(),"moved");
+                assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {}",db::qualified_name(source,"audit")),[],|row|row.get::<_,i64>(0)).unwrap(),0);
+                if source != "temp" {assert_eq!(conn.query_row("SELECT value FROM temp.session_audit",[],|row|row.get::<_,String>(0)).unwrap(),"moved");}
+                conn.execute(&format!("UPDATE {target_table} SET id=8 WHERE id=7"),[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT previous FROM {target_table} WHERE id=11"),[],|row|row.get::<_,i64>(0)).unwrap(),8);
+                conn.execute(&format!("INSERT INTO {target_table}(x) VALUES('next')"),[]).unwrap();assert_eq!(conn.last_insert_rowid(),100);
+                assert!(!conn.is_autocommit());assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap());assert!(!conn.db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE).unwrap());
+                conn.execute_batch("ROLLBACK").unwrap();assert!(conn.prepare(&format!("SELECT * FROM {target_table}")).is_err());assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {source_table}"),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+            }
+        }
+    }
 
     #[test]
     fn removed_generated_fields_do_not_validate_values_after_retained_type_changes() {

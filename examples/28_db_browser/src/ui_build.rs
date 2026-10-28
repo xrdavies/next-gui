@@ -980,7 +980,7 @@ pub fn build_ui(
                         OverlayKind::EditTable => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                             scroll.width = ov_col.width - 16.0;
-                            let header_height = if state.wizard_table_advanced { 108.0 } else { 32.0 };
+                            let header_height = if state.wizard_table_advanced { 70.0 } else { 32.0 };
                             let mut split=SplitterStyle::from_theme(&theme);
                             split.width=scroll.width;split.height=(ov_col.height-header_height-22.0).max(100.0);
                             split.axis=Axis::Horizontal;split.ratio=state.wizard_table_ratio;split.sash_size=6.0;
@@ -998,20 +998,16 @@ pub fn build_ui(
                             });
                             if state.wizard_table_advanced {
                                 c.row(row, |r| {
-                                    r.text("Database schema");
-                                    if state.wizard_table_original.is_none() {
-                                        let schemas=state.table_schemas(); let selected=schemas.iter().position(|s|*s==state.wizard_schema);
-                                        ov_schema=r.select(schemas,selected,"schema",type_sel);
-                                    } else { r.text(&state.wizard_schema); }
+                                    r.text("Database");
+                                    let schemas=state.table_schemas(); let selected=schemas.iter().position(|s|*s==state.wizard_schema);
+                                    ov_schema=r.select(schemas,selected,"schema",type_sel);
                                     r.tooltip("Requires a primary key; removes the hidden rowid and forbids AUTOINCREMENT", |r| {
                                         ov_without_rowid=r.checkbox("Without Rowid",state.wizard_table_options.without_rowid);
                                     });
                                     r.tooltip("Enforce SQLite STRICT column types and stored values", |r| {
                                         ov_strict=r.checkbox("Strict",state.wizard_table_options.strict);
                                     });
-                                });
-                                c.row(row, |r| {
-                                    r.text("Primary key on conflict"); let mut selector=type_sel; selector.width=180.0;
+                                    r.text("PK conflict"); let mut selector=type_sel; selector.width=120.0;
                                     ov_pk_conflict=r.select(crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().map(|(label,_)|*label),
                                         crate::table_sql::PRIMARY_KEY_CONFLICTS.iter().position(|(_,action)|*action==state.wizard_table_options.primary_key_conflict),"Default",selector);
                                 });
@@ -1027,7 +1023,6 @@ pub fn build_ui(
                             ov_table_splitter=c.splitter(split,|c| {
                             ov_table_tabs = c.tabs(table_tabs, |tabs| {
                             ov_scroll=tabs.scroll_page("Fields",scroll, |c| {
-                                c.text("Columns");
                                 c.row(row, |r| {
                                     ov_btn_add = r.tool_button("Add"); ov_btn_del = r.tool_button("Remove");
                                     ov_field_top = r.tool_button("Top"); ov_btn_up = r.tool_button("Up");

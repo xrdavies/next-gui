@@ -1509,6 +1509,14 @@ pub fn trigger_table_schema(sql: &str) -> Result<Option<Name>, String> {
     Ok(tbl_name.db_name)
 }
 
+pub fn relocate_dependency(sql: &str, object_schema: &str, table_schema: &str) -> Result<String, String> {
+    let mut command = parse(&qualify_dependency(sql, object_schema)?)?;
+    if let Cmd::Stmt(Stmt::CreateTrigger { tbl_name, .. }) = &mut command {
+        tbl_name.db_name = Some(identifier(table_schema));
+    }
+    Ok(emit(command))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

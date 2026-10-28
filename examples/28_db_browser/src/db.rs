@@ -310,6 +310,12 @@ pub fn list_schema(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
     list_schema_in(conn, "main")
 }
 
+pub fn list_all_schemas(conn: &Connection) -> Result<Vec<SchemaObject>, String> {
+    let mut objects = Vec::new();
+    for schema in database_names(conn)? { objects.extend(list_schema_in(conn, &schema)?); }
+    Ok(objects)
+}
+
 pub fn database_names(conn: &Connection) -> Result<Vec<String>, String> {
     let mut stmt = conn.prepare("PRAGMA database_list").map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |row| row.get(1)).map_err(|e| e.to_string())?;
@@ -1468,34 +1474,28 @@ pub fn recreate_table_columns_in(
     sources: &[Option<String>],
     options: Option<crate::table_sql::TableOptions>,
 ) -> Result<(), String> {
+    recreate_table_columns_between(conn, (schema, old_name), (schema, new_name), cols, sources, options)
+}
+
+pub fn recreate_table_columns_between(
+    conn: &Connection,
+    source: (&str, &str),
+    target: (&str, &str),
+    cols: &[ColDef],
+    sources: &[Option<String>],
+    options: Option<crate::table_sql::TableOptions>,
+) -> Result<(), String> {
+    let (schema, old_name) = source; let (target_schema, new_name) = target;
+    let moving = !schema.eq_ignore_ascii_case(target_schema);
+    if moving {
+        let exists: bool = conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM {}.sqlite_schema WHERE name=?1 COLLATE NOCASE AND type IN ('table','view','index'))", quote_ident(target_schema)), [new_name], |row| row.get(0)).map_err(|error| error.to_string())?;
+        if exists { return Err(format!("Target already exists: {}", qualified_name(target_schema, new_name))); }
+    }
     let mut options = options;
     let mut draft = if let Some(keys) = options.as_ref().and_then(|options| options.index_constraints.as_deref()) {
         crate::table_sql::columns_with_index_constraints(cols, keys)?
     } else { cols.to_vec() };
-    if old_name != new_name {
-        if let Some(keys) = options.as_mut().and_then(|options| options.foreign_keys.as_mut()) {
-            *keys = crate::table_sql::rename_foreign_keys(keys, new_name, old_name, &[])?;
-        }
-        if let Some(keys) = options.as_mut().and_then(|options| options.inline_foreign_keys.as_mut()) {
-            *keys = crate::table_sql::rename_foreign_keys(keys, new_name, old_name, &[])?;
-        }
-        if let Some(checks) = options.as_mut().and_then(|options| options.checks.as_mut()) {
-            *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
-        }
-        if let Some(checks) = options.as_mut().and_then(|options| options.inline_checks.as_mut()) {
-            *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
-        }
-        for column in &mut draft {
-            if !column.foreign_key_clause.trim().is_empty() {
-                let key=crate::table_sql::NamedForeignKey {name:None,columns:quote_ident(&column.name),clause:column.foreign_key_clause.clone(),inline:true};
-                column.foreign_key_clause=crate::table_sql::rename_foreign_keys(&[key],new_name,old_name,&[])?.remove(0).clause;
-            }
-            if !column.check_expression.trim().is_empty() {
-                let check = crate::table_sql::NamedCheck { column:None, name: None, expression: column.check_expression.clone() };
-                column.check_expression = crate::table_sql::rename_checks(&[check], new_name, old_name, &[])?.remove(0).expression;
-            }
-        }
-    }
+    retarget_table_draft(&mut draft, &mut options, new_name, old_name)?;
     let cols = draft.as_slice();
     let existing = table_column_defs_in(conn, schema, old_name)?;
     if existing.is_empty() {
@@ -1506,7 +1506,7 @@ pub fn recreate_table_columns_in(
     }
     crate::table_sql::validate_primary_key(cols)?;
     let old_options = table_options_in(conn, schema, old_name)?;
-    let rebuild = crate::table_sql::requires_rebuild(&existing, cols, sources, &old_options, options.as_ref());
+    let rebuild = moving || crate::table_sql::requires_rebuild(&existing, cols, sources, &old_options, options.as_ref());
     for (index, (col, source)) in cols.iter().zip(sources).enumerate() {
         if cols[..index].iter().any(|old| old.name.eq_ignore_ascii_case(&col.name)) {
             return Err(format!("Duplicate column name: {}", col.name));
@@ -1564,6 +1564,14 @@ pub fn recreate_table_columns_in(
             renames.push((source, &col.name, temporary));
         }
     }
+    let move_name = if moving {
+        let occupied = list_all_schemas(conn)?; let mut number = 0;
+        Some(loop {
+            let candidate = format!("__next_gui_move_{number}");
+            if !candidate.eq_ignore_ascii_case(new_name) && !occupied.iter().any(|object| object.name.eq_ignore_ascii_case(&candidate)) { break candidate; }
+            number += 1;
+        })
+    } else { None };
     with_savepoint(conn, || {
         let mut staged_removals = Vec::new();
         if rebuild {
@@ -1595,21 +1603,35 @@ pub fn recreate_table_columns_in(
                 qualified_name(schema, old_name), quote_ident(temporary), quote_ident(target)))
                 .map_err(|error| format!("Cannot rename column to {target}: {error}"))?;
         }
+        if let Some(name) = move_name.as_deref() {
+            rename_table_in(conn, schema, old_name, name)?;
+        }
+        let current_name = move_name.as_deref().unwrap_or(old_name);
         if rebuild {
-            if staged_removals.is_empty() {
+            if staged_removals.is_empty() && !moving {
                 crate::table_migration::rebuild(conn, schema, old_name, &existing, cols, sources, options)?;
             } else {
-                let current = table_column_defs_in(conn, schema, old_name)?;
+                let current = table_column_defs_in(conn, schema, current_name)?;
                 let mut staged = cols.to_vec();
+                for (column, source) in staged.iter_mut().zip(sources) {
+                    if let Some((old, renamed)) = source.as_ref().and_then(|source| existing.iter().find(|old| old.name == *source))
+                        .zip(current.iter().find(|renamed| renamed.name == column.name)) {
+                        // Keep SQLite's reference rewrites for inherited definitions, while retaining explicit edits.
+                        if column.check_expression == old.check_expression { column.check_expression = renamed.check_expression.clone(); }
+                        if column.foreign_key_clause == old.foreign_key_clause { column.foreign_key_clause = renamed.foreign_key_clause.clone(); }
+                        if column.generated == old.generated { column.generated = renamed.generated.clone(); }
+                    }
+                }
                 let mut identities: Vec<_> = cols.iter().zip(sources).map(|(column, source)| source.as_ref().map(|_| column.name.clone())).collect();
                 for (_, temporary) in &staged_removals {
                     // Retired fields only validate dependencies; discarded values need no generated/NOT NULL rules.
                     let column = current.iter().find(|column| column.name == *temporary).map(|column| ColDef::new(&column.name, "ANY")).ok_or("Removed column identity disappeared")?;
                     staged.push(column); identities.push(Some(temporary.clone()));
                 }
-                crate::table_migration::rebuild(conn, schema, old_name, &current, &staged, &identities, options)?;
+                if moving { retarget_table_draft(&mut staged, &mut options, old_name, current_name)?; }
+                crate::table_migration::rebuild_to_schema(conn, (schema, current_name), target_schema, &current, &staged, &identities, options)?;
                 for (original, temporary) in staged_removals {
-                    drop_table_column_in(conn, schema, old_name, &temporary)
+                    drop_table_column_in(conn, target_schema, current_name, &temporary)
                         .map_err(|error| format!("Cannot remove column {original}: {error}"))?;
                 }
             }
@@ -1622,23 +1644,56 @@ pub fn recreate_table_columns_in(
                 ))?;
             }
         }
-        if old_name != new_name {
-            let setting = rusqlite::config::DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE;
-            let legacy = conn.db_config(setting).map_err(|e| e.to_string())?;
-            if legacy { conn.set_db_config(setting, false).map_err(|e| e.to_string())?; }
-            let renamed = execute_single_statement(conn, &format!(
-                "ALTER TABLE {} RENAME TO {}",
-                qualified_name(schema, old_name),
-                quote_ident(new_name)
-            ));
-            if legacy {
-                conn.set_db_config(setting, true).map_err(|e| format!("{}Restoring legacy ALTER setting failed: {e}",
-                    renamed.as_ref().err().map(|error| format!("{error}; ")).unwrap_or_default()))?;
-            }
-            renamed?;
-        }
+        rename_table_in(conn, target_schema, current_name, new_name)?;
         Ok(())
-    })
+    }).map_err(|error| if let Some(name) = move_name.as_deref() {
+        format!("Cannot move {} to {}: {}", qualified_name(schema, old_name), qualified_name(target_schema, new_name),
+            error.replace(&quote_ident(name), &quote_ident(old_name)).replace(name, old_name))
+    } else { error })
+}
+
+fn rename_table_in(conn: &Connection, schema: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+    if old_name == new_name { return Ok(()); }
+    let setting = rusqlite::config::DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE;
+    let legacy = conn.db_config(setting).map_err(|e| e.to_string())?;
+    if legacy { conn.set_db_config(setting, false).map_err(|e| e.to_string())?; }
+    let renamed = execute_single_statement(conn, &format!(
+        "ALTER TABLE {} RENAME TO {}",
+        qualified_name(schema, old_name),
+        quote_ident(new_name)
+    ));
+    if legacy {
+        conn.set_db_config(setting, true).map_err(|e| format!("{}Restoring legacy ALTER setting failed: {e}",
+            renamed.as_ref().err().map(|error| format!("{error}; ")).unwrap_or_default()))?;
+    }
+    renamed.map_err(|error| format!("Cannot rename table {} to {}: {error}", qualified_name(schema, old_name), quote_ident(new_name)))
+}
+
+fn retarget_table_draft(columns: &mut [ColDef], options: &mut Option<crate::table_sql::TableOptions>, from: &str, to: &str) -> Result<(), String> {
+    if from == to { return Ok(()); }
+    if let Some(keys) = options.as_mut().and_then(|options| options.foreign_keys.as_mut()) {
+        *keys = crate::table_sql::rename_foreign_keys(keys, from, to, &[])?;
+    }
+    if let Some(keys) = options.as_mut().and_then(|options| options.inline_foreign_keys.as_mut()) {
+        *keys = crate::table_sql::rename_foreign_keys(keys, from, to, &[])?;
+    }
+    if let Some(checks) = options.as_mut().and_then(|options| options.checks.as_mut()) {
+        *checks = crate::table_sql::rename_checks(checks, from, to, &[])?;
+    }
+    if let Some(checks) = options.as_mut().and_then(|options| options.inline_checks.as_mut()) {
+        *checks = crate::table_sql::rename_checks(checks, from, to, &[])?;
+    }
+    for column in columns {
+        if !column.foreign_key_clause.trim().is_empty() {
+            let key=crate::table_sql::NamedForeignKey {name:None,columns:quote_ident(&column.name),clause:column.foreign_key_clause.clone(),inline:true};
+            column.foreign_key_clause=crate::table_sql::rename_foreign_keys(&[key],from,to,&[])?.remove(0).clause;
+        }
+        if !column.check_expression.trim().is_empty() {
+            let check = crate::table_sql::NamedCheck { column:None, name: None, expression: column.check_expression.clone() };
+            column.check_expression = crate::table_sql::rename_checks(&[check], from, to, &[])?.remove(0).expression;
+        }
+    }
+    Ok(())
 }
 
 fn drop_table_column_in(conn: &Connection, schema: &str, table: &str, column: &str) -> Result<(), String> {
