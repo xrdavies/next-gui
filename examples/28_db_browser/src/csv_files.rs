@@ -262,12 +262,13 @@ struct Item {
     slot: Option<usize>,
 }
 
-#[derive(Debug)]
 pub struct Work {
     items: Vec<Item>,
     index: usize,
     pub options: CsvImportOptions,
     pub pending: Option<csv_import::Prepared>,
+    job: Option<crate::csv_jobs::Job>,
+    pub progress: std::sync::Arc<crate::csv_jobs::Progress>,
     accepted: std::collections::HashSet<String>,
     yes_all: bool,
     rows: u64,
@@ -283,19 +284,55 @@ impl Work {
         &self.items[self.index].target
     }
     pub fn label(&self) -> String {
-        match &self.items[self.index].source {
+        match &self.items[self.index.min(self.items.len() - 1)].source {
             Source::File(path) => path.display().to_string(),
             Source::Clipboard => "Clipboard".into(),
         }
     }
-    fn read(&self, clipboard: &str) -> Result<csv_import::Prepared, String> {
-        // shortcut: preparation/insertion are synchronous; move them to a cancellable worker for interactive progress.
-        match &self.items[self.index].source {
-            Source::File(path) => std::fs::File::open(path)
-                .map_err(|error| error.to_string())
-                .and_then(|file| csv_import::prepare(file, &self.options)),
-            Source::Clipboard => csv_import::prepare_text(clipboard, &self.options),
-        }
+    pub fn running(&self) -> bool {
+        self.job.is_some()
+    }
+
+    pub fn progress_info(&self) -> (f32, String) {
+        let reading = self
+            .job
+            .as_ref()
+            .is_some_and(crate::csv_jobs::Job::is_reading);
+        let (done, total) = if reading {
+            self.progress.bytes()
+        } else {
+            self.progress.rows()
+        };
+        let caption = if self.progress.cancelled() {
+            "Canceling after the current operation".into()
+        } else if reading {
+            format!(
+                "Reading file {} of {} · {done} / {total} bytes",
+                self.index + 1,
+                self.items.len()
+            )
+        } else {
+            format!(
+                "Importing file {} of {} · record {done} / {total}",
+                self.index + 1,
+                self.items.len()
+            )
+        };
+        let fraction = if total == 0 {
+            0.0
+        } else {
+            (done as f64 / total as f64).clamp(0.0, 0.99) as f32
+        };
+        (
+            fraction,
+            format!("{caption}\n{}\nTable: {}", self.label(), self.target()),
+        )
+    }
+}
+
+impl Drop for Work {
+    fn drop(&mut self) {
+        self.progress.cancel();
     }
 }
 
@@ -303,9 +340,6 @@ impl crate::state::AppState {
     pub fn start_csv_import_work(&mut self) -> Result<(), String> {
         use crate::state::OverlayKind;
         self.guard_writable()?;
-        if self.csv_work.is_some() {
-            return Err("Finish the pending CSV import first".into());
-        }
         let overlay = self.overlay.ok_or("Open the CSV import dialog first")?;
         let items = if overlay == OverlayKind::PasteCsv {
             vec![Item {
@@ -342,6 +376,8 @@ impl crate::state::AppState {
             index: 0,
             options: self.csv_options(),
             pending: None,
+            job: None,
+            progress: std::sync::Arc::default(),
             accepted: std::collections::HashSet::new(),
             yes_all: false,
             rows: 0,
@@ -354,23 +390,91 @@ impl crate::state::AppState {
         self.continue_csv_import_work(None)
     }
 
+    pub fn csv_running(&self) -> bool {
+        self.csv_work.as_ref().is_some_and(Work::running)
+    }
+
+    pub fn guard_csv_idle(&self) -> Result<(), String> {
+        if self.csv_work.is_some() {
+            return Err("Cancel or finish CSV import first".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn settle_csv_test(&mut self) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while self.csv_running() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "CSV worker did not finish"
+            );
+            self.poll_csv_import_work()?;
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Ok(())
+    }
+
+    pub fn poll_csv_import_work(&mut self) -> Result<bool, String> {
+        if !self
+            .csv_work
+            .as_ref()
+            .and_then(|work| work.job.as_ref())
+            .is_some_and(crate::csv_jobs::Job::is_finished)
+        {
+            return Ok(false);
+        }
+        self.continue_csv_import_work(None)?;
+        Ok(true)
+    }
+
     pub fn continue_csv_import_work(&mut self, answer: Option<Answer>) -> Result<(), String> {
         let Some(mut work) = self.csv_work.take() else {
             return Ok(());
         };
-        if !self.read_only && self.conn.as_ref().is_some_and(|conn| conn.is_autocommit()) {
-            self.finish_csv_import_work(&work, true);
-            return Err("SQLite ended the pending transaction; review database changes and reselect files before retrying".into());
-        }
-        if let Err(error) = self.guard_writable() {
-            self.finish_csv_import_work(&work, true);
-            return Err(error);
-        }
-        let cancelled = matches!(answer, Some(Answer::Cancel));
+        let mut cancelled = matches!(answer, Some(Answer::Cancel));
         let result = (|| {
+            let mut ready = None;
+            if let Some(job) = &work.job {
+                if cancelled {
+                    work.progress.cancel();
+                }
+                if !job.is_finished() {
+                    return Ok(true);
+                }
+                let completed = work.job.take().unwrap().join();
+                cancelled |= work.progress.cancelled();
+                match completed {
+                    crate::csv_jobs::Completed::Read(data) => {
+                        if !cancelled {
+                            ready = Some(data?);
+                        }
+                    }
+                    crate::csv_jobs::Completed::Write(conn, result) => {
+                        self.conn = conn;
+                        if self.conn.is_none() {
+                            return Err(result.err().unwrap_or_else(|| {
+                                "CSV worker lost its database connection".into()
+                            }));
+                        }
+                        match result {
+                            Ok(rows) => self.finish_csv_insert(&mut work, rows),
+                            Err(error)
+                                if cancelled
+                                    && error == "CSV import cancelled"
+                                    && !self.conn.as_ref().unwrap().is_autocommit() => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                }
+            }
+            if !self.read_only && self.conn.as_ref().is_some_and(|conn| conn.is_autocommit()) {
+                return Err("SQLite ended the pending transaction; review database changes and reselect files before retrying".into());
+            }
             if cancelled {
                 return Ok(false);
             }
+            self.guard_writable()?;
             if let Some(answer) = answer {
                 if work.pending.is_none() {
                     return Err("There is no CSV import awaiting confirmation".into());
@@ -381,31 +485,14 @@ impl crate::state::AppState {
                         work.pending = None;
                     }
                     Answer::Yes | Answer::YesAll => {
-                        if matches!(answer, Answer::YesAll) {
-                            work.yes_all = true;
-                        }
+                        work.yes_all |= matches!(answer, Answer::YesAll);
                         work.accepted.insert(work.target().to_ascii_lowercase());
-                        let data = work.pending.take().unwrap();
-                        self.insert_csv_item(&mut work, &data)?;
+                        ready = work.pending.take();
                     }
                     Answer::Cancel => unreachable!(),
                 }
             }
-            while work.index < work.items.len() {
-                let item = &work.items[work.index];
-                if let Some(index) = item.slot {
-                    if let Some(batch) = &mut self.csv_files {
-                        batch.current = index;
-                    }
-                }
-                if let Source::File(path) = &item.source {
-                    self.csv_path = path.display().to_string();
-                }
-                self.csv_table = item.target.clone();
-                self.csv_preview = None;
-                let data = work
-                    .read(&self.csv_paste)
-                    .map_err(|error| format!("{}: {error}", work.label()))?;
+            if let Some(data) = ready {
                 let exists:bool=self.conn.as_ref().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=?1 COLLATE NOCASE)",[work.target()],|row|row.get(0)).map_err(|error|error.to_string())?;
                 if exists
                     && !work.yes_all
@@ -413,11 +500,50 @@ impl crate::state::AppState {
                 {
                     work.pending = Some(data);
                     work.focus = 1;
-                    return Ok(true);
+                } else {
+                    work.progress = std::sync::Arc::default();
+                    let conn = self.conn.take().unwrap();
+                    work.job = Some(crate::csv_jobs::Job::insert(
+                        conn,
+                        work.target().into(),
+                        data,
+                        work.options.clone(),
+                        work.progress.clone(),
+                    ));
                 }
-                self.insert_csv_item(&mut work, &data)?;
+                return Ok(true);
             }
-            Ok(false)
+            if work.pending.is_some() {
+                return Ok(true);
+            }
+            if work.index == work.items.len() {
+                return Ok(false);
+            }
+            let item = &work.items[work.index];
+            if let Some(index) = item.slot {
+                if let Some(batch) = &mut self.csv_files {
+                    batch.current = index;
+                }
+            }
+            if let Source::File(path) = &item.source {
+                self.csv_path = path.display().to_string();
+            }
+            self.csv_table = item.target.clone();
+            self.csv_preview = None;
+            work.progress = std::sync::Arc::default();
+            work.job = Some(match &item.source {
+                Source::File(path) => crate::csv_jobs::Job::file(
+                    path.clone(),
+                    work.options.clone(),
+                    work.progress.clone(),
+                ),
+                Source::Clipboard => crate::csv_jobs::Job::text(
+                    self.csv_paste.clone(),
+                    work.options.clone(),
+                    work.progress.clone(),
+                ),
+            });
+            Ok(true)
         })();
         match result {
             Ok(true) => {
@@ -429,11 +555,15 @@ impl crate::state::AppState {
                 Ok(())
             }
             Err(error) => {
+                if self.conn.is_none() {
+                    self.close_db();
+                    return Err(error);
+                }
                 let rolled_back = self.finish_csv_import_work(&work, true);
                 Err(if rolled_back {
                     format!("{error}; SQLite rolled back the pending transaction. Review database changes and reselect files before retrying")
                 } else {
-                    error
+                    format!("{}: {error}", work.label())
                 })
             }
         }
@@ -453,32 +583,13 @@ impl crate::state::AppState {
         work.index += 1;
     }
 
-    fn insert_csv_item(
-        &mut self,
-        work: &mut Work,
-        data: &csv_import::Prepared,
-    ) -> Result<(), String> {
+    fn finish_csv_insert(&mut self, work: &mut Work, rows: u64) {
         let table = work.target().to_string();
-        let rows = data
-            .rows()
-            .and_then(|rows| {
-                crate::db::import_csv_rows(
-                    self.conn.as_ref().unwrap(),
-                    &table,
-                    &data.preview.columns,
-                    &data.preview.types,
-                    rows,
-                    &work.options,
-                )
-            })
-            .map_err(|error| format!("{}: {error}", work.label()))?;
-        debug_assert!(rows <= data.row_count);
         self.mark_dirty();
         self.log_sql(format!("-- import csv → {table} ({rows} rows)"));
         work.rows += rows;
         work.last_table = Some(table);
         self.finish_csv_item(work, true);
-        Ok(())
     }
 
     fn finish_csv_import_work(&mut self, work: &Work, cancelled: bool) -> bool {
@@ -511,6 +622,7 @@ impl crate::state::AppState {
         if let Some(index) = remaining {
             let batch = self.csv_files.as_mut().unwrap();
             batch.current = index;
+            batch.focus = Some(0);
             self.csv_path = batch.files[index].path.display().to_string();
             self.csv_table = batch.target(index).into();
         }
@@ -560,6 +672,8 @@ pub struct Controls {
     pub matching: next_gui_ui::WidgetId,
     pub dialog: next_gui_ui::WidgetId,
     pub answers: [next_gui_ui::WidgetId; 4],
+    progress: next_gui_ui::WidgetId,
+    stop: next_gui_ui::WidgetId,
     message: next_gui_ui::WidgetId,
 }
 
@@ -573,6 +687,8 @@ impl Default for Controls {
             matching: zero,
             dialog: zero,
             answers: [zero; 4],
+            progress: zero,
+            stop: zero,
             message: zero,
         }
     }
@@ -690,7 +806,7 @@ pub fn build_confirmation(
     let Some(work) = state
         .csv_work
         .as_ref()
-        .filter(|work| work.pending.is_some())
+        .filter(|work| work.pending.is_some() || work.running())
     else {
         return;
     };
@@ -700,6 +816,28 @@ pub fn build_confirmation(
     let mut message = TextAreaStyle::from_theme(theme);
     message.width = style.width - 48.0;
     message.height = 112.0;
+    if work.running() {
+        let (value, caption) = work.progress_info();
+        message.height = 80.0;
+        let mut progress = next_gui_ui::ProgressStyle::from_theme(theme);
+        progress.width = message.width;
+        controls.dialog = ui.dialog(
+            "Importing CSV",
+            style,
+            |body| {
+                controls.message = body.text_area(caption, "", message);
+                controls.progress = body.progress_styled(value, false, progress);
+            },
+            |footer| {
+                controls.stop = footer.tool_button("Cancel");
+            },
+        );
+        ui.set_text_area_read_only(controls.message, true);
+        ui.set_accessible_name(controls.message, "CSV import progress");
+        ui.set_button_enabled(controls.stop, !work.progress.cancelled());
+        ui.set_dialog_open(controls.dialog, true);
+        return;
+    }
     let question = format!(
         "File: {}\nExisting table: {}\nImport rows by column position?{}",
         work.label(),
@@ -735,7 +873,9 @@ pub fn restore(ui: &mut next_gui_ui::Ui, controls: Controls, state: &crate::stat
             ui.set_table_scroll_offset(controls.table, batch.scroll.0, batch.scroll.1);
         }
     }
-    if let Some(work) = state
+    if state.csv_running() {
+        ui.set_focus(Some(controls.stop));
+    } else if let Some(work) = state
         .csv_work
         .as_ref()
         .filter(|work| work.pending.is_some())
@@ -755,14 +895,19 @@ pub fn restore(ui: &mut next_gui_ui::Ui, controls: Controls, state: &crate::stat
 }
 
 impl crate::Demo {
+    #[cfg(test)]
+    pub(crate) fn settle_csv_test(&mut self) {
+        match self.state.settle_csv_test() {
+            Ok(()) => {}
+            Err(error) => self.set_error(error),
+        }
+        self.rebuild = true;
+        self.do_rebuild();
+    }
+
     pub(crate) fn snapshot_csv_view(&mut self) {
         let controls = self.ids.csv_files;
-        if let Some(work) = self
-            .state
-            .csv_work
-            .as_mut()
-            .filter(|work| work.pending.is_some())
-        {
+        if let Some(work) = self.state.csv_work.as_mut() {
             if let Some(index) = controls
                 .answers
                 .iter()
@@ -784,14 +929,16 @@ impl crate::Demo {
         if let Some(widths) = self.ui.table_column_widths(controls.table) {
             batch.widths = widths;
         }
-        batch.focus = [
-            controls.table,
-            controls.separate,
-            controls.toggle,
-            controls.matching,
-        ]
-        .iter()
-        .position(|id| id.0 != 0 && self.ui.focused() == Some(*id));
+        if controls.dialog.0 == 0 {
+            batch.focus = [
+                controls.table,
+                controls.separate,
+                controls.toggle,
+                controls.matching,
+            ]
+            .iter()
+            .position(|id| id.0 != 0 && self.ui.focused() == Some(*id));
+        }
     }
 
     pub(crate) fn snapshot_csv_files(&mut self) {
@@ -860,6 +1007,14 @@ impl crate::Demo {
     }
 
     pub(crate) fn handle_csv_answer_button(&mut self, id: next_gui_ui::WidgetId) {
+        if id.0 != 0 && id == self.ids.csv_files.stop {
+            match self.state.continue_csv_import_work(Some(Answer::Cancel)) {
+                Ok(()) => self.clear_error(),
+                Err(error) => self.set_error(error),
+            }
+            self.rebuild = true;
+            return;
+        }
         let Some(index) = self
             .ids
             .csv_files
@@ -876,6 +1031,20 @@ impl crate::Demo {
             Err(error) => self.set_error(error),
         }
         self.rebuild = true;
+    }
+
+    pub(crate) fn update_csv_progress(&mut self) {
+        if let Some(work) = self.state.csv_work.as_ref().filter(|work| work.running()) {
+            let (value, caption) = work.progress_info();
+            self.ui
+                .set_progress_value(self.ids.csv_files.progress, value);
+            self.ui
+                .set_text_area_value(self.ids.csv_files.message, caption);
+            self.ui
+                .set_button_enabled(self.ids.csv_files.stop, !work.progress.cancelled());
+            self.ui.sync(&mut self.scene);
+            self.needs_paint = true;
+        }
     }
 
     pub(crate) fn handle_csv_confirmation(&mut self) {
@@ -957,6 +1126,134 @@ mod interaction_tests {
             eprintln!("CSV batch {theme}/{width}/{phase}: Soft/Metal delta {delta}");
         } else {
             eprintln!("CSV batch GPU comparison not_run: adapter unavailable");
+        }
+    }
+
+    #[test]
+    fn csv_progress_cancel_is_modal_and_keeps_completed_files_and_pending_edits() {
+        use crate::{csv_files::Answer, state::OverlayKind, DocumentAction};
+        use std::sync::mpsc;
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let dir = tempfile::tempdir().unwrap();
+                let paths: Vec<_> = [
+                    ("first.csv", "v\none\n"),
+                    ("second.csv", "v\nfirst\nsecond\n"),
+                ]
+                .into_iter()
+                .map(|(name, text)| {
+                    let path = dir.path().join(name);
+                    std::fs::write(&path, text).unwrap();
+                    path
+                })
+                .collect();
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                let conn = demo.state.conn.as_ref().unwrap();
+                conn.execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('saved');CREATE TABLE second(v TEXT);INSERT INTO second VALUES('saved');COMMIT;BEGIN;INSERT INTO keeper VALUES('pending');INSERT INTO second VALUES('pending')").unwrap();
+                let (entered, waiting) = mpsc::channel();
+                let (release, resume) = mpsc::channel();
+                conn.create_scalar_function(
+                    "wait_csv",
+                    0,
+                    rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+                    move |_| {
+                        entered
+                            .send(())
+                            .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                        resume
+                            .recv_timeout(std::time::Duration::from_secs(60))
+                            .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                        Ok(0)
+                    },
+                )
+                .unwrap();
+                conn.execute_batch("CREATE TRIGGER wait_import AFTER INSERT ON second WHEN new.v='first' BEGIN SELECT wait_csv();END").unwrap();
+                assert!(demo.state.open_csv_files(paths));
+                demo.state.csv_has_header = true;
+                demo.state.csv_files.as_mut().unwrap().separate = true;
+                demo.state.start_csv_import_work().unwrap();
+                demo.settle_csv_test();
+                assert!(demo.state.csv_work.as_ref().unwrap().pending.is_some());
+                demo.handle_button(demo.ids.csv_files.answers[0]);
+                waiting
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                assert!(demo.state.conn.is_none());
+                demo.state.csv_preview = None;
+                demo.do_rebuild();
+                assert!(demo.state.csv_preview.is_none());
+                assert_eq!(demo.ui.active_dialog(), Some(demo.ids.csv_files.dialog));
+                assert_eq!(demo.ui.focused(), Some(demo.ids.csv_files.stop));
+                assert_eq!(
+                    demo.state.csv_work.as_ref().unwrap().progress.rows(),
+                    (1, 2)
+                );
+                for error in [
+                    demo.state.write_changes().unwrap_err(),
+                    demo.state.revert_changes().unwrap_err(),
+                    demo.state.new_memory_db().unwrap_err(),
+                    demo.state
+                        .save_as(dir.path().join("blocked.db").to_str().unwrap())
+                        .unwrap_err(),
+                    demo.state.start_sql_text("SELECT 1".into()).unwrap_err(),
+                ] {
+                    assert!(error.contains("CSV import first"), "{error}");
+                }
+                assert!(!dir.path().join("blocked.db").exists());
+                demo.request_document_action(DocumentAction::CloseDatabase);
+                assert!(demo.state.csv_running());
+                assert!(demo.state.pending_document.is_none());
+                demo.clear_error();
+                demo.do_rebuild();
+                capture(&mut demo, theme_name, width, "progress");
+                demo.win_w = if width == 800 { 1400 } else { 800 };
+                demo.win_h = if height == 600 { 1000 } else { 600 };
+                demo.do_rebuild();
+                assert_eq!(demo.ui.focused(), Some(demo.ids.csv_files.stop));
+                demo.win_w = width;
+                demo.win_h = height;
+                demo.do_rebuild();
+                assert!(demo.ui.key_input(UiKey::Escape));
+                demo.handle_csv_confirmation();
+                demo.do_rebuild();
+                assert!(demo.state.csv_running());
+                assert!(demo.state.csv_work.as_ref().unwrap().progress.cancelled());
+                assert_eq!(demo.ui.button_enabled(demo.ids.csv_files.stop), Some(false));
+                assert!(demo
+                    .ui
+                    .text_area_value(demo.ids.csv_files.message)
+                    .unwrap()
+                    .starts_with("Canceling"));
+                capture(&mut demo, theme_name, width, "canceling");
+                release.send(()).unwrap();
+                demo.settle_csv_test();
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert_eq!(demo.state.overlay, Some(OverlayKind::ImportCsv));
+                assert_eq!(demo.state.csv_files.as_ref().unwrap().queue(), [1]);
+                assert_eq!(demo.ui.focused(), Some(demo.ids.csv_files.table));
+                let conn = demo.state.conn.as_ref().unwrap();
+                assert!(!conn.is_autocommit());
+                assert_eq!(crate::db::count_rows(conn, "first").unwrap(), 1);
+                assert_eq!(crate::db::count_rows(conn, "second").unwrap(), 2);
+                assert_eq!(crate::db::count_rows(conn, "keeper").unwrap(), 2);
+                conn.execute_batch("DROP TRIGGER wait_import").unwrap();
+                demo.state.start_csv_import_work().unwrap();
+                demo.settle_csv_test();
+                demo.state
+                    .continue_csv_import_work(Some(Answer::Yes))
+                    .unwrap();
+                demo.settle_csv_test();
+                assert!(demo.state.overlay.is_none());
+                let conn = demo.state.conn.as_ref().unwrap();
+                assert_eq!(crate::db::count_rows(conn, "first").unwrap(), 1);
+                assert_eq!(crate::db::count_rows(conn, "second").unwrap(), 4);
+                conn.execute_batch("ROLLBACK;BEGIN").unwrap();
+                assert_eq!(crate::db::count_rows(conn, "second").unwrap(), 1);
+                assert_eq!(crate::db::count_rows(conn, "keeper").unwrap(), 1);
+                assert!(crate::db::table_columns(conn, "first").unwrap().is_empty());
+            }
         }
     }
 
@@ -1080,6 +1377,7 @@ mod interaction_tests {
                 capture(&mut demo, theme_name, width, "separate");
                 demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE \"renamed first\"(id INTEGER,name TEXT);INSERT INTO \"renamed first\" VALUES(0,'saved');CREATE TABLE two(id INTEGER,name TEXT);INSERT INTO two VALUES(0,'saved');").unwrap();
                 demo.handle_button(demo.ids.ov_btn_ok);
+                demo.settle_csv_test();
                 demo.do_rebuild();
                 assert_eq!(demo.ui.focused(), Some(demo.ids.csv_files.answers[1]));
                 assert_eq!(
@@ -1089,13 +1387,16 @@ mod interaction_tests {
                 capture(&mut demo, theme_name, width, "confirm");
                 assert!(demo.ui.key_input(UiKey::Escape));
                 demo.handle_csv_confirmation();
+                demo.settle_csv_test();
                 demo.do_rebuild();
                 assert!(demo.state.csv_work.is_none());
                 assert_eq!(demo.state.csv_table, "renamed first");
                 demo.handle_button(demo.ids.ov_btn_ok);
+                demo.settle_csv_test();
                 demo.do_rebuild();
                 assert!(demo.ui.key_input(UiKey::Enter));
                 demo.handle_csv_confirmation();
+                demo.settle_csv_test();
                 demo.do_rebuild();
                 assert_eq!(demo.state.csv_work.as_ref().unwrap().target(), "two");
                 assert_eq!(demo.state.csv_table, "two");
@@ -1104,6 +1405,7 @@ mod interaction_tests {
                 assert_eq!(demo.ui.focused(), Some(demo.ids.csv_files.answers[2]));
                 assert!(demo.ui.key_input(UiKey::Enter));
                 demo.handle_csv_confirmation();
+                demo.settle_csv_test();
                 demo.do_rebuild();
                 assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
                 assert!(demo.state.csv_work.is_none());
@@ -1124,6 +1426,7 @@ mod interaction_tests {
                 assert!(demo.ui.key_input(UiKey::Space));
                 finish(&mut demo);
                 demo.handle_button(demo.ids.ov_btn_ok);
+                demo.settle_csv_test();
                 demo.do_rebuild();
                 assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
                 assert!(demo.state.overlay.is_none());

@@ -1172,6 +1172,7 @@ impl AppState {
     }
 
     pub fn write_changes(&mut self) -> Result<(), String> {
+        self.guard_csv_idle()?;
         if self.read_only {
             return Err("Database is open read-only".into());
         }
@@ -1186,6 +1187,7 @@ impl AppState {
     }
 
     pub fn revert_changes(&mut self) -> Result<(), String> {
+        self.guard_csv_idle()?;
         if self.read_only {
             return Err("Database is open read-only".into());
         }
@@ -2239,8 +2241,8 @@ impl AppState {
         if let Some(work) = &self.csv_work {
             if let Some(data) = &work.pending {
                 self.csv_preview = Some(Ok(data.preview.clone()));
-                return;
             }
+            return;
         }
         let options = self.csv_options();
         self.csv_preview = Some(if self.overlay == Some(OverlayKind::PasteCsv) {
@@ -2462,6 +2464,7 @@ impl AppState {
     }
 
     pub fn save_as(&mut self, dst: &str) -> Result<(), String> {
+        self.guard_csv_idle()?;
         if self.sql_busy {
             return Err("Wait for SQL to finish".into());
         }
@@ -2507,6 +2510,7 @@ impl AppState {
     }
 
     fn guard_replace(&self) -> Result<(), String> {
+        self.guard_csv_idle()?;
         if self.sql_busy {
             return Err("Stop or finish SQL before changing databases".into());
         }
@@ -2585,6 +2589,7 @@ impl AppState {
     }
 
     pub fn guard_writable(&mut self) -> Result<(), String> {
+        self.guard_csv_idle()?;
         if self.conn.is_none() {
             return Err("No database open".into());
         }
@@ -2800,6 +2805,7 @@ impl AppState {
     }
 
     pub fn start_sql_text(&mut self, sql: String) -> Result<(), String> {
+        self.guard_csv_idle()?;
         if self.sql_busy {
             return Err("SQL already running".into());
         }
@@ -4895,16 +4901,16 @@ mod chart_default_tests {
         use crate::csv_files::Answer;
         let (_directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\ntwo\n"),("third.csv","v\nthree\n")]);
         state.conn.as_ref().unwrap().execute_batch("CREATE TABLE first(v TEXT);INSERT INTO first VALUES('old');CREATE TABLE second(v TEXT);INSERT INTO second VALUES('old');CREATE TABLE third(v TEXT);INSERT INTO third VALUES('old');INSERT INTO t VALUES('pending');").unwrap();
-        state.start_csv_import_work().unwrap();assert!(state.csv_work.as_ref().unwrap().pending.is_some());assert_eq!(state.csv_work.as_ref().unwrap().target(),"first");
-        state.continue_csv_import_work(Some(Answer::No)).unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert!(state.csv_files.as_ref().unwrap().files[0].done);
-        state.continue_csv_import_work(Some(Answer::YesAll)).unwrap();assert!(state.csv_work.is_none());assert!(state.csv_files.is_none());assert!(state.overlay.is_none());
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();assert!(state.csv_work.as_ref().unwrap().pending.is_some());assert_eq!(state.csv_work.as_ref().unwrap().target(),"first");
+        state.continue_csv_import_work(Some(Answer::No)).and_then(|_| state.settle_csv_test()).unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert!(state.csv_files.as_ref().unwrap().files[0].done);
+        state.continue_csv_import_work(Some(Answer::YesAll)).and_then(|_| state.settle_csv_test()).unwrap();assert!(state.csv_work.is_none());assert!(state.csv_files.is_none());assert!(state.overlay.is_none());
         let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(db::count_rows(conn,"second").unwrap(),2);assert_eq!(db::count_rows(conn,"third").unwrap(),2);assert_eq!(db::count_rows(conn,"t").unwrap(),2);assert!(!conn.is_autocommit());assert!(state.dirty);
         assert!(state.prefs.csv_separate_tables);assert!(state.prefs.csv_import.as_ref().unwrap().has_header);
         let (_directory,mut merged)=csv_batch_state(&[("one.csv","v\none\n"),("two.csv","v\ntwo\n"),("three.csv","v\nthree\n")]);
         merged.csv_files.as_mut().unwrap().separate=false;merged.csv_table="merged".into();
-        merged.start_csv_import_work().unwrap();assert_eq!(merged.csv_work.as_ref().unwrap().target(),"merged");
+        merged.start_csv_import_work().and_then(|_| merged.settle_csv_test()).unwrap();assert_eq!(merged.csv_work.as_ref().unwrap().target(),"merged");
         assert_eq!(db::count_rows(merged.conn.as_ref().unwrap(),"merged").unwrap(),1);
-        merged.continue_csv_import_work(Some(Answer::Yes)).unwrap();
+        merged.continue_csv_import_work(Some(Answer::Yes)).and_then(|_| merged.settle_csv_test()).unwrap();
         assert!(merged.csv_work.is_none());assert!(merged.overlay.is_none());
         assert_eq!(merged.conn.as_ref().unwrap().query_row("SELECT group_concat(v,',') FROM merged",[],|row|row.get::<_,String>(0)).unwrap(),"one,two,three");
     }
@@ -4914,10 +4920,10 @@ mod chart_default_tests {
         use crate::csv_files::Answer;
         let (_directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\ntwo\n"),("third.csv","v\nthree\n")]);
         state.conn.as_ref().unwrap().execute_batch("CREATE TABLE second(v TEXT);INSERT INTO second VALUES('old')").unwrap();state.csv_files.as_mut().unwrap().files[2].selected=false;
-        state.start_csv_import_work().unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert_eq!(db::count_rows(state.conn.as_ref().unwrap(),"first").unwrap(),1);
-        state.continue_csv_import_work(Some(Answer::Cancel)).unwrap();assert!(state.csv_work.is_none());assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert_eq!(state.csv_files.as_ref().unwrap().queue(),[1]);
-        state.start_csv_import_work().unwrap();state.continue_csv_import_work(Some(Answer::Yes)).unwrap();assert!(state.csv_work.is_none());assert!(state.overlay.is_some());assert!(state.csv_files.as_ref().unwrap().queue().is_empty());
-        state.csv_files.as_mut().unwrap().files[2].selected=true;state.start_csv_import_work().unwrap();assert!(state.overlay.is_none());assert!(state.csv_files.is_none());
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert_eq!(db::count_rows(state.conn.as_ref().unwrap(),"first").unwrap(),1);
+        state.continue_csv_import_work(Some(Answer::Cancel)).and_then(|_| state.settle_csv_test()).unwrap();assert!(state.csv_work.is_none());assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert_eq!(state.csv_files.as_ref().unwrap().queue(),[1]);
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();state.continue_csv_import_work(Some(Answer::Yes)).and_then(|_| state.settle_csv_test()).unwrap();assert!(state.csv_work.is_none());assert!(state.overlay.is_some());assert!(state.csv_files.as_ref().unwrap().queue().is_empty());
+        state.csv_files.as_mut().unwrap().files[2].selected=true;state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();assert!(state.overlay.is_none());assert!(state.csv_files.is_none());
         let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(db::count_rows(conn,"second").unwrap(),2);assert_eq!(db::count_rows(conn,"third").unwrap(),1);
     }
 
@@ -4925,9 +4931,9 @@ mod chart_default_tests {
     fn csv_batch_failed_file_is_retryable_without_reimporting_successful_files() {
         let (directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\n\"broken")]);
         state.conn.as_ref().unwrap().execute("INSERT INTO t VALUES('pending')",[]).unwrap();
-        let error=state.start_csv_import_work().unwrap_err();assert!(error.contains("second.csv") && error.contains("Unterminated"));assert!(state.csv_work.is_none());assert_eq!(state.csv_files.as_ref().unwrap().queue(),[1]);
+        let error=state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap_err();assert!(error.contains("second.csv") && error.contains("Unterminated"));assert!(state.csv_work.is_none());assert_eq!(state.csv_files.as_ref().unwrap().queue(),[1]);
         let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(db::count_rows(conn,"t").unwrap(),2);assert!(!conn.is_autocommit());
-        std::fs::write(directory.path().join("second.csv"),"v\nfixed\n").unwrap();state.start_csv_import_work().unwrap();assert!(state.overlay.is_none());
+        std::fs::write(directory.path().join("second.csv"),"v\nfixed\n").unwrap();state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();assert!(state.overlay.is_none());
         let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(conn.query_row("SELECT v FROM second",[],|row|row.get::<_,String>(0)).unwrap(),"fixed");
     }
 
@@ -4937,14 +4943,14 @@ mod chart_default_tests {
         let (directory,mut state)=csv_batch_state(&[("first.csv","v\nunselected\n"),("second.csv","v\nconfirmed\n")]);
         state.csv_files.as_mut().unwrap().files[0].selected=false;
         state.conn.as_ref().unwrap().execute_batch("CREATE TABLE second(v TEXT)").unwrap();
-        state.start_csv_import_work().unwrap();state.refresh_csv_preview();
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();state.refresh_csv_preview();
         assert_eq!(state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][0],"confirmed");
         std::fs::write(directory.path().join("second.csv"),"v\nchanged after confirmation\n").unwrap();
         state.csv_preview=None;state.refresh_csv_preview();
         assert_eq!(state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][0],"confirmed");
-        state.continue_csv_import_work(Some(Answer::Cancel)).unwrap();
+        state.continue_csv_import_work(Some(Answer::Cancel)).and_then(|_| state.settle_csv_test()).unwrap();
         assert_eq!(state.csv_files.as_ref().unwrap().current,1);assert_eq!(state.csv_table,"second");
-        state.start_csv_import_work().unwrap();state.continue_csv_import_work(Some(Answer::Yes)).unwrap();
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();state.continue_csv_import_work(Some(Answer::Yes)).and_then(|_| state.settle_csv_test()).unwrap();
         assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM second",[],|row|row.get::<_,String>(0)).unwrap(),"changed after confirmation");
         assert_eq!(state.csv_files.as_ref().unwrap().visible(),[0]);
     }
@@ -4962,15 +4968,56 @@ mod chart_default_tests {
         if let Err(error)=written {
             // macOS filesystems reject invalid UTF-8 names before a file can exist.
             assert!(cfg!(target_os="macos") && error.raw_os_error()==Some(92),"{error}");
-            assert!(state.start_csv_import_work().is_err());
+            assert!(state.start_csv_import_work().and_then(|_| state.settle_csv_test()).is_err());
             assert!(!state.conn.as_ref().unwrap().is_autocommit());
             assert!(db::table_columns(state.conn.as_ref().unwrap(),"native_path").unwrap().is_empty());
             return;
         }
         state.refresh_csv_preview();
         assert_eq!(state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][0],"日本");
-        state.start_csv_import_work().unwrap();
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();
         assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM native_path",[],|row|row.get::<_,String>(0)).unwrap(),"日本");
+    }
+
+    #[test]
+    fn csv_cancel_does_not_hide_simultaneous_sqlite_errors_or_transaction_rollback() {
+        use crate::csv_files::Answer;
+        for policy in ["ABORT", "ROLLBACK"] {
+            let (_directory, mut state) = csv_batch_state(&[("first.csv", "v\none\n"), ("second.csv", "v\nblocked\n")]);
+            let conn = state.conn.as_ref().unwrap();
+            conn.execute_batch("CREATE TABLE second(v TEXT);INSERT INTO second VALUES('saved');COMMIT;BEGIN;INSERT INTO t VALUES('pending')").unwrap();
+            let (entered, waiting) = std::sync::mpsc::channel();
+            let (release, resume) = std::sync::mpsc::channel();
+            conn.create_scalar_function("wait_csv", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+                entered.send(()).map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                resume.recv_timeout(std::time::Duration::from_secs(5)).map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                Ok(0)
+            }).unwrap();
+            conn.execute_batch(&format!("CREATE TRIGGER stop_import AFTER INSERT ON second BEGIN SELECT wait_csv();SELECT RAISE({policy},'intentional SQLite error');END")).unwrap();
+            state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();
+            state.continue_csv_import_work(Some(Answer::Yes)).unwrap();
+            waiting.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            state.continue_csv_import_work(Some(Answer::Cancel)).unwrap();
+            release.send(()).unwrap();
+            let error = state.settle_csv_test().unwrap_err();
+            assert!(error.contains("intentional SQLite error"), "{error}");
+            assert!(state.csv_work.is_none());
+            let conn = state.conn.as_ref().unwrap();
+            assert!(!conn.is_autocommit());
+            assert_eq!(db::count_rows(conn, "second").unwrap(), 1);
+            if policy == "ROLLBACK" {
+                assert!(error.contains("SQLite rolled back"), "{error}");
+                assert_eq!(db::count_rows(conn, "t").unwrap(), 1);
+                assert!(db::table_columns(conn, "first").unwrap().is_empty());
+                assert!(state.csv_files.as_ref().unwrap().queue().is_empty());
+                assert!(!state.dirty);
+            } else {
+                assert_eq!(db::count_rows(conn, "t").unwrap(), 2);
+                assert_eq!(db::count_rows(conn, "first").unwrap(), 1);
+                assert_eq!(state.csv_files.as_ref().unwrap().queue(), [1]);
+                assert!(state.dirty);
+            }
+        }
     }
 
     #[test]
@@ -4978,8 +5025,8 @@ mod chart_default_tests {
         use crate::csv_files::Answer;
         let (_directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\nbad\n")]);
         state.conn.as_ref().unwrap().execute_batch("COMMIT;CREATE TABLE second(v TEXT);INSERT INTO second VALUES('saved');CREATE TRIGGER stop_import BEFORE INSERT ON second WHEN new.v='bad' BEGIN SELECT RAISE(ROLLBACK,'stop import');END;BEGIN;INSERT INTO t VALUES('pending');").unwrap();
-        state.start_csv_import_work().unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert!(state.csv_files.as_ref().unwrap().files[0].done);
-        let error=state.continue_csv_import_work(Some(Answer::Yes)).unwrap_err();assert!(error.contains("SQLite rolled back"),"{error}");assert!(state.csv_work.is_none());assert!(state.overlay.is_some());assert!(!state.dirty);
+        state.start_csv_import_work().and_then(|_| state.settle_csv_test()).unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert!(state.csv_files.as_ref().unwrap().files[0].done);
+        let error=state.continue_csv_import_work(Some(Answer::Yes)).and_then(|_| state.settle_csv_test()).unwrap_err();assert!(error.contains("SQLite rolled back"),"{error}");assert!(state.csv_work.is_none());assert!(state.overlay.is_some());assert!(!state.dirty);
         let batch=state.csv_files.as_ref().unwrap();assert!(batch.queue().is_empty());assert!(batch.files.iter().all(|file|!file.done && !file.selected));
         let conn=state.conn.as_ref().unwrap();assert!(!conn.is_autocommit());assert_eq!(db::count_rows(conn,"t").unwrap(),1);assert_eq!(db::count_rows(conn,"second").unwrap(),1);assert!(db::table_columns(conn,"first").unwrap().is_empty());
     }
@@ -5007,13 +5054,13 @@ mod chart_default_tests {
             let dir=tempfile::tempdir().unwrap();let path=dir.path().join("encoded.csv");std::fs::write(&path,&raw).unwrap();
             let mut state=test_state();state.conn.as_ref().unwrap().execute("INSERT INTO t VALUES('pending')",[]).unwrap();state.mark_dirty();
             state.csv_path=path.display().to_string();state.csv_table="imported".into();state.overlay=Some(OverlayKind::ImportCsv);state.csv_encoding_idx=3;state.csv_custom_encoding="unknown-codec".into();
-            assert!(state.apply_csv_import().unwrap_err().contains("Unsupported CSV encoding"));assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert!(state.dirty);
+            assert!(state.apply_csv_import().and_then(|_| state.settle_csv_test()).unwrap_err().contains("Unsupported CSV encoding"));assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert!(state.dirty);
             let conn=state.conn.as_ref().unwrap();assert!(!conn.is_autocommit());assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|r|r.get::<_,i64>(0)).unwrap(),2);assert_eq!(conn.query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
             std::fs::write(&path,[0xff]).unwrap();state.csv_encoding_idx=0;
-            assert!(state.apply_csv_import().unwrap_err().contains("invalid or incomplete"));assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert!(state.dirty);
+            assert!(state.apply_csv_import().and_then(|_| state.settle_csv_test()).unwrap_err().contains("invalid or incomplete"));assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert!(state.dirty);
             let conn=state.conn.as_ref().unwrap();assert!(!conn.is_autocommit());assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|r|r.get::<_,i64>(0)).unwrap(),2);assert_eq!(conn.query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
             std::fs::write(&path,&raw).unwrap();
-            state.csv_encoding_idx=match label {"UTF-8"=>0,"UTF-16"=>1,"ISO-8859-1"=>2,_=>3};state.csv_custom_encoding=label.into();state.apply_csv_import().unwrap();
+            state.csv_encoding_idx=match label {"UTF-8"=>0,"UTF-16"=>1,"ISO-8859-1"=>2,_=>3};state.csv_custom_encoding=label.into();state.apply_csv_import().and_then(|_| state.settle_csv_test()).unwrap();
             let conn=state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT value FROM main.imported",[],|r|r.get::<_,String>(0)).unwrap(),value,"{label}");assert!(!conn.is_autocommit());assert!(state.dirty);assert!(state.overlay.is_none());
             conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|r|r.get::<_,i64>(0)).unwrap(),1);assert_eq!(conn.query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
         }
@@ -5030,7 +5077,7 @@ mod chart_default_tests {
         state.overlay = Some(OverlayKind::PasteCsv);
         state.csv_table = "new_csv".into();
         state.csv_paste = "new_col\nhello\n".into();
-        state.apply_csv_import().unwrap();
+        state.apply_csv_import().and_then(|_| state.settle_csv_test()).unwrap();
         assert_eq!(state.browse().offset, 0);
         assert_eq!(state.browse().order_col, None);
         assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0], "hello");

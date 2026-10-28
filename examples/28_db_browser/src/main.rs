@@ -7,6 +7,7 @@ mod db;
 mod csv_encoding;
 mod csv_import;
 mod csv_files;
+mod csv_jobs;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
@@ -838,13 +839,21 @@ impl Demo {
                     if tab.ends_with("-saved") {state.apply_table_wizard().unwrap();}
                     if tab=="table-move-views-saved" {state.switch_browse_table_in("analytics","visible").unwrap();MainTab::Browse}else{MainTab::Structure}
                 }
-                "csv-batch" | "csv-batch-separate" | "csv-batch-confirm" => {
+                "csv-batch" | "csv-batch-separate" | "csv-batch-confirm" | "csv-progress" | "csv-canceling" => {
                     state.new_memory_db().unwrap();
                     let paths=std::env::var_os("NEXT_GUI_DB_BROWSER_QA_CSV_PATHS").expect("CSV batch QA fixture paths");
                     assert!(state.open_csv_files(std::env::split_paths(&paths).collect()));
                     state.csv_has_header=true;
                     state.csv_files.as_mut().unwrap().separate=tab.ends_with("-separate");
-                    if tab.ends_with("-confirm") {
+                    if matches!(tab.as_str(), "csv-progress" | "csv-canceling") {
+                        let conn = state.conn.as_ref().unwrap();
+                        conn.create_scalar_function("qa_csv_pause", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, |_| {
+                            std::thread::sleep(std::time::Duration::from_secs(30));
+                            Ok(0)
+                        }).unwrap();
+                        conn.execute_batch("CREATE TABLE customers(id INTEGER,name TEXT,amount REAL);CREATE TRIGGER qa_pause AFTER INSERT ON customers WHEN new.id=1 BEGIN SELECT qa_csv_pause();END").unwrap();
+                        state.start_csv_import_work().expect("CSV progress QA source fixtures");
+                    } else if tab.ends_with("-confirm") {
                         state.conn.as_ref().unwrap().execute_batch("CREATE TABLE customers(id INTEGER,name TEXT,amount REAL)").unwrap();
                         state.start_csv_import_work().expect("CSV batch QA source fixtures");
                     }
@@ -1571,6 +1580,7 @@ impl Demo {
                 self.sync_index_wizard(previous_keys != self.state.wizard_index_cols);
             }
             OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
+                if self.state.csv_work.is_some() { return; }
                 let previous_options = self.state.csv_options();
                 let previous_modes = (self.state.csv_delim_idx, self.state.csv_quote_idx, self.state.csv_encoding_idx);
                 let previous_paste = self.state.csv_paste.clone();
@@ -2382,7 +2392,7 @@ impl Demo {
     fn do_rebuild(&mut self) {
         self.snapshot_column_picker();
         self.snapshot_csv_view();
-        let csv_waiting=self.state.csv_work.as_ref().is_some_and(|work|work.pending.is_some());
+        let csv_waiting=self.state.csv_work.is_some();
         let csv_overlay = matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
         if csv_overlay { self.state.refresh_csv_preview(); }
         let csv_open=csv_overlay && !csv_waiting;
@@ -2676,6 +2686,10 @@ impl Demo {
     }
 
     fn request_document_action(&mut self, action: DocumentAction) {
+        if let Err(error) = self.state.guard_csv_idle() {
+            self.set_error(error);
+            return;
+        }
         self.snapshot_inputs();
         let needs_save = if let DocumentAction::CloseSqlTab(index) = &action {
             self.state.sql_tab_dirty(*index)
@@ -2695,6 +2709,10 @@ impl Demo {
     }
 
     fn perform_document_action(&mut self, action: DocumentAction) {
+        if let Err(error) = self.state.guard_csv_idle() {
+            self.set_error(error);
+            return;
+        }
         let result = match action {
             DocumentAction::NewDatabase(path) => self.state.create_new_db(&path.to_string_lossy()),
             DocumentAction::NewMemory => self.state.new_memory_db(),
@@ -3097,6 +3115,7 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
+        if let Err(error)=self.state.guard_csv_idle() {self.set_error(error);return;}
         if self.state.wizard_column_picker.is_some() { return; }
         self.snapshot_inputs();
         if self.handle_browse_header_action(item) { return; }
@@ -3753,7 +3772,7 @@ impl Demo {
 
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
-        if self.state.csv_work.as_ref().is_some_and(|work|work.pending.is_some()) {self.handle_csv_answer_button(id);return;}
+        if self.state.csv_work.is_some() {self.handle_csv_answer_button(id);return;}
         if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
         if id==self.ids.reference_editor.reset {
             if let Some(draft)=self.state.wizard_constraint_edit.as_mut().and_then(|edit|edit.reference.as_mut()) {draft.reset();self.do_rebuild();self.snapshot_reference_cell(false);self.flush_table_foreign_key();}
@@ -4535,7 +4554,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.csv_work.as_ref().is_some_and(|work|work.pending.is_some()) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if self.state.csv_work.is_some() {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         self.handle_table_cell_edit();
@@ -4588,6 +4607,7 @@ impl Demo {
 impl AppCallbacks for Demo {
     fn can_close(&self) -> bool {
         !self.state.dirty
+            && self.state.csv_work.is_none()
             && !self.state.sql_busy
             && !self.state.has_unsaved_drafts()
             && self
@@ -4645,7 +4665,10 @@ impl AppCallbacks for Demo {
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event) {
         match event {
             Event::CloseRequested { .. } => {
-                if self.state.sql_busy {
+                if self.state.csv_work.is_some() {
+                    if let Err(error)=self.state.continue_csv_import_work(Some(csv_files::Answer::Cancel)) {self.set_error(error);}
+                    self.rebuild=true;
+                } else if self.state.sql_busy {
                     self.state.request_sql_stop();
                 } else {
                     self.handle_menu(mid::FILE_EXIT);
@@ -4880,6 +4903,15 @@ impl AppCallbacks for Demo {
                         return;
                     }
                     if matches!(ui_key, UiKey::Escape) {
+                        if self.state.csv_work.is_some() {
+                            if let Err(error) = self.state.continue_csv_import_work(Some(csv_files::Answer::Cancel)) {
+                                self.set_error(error);
+                            }
+                            self.rebuild = true;
+                            self.do_rebuild();
+                            ctx.request_redraw();
+                            return;
+                        }
                         if self.state.overlay.is_some() {
                             self.snapshot_inputs();
                             if matches!(self.state.overlay,Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {
@@ -4937,6 +4969,28 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
+        let csv_progress_qa = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| matches!(tab.as_str(), "csv-progress" | "csv-canceling"));
+        if csv_progress_qa {
+            let answer = if self.state.csv_work.as_ref().is_some_and(|work| work.pending.is_some()) {
+                Some(csv_files::Answer::Yes)
+            } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("csv-canceling")
+                && self.state.csv_work.as_ref().is_some_and(|work| work.progress.rows().0 > 0 && !work.progress.cancelled()) {
+                Some(csv_files::Answer::Cancel)
+            } else {None};
+            if let Some(answer) = answer {
+                if let Err(error) = self.state.continue_csv_import_work(Some(answer)) {self.set_error(error);}
+                self.rebuild = true;
+            }
+        }
+        if self.state.csv_running() {
+            match self.state.poll_csv_import_work() {
+                Ok(true)=>{self.clear_error();self.rebuild=true;}
+                Ok(false)=>{},
+                Err(error)=>{self.set_error(error);self.rebuild=true;}
+            }
+            if self.rebuild {self.do_rebuild();} else {self.update_csv_progress();}
+            if self.state.csv_running() || csv_progress_qa && self.state.csv_work.is_some() {ctx.request_redraw();}
+        }
         if self.state.sql_busy {
             self.snapshot_inputs();
             if self.state.poll_sql_job() {
@@ -8296,10 +8350,10 @@ mod interaction_tests {
                 demo.ui.set_checked(demo.ids.ov_csv_types,true);finish(&mut demo);assert!(!demo.state.csv_import_settings.detect_types);
                 demo.ui.set_scroll_offset(demo.ids.ov_csv_scroll,0.0,10000.0);finish(&mut demo);let old_scroll=demo.state.csv_scroll;demo.do_rebuild();assert_eq!(demo.ui.scroll_offset(demo.ids.ov_csv_scroll),Some(old_scroll));capture(&mut demo,"advanced");
                 std::fs::write(&path,"id§amount§note\n3§4§refreshed\n").unwrap();demo.handle_button(demo.ids.ov_csv_refresh);demo.do_rebuild();assert_eq!(demo.state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][2],"refreshed");
-                demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert!(dbmod::table_columns(demo.state.conn.as_ref().unwrap(),"imported").unwrap().iter().all(|column|column.type_name.is_empty()));
-                demo.state.csv_paste="x§y§z\n4§5§append\n".into();demo.state.overlay=Some(OverlayKind::PasteCsv);demo.state.csv_preview=None;demo.do_rebuild();demo.handle_button(demo.ids.ov_btn_ok);demo.do_rebuild();assert!(demo.state.csv_work.as_ref().unwrap().pending.is_some());capture(&mut demo,"confirm");
-                assert!(demo.ui.key_input(UiKey::Escape));demo.handle_csv_confirmation();demo.do_rebuild();assert!(demo.state.overlay.is_some());assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"imported").unwrap(),1);
-                demo.handle_button(demo.ids.ov_btn_ok);demo.do_rebuild();assert!(demo.ui.key_input(UiKey::BackTab));assert!(demo.ui.key_input(UiKey::Enter));demo.handle_csv_confirmation();assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"imported").unwrap(),2);
+                demo.handle_button(demo.ids.ov_btn_ok);demo.settle_csv_test();assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert!(dbmod::table_columns(demo.state.conn.as_ref().unwrap(),"imported").unwrap().iter().all(|column|column.type_name.is_empty()));
+                demo.state.csv_paste="x§y§z\n4§5§append\n".into();demo.state.overlay=Some(OverlayKind::PasteCsv);demo.state.csv_preview=None;demo.do_rebuild();demo.handle_button(demo.ids.ov_btn_ok);demo.settle_csv_test();demo.do_rebuild();assert!(demo.state.csv_work.as_ref().unwrap().pending.is_some());capture(&mut demo,"confirm");
+                assert!(demo.ui.key_input(UiKey::Escape));demo.handle_csv_confirmation();demo.settle_csv_test();demo.do_rebuild();assert!(demo.state.overlay.is_some());assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"imported").unwrap(),1);
+                demo.handle_button(demo.ids.ov_btn_ok);demo.settle_csv_test();demo.do_rebuild();assert!(demo.ui.key_input(UiKey::BackTab));assert!(demo.ui.key_input(UiKey::Enter));demo.handle_csv_confirmation();demo.settle_csv_test();assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"imported").unwrap(),2);
             }
         }
     }
@@ -8323,9 +8377,9 @@ mod interaction_tests {
                 assert!(demo.ui.key_input(UiKey::Down));finish(&mut demo);assert_eq!(demo.state.csv_encoding_idx,3);assert!(demo.ids.ov_csv_custom_encoding.0!=0);demo.ui.key_input(UiKey::Enter);finish(&mut demo);
                 demo.ui.set_focus(Some(demo.ids.ov_csv_custom_encoding));demo.ui.key_input(UiKey::SelectAll);assert!(demo.ui.paste_into_focused_text("windows-1252"));finish(&mut demo);assert_eq!(demo.state.csv_options().encoding,"windows-1252");capture(&mut demo,"custom");
                 demo.win_w=if width==800 {1400} else {800};demo.win_h=if height==600 {1000} else {600};demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.ov_csv_custom_encoding));assert!(demo.ui.has_open_popup());assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_csv_custom_encoding),Some("windows-1252"));
-                demo.ui.close_popup();demo.ui.set_autocomplete_value(demo.ids.ov_csv_custom_encoding,"bad-codec");finish(&mut demo);demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.as_deref().unwrap().contains("Unsupported CSV encoding"));assert_eq!(demo.state.overlay,Some(OverlayKind::ImportCsv));assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-                demo.clear_error();demo.do_rebuild();demo.ui.set_autocomplete_value(demo.ids.ov_csv_custom_encoding,"windows-1252");finish(&mut demo);demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT value||note FROM imported",[],|r|r.get::<_,String>(0)).unwrap(),"café€");
-                demo.state.overlay=Some(OverlayKind::PasteCsv);demo.state.csv_table="clipboard".into();demo.state.csv_custom_encoding="bad-codec".into();demo.state.csv_paste="value\n日本\n".into();demo.do_rebuild();assert_eq!(demo.ids.ov_csv_encoding.0,0);assert_eq!(demo.ids.ov_csv_custom_encoding.0,0);demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM clipboard",[],|r|r.get::<_,String>(0)).unwrap(),"日本");
+                demo.ui.close_popup();demo.ui.set_autocomplete_value(demo.ids.ov_csv_custom_encoding,"bad-codec");finish(&mut demo);demo.handle_button(demo.ids.ov_btn_ok);demo.settle_csv_test();assert!(demo.state.error_msg.as_deref().unwrap().contains("Unsupported CSV encoding"));assert_eq!(demo.state.overlay,Some(OverlayKind::ImportCsv));assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+                demo.clear_error();demo.do_rebuild();demo.ui.set_autocomplete_value(demo.ids.ov_csv_custom_encoding,"windows-1252");finish(&mut demo);demo.handle_button(demo.ids.ov_btn_ok);demo.settle_csv_test();assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT value||note FROM imported",[],|r|r.get::<_,String>(0)).unwrap(),"café€");
+                demo.state.overlay=Some(OverlayKind::PasteCsv);demo.state.csv_table="clipboard".into();demo.state.csv_custom_encoding="bad-codec".into();demo.state.csv_paste="value\n日本\n".into();demo.do_rebuild();assert_eq!(demo.ids.ov_csv_encoding.0,0);assert_eq!(demo.ids.ov_csv_custom_encoding.0,0);demo.handle_button(demo.ids.ov_btn_ok);demo.settle_csv_test();assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM clipboard",[],|r|r.get::<_,String>(0)).unwrap(),"日本");
             }
         }
     }

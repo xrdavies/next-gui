@@ -302,6 +302,7 @@ pub fn prepare(reader: impl std::io::Read, options: &CsvImportOptions) -> Result
     })
 }
 
+#[cfg(test)]
 pub fn prepare_text(text: &str, options: &CsvImportOptions) -> Result<Prepared, String> {
     let unicode = CsvImportOptions {
         encoding: "UTF-8".into(),

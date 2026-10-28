@@ -26,6 +26,11 @@ Structure navigation retains focus, expanded groups and scroll position across p
 
 **Phase 2:** EditTable/EditIndex overlay wizards · CSV import wizard (+ clipboard) · per-column browse filters + multi browse tabs · Execute SQL multi-tabs / Find-Replace / Stop (interrupt) · Pragma labeled form · JSON export · Recent files · Attach Database.
 
+CSV imports validate and write on background workers with byte/record progress.
+Cancel stops after the current read or record and rolls back the current file;
+completed files and earlier pending edits remain available for Write Changes or
+Revert. Other database actions wait until import or cancellation finishes.
+
 Native file pickers use `rfd`. Cancel means no operation.
 
 Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
