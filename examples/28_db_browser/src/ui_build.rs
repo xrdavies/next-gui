@@ -249,6 +249,18 @@ pub struct BuiltUi {
     pub ov_csv_quote: WidgetId,
     pub ov_csv_encoding: WidgetId,
     pub ov_csv_custom_encoding: WidgetId,
+    pub ov_csv_custom_delimiter: WidgetId,
+    pub ov_csv_custom_quote: WidgetId,
+    pub ov_csv_trim: WidgetId,
+    pub ov_csv_types: WidgetId,
+    pub ov_csv_defaults: WidgetId,
+    pub ov_csv_missing: WidgetId,
+    pub ov_csv_conflict: WidgetId,
+    pub ov_csv_advanced: WidgetId,
+    pub ov_csv_refresh: WidgetId,
+    pub ov_csv_preview: WidgetId,
+    pub ov_csv_preview_error: WidgetId,
+    pub ov_csv_scroll: WidgetId,
     pub ov_csv_paste: WidgetId,
     pub ov_attach_path: WidgetId,
     pub ov_attach_schema: WidgetId,
@@ -640,6 +652,18 @@ pub fn build_ui(
     let mut ov_csv_quote = z;
     let mut ov_csv_encoding = z;
     let mut ov_csv_custom_encoding = z;
+    let mut ov_csv_custom_delimiter = z;
+    let mut ov_csv_custom_quote = z;
+    let mut ov_csv_trim = z;
+    let mut ov_csv_types = z;
+    let mut ov_csv_defaults = z;
+    let mut ov_csv_missing = z;
+    let mut ov_csv_conflict = z;
+    let mut ov_csv_advanced = z;
+    let mut ov_csv_refresh = z;
+    let mut ov_csv_preview = z;
+    let mut ov_csv_preview_error = z;
+    let mut ov_csv_scroll = z;
     let mut ov_csv_paste = z;
     let mut ov_attach_path = z;
     let mut ov_attach_schema = z;
@@ -897,7 +921,7 @@ pub fn build_ui(
             // —— Overlay wizard panel ——
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
-            panel.height = content_h - if matches!(kind, OverlayKind::FindReplace | OverlayKind::EditTable) { 0.0 } else { 50.0 };
+            panel.height = content_h - if matches!(kind, OverlayKind::FindReplace | OverlayKind::EditTable | OverlayKind::ImportCsv | OverlayKind::PasteCsv) { 0.0 } else { 50.0 };
             let title = match kind {
                 OverlayKind::InsertRow => "New Record",
                 OverlayKind::EditTable => {
@@ -1279,44 +1303,71 @@ pub fn build_ui(
                             });
                         }
                         OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
-                            if kind == OverlayKind::ImportCsv {
-                                c.text(format!("File: {}", state.csv_path));
-                            } else {
-                                c.text("Paste CSV below");
-                                ov_csv_paste = c.text_area(&state.csv_paste, "csv…", area_s);
-                            }
-                            c.row(row, |r| {
-                                r.text("Table");
-                                ov_csv_table = r.text_input_styled(&state.csv_table, "table", name_s);
-                            });
-                            ov_csv_header = c.switch_styled("First row is header", state.csv_has_header, sw);
-                            c.row(row, |r| {
-                                r.text("Delimiter");
-                                ov_csv_delim = r.select(
-                                    vec![String::from(","), String::from(";"), String::from("Tab"), String::from("|")],
-                                    Some(state.csv_delim_idx),
-                                    "delim",
-                                    type_sel,
-                                );
-                                r.text("Quote");
-                                ov_csv_quote = r.select(
-                                    vec![String::from("\""), String::from("'"), String::from("None")],
-                                    Some(state.csv_quote_idx),
-                                    "quote",
-                                    type_sel,
-                                );
-                            });
-                            if kind==OverlayKind::ImportCsv {
-                                c.row(row,|r| {
-                                    r.text("Encoding");
-                                    ov_csv_encoding=r.select(["UTF-8","UTF-16","ISO-8859-1","Other"],Some(state.csv_encoding_idx),"Encoding",type_sel);
-                                    if state.csv_encoding_idx==3 {
-                                        let mut custom=next_gui_ui::AutocompleteStyle::from_theme(&theme);custom.width=260.0;
-                                        ov_csv_custom_encoding=r.autocomplete_placeholder(crate::csv_encoding::NAMES.iter().copied(),&state.csv_custom_encoding,"e.g. Shift_JIS",custom);
+                            let body_w = ov_col.width - 16.0;
+                            let body_h = ov_col.height - 16.0;
+                            let left_w = if shell_w >= 1000.0 { 380.0 } else { 320.0 };
+                            let preview_w = (body_w - left_w - 12.0).max(200.0);
+                            let mut body = row; body.width = body_w; body.height = body_h; body.cross_align = CrossAlign::Start; body.gap = 12.0;
+                            c.row(body, |body| {
+                                let mut options = next_gui_ui::ScrollAreaStyle::from_theme(&theme); options.width = left_w; options.height = body_h; options.padding = 8.0;
+                                ov_csv_scroll = body.scroll_area(options, |c| {
+                                    let mut option_row = row; option_row.width = left_w - 16.0;
+                                    let mut input = name_s; input.width = left_w - 82.0;
+                                    if kind == OverlayKind::ImportCsv {
+                                        let filename = std::path::Path::new(&state.csv_path).file_name().and_then(|name| name.to_str()).unwrap_or(&state.csv_path);
+                                        c.text_styled(filename, theme.colors.text_secondary, 12.0);
+                                    } else {
+                                        c.text("Clipboard text"); let mut source = area_s; source.width = left_w - 16.0; source.height = 110.0;
+                                        ov_csv_paste = c.text_area(&state.csv_paste, "Paste CSV…", source);
+                                    }
+                                    c.row(option_row, |r| { r.text("Table"); ov_csv_table = r.text_input_styled(&state.csv_table, "table", input); });
+                                    c.row(option_row, |r| {
+                                        ov_csv_header = r.switch_styled("Header row", state.csv_has_header, sw);
+                                        ov_csv_trim = r.switch_styled("Trim fields", state.csv_import_settings.trim_fields, sw);
+                                    });
+                                    let mut select = type_sel; select.width = 180.0;
+                                    c.row(option_row, |r| { r.text("Separator"); ov_csv_delim = r.select(["Comma ,", "Semicolon ;", "Tab", "Pipe |", "Other character", "Other code point"], Some(state.csv_delim_idx), "Separator", select); });
+                                    if state.csv_delim_idx >= 4 { ov_csv_custom_delimiter = c.text_input_styled(&state.csv_custom_delimiter, if state.csv_delim_idx == 5 { "e.g. 31 or U+001F" } else { "One character" }, input); }
+                                    c.row(option_row, |r| { r.text("Quote"); ov_csv_quote = r.select(["Double quote", "Single quote", "None", "Other character", "Other code point"], Some(state.csv_quote_idx), "Quote", select); });
+                                    if state.csv_quote_idx >= 3 { ov_csv_custom_quote = c.text_input_styled(&state.csv_custom_quote, if state.csv_quote_idx == 4 { "e.g. 34 or U+0022" } else { "One character" }, input); }
+                                    if kind == OverlayKind::ImportCsv {
+                                        c.row(option_row, |r| { r.text("Encoding"); ov_csv_encoding = r.select(["UTF-8", "UTF-16", "ISO-8859-1", "Other"], Some(state.csv_encoding_idx), "Encoding", select); });
+                                        if state.csv_encoding_idx == 3 {
+                                            let mut custom = next_gui_ui::AutocompleteStyle::from_theme(&theme); custom.width = left_w - 16.0;
+                                            ov_csv_custom_encoding = c.autocomplete_placeholder(crate::csv_encoding::NAMES.iter().copied(), &state.csv_custom_encoding, "e.g. Shift_JIS", custom);
+                                        }
+                                    }
+                                    ov_csv_advanced = c.tool_button(if state.csv_advanced { "Hide Advanced" } else { "Advanced" });
+                                    if state.csv_advanced {
+                                        ov_csv_types = c.switch_styled("Disable data type detection", !state.csv_import_settings.detect_types, sw);
+                                        ov_csv_defaults = c.switch_styled("Ignore default values", state.csv_import_settings.ignore_defaults, sw);
+                                        ov_csv_missing = c.switch_styled("Fail on missing values", state.csv_import_settings.fail_on_missing, sw);
+                                        c.text("On conflict");
+                                        ov_csv_conflict = c.select(["Abort import", "Ignore row", "Replace row"], Some(match state.csv_import_settings.conflict { crate::db::CsvConflict::Abort => 0, crate::db::CsvConflict::Ignore => 1, crate::db::CsvConflict::Replace => 2 }), "On conflict", select);
                                     }
                                 });
-                                c.text("Unicode byte order marks are detected automatically.");
-                            } else {c.text("Clipboard text is Unicode.");}
+                                let mut preview = ov_col; preview.width = preview_w; preview.height = body_h; preview.padding = 0.0;
+                                body.column(preview, |c| {
+                                    let mut header = row; header.width = preview_w;
+                                    c.row(header, |r| { r.text("Preview · first 20 records"); ov_csv_refresh = r.tool_button("Refresh"); });
+                                    match state.csv_preview.as_ref() {
+                                        Some(Ok(data)) => {
+                                            let mut grid = TableStyle::from_theme(&theme); grid.width = preview_w; grid.height = (body_h - 82.0).max(80.0);
+                                            let mut columns = vec![TableColumn::new("#", 44.0)];
+                                            columns.extend(data.columns.iter().map(|name| TableColumn::new(name, ((preview_w - 44.0 - grid.padding * 2.0 - 1.0) / data.columns.len() as f32).clamp(110.0, 220.0))));
+                                            let rows = data.rows.iter().enumerate().map(|(index, row)| std::iter::once((index + 1).to_string()).chain(row.iter().map(|value| value.chars().take(1024).collect::<String>())).collect()).collect();
+                                            ov_csv_preview = c.table(columns, rows, grid);
+                                            let types = data.columns.iter().zip(&data.types).map(|(name, kind)| format!("{name}: {}", if kind.is_empty() { "untyped" } else { kind })).collect::<Vec<_>>().join(" · ");
+                                            c.text_styled(types, theme.colors.text_secondary, 12.0);
+                                        }
+                                        Some(Err(error)) => {
+                                            c.text("Preview unavailable"); let mut message = area_s; message.width = preview_w; message.height = (body_h - 76.0).max(80.0);
+                                            ov_csv_preview_error = c.text_area(error, "", message);
+                                        }
+                                        None => { c.text("Choose CSV data to preview."); }
+                                    }
+                                });
+                            });
                         }
                         OverlayKind::FindReplace => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
@@ -2204,6 +2255,11 @@ pub fn build_ui(
         status = bar.text_styled(status_text(state), status_fg, 12.0);
     });
 
+    if ov_csv_preview_error.0 != 0 { ui.set_text_area_read_only(ov_csv_preview_error, true); ui.set_accessible_name(ov_csv_preview_error, "CSV preview error"); }
+    if ov_csv_custom_delimiter.0 != 0 { ui.set_accessible_name(ov_csv_custom_delimiter, "Custom CSV separator"); }
+    if ov_csv_custom_quote.0 != 0 { ui.set_accessible_name(ov_csv_custom_quote, "Custom CSV quote"); }
+    if ov_csv_preview.0 != 0 { ui.set_accessible_name(ov_csv_preview, "CSV data preview"); }
+    if ov_csv_scroll.0 != 0 { ui.set_accessible_name(ov_csv_scroll, "CSV import options"); }
     if ov_csv_encoding.0!=0 {ui.set_accessible_name(ov_csv_encoding,"CSV file encoding");}
     if ov_csv_custom_encoding.0!=0 {ui.set_accessible_name(ov_csv_custom_encoding,"Custom CSV encoding");}
     if ov_cipher_pass.0 != 0 {
@@ -2316,6 +2372,11 @@ pub fn build_ui(
                 .unwrap_or_else(|| "Delete selected object?".into()),
             "Delete",
         ),
+        ConfirmKind::ImportCsv => (
+            "Import into Existing Table",
+            format!("Append CSV rows to existing table '{}'?\nColumns are matched by position.{}", state.csv_table.trim(), if state.csv_import_settings.conflict == crate::db::CsvConflict::Replace { "\nConflicting rows will be replaced." } else { "" }),
+            "Cancel",
+        ),
         ConfirmKind::DeleteColumn(row) => (
             "Remove Field",
             format!("Remove field '{}'?\nThe field and its data will be removed when you save.", state.wizard_cols.get(row).map_or("", |column| column.name.as_str())),
@@ -2343,12 +2404,12 @@ pub fn build_ui(
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
     let mut modal_style = ModalStyle::from_theme(&theme);
-    if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { modal_style.height = 170.0; }
+    if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::ImportCsv) { modal_style.height = 170.0; }
     let modal = ui.modal(
         modal_title,
         modal_body,
         modal_primary,
-        Some(if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
+        Some(if state.confirm_kind == ConfirmKind::ImportCsv { "Import" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
         modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
@@ -2494,6 +2555,7 @@ pub fn build_ui(
         let (x,y)=state.wizard_constraint_views[index].scroll;ui.set_table_scroll_offset(table,x,y);
     }
     if state.wizard_constraint_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {ui.reveal_table_selection(ov_fks_table);}
+    if ov_csv_scroll.0 != 0 { ui.set_scroll_offset(ov_csv_scroll, state.csv_scroll.0, state.csv_scroll.1); }
     ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
     ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
     ui.set_scroll_offset(ov_keys_scroll, state.wizard_key_scroll.0, state.wizard_key_scroll.1);
@@ -2706,6 +2768,18 @@ pub fn build_ui(
         ov_csv_quote,
         ov_csv_encoding,
         ov_csv_custom_encoding,
+        ov_csv_custom_delimiter,
+        ov_csv_custom_quote,
+        ov_csv_trim,
+        ov_csv_types,
+        ov_csv_defaults,
+        ov_csv_missing,
+        ov_csv_conflict,
+        ov_csv_advanced,
+        ov_csv_refresh,
+        ov_csv_preview,
+        ov_csv_preview_error,
+        ov_csv_scroll,
         ov_csv_paste,
         ov_attach_path,
         ov_attach_schema,

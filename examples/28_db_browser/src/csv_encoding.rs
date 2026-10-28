@@ -72,51 +72,117 @@ fn codec(label: &str) -> Result<Codec, String> {
     })
 }
 
-pub fn decode(raw: &[u8], label: &str) -> Result<String, String> {
+/// Decode bounded chunks; the consumer can stop after enough preview records.
+pub fn decode_reader(
+    mut reader: impl std::io::Read,
+    label: &str,
+    mut consume: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<(), String> {
+    use std::io::Read;
     let selected = codec(label)?;
+    let mut prefix = Vec::new();
+    reader
+        .by_ref()
+        .take(4)
+        .read_to_end(&mut prefix)
+        .map_err(|e| e.to_string())?;
     // QTextStream detects Unicode BOMs even when another codec was selected.
-    let (selected, raw) = if raw.starts_with(&[0xff, 0xfe, 0, 0]) {
-        (Codec::Utf32(true), &raw[4..])
-    } else if raw.starts_with(&[0, 0, 0xfe, 0xff]) {
-        (Codec::Utf32(false), &raw[4..])
-    } else if let Some((encoding, len)) = Encoding::for_bom(raw) {
-        (Codec::Standard(encoding), &raw[len..])
+    let (selected, offset) = if prefix.starts_with(&[0xff, 0xfe, 0, 0]) {
+        (Codec::Utf32(true), 4)
+    } else if prefix.starts_with(&[0, 0, 0xfe, 0xff]) {
+        (Codec::Utf32(false), 4)
+    } else if let Some((encoding, len)) = Encoding::for_bom(&prefix) {
+        (Codec::Standard(encoding), len)
     } else {
-        (selected, raw)
+        (selected, 0)
     };
-    match selected {
-        Codec::Latin1 => Ok(raw.iter().copied().map(char::from).collect()),
-        Codec::Ascii if raw.is_ascii() => Ok(raw.iter().copied().map(char::from).collect()),
-        Codec::Ascii => Err("CSV US-ASCII contains a non-ASCII byte".into()),
-        Codec::Utf32(little) => {
-            let name = if little { "UTF-32LE" } else { "UTF-32BE" };
-            if raw.len() % 4 != 0 {
-                return Err(format!("CSV {name} has an incomplete code unit"));
+    let mut decoder = match selected {
+        Codec::Standard(encoding) => Some(encoding.new_decoder_without_bom_handling()),
+        _ => None,
+    };
+    let mut pending = Vec::new();
+    let mut buffer = [0u8; 4096];
+    let mut input = &prefix[offset..];
+    let mut last = false;
+    loop {
+        let mut output = String::new();
+        let mut error = None;
+        match selected {
+            Codec::Standard(encoding) => {
+                let decoder = decoder.as_mut().unwrap();
+                output.reserve(
+                    decoder
+                        .max_utf8_buffer_length_without_replacement(input.len())
+                        .expect("bounded decoder chunk"),
+                );
+                let (result, _) =
+                    decoder.decode_to_string_without_replacement(input, &mut output, last);
+                if result != encoding_rs::DecoderResult::InputEmpty {
+                    error = Some(format!(
+                        "CSV {} contains invalid or incomplete byte sequences",
+                        encoding.name()
+                    ));
+                }
             }
-            raw.chunks_exact(4)
-                .map(|bytes| {
+            Codec::Latin1 => output.extend(input.iter().copied().map(char::from)),
+            Codec::Ascii => {
+                for &byte in input {
+                    if !byte.is_ascii() {
+                        error = Some("CSV US-ASCII contains a non-ASCII byte".into());
+                        break;
+                    }
+                    output.push(char::from(byte));
+                }
+            }
+            Codec::Utf32(little) => {
+                let name = if little { "UTF-32LE" } else { "UTF-32BE" };
+                pending.extend_from_slice(input);
+                let complete = pending.len() / 4 * 4;
+                for bytes in pending[..complete].chunks_exact(4) {
                     let bytes = [bytes[0], bytes[1], bytes[2], bytes[3]];
                     let unit = if little {
                         u32::from_le_bytes(bytes)
                     } else {
                         u32::from_be_bytes(bytes)
                     };
-                    char::from_u32(unit).ok_or_else(|| {
-                        format!("CSV {name} contains an invalid Unicode scalar U+{unit:04X}")
-                    })
-                })
-                .collect()
+                    if let Some(ch) = char::from_u32(unit) {
+                        output.push(ch);
+                    } else {
+                        error = Some(format!(
+                            "CSV {name} contains an invalid Unicode scalar U+{unit:04X}"
+                        ));
+                        break;
+                    }
+                }
+                pending.drain(..complete);
+                if last && !pending.is_empty() {
+                    error = Some(format!("CSV {name} has an incomplete code unit"));
+                }
+            }
         }
-        Codec::Standard(encoding) => encoding
-            .decode_without_bom_handling_and_without_replacement(raw)
-            .map(|text| text.into_owned())
-            .ok_or_else(|| {
-                format!(
-                    "CSV {} contains invalid or incomplete byte sequences",
-                    encoding.name()
-                )
-            }),
+        if !output.is_empty() && !consume(&output)? {
+            return Ok(());
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
+        if last {
+            return Ok(());
+        }
+        let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        input = &buffer[..count];
+        last = count == 0;
     }
+}
+
+#[cfg(test)]
+pub fn decode(raw: &[u8], label: &str) -> Result<String, String> {
+    let mut result = String::new();
+    decode_reader(raw, label, |chunk| {
+        result.push_str(chunk);
+        Ok(true)
+    })?;
+    Ok(result)
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@
 
 mod db;
 mod csv_encoding;
+mod csv_import;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
@@ -371,6 +372,18 @@ struct BuiltUiIds {
     ov_csv_quote: WidgetId,
     ov_csv_encoding: WidgetId,
     ov_csv_custom_encoding: WidgetId,
+    ov_csv_custom_delimiter: WidgetId,
+    ov_csv_custom_quote: WidgetId,
+    ov_csv_trim: WidgetId,
+    ov_csv_types: WidgetId,
+    ov_csv_defaults: WidgetId,
+    ov_csv_missing: WidgetId,
+    ov_csv_conflict: WidgetId,
+    ov_csv_advanced: WidgetId,
+    ov_csv_refresh: WidgetId,
+    ov_csv_preview: WidgetId,
+    ov_csv_preview_error: WidgetId,
+    ov_csv_scroll: WidgetId,
     ov_csv_paste: WidgetId,
     ov_attach_path: WidgetId,
     ov_attach_schema: WidgetId,
@@ -594,6 +607,18 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_csv_quote: b.ov_csv_quote,
             ov_csv_encoding: b.ov_csv_encoding,
             ov_csv_custom_encoding: b.ov_csv_custom_encoding,
+            ov_csv_custom_delimiter: b.ov_csv_custom_delimiter,
+            ov_csv_custom_quote: b.ov_csv_custom_quote,
+            ov_csv_trim: b.ov_csv_trim,
+            ov_csv_types: b.ov_csv_types,
+            ov_csv_defaults: b.ov_csv_defaults,
+            ov_csv_missing: b.ov_csv_missing,
+            ov_csv_conflict: b.ov_csv_conflict,
+            ov_csv_advanced: b.ov_csv_advanced,
+            ov_csv_refresh: b.ov_csv_refresh,
+            ov_csv_preview: b.ov_csv_preview,
+            ov_csv_preview_error: b.ov_csv_preview_error,
+            ov_csv_scroll: b.ov_csv_scroll,
             ov_csv_paste: b.ov_csv_paste,
             ov_attach_path: b.ov_attach_path,
             ov_attach_schema: b.ov_attach_schema,
@@ -810,8 +835,8 @@ impl Demo {
                     if tab.ends_with("-saved") {state.apply_table_wizard().unwrap();}
                     if tab=="table-move-views-saved" {state.switch_browse_table_in("analytics","visible").unwrap();MainTab::Browse}else{MainTab::Structure}
                 }
-                "csv-encoding" | "csv-encoding-other" => {
-                    state.new_memory_db().unwrap();state.csv_path="customers.csv".into();state.csv_table="customers".into();state.csv_encoding_idx=if tab.ends_with("-other") {3} else {2};state.csv_custom_encoding="Shift_JIS".into();state.overlay=Some(OverlayKind::ImportCsv);MainTab::Structure
+                "csv-encoding" | "csv-encoding-other" | "csv-preview" | "csv-preview-advanced" | "csv-preview-confirm" => {
+                    state.new_memory_db().unwrap();state.csv_path=std::env::var("NEXT_GUI_DB_BROWSER_QA_CSV_PATH").unwrap_or_else(|_|"customers.csv".into());state.csv_table="customers".into();state.csv_encoding_idx=if tab.starts_with("csv-preview") {0} else if tab.ends_with("-other") {3} else {2};state.csv_advanced=tab.ends_with("-advanced");state.csv_custom_encoding="Shift_JIS".into();state.overlay=Some(OverlayKind::ImportCsv);if tab.ends_with("-confirm") {state.conn.as_ref().unwrap().execute_batch("CREATE TABLE customers(id INTEGER, name TEXT, amount REAL)").unwrap();state.confirm_kind=ConfirmKind::ImportCsv;state.confirm_open=true;}MainTab::Structure
                 }
                 "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-type-dropdown" | "table-field-collation-dropdown" | "table-field-strict-dropdown" | "table-field-reference-editor" | "table-field-reference-empty" | "table-field-check-editor" | "table-field-remove-confirm" | "table-advanced" => {
                     state.new_memory_db().unwrap();
@@ -1151,6 +1176,7 @@ impl Demo {
             }
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
+        if matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) { state.refresh_csv_preview(); }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
         if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);if matches!(edit.column,1|8) {if built.ui.is_select(built.ov_field_editor) {built.ui.key_input(UiKey::Space);} else {built.ui.open_autocomplete_options(built.ov_field_editor);}}}built.ui.sync(&mut built.scene);}
@@ -1530,6 +1556,10 @@ impl Demo {
                 self.sync_index_wizard(previous_keys != self.state.wizard_index_cols);
             }
             OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
+                let previous_options = self.state.csv_options();
+                let previous_modes = (self.state.csv_delim_idx, self.state.csv_quote_idx, self.state.csv_encoding_idx);
+                let previous_paste = self.state.csv_paste.clone();
+                if let Some(offset) = self.ui.scroll_offset(self.ids.ov_csv_scroll) { self.state.csv_scroll = offset; }
                 if self.ids.ov_csv_table.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_csv_table) {
                         self.state.csv_table = v.to_string();
@@ -1559,6 +1589,16 @@ impl Demo {
                         self.state.csv_paste = v.to_string();
                     }
                 }
+                for (id, setting) in [(self.ids.ov_csv_custom_delimiter, &mut self.state.csv_custom_delimiter), (self.ids.ov_csv_custom_quote, &mut self.state.csv_custom_quote)] {
+                    if let Some(value) = self.ui.text_input_value(id) { *setting = value.into(); }
+                }
+                if let Some(value) = self.ui.is_checked(self.ids.ov_csv_trim) { self.state.csv_import_settings.trim_fields = value; }
+                if let Some(value) = self.ui.is_checked(self.ids.ov_csv_types) { self.state.csv_import_settings.detect_types = !value; }
+                if let Some(value) = self.ui.is_checked(self.ids.ov_csv_defaults) { self.state.csv_import_settings.ignore_defaults = value; }
+                if let Some(value) = self.ui.is_checked(self.ids.ov_csv_missing) { self.state.csv_import_settings.fail_on_missing = value; }
+                if let Some(value) = self.ui.select_selected(self.ids.ov_csv_conflict) { self.state.csv_import_settings.conflict = match value { 1 => dbmod::CsvConflict::Ignore, 2 => dbmod::CsvConflict::Replace, _ => dbmod::CsvConflict::Abort }; }
+                if self.state.csv_options() != previous_options || self.state.csv_paste != previous_paste { self.state.csv_preview = None; self.rebuild = true; }
+                if previous_modes != (self.state.csv_delim_idx, self.state.csv_quote_idx, self.state.csv_encoding_idx) { self.rebuild = true; }
             }
             OverlayKind::FindReplace => {
                 let mut flags = self.state.find_search.options.flags();
@@ -2321,6 +2361,11 @@ impl Demo {
 
     fn do_rebuild(&mut self) {
         self.snapshot_column_picker();
+        let csv_open = matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
+        if csv_open { self.state.refresh_csv_preview(); }
+        let csv_input_session = csv_open.then(|| [self.ids.ov_csv_table, self.ids.ov_csv_custom_delimiter, self.ids.ov_csv_custom_quote].into_iter().enumerate().find_map(|(index, id)| (id.0 != 0 && self.ui.focused() == Some(id)).then(|| self.ui.text_input_state(id).map(|session| (index, session))).flatten())).flatten();
+        let csv_paste_session = (csv_open && self.ids.ov_csv_paste.0 != 0 && self.ui.focused() == Some(self.ids.ov_csv_paste)).then(|| self.ui.text_area_state(self.ids.ov_csv_paste)).flatten();
+        let csv_control_focus = csv_open.then(|| [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let advanced_focused=self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_table_advanced);
         let column_input_session = self.state.wizard_cols.get(self.state.wizard_col_sel).and_then(|column| {
             if self.state.overlay!=Some(OverlayKind::EditTable) || self.ui.text_input_value(self.ids.ov_col_name)!=Some(column.name.as_str()) { return None; }
@@ -2331,7 +2376,7 @@ impl Demo {
             && self.ui.text_input_value(self.ids.ov_name)==Some(self.state.wizard_table_name.as_str());
         let constraint_editor_focused=self.state.wizard_constraint_edit.is_some() && self.ids.ov_constraint_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_constraint_editor);
         let field_editor_focused=self.state.wizard_field_edit.is_some() && self.ids.ov_field_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_field_editor);
-        let cell_select_session=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent,self.ids.ov_csv_encoding].into_iter().enumerate().find_map(|(index,id)|
+        let cell_select_session=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent,self.ids.ov_csv_encoding,self.ids.ov_csv_delim,self.ids.ov_csv_quote,self.ids.ov_csv_conflict].into_iter().enumerate().find_map(|(index,id)|
             (id.0!=0 && self.ui.focused()==Some(id)).then(||self.ui.select_state(id).map(|session|(index,session))).flatten());
         let fields_focused = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_fields_table);
         let reveal_field = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.table_selected_row(self.ids.ov_fields_table)!=Some(self.state.wizard_col_sel);
@@ -2408,6 +2453,9 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some((index, session)) = csv_input_session { let id = [self.ids.ov_csv_table,self.ids.ov_csv_custom_delimiter,self.ids.ov_csv_custom_quote][index]; if self.ui.restore_text_input_state(id, &session) { self.ui.set_focus(Some(id)); } }
+        if let Some(session) = csv_paste_session { if self.ui.restore_text_area_state(self.ids.ov_csv_paste, &session) { self.ui.set_focus(Some(self.ids.ov_csv_paste)); } }
+        if let Some(index) = csv_control_focus { let id = [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh][index]; if id.0 != 0 { self.ui.set_focus(Some(id)); } }
         if advanced_focused { self.ui.set_focus(Some(self.ids.ov_table_advanced)); self.ui.sync(&mut self.scene); }
         if let Some((index,session))=column_input_session {
             let id=[self.ids.ov_col_name,self.ids.ov_default][index];
@@ -2422,7 +2470,7 @@ impl Demo {
         if constraint_editor_focused && self.ids.ov_constraint_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_constraint_editor));self.ui.sync(&mut self.scene);}
         if field_editor_focused && self.ids.ov_field_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_field_editor));self.ui.sync(&mut self.scene);}
         if let Some((index,session))=cell_select_session {
-            let id=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent,self.ids.ov_csv_encoding][index];
+            let id=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent,self.ids.ov_csv_encoding,self.ids.ov_csv_delim,self.ids.ov_csv_quote,self.ids.ov_csv_conflict][index];
             if self.ui.restore_select_state(id,&session) {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if table_tabs_focused { self.ui.set_focus(Some(self.ids.ov_table_tabs)); self.ui.sync(&mut self.scene); }
@@ -2781,14 +2829,7 @@ impl Demo {
                 .unwrap_or("imported")
                 .to_string();
             self.state.csv_table = stem;
-            self.state.csv_has_header = true;
-            self.state.csv_delim_idx = match self.state.prefs.csv_delimiter {
-                ';' => 1,
-                '\t' => 2,
-                '|' => 3,
-                _ => 0,
-            };
-            self.state.csv_quote_idx = 0;
+            self.state.load_csv_import_settings(); self.state.csv_scroll = (0.0,0.0);
             self.state.overlay = Some(OverlayKind::ImportCsv);
         } else {
             self.state.status_msg = "Import CSV cancelled".into();
@@ -3171,13 +3212,7 @@ impl Demo {
             mid::FILE_IMPORT_CLIP => {
                 self.state.csv_paste.clear();
                 self.state.csv_table = "clipboard".into();
-                self.state.csv_has_header = true;
-                self.state.csv_delim_idx = match self.state.prefs.csv_delimiter {
-                    ';' => 1,
-                    '\t' => 2,
-                    '|' => 3,
-                    _ => 0,
-                };
+                self.state.load_csv_import_settings(); self.state.csv_scroll = (0.0,0.0);
                 self.state.overlay = Some(OverlayKind::PasteCsv);
                 self.rebuild = true;
             }
@@ -3290,6 +3325,12 @@ impl Demo {
         if self.state.overlay.is_none() {
             return false;
         }
+        if id == self.ids.ov_csv_advanced && id.0 != 0 {
+            self.snapshot_inputs(); self.state.csv_advanced = !self.state.csv_advanced; self.rebuild = true; return true;
+        }
+        if id == self.ids.ov_csv_refresh && id.0 != 0 {
+            self.snapshot_inputs(); self.state.csv_preview = None; self.rebuild = true; return true;
+        }
         if id == self.ids.ov_btn_cancel {
             self.state.overlay = None;
             self.state.cipher_open_path = None;
@@ -3305,7 +3346,10 @@ impl Demo {
                 Some(OverlayKind::EditTable) => self.state.apply_table_wizard(),
                 Some(OverlayKind::EditIndex) => self.state.apply_index_wizard(),
                 Some(OverlayKind::ImportCsv) | Some(OverlayKind::PasteCsv) => {
-                    self.state.apply_csv_import()
+                    self.state.csv_target_exists().and_then(|exists| {
+                        if exists { self.state.confirm_kind = ConfirmKind::ImportCsv; self.state.confirm_open = true; Ok(()) }
+                        else { self.state.apply_csv_import() }
+                    })
                 }
                 Some(OverlayKind::Attach) => self.state.apply_attach(),
                 Some(OverlayKind::FindReplace) => {
@@ -3363,8 +3407,6 @@ impl Demo {
                         kind,
                         Some(OverlayKind::EditTable)
                             | Some(OverlayKind::EditIndex)
-                            | Some(OverlayKind::ImportCsv)
-                            | Some(OverlayKind::PasteCsv)
                             | Some(OverlayKind::Attach)
                             | Some(OverlayKind::Cipher)
                             | Some(OverlayKind::Preferences)
@@ -4316,7 +4358,7 @@ impl Demo {
                 return;
             }
             if matches!(kind, ConfirmKind::DeleteColumn(_)) { self.ui.set_focus(Some(self.ids.ov_fields_table)); }
-            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_)) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
+            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::ImportCsv) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
             if !accepted { self.rebuild = true; return; }
             self.apply_confirmed_action(kind);
         }
@@ -4324,6 +4366,7 @@ impl Demo {
 
     fn apply_confirmed_action(&mut self, kind: ConfirmKind) {
         match kind {
+            ConfirmKind::ImportCsv => match self.state.apply_csv_import() { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) },
             ConfirmKind::DeleteColumn(row) => match self.state.remove_wizard_column(row) {
                 Ok(()) => { self.clear_error(); self.state.status_msg = "Column removed from table draft".into(); }
                 Err(error) => self.set_error(error),
@@ -8206,6 +8249,40 @@ mod interaction_tests {
             let conn=demo.state.conn.as_ref().unwrap();assert!(conn.execute("UPDATE analytics.records SET a='blocked'",[]).is_err());conn.execute("UPDATE analytics.records SET a='x' WHERE id=7",[]).unwrap();
             assert_eq!(conn.query_row("SELECT value FROM analytics.audit",[],|row|row.get::<_,String>(0)).unwrap(),"x");
             conn.execute("INSERT INTO analytics.records(a,b) VALUES('third','south')",[]).unwrap();assert_eq!(conn.last_insert_rowid(),12);assert_eq!(conn.query_row("SELECT untouched FROM main.records",[],|row|row.get::<_,i64>(0)).unwrap(),42);
+        }
+    }
+
+    #[test]
+    fn csv_preview_options_refresh_focus_scroll_and_existing_table_confirmation() {
+        for (theme_name, theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            for (width,height) in [(1400,1000),(800,600)] {
+                let dir=tempfile::tempdir().unwrap(); let path=dir.path().join("source.csv");
+                std::fs::write(&path,"id§amount§note\n1§2.5§「 padded§quoted 「\n2§3§plain\n").unwrap();
+                let mut demo=Demo::new(width,height,PresentBackend::Softbuffer); demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap(); demo.state.csv_path=path.display().to_string(); demo.state.csv_table="imported".into(); demo.state.csv_delim_idx=4; demo.state.csv_custom_delimiter="§".into(); demo.state.csv_quote_idx=3; demo.state.csv_custom_quote="「".into(); demo.state.overlay=Some(OverlayKind::ImportCsv); demo.do_rebuild();
+                let finish=|demo:&mut Demo|{demo.snapshot_inputs();if demo.rebuild{demo.do_rebuild();}demo.ui.sync(&mut demo.scene);};
+                let bounds=|demo:&Demo,id|demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(id)).unwrap().bounds;
+                let capture=|demo:&mut Demo,phase| {
+                    if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_CSV_PREVIEW_QA_OUT") {
+                        let (w,h)=(demo.win_w,demo.win_h);demo.scene.mark_full_dirty(w as f32,h as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(w,h,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}.ppm"),soft.frame_pixels().unwrap().0,w,h).unwrap();
+                        if let Ok(mut gpu)=GpuRenderer::try_new(w,h,clear) {gpu.render(&commands,&dirty);let a=soft.frame_pixels().unwrap().0;let b=gpu.frame_pixels().unwrap().0;write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}-metal.ppm"),b,w,h).unwrap();let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}/{width}/{phase}: {delta}");eprintln!("CSV preview {theme_name}/{width}/{phase}: Soft/Metal delta {delta}");}else{eprintln!("CSV preview GPU comparison not_run: adapter unavailable");}
+                    }
+                };
+                assert_eq!(demo.state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][2]," padded§quoted ");
+                demo.ui.set_checked(demo.ids.ov_csv_trim,true);finish(&mut demo);
+                assert_eq!(demo.state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][2],"padded§quoted");
+                let preview=bounds(&demo,demo.ids.ov_csv_preview);let import=bounds(&demo,demo.ids.ov_btn_ok);assert!(preview.x>=320.0 && preview.x+preview.width<=width as f32 && preview.y+preview.height<import.y);assert!(import.y+import.height<=height as f32);demo.ui.set_table_scroll_x(demo.ids.ov_csv_preview,10000.0);assert_eq!(demo.ui.table_scroll_offset(demo.ids.ov_csv_preview).unwrap().0,0.0);capture(&mut demo,"preview");
+                demo.ui.set_focus(Some(demo.ids.ov_csv_custom_delimiter));demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text("xx");finish(&mut demo);assert!(demo.state.csv_preview.as_ref().unwrap().is_err());assert_eq!(demo.ui.focused(),Some(demo.ids.ov_csv_custom_delimiter));
+                demo.ui.key_input(UiKey::Undo);finish(&mut demo);assert!(demo.state.csv_preview.as_ref().unwrap().is_ok());assert_eq!(demo.ui.text_input_value(demo.ids.ov_csv_custom_delimiter),Some("§"));
+                demo.ui.set_scroll_offset(demo.ids.ov_csv_scroll,0.0,10000.0);demo.ui.sync(&mut demo.scene);let advanced=bounds(&demo,demo.ids.ov_csv_advanced);assert_eq!(demo.ui.hit_widget(&demo.scene,advanced.x+8.0,advanced.y+8.0),Some(demo.ids.ov_csv_advanced));demo.ui.pointer_pressed(&mut demo.scene,advanced.x+8.0,advanced.y+8.0);demo.ui.pointer_released();demo.handle_button(demo.ids.ov_csv_advanced);demo.do_rebuild();assert!(demo.state.csv_advanced);assert_eq!(demo.ui.focused(),Some(demo.ids.ov_csv_advanced));
+                demo.ui.set_checked(demo.ids.ov_csv_types,true);finish(&mut demo);assert!(!demo.state.csv_import_settings.detect_types);
+                demo.ui.set_scroll_offset(demo.ids.ov_csv_scroll,0.0,10000.0);finish(&mut demo);let old_scroll=demo.state.csv_scroll;demo.do_rebuild();assert_eq!(demo.ui.scroll_offset(demo.ids.ov_csv_scroll),Some(old_scroll));capture(&mut demo,"advanced");
+                std::fs::write(&path,"id§amount§note\n3§4§refreshed\n").unwrap();demo.handle_button(demo.ids.ov_csv_refresh);demo.do_rebuild();assert_eq!(demo.state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][2],"refreshed");
+                demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert!(dbmod::table_columns(demo.state.conn.as_ref().unwrap(),"imported").unwrap().iter().all(|column|column.type_name.is_empty()));
+                demo.state.csv_paste="x§y§z\n4§5§append\n".into();demo.state.overlay=Some(OverlayKind::PasteCsv);demo.state.csv_preview=None;demo.do_rebuild();demo.handle_button(demo.ids.ov_btn_ok);demo.do_rebuild();assert_eq!(demo.state.confirm_kind,ConfirmKind::ImportCsv);capture(&mut demo,"confirm");
+                assert!(demo.ui.key_input(UiKey::Enter));demo.handle_modal();demo.do_rebuild();assert!(demo.state.overlay.is_some());assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"imported").unwrap(),1);
+                demo.handle_button(demo.ids.ov_btn_ok);demo.do_rebuild();assert!(demo.ui.key_input(UiKey::Tab));assert!(demo.ui.key_input(UiKey::Enter));demo.handle_modal();assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"imported").unwrap(),2);
+            }
         }
     }
 

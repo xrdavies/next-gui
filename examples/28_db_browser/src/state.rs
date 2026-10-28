@@ -484,6 +484,12 @@ pub struct AppState {
     pub wizard_index_original: Option<SelectedObject>,
 
     // CSV import wizard
+    pub csv_scroll: (f32, f32),
+    pub csv_advanced: bool,
+    pub csv_custom_delimiter: String,
+    pub csv_custom_quote: String,
+    pub csv_import_settings: CsvImportOptions,
+    pub csv_preview: Option<Result<crate::csv_import::Data, String>>,
     pub csv_path: String,
     pub csv_table: String,
     pub csv_has_header: bool,
@@ -618,6 +624,7 @@ pub enum ConfirmKind {
     DropObject,
     DeleteRow,
     DeleteColumn(usize),
+    ImportCsv,
     Documents,
     Revert,
 }
@@ -803,6 +810,12 @@ impl AppState {
             wizard_index_available_sel: 0,
             wizard_index_unique: false,
             wizard_index_original: None,
+            csv_scroll: (0.0, 0.0),
+            csv_advanced: false,
+            csv_custom_delimiter: String::new(),
+            csv_custom_quote: String::new(),
+            csv_import_settings: CsvImportOptions::default(),
+            csv_preview: None,
             csv_path: String::new(),
             csv_table: "imported".into(),
             csv_has_header: true,
@@ -897,6 +910,8 @@ impl AppState {
             #[cfg(test)]
             _demo_directory: None,
         };
+        #[cfg(not(test))]
+        state.load_csv_import_settings();
         state.checkpoint_project();
         state
     }
@@ -2184,16 +2199,41 @@ impl AppState {
         Ok(())
     }
 
+    pub fn load_csv_import_settings(&mut self) {
+        let opts = self.prefs.csv_import.clone().unwrap_or_else(|| CsvImportOptions { delimiter: self.prefs.csv_delimiter, ..CsvImportOptions::default() });
+        self.csv_has_header = opts.has_header;
+        self.csv_delim_idx = match opts.delimiter { ',' => 0, ';' => 1, '\t' => 2, '|' => 3, _ => 4 };
+        self.csv_custom_delimiter = opts.delimiter.to_string();
+        self.csv_quote_idx = match opts.quote { Some('"') => 0, Some('\'') => 1, None => 2, _ => 3 };
+        self.csv_custom_quote = opts.quote.map(String::from).unwrap_or_default();
+        self.csv_encoding_idx = match opts.encoding.as_str() { "UTF-8" => 0, "UTF-16" => 1, "ISO-8859-1" => 2, _ => 3 };
+        self.csv_custom_encoding = opts.encoding.clone();
+        self.csv_import_settings = opts;
+        self.csv_preview = None;
+    }
+
+    pub fn refresh_csv_preview(&mut self) {
+        if self.csv_preview.is_some() { return; }
+        let options = self.csv_options();
+        self.csv_preview = Some(if self.overlay == Some(OverlayKind::PasteCsv) {
+            crate::csv_import::text(&self.csv_paste, &options, 20)
+        } else {
+            std::fs::File::open(&self.csv_path).map_err(|e| e.to_string()).and_then(|file| crate::csv_import::read(file, &options, 20))
+        });
+    }
+
     pub fn csv_options(&self) -> CsvImportOptions {
         let delimiter = match self.csv_delim_idx {
             1 => ';',
             2 => '\t',
             3 => '|',
+            4 | 5 => crate::csv_import::character(&self.csv_custom_delimiter, self.csv_delim_idx == 5).unwrap_or('\0'),
             _ => ',',
         };
         let quote = match self.csv_quote_idx {
             1 => Some('\''),
             2 => None,
+            3 | 4 => Some(crate::csv_import::character(&self.csv_custom_quote, self.csv_quote_idx == 4).unwrap_or('\0')),
             _ => Some('"'),
         };
         CsvImportOptions {
@@ -2201,7 +2241,13 @@ impl AppState {
             has_header: self.csv_has_header,
             delimiter,
             quote,
+            ..self.csv_import_settings.clone()
         }
+    }
+
+    pub fn csv_target_exists(&mut self) -> Result<bool, String> {
+        self.guard_writable()?;
+        self.conn.as_ref().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=?1 COLLATE NOCASE)", [self.csv_table.trim()], |row| row.get(0)).map_err(|e| e.to_string())
     }
 
     pub fn apply_csv_import(&mut self) -> Result<(), String> {
@@ -2211,12 +2257,17 @@ impl AppState {
             return Err("Table name required".into());
         }
         let opts = self.csv_options();
-        let (cols, rows) = if self.overlay == Some(OverlayKind::PasteCsv) {
-            db::import_csv_from_text(&self.csv_paste, &opts)?
+        // shortcut: full imports retain parsed rows; stream under a savepoint when adding import cancellation/progress.
+        let data = if self.overlay == Some(OverlayKind::PasteCsv) {
+            crate::csv_import::text(&self.csv_paste, &opts, 0)?
         } else {
-            db::import_csv_parse_opts(Path::new(&self.csv_path), &opts)?
+            crate::csv_import::read(std::fs::File::open(&self.csv_path).map_err(|e| e.to_string())?, &opts, 0)?
         };
-        let n = db::import_csv_into_table(self.conn.as_ref().unwrap(), &table, &cols, &rows, true)?;
+        let n = db::import_csv_data(self.conn.as_ref().unwrap(), &table, &data, &opts)?;
+        self.csv_preview = None;
+        self.prefs.csv_delimiter = opts.delimiter;
+        self.prefs.csv_import = Some(opts);
+        let settings_error = if cfg!(test) { None } else { self.prefs.save().err() };
         self.log_sql(format!("-- import csv → {table} ({n} rows)"));
         self.mark_dirty();
         self.overlay = None;
@@ -2224,6 +2275,7 @@ impl AppState {
         *self.browse_mut() = BrowseTabState::new(Some(table.clone()));
         self.refresh_browse()?;
         self.status_msg = format!("Imported {n} rows into `{table}` (unwritten)");
+        if let Some(error) = settings_error { self.status_msg.push_str(&format!("; settings could not be saved: {error}")); }
         Ok(())
     }
 
@@ -2893,7 +2945,11 @@ impl AppState {
         self.prefs.sql_completion = self.prefs_sql_completion;
         self.prefs.sql_upper_keywords = self.prefs_sql_upper_keywords;
         if let Some(c) = self.prefs_csv_delim.chars().next() {
-            self.prefs.csv_delimiter = if c == 't' { '\t' } else { c };
+            let delimiter = if c == 't' { '\t' } else { c };
+            if delimiter != self.prefs.csv_delimiter {
+                if let Some(options) = &mut self.prefs.csv_import { options.delimiter = delimiter; }
+            }
+            self.prefs.csv_delimiter = delimiter;
         }
         self.prefs.frozen_cols_default = self.prefs_frozen_cols;
         self.frozen_cols = self.prefs_frozen_cols;
@@ -3232,7 +3288,7 @@ impl AppState {
     /// Paste quoted TSV; one source cell fills the selected rectangle.
     pub fn paste_browse_tsv(&mut self, text: &str) -> Result<(), String> {
         let (_, rows) = db::import_csv_from_text(text, &CsvImportOptions {
-            encoding: "UTF-8".into(), has_header: false, delimiter: '\t', quote: Some('"'),
+            encoding: "UTF-8".into(), has_header: false, delimiter: '\t', quote: Some('"'), ..CsvImportOptions::default()
         })?;
         self.paste_browse_cells(rows.into_iter().map(|row|
             row.into_iter().map(|s| db::CellValue::Text(s.into_bytes())).collect()
@@ -4826,6 +4882,16 @@ mod chart_default_tests {
         state.close_db();
         assert_eq!(state.chart_schema, "main");
         assert!(state.chart_table.is_none());
+    }
+
+    #[test]
+    fn csv_import_settings_roundtrip_custom_characters_and_upgrade_old_preferences() {
+        let mut state=test_state();state.prefs.csv_import=None;state.prefs.csv_delimiter=';';state.load_csv_import_settings();assert_eq!(state.csv_options().delimiter,';');
+        let options=CsvImportOptions {delimiter:'§',quote:None,encoding:"Shift_JIS".into(),has_header:false,trim_fields:true,detect_types:false,ignore_defaults:true,fail_on_missing:true,conflict:db::CsvConflict::Replace};
+        state.prefs.csv_import=Some(options.clone());let json=serde_json::to_string(&state.prefs).unwrap();state.prefs=serde_json::from_str(&json).unwrap();state.load_csv_import_settings();assert_eq!(state.csv_options(),options);
+        state.csv_delim_idx=5;state.csv_custom_delimiter="U+001F".into();state.csv_quote_idx=4;state.csv_custom_quote="34".into();assert_eq!(state.csv_options().delimiter,'\u{1f}');assert_eq!(state.csv_options().quote,Some('"'));
+        state.csv_custom_delimiter="55296".into();assert_eq!(state.csv_options().delimiter,'\0');state.csv_custom_quote="U+110000".into();assert_eq!(state.csv_options().quote,Some('\0'));
+        state.csv_delim_idx=4;state.csv_custom_delimiter="two".into();assert_eq!(state.csv_options().delimiter,'\0');
     }
 
     #[test]

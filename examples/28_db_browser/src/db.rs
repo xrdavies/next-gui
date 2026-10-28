@@ -983,8 +983,18 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CsvConflict { #[default] Abort, Ignore, Replace }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct CsvImportOptions {
+    pub trim_fields: bool,
+    // shortcut: numeric inference uses the C locale; add system conventions with locale preference parity.
+    pub detect_types: bool,
+    pub ignore_defaults: bool,
+    pub fail_on_missing: bool,
+    pub conflict: CsvConflict,
     pub encoding: String,
     pub has_header: bool,
     pub delimiter: char,
@@ -994,6 +1004,7 @@ pub struct CsvImportOptions {
 impl Default for CsvImportOptions {
     fn default() -> Self {
         Self {
+            trim_fields: false, detect_types: true, ignore_defaults: false, fail_on_missing: false, conflict: CsvConflict::Abort,
             encoding: "UTF-8".into(),
             has_header: true,
             delimiter: ',',
@@ -1012,79 +1023,14 @@ pub fn import_csv_parse_opts(
     path: &Path,
     opts: &CsvImportOptions,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let raw = fs::read(path).map_err(|e| e.to_string())?;
-    let text = crate::csv_encoding::decode(&raw,&opts.encoding)?;
-    import_csv_from_text(&text, opts)
+    let data = crate::csv_import::read(fs::File::open(path).map_err(|e| e.to_string())?, opts, 0)?;
+    Ok((data.columns, data.rows))
 }
 
 /// Parse CSV text (clipboard / file contents).
-pub fn import_csv_from_text(
-    text: &str,
-    opts: &CsvImportOptions,
-) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let mut records = Vec::new();
-    let mut record = Vec::new();
-    let mut field = String::new();
-    let mut quoted = false;
-    let mut closed = false;
-    let mut chars = text.trim_start_matches('\u{feff}').chars().peekable();
-    while let Some(c) = chars.next() {
-        if quoted {
-            if Some(c) == opts.quote {
-                if chars.peek() == Some(&c) {
-                    field.push(c);
-                    chars.next();
-                } else {
-                    quoted = false;
-                    closed = true;
-                }
-            } else {
-                field.push(c);
-            }
-        } else if Some(c) == opts.quote && field.is_empty() && !closed {
-            quoted = true;
-        } else if c == opts.delimiter {
-            record.push(std::mem::take(&mut field));
-            closed = false;
-        } else if c == '\n' || c == '\r' {
-            if c == '\r' && chars.peek() == Some(&'\n') {
-                chars.next();
-            }
-            record.push(std::mem::take(&mut field));
-            records.push(std::mem::take(&mut record));
-            closed = false;
-        } else if closed {
-            return Err("Unexpected text after CSV closing quote".into());
-        } else {
-            field.push(c);
-        }
-    }
-    if quoted {
-        return Err("Unterminated CSV quoted field".into());
-    }
-    if !field.is_empty() || !record.is_empty() || closed {
-        record.push(field);
-        records.push(record);
-    }
-    if records.is_empty() {
-        return Err("empty CSV".into());
-    }
-    let columns = if opts.has_header {
-        records.remove(0)
-    } else {
-        (0..records[0].len())
-            .map(|i| format!("column{i}"))
-            .collect()
-    };
-    if columns
-        .iter()
-        .enumerate()
-        .any(|(i, c)| c.is_empty() || columns[..i].iter().any(|p| p.eq_ignore_ascii_case(c)))
-        || records.iter().any(|r| r.len() != columns.len())
-    {
-        return Err("CSV needs nonempty headers and the same number of fields in every row".into());
-    }
-    Ok((columns, records))
+pub fn import_csv_from_text(text: &str, opts: &CsvImportOptions) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    let data = crate::csv_import::text(text, opts, 0)?;
+    Ok((data.columns, data.rows))
 }
 
 pub fn guard_output_path(conn: &Connection, path: &Path) -> Result<(), String> {
@@ -1749,6 +1695,40 @@ pub fn import_csv_into_table(
     })
 }
 
+/// Import CSV by column position, with the original empty/default/conflict policies.
+pub fn import_csv_data(conn: &Connection, table: &str, data: &crate::csv_import::Data, options: &CsvImportOptions) -> Result<u64, String> {
+    with_savepoint(conn, || {
+        if data.columns.is_empty() || data.types.len() != data.columns.len() { return Err("CSV has no valid column definition".into()); }
+        let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=?1 COLLATE NOCASE)", [table], |row| row.get(0)).map_err(|e| e.to_string())?;
+        if !exists {
+            let ddl = data.columns.iter().zip(&data.types).map(|(name, kind)| format!("{} {kind}", quote_ident(name))).collect::<Vec<_>>().join(", ");
+            create_table_simple(conn, table, &ddl)?;
+        }
+        let columns = table_columns(conn, table)?;
+        if columns.len() != data.columns.len() { return Err("Import into an existing table requires the same number of writable columns".into()); }
+        let strategy = match options.conflict { CsvConflict::Abort => "", CsvConflict::Ignore => " OR IGNORE", CsvConflict::Replace => " OR REPLACE" };
+        let mut count = 0;
+        for (row_index, row) in data.rows.iter().enumerate() {
+            if row.len() != columns.len() { return Err(format!("CSV row {} has the wrong number of fields", row_index + 1)); }
+            let mut names = Vec::new(); let mut values = Vec::new();
+            for (column, text) in columns.iter().zip(row) {
+                let value = if !text.is_empty() { rusqlite::types::Value::Text(text.clone()) }
+                    else if exists && !options.ignore_defaults && column.default_value.is_some() { continue; }
+                    else if exists && column.notnull {
+                        if options.fail_on_missing { return Err(format!("CSV row {}: missing value for NOT NULL column {}", row_index + 1, column.name)); }
+                        if column.type_name.to_ascii_uppercase().contains("INT") { rusqlite::types::Value::Integer(0) } else { rusqlite::types::Value::Text(String::new()) }
+                    } else { rusqlite::types::Value::Null };
+                names.push(quote_ident(&column.name)); values.push(value);
+            }
+            let target = qualified_name("main", table);
+            let sql = if names.is_empty() { format!("INSERT{strategy} INTO {target} DEFAULT VALUES") }
+                else { format!("INSERT{strategy} INTO {target} ({}) VALUES ({})", names.join(","), vec!["?"; names.len()].join(",")) };
+            count += conn.prepare_cached(&sql).and_then(|mut statement| statement.execute(params_from_iter(values))).map_err(|error| format!("CSV row {}: {error}", row_index + 1))? as u64;
+        }
+        Ok(count)
+    })
+}
+
 /// SQL dump (schema + data) similar to `.dump`.
 pub fn export_sql_dump(conn: &Connection, path: &Path) -> Result<(), String> {
     export_sql_dump_opts(conn, path, &ExportSqlOptions::default())
@@ -2222,6 +2202,40 @@ mod tests {
         .unwrap();
         assert!(import_sql_file(&conn, &path).is_err());
         assert!(count_rows(&conn, "broken").is_err());
+    }
+
+    #[test]
+    fn csv_import_options_preserve_types_defaults_constraints_conflicts_and_transactions() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE saved(v); INSERT INTO saved VALUES('before'); BEGIN; INSERT INTO saved VALUES('pending');
+            CREATE TABLE existing(id INTEGER PRIMARY KEY, amount INTEGER NOT NULL, note TEXT DEFAULT 'fallback', required TEXT NOT NULL, maybe TEXT, generated TEXT AS(required||'!'));
+            INSERT INTO existing(id,amount,required) VALUES(1,99,'old');").unwrap();
+        let opts = CsvImportOptions::default();
+        let data = crate::csv_import::text("different,headers,are,by,position\n2,,,new,\n3,4,x,next,z\n", &opts, 0).unwrap();
+        assert_eq!(import_csv_data(&conn,"EXISTING",&data,&opts).unwrap(),2);
+        let values: (i64,String,String,String,String) = conn.query_row("SELECT amount,note,required,typeof(maybe),generated FROM existing WHERE id=2",[],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();
+        assert_eq!(values,(0,"fallback".into(),"new".into(),"null".into(),"new!".into()));
+        let bad = crate::csv_import::text("a,b,c,d,e\n4,8,x,valid,z\n5,,, ,\n6,,,,\n", &opts, 0).unwrap();
+        assert!(import_csv_data(&conn,"existing",&bad,&CsvImportOptions {fail_on_missing:true,..opts.clone()}).unwrap_err().contains("missing value"));
+        assert_eq!(conn.query_row("SELECT count(*) FROM existing WHERE id>=4",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        let mut duplicate = data.clone(); duplicate.rows.push(vec!["1".into(),"2".into(),"replace".into(),"changed".into(),"v".into()]);
+        assert!(import_csv_data(&conn,"existing",&duplicate,&opts).is_err());
+        assert_eq!(import_csv_data(&conn,"existing",&duplicate,&CsvImportOptions {conflict:CsvConflict::Ignore,..opts.clone()}).unwrap(),0);
+        assert_eq!(import_csv_data(&conn,"existing",&duplicate,&CsvImportOptions {conflict:CsvConflict::Replace,..opts.clone()}).unwrap(),3);
+        assert_eq!(conn.query_row("SELECT required FROM existing WHERE id=1",[],|r|r.get::<_,String>(0)).unwrap(),"changed");
+        let empty = crate::csv_import::text("a,b,c,d,e\n8,,,,\n",&opts,0).unwrap();
+        import_csv_data(&conn,"existing",&empty,&CsvImportOptions {ignore_defaults:true,..opts.clone()}).unwrap();
+        assert_eq!(conn.query_row("SELECT typeof(note)||'/'||required FROM existing WHERE id=8",[],|r|r.get::<_,String>(0)).unwrap(),"null/");
+        let typed = crate::csv_import::text("id,real,word,missing\n1,2.5,x,\n2,3,y,\n",&opts,0).unwrap();
+        import_csv_data(&conn,"typed",&typed,&opts).unwrap();
+        assert_eq!(table_columns(&conn,"typed").unwrap().iter().map(|c|c.type_name.as_str()).collect::<Vec<_>>(),["INTEGER","REAL","TEXT","TEXT"]);
+        assert_eq!(conn.query_row("SELECT typeof(id)||'/'||typeof(real)||'/'||typeof(missing) FROM typed LIMIT 1",[],|r|r.get::<_,String>(0)).unwrap(),"integer/real/null");
+        let mut untyped=typed.clone(); untyped.types.fill(""); import_csv_data(&conn,"untyped",&untyped,&CsvImportOptions {detect_types:false,..opts.clone()}).unwrap();
+        assert_eq!(conn.query_row("SELECT typeof(id)||'/'||typeof(real) FROM untyped LIMIT 1",[],|r|r.get::<_,String>(0)).unwrap(),"text/text");
+        let quoted=crate::csv_import::text("\"field\"\";DROP TABLE saved;--\"\n1\n",&opts,0).unwrap();import_csv_data(&conn,"csv\";DROP TABLE saved;--",&quoted,&opts).unwrap();assert_eq!(count_rows(&conn,"saved").unwrap(),2);
+        assert!(import_csv_data(&conn,"existing",&typed,&opts).is_err());
+        assert!(!conn.is_autocommit()); conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count_rows(&conn,"saved").unwrap(),1); assert!(table_columns(&conn,"typed").unwrap().is_empty());
     }
 
     #[test]

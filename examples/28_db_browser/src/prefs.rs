@@ -12,6 +12,7 @@ pub struct Prefs {
     pub sql_completion: bool,
     pub sql_upper_keywords: bool,
     pub csv_delimiter: char,
+    pub csv_import: Option<crate::db::CsvImportOptions>,
     pub frozen_cols_default: usize,
 }
 
@@ -24,6 +25,7 @@ impl Default for Prefs {
             sql_completion: true,
             sql_upper_keywords: true,
             csv_delimiter: ',',
+            csv_import: None,
             frozen_cols_default: 0,
         }
     }
