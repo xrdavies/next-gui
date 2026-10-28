@@ -1420,7 +1420,7 @@ pub fn build_ui(
                                 c.text_styled(r"Regex replacements: \0–\9 captures · \n \r \t escapes", theme.colors.text_secondary, 11.0);
                                 let mut editor_style = area_s;
                                 editor_style.width = shell_w - 80.0;
-                                editor_style.height = (scroll.height - 242.0).max(100.0);
+                                editor_style.height = (scroll.height - 256.0).max(100.0);
                                 sql_area = c.text_area(state.sql_editor(), "SQL…", editor_style);
                             });
                         }

@@ -290,6 +290,13 @@ pub fn prepare(reader: impl std::io::Read, options: &CsvImportOptions) -> Result
     use std::io::Write;
     // Anonymous files are removed by the OS when handles close, including process crashes.
     let mut file = tempfile::tempfile().map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = file.metadata().map_err(|error| error.to_string())?.permissions();
+        permissions.set_mode(0o600);
+        file.set_permissions(permissions).map_err(|error| error.to_string())?;
+    }
     let mut writer = std::io::BufWriter::new(&mut file);
     let mut count = 0;
     let mut sink = |row: &[String]| {

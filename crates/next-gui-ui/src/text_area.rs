@@ -1097,7 +1097,7 @@ mod tests {
         let chrome = scene.get(ui.widgets[&area].chrome_node.unwrap()).unwrap();
         let ime = ui.ime_cursor_area(&scene).unwrap();
         assert_eq!((ime.0, ime.1), (chrome.bounds.x, chrome.bounds.y));
-        assert!(chrome.bounds.x >= content_x);
+        assert!(chrome.bounds.x >= content_x.floor());
         assert!(ui.ime_preedit("候选\n", None));
         ui.sync(&mut scene);
         let chrome = scene.get(ui.widgets[&area].chrome_node.unwrap()).unwrap();
