@@ -721,3 +721,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Full original PRAGMA catalog and safe apply — 2026-10-28
 
 [Review](../../docs/reviews/R-20261028-2850bcb3abde.md): original18 fields plus two retained extras now share validated accessible controls. Default-Cancel confirmation protects pending edits, invalid input precedes all writes, page/auto-vacuum rebuilds persist, actual states/errors and fresh transactions are retained.623 tests/strict checks,12 Soft/Metal pairs and six native static windows verified. Numeric steppers, shared word wrapping/layout polish, asynchronous VACUUM and complete native/product parity remain.
+
+### Static text word wrapping — 2026-10-28
+
+[Review](../../docs/reviews/R-20261028-f36b581271db.md): shared next-gui modal/tooltip text keeps fitting words intact while preserving paragraphs and long-path/CJK emergency wrapping.626 tests/strict checks, confirmation/calltip Metal comparisons and four native e28/14 rebuilt Office windows inspected. Complete Unicode shaping, long modal scrolling, numeric stepper/alignment and original/native product parity remain.
