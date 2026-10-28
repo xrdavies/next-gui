@@ -559,6 +559,9 @@ pub struct AppState {
     pub project_xml: Option<String>,
     saved_project: serde_json::Value,
     pub edit_saved: rusqlite::types::Value,
+    pub edit_revision: u64,
+    pub edit_view: Option<next_gui_ui::TextAreaState>,
+    pub edit_col_view: Option<next_gui_ui::TextInputState>,
     pub prefs: crate::prefs::Prefs,
     pub frozen_cols: usize,
     pub cond_rules: Vec<CondFormatRule>,
@@ -895,6 +898,9 @@ impl AppState {
             project_xml: None,
             saved_project: serde_json::Value::Null,
             edit_saved: rusqlite::types::Value::Null,
+            edit_revision: 0,
+            edit_view: None,
+            edit_col_view: None,
             prefs: crate::prefs::Prefs::load(),
             frozen_cols: 0,
             cond_rules: Vec::new(),
@@ -1453,6 +1459,7 @@ impl AppState {
     }
 
     fn clear_browse_editor(&mut self) {
+        self.reset_cell_editor_session();
         self.edit_source = EditCellSource::Browse;
         self.edit_col.clear();
         self.edit_value.clear();
@@ -3435,6 +3442,7 @@ impl AppState {
             }
         }
         self.checkpoint_project();
+        self.reset_cell_editor_session();
         self.edit_col.clear();
         self.edit_value.clear();
         self.edit_image_rgba = None;
@@ -3453,6 +3461,7 @@ impl AppState {
         if !matches!(self.edit_source, EditCellSource::Browse) {
             self.edit_original = self.edit_saved.clone(); self.show_edit_value(); return;
         }
+        self.reset_cell_editor_session();
         self.edit_col.clear();
         self.edit_value.clear();
         self.edit_image_rgba = None;
@@ -3672,7 +3681,15 @@ impl AppState {
         Ok(())
     }
 
+    fn reset_cell_editor_session(&mut self) {
+        // Equal text in another cell must not inherit this cell's undo history.
+        self.edit_revision = self.edit_revision.wrapping_add(1);
+        self.edit_view = None;
+        self.edit_col_view = None;
+    }
+
     fn show_edit_value(&mut self) {
+        self.reset_cell_editor_session();
         use rusqlite::types::Value;
         let bytes = match &self.edit_original {
             Value::Blob(v) => v.clone(),

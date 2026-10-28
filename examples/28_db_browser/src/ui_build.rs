@@ -2783,6 +2783,8 @@ pub fn build_ui(
     ui.set_accessible_name(edit_col,"Selected cell column");
     ui.set_accessible_name(edit_type,"Cell storage type");
     ui.set_accessible_name(edit_value,"Cell value");
+    if let Some(view) = &state.edit_view { ui.restore_text_area_state(edit_value, view); }
+    if let Some(view) = &state.edit_col_view { ui.restore_text_input_state(edit_col, view); }
     ui.set_accessible_name(btn_dock_close,"Close selected dock page");
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
