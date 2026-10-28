@@ -1,0 +1,126 @@
+{
+  "reviewed_commit": "cebc44a051a4db741a03f657e91d45b332800a0b",
+  "tests": 708,
+  "test_groups": 43,
+  "checks": {
+    "clippy": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-policy-v4-clippy-final.log"
+    },
+    "workspace": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-policy-v4-workspace-final.log"
+    },
+    "build": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-policy-v4-build-final.log"
+    },
+    "macos": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-policy-v4-macos-final.log"
+    },
+    "windows": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-policy-v4-windows-final.log"
+    }
+  },
+  "whole_frame_comparisons": {
+    "window-cell-policy-dark-pragmas-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-dark-pragmas-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-dark-structure-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-dark-structure-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-light-pragmas-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-light-pragmas-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-light-structure-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-policy-light-structure-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "native_windows": {
+    "dark-cell-structure": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/dark-cell-structure.driver.log"
+    },
+    "dark-cell-pragmas": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/dark-cell-pragmas.driver.log"
+    },
+    "dark-cell-structure-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/dark-cell-structure-narrow.driver.log"
+    },
+    "dark-cell-pragmas-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/dark-cell-pragmas-narrow.driver.log"
+    },
+    "light-cell-structure": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/light-cell-structure.driver.log"
+    },
+    "light-cell-pragmas": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/light-cell-pragmas.driver.log"
+    },
+    "light-cell-structure-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/light-cell-structure-narrow.driver.log"
+    },
+    "light-cell-pragmas-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-policy-v4-native/light-cell-pragmas-narrow.driver.log"
+    }
+  },
+  "native_binary": {
+    "sha256": "39892f03d118914a353e2fe5fe4c571c4f9319946dd1335d7e630336fd806752"
+  },
+  "source_sha256": {
+    "examples/28_db_browser/src/state.rs": "2b4e0a904ea98d97fd9fda80a35060aba4e0db98c9b82bb495436863300a3fc3",
+    "examples/28_db_browser/src/main.rs": "63ba60bdb5ddc45cc57c88dfe1a5d4e85cc9cef66c98ffefee46ef22960f5838",
+    "examples/28_db_browser/src/ui_build.rs": "31411045a9328e3c099d31ea6c6b2666b48d1186b448516e3c3a1b4f3cc89ed6",
+    "examples/28_db_browser/src/dock_tests.rs": "9e0f77dc429341d73db159351fa24fd4e19f93f70f46c72893ecf2fe410360dd"
+  },
+  "assets_sha256": {
+    "native-light-pragmas-narrow.png": "c12d3855525e23b2e9655f904d4be94d1afb7d328ee6908d526579010e71941a",
+    "metal-contact.png": "e40e02b43adef0c37bbb64760b8966d3a01ab31e6d202942302c2ae6bfb21e6e",
+    "soft-contact.png": "af21b76a3d3a9a8bfa626fffa1bb2e3a16b9d41a9f3738436947b84091506717",
+    "native-contact.png": "c8dbecf10f7efabf46efcdd2faeb4d2c2d38351ea990663e9c4382bd917336f4"
+  }
+}
