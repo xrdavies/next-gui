@@ -258,7 +258,14 @@ fn object_id(text: &str) -> Result<(&str, &str), String> {
 
 fn relative_path(path: &str, project: &Path) -> String {
     let path = Path::new(path);
-    if path.is_absolute() && path.parent() == project.parent() {
+    let project_parent = project.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let same_directory = path.parent().is_some_and(|parent| {
+        parent == project_parent || match (parent.canonicalize(), project_parent.canonicalize()) {
+            (Ok(database), Ok(project)) => database == project,
+            _ => false,
+        }
+    });
+    if path.is_absolute() && same_directory {
         path.file_name()
             .unwrap_or_default()
             .to_string_lossy()
@@ -908,6 +915,22 @@ pub fn restore_connection(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn relative_database_path_survives_parent_directory_aliases() {
+        let directory = tempfile::tempdir().unwrap();
+        let real = directory.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let alias = directory.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let database = real.join("data.db");
+        std::fs::write(&database, "fixture").unwrap();
+        assert_eq!(super::relative_path(database.to_str().unwrap(), &alias.join("project.sqbpro")), "data.db");
+        assert_eq!(super::relative_path("missing/data.db", &alias.join("project.sqbpro")), "missing/data.db");
+        let elsewhere = directory.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        assert_eq!(super::relative_path(database.to_str().unwrap(), &elsewhere.join("project.sqbpro")), database.to_str().unwrap());
+    }
     use super::*;
 
     #[test]
