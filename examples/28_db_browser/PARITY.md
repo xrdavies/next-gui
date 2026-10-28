@@ -127,7 +127,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Scroll form of pragmas | partial | All original18 fields plus cache_size/busy_timeout; accessible boolean/enum/numeric controls and retained focus/Undo/scroll. Exact i64 numeric steppers, shared Undo/resize history and measured label-column alignment verified; pointer press-and-hold/native original acceptance remain. |
+| Scroll form of pragmas | partial | All original18 fields plus cache_size/busy_timeout; accessible boolean/enum/numeric controls and retained focus/Undo/scroll. Exact i64 numeric steppers, shared Undo/resize history and measured label-column alignment verified; 500/150ms pointer hold, pause/rearm, cancellation and active contrast verified; native original/wheel/modifier acceptance remain. |
 | Save / Apply pragmas | partial | Validated before any COMMIT; dirty edits require default-Cancel confirmation. Writes read actual state; page_size/auto_vacuum run VACUUM and clear cached row identities. File persistence and partial errors verified. VACUUM is synchronous; native input acceptance remains. |
 | Bool / Select editors | done | All original boolean/enum fields, including Page Size, Temp Store and secure_delete Fast retained. |
 
@@ -737,3 +737,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Long confirmations and GPU text limits —2026-10-28
 
 [Review](../../docs/reviews/R-20261028-14e5b79b9315.md): shared modal prose scrolls by wheel/keys/thumb within a clipped viewport above fixed actions, preserves matching reading/action state across rebuild/resize and exposes its complete accessible description. Oversized alpha masks now tile beyond actual adapter limits, avoiding a reproduced long-name native GPU abort.640 workspace tests/strict checks, eight render pairs (max2), six browser and14 rebuilt Office native windows inspected. Native OS input/original binary/platform acceptance, complete text shaping and broader product parity remain unfinished.
+
+### Held integer editors and idle-safe host deadlines — 2026-10-28
+
+[Review](../../docs/reviews/R-20261028-a3dc6cdd4f0c.md): shared exact integer arrows repeat with500ms initial/150ms cadence, pause outside, stop at bounds and cancel across release/focus/IME/edit/modal/resize/rebuild. All hosts expose coalesced one-shot redraw deadlines without idle polling; actual macOS deadline and20ms soak probes pass. Browser repeats update only the draft until explicit Save; both-theme pressed contrast corrected.644 tests/strict checks, eight Soft/Metal pairs (max2), six native browser/14 rebuilt Office windows inspected. Native original gestures, wheel/modifiers, actual Windows/Linux runtime and full product/interface parity remain unfinished.

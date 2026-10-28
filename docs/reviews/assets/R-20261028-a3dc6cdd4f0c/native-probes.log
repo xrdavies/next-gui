@@ -1,0 +1,42 @@
+Native deadline probe, soak off:
+phase=0 actual_delay_ms=140 redraws=3 focus_events=1
+phase=1 actual_delay_ms=76 redraws=4 focus_events=1
+phase=2 actual_delay_ms=99 redraws=5 focus_events=1
+native deadline probe passed total_ms=317
+
+Native deadline probe, soak interval20ms:
+phase=0 actual_delay_ms=131 redraws=7 focus_events=1
+phase=1 actual_delay_ms=83 redraws=10 focus_events=1
+phase=2 actual_delay_ms=105 redraws=14 focus_events=1
+native deadline probe passed total_ms=321
+
+=== held dark at a3dc6cdd4f0c ===
+e28_db_browser ready 1400x860 backend=GPU path=:memory:
+native held stepper armed input=WidgetId(77) focus=Some(WidgetId(77)) delay=Some(459.97925ms)
+native held stepper armed input=WidgetId(77) focus=Some(WidgetId(77)) delay=Some(465.41925ms)
+native held stepper draft=9007199254740995
+native held stepper draft=9007199254740996
+native held stepper draft=9007199254740997
+native held stepper draft=9007199254740998
+native held stepper draft=9007199254740999
+native held stepper draft=9007199254741000
+native held stepper draft=9007199254741001
+native held stepper draft=9007199254741002
+native held stepper draft=9007199254741003
+native held stepper draft=9007199254741004
+native held stepper draft=9007199254741005
+
+=== held light at a3dc6cdd4f0c ===
+e28_db_browser ready 1400x860 backend=GPU path=:memory:
+native held stepper armed input=WidgetId(77) focus=Some(WidgetId(77)) delay=Some(483.360833ms)
+native held stepper armed input=WidgetId(77) focus=Some(WidgetId(77)) delay=Some(477.521084ms)
+native held stepper draft=9007199254740995
+native held stepper draft=9007199254740996
+native held stepper draft=9007199254740997
+native held stepper draft=9007199254740998
+native held stepper draft=9007199254740999
+native held stepper draft=9007199254741000
+native held stepper draft=9007199254741001
+native held stepper draft=9007199254741002
+native held stepper draft=9007199254741003
+native held stepper draft=9007199254741004
