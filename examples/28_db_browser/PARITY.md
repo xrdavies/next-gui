@@ -40,8 +40,8 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Close Database | done | confirm modal |
 | Save Database As… | done | SQLite live backup includes WAL and in-memory data; new destination required; commits pending edits first; encrypted databases use encrypted export |
 | Import → Database from SQL file… | done | Atomic savepoint import; dump transaction wrappers cannot commit prior edits |
-| Import → Table from CSV file… | partial | Bounded preview, supported codecs/BOMs, custom characters/codepoints, trim/type/default/missing/conflict policies, multi-file selection/shared or per-file targets/four-choice append confirmation/retry and settings; locale/Qt codecs/cancellable streaming import/original modal pending |
-| Import → Table from CSV clipboard… | partial | Unicode clipboard, shared preview/options/type/policy engine and safe positional append; full original import workflow pending |
+| Import → Table from CSV file… | partial | Bounded preview, supported codecs/BOMs, custom characters/codepoints, trim/type/default/missing/conflict policies, multi-file selection/shared or per-file targets/four-choice append confirmation/retry and settings; validated streaming snapshots; locale/Qt codecs/background progress/cancellation/original modal pending |
+| Import → Table from CSV clipboard… | partial | Unicode clipboard, shared preview/options/type/policy engine, validated anonymous snapshot and safe four-choice positional append; background progress/cancellation and full original import workflow pending |
 | Export → Database to SQL file… | done | Uncapped typed rows, generated columns, triggers after data, AUTOINCREMENT sequence; virtual tables fail explicitly |
 | Export → Table(s) as CSV… | partial | Complete current filtered table; no multi-table chooser; BLOB as hex; CSV does not preserve NULL/type distinctions |
 | Export → Table(s) to JSON… | partial | Complete current filtered table; typed numbers/null, BLOB hex string; no multi-table chooser |
@@ -697,3 +697,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### CSV multi-file workflow and abort safety — 2026-10-28
 
 [Review](../../docs/reviews/R-20261028-83bec7daaef8.md): native multi-file paths, checkbox selection, Select All/Match Similar, shared/separate per-file names, original Yes/No/YesAll/Cancel default-No confirmation and partial retry now reach actual SQLite imports. Confirmation snapshots, focus/width/scroll/resize sessions, original header-off/trim-on defaults and explicit trigger rollback recovery pass. A reproduced inherited ROLLBACK-policy data-loss bug is fixed by explicit OR ABORT.587 tests/strict checks,16 Soft/Metal pairs (delta1–2) and six native static windows inspected. CSV locale/Qt codecs/worker progress/cancellation/streamed insertion/parser compatibility/original modal and broader interface/product/native parity remain in_progress.
+
+### CSV validated streaming snapshots — 2026-10-28
+
+[Review](../../docs/reviews/R-20261028-16d823ae8faf.md): actual file/clipboard imports now validate to an anonymous private snapshot, retain the first20 raw records for preview/type detection, and insert rows incrementally through the shared savepoint/policy engine. Independent positional readers and exact record counts reject corrupted/truncated snapshots; current confirmation retains the same accepted data.50,000 multiline rows and SQLite count/sum/rollback,589 tests/strict checks and two current native static confirmations verified. Memory still includes sampled/largest records and temp disk scales with parsed data. Background progress/cancellation, local conventions/Qt codecs/parser compatibility/original modal and broader product/native parity remain unfinished.
