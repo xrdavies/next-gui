@@ -17,11 +17,11 @@ pub fn pick_save_db() -> Option<PathBuf> {
         .save_file()
 }
 
-pub fn pick_open_csv() -> Option<PathBuf> {
+pub fn pick_open_csv() -> Option<Vec<PathBuf>> {
     rfd::FileDialog::new()
         .add_filter("CSV", &["csv", "txt"])
         .set_title("Import CSV")
-        .pick_file()
+        .pick_files()
 }
 
 pub fn pick_save_csv() -> Option<PathBuf> {

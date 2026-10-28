@@ -83,6 +83,7 @@ pub mod mid {
 #[allow(dead_code)]
 pub struct BuiltUi {
     pub ui: Ui,
+    pub csv_files: crate::csv_files::Controls,
     pub column_picker: crate::column_picker::Controls,
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
@@ -664,6 +665,7 @@ pub fn build_ui(
     let mut ov_csv_preview = z;
     let mut ov_csv_preview_error = z;
     let mut ov_csv_scroll = z;
+    let mut csv_files = crate::csv_files::Controls::default();
     let mut ov_csv_paste = z;
     let mut ov_attach_path = z;
     let mut ov_attach_schema = z;
@@ -1311,6 +1313,7 @@ pub fn build_ui(
                             c.row(body, |body| {
                                 let mut options = next_gui_ui::ScrollAreaStyle::from_theme(&theme); options.width = left_w; options.height = body_h; options.padding = 8.0;
                                 ov_csv_scroll = body.scroll_area(options, |c| {
+                                    csv_files = crate::csv_files::build_files(c,state,&theme,left_w-16.0);
                                     let mut option_row = row; option_row.width = left_w - 16.0;
                                     let mut input = name_s; input.width = left_w - 82.0;
                                     if kind == OverlayKind::ImportCsv {
@@ -2372,11 +2375,6 @@ pub fn build_ui(
                 .unwrap_or_else(|| "Delete selected object?".into()),
             "Delete",
         ),
-        ConfirmKind::ImportCsv => (
-            "Import into Existing Table",
-            format!("Append CSV rows to existing table '{}'?\nColumns are matched by position.{}", state.csv_table.trim(), if state.csv_import_settings.conflict == crate::db::CsvConflict::Replace { "\nConflicting rows will be replaced." } else { "" }),
-            "Cancel",
-        ),
         ConfirmKind::DeleteColumn(row) => (
             "Remove Field",
             format!("Remove field '{}'?\nThe field and its data will be removed when you save.", state.wizard_cols.get(row).map_or("", |column| column.name.as_str())),
@@ -2404,12 +2402,12 @@ pub fn build_ui(
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
     let mut modal_style = ModalStyle::from_theme(&theme);
-    if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::ImportCsv) { modal_style.height = 170.0; }
+    if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { modal_style.height = 170.0; }
     let modal = ui.modal(
         modal_title,
         modal_body,
         modal_primary,
-        Some(if state.confirm_kind == ConfirmKind::ImportCsv { "Import" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
+        Some(if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
         modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
@@ -2539,9 +2537,12 @@ pub fn build_ui(
     ui.set_image_view(edit_image, state.edit_image_view);
     ui.set_text_area_line_numbers(sql_area, true);
     ui.set_text_area_read_only(log_area, true);
+    crate::csv_files::configure(&mut ui,csv_files,state);
+    crate::csv_files::build_confirmation(&mut ui,&mut csv_files,state,&theme,width as f32);
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     ui.sync(&mut scene);
     crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
+    crate::csv_files::restore(&mut ui,csv_files,state);
     if let Some(draft)=state.wizard_constraint_edit.as_ref().and_then(|edit|edit.reference.as_ref()).or_else(||state.wizard_field_edit.as_ref().and_then(|edit|edit.reference.as_ref())) {crate::reference_editor::restore(&mut ui,reference_editor,draft);}
     ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
     if state.overlay == Some(OverlayKind::EditIndex) {
@@ -2603,6 +2604,7 @@ pub fn build_ui(
 
     BuiltUi {
         ui,
+        csv_files,
         column_picker,
         reference_editor,
         body_splitter,

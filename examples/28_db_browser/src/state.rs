@@ -484,6 +484,8 @@ pub struct AppState {
     pub wizard_index_original: Option<SelectedObject>,
 
     // CSV import wizard
+    pub csv_work: Option<crate::csv_files::Work>,
+    pub csv_files: Option<crate::csv_files::Batch>,
     pub csv_scroll: (f32, f32),
     pub csv_advanced: bool,
     pub csv_custom_delimiter: String,
@@ -624,7 +626,6 @@ pub enum ConfirmKind {
     DropObject,
     DeleteRow,
     DeleteColumn(usize),
-    ImportCsv,
     Documents,
     Revert,
 }
@@ -810,6 +811,8 @@ impl AppState {
             wizard_index_available_sel: 0,
             wizard_index_unique: false,
             wizard_index_original: None,
+            csv_work: None,
+            csv_files: None,
             csv_scroll: (0.0, 0.0),
             csv_advanced: false,
             csv_custom_delimiter: String::new(),
@@ -2200,7 +2203,7 @@ impl AppState {
     }
 
     pub fn load_csv_import_settings(&mut self) {
-        let opts = self.prefs.csv_import.clone().unwrap_or_else(|| CsvImportOptions { delimiter: self.prefs.csv_delimiter, ..CsvImportOptions::default() });
+        let opts = self.prefs.csv_import.clone().unwrap_or_else(|| CsvImportOptions { has_header: false, trim_fields: true, delimiter: self.prefs.csv_delimiter, ..CsvImportOptions::default() });
         self.csv_has_header = opts.has_header;
         self.csv_delim_idx = match opts.delimiter { ',' => 0, ';' => 1, '\t' => 2, '|' => 3, _ => 4 };
         self.csv_custom_delimiter = opts.delimiter.to_string();
@@ -2212,13 +2215,41 @@ impl AppState {
         self.csv_preview = None;
     }
 
+    pub fn open_csv_files(&mut self, paths: Vec<PathBuf>) -> bool {
+        let Some(batch) = crate::csv_files::Batch::new(paths, self.prefs.csv_separate_tables) else { return false; };
+        self.load_csv_import_settings();
+        self.csv_path = batch.files[0].path.display().to_string();
+        self.csv_table = batch.target(0).into();
+        self.csv_files = Some(batch); self.csv_scroll = (0.0, 0.0);
+        self.overlay = Some(OverlayKind::ImportCsv); true
+    }
+
+    pub fn selected_csv_path(&self) -> &Path {
+        self.csv_files.as_ref().map_or_else(|| Path::new(&self.csv_path), |batch| batch.files[batch.current].path.as_path())
+    }
+
+    pub fn select_csv_file(&mut self, index: usize) -> bool {
+        let Some(batch) = &mut self.csv_files else { return false; };
+        if !batch.select(index, &self.csv_table) { return false; }
+        self.csv_path = batch.files[index].path.display().to_string(); self.csv_table = batch.target(index).into(); self.csv_preview = None; true
+    }
+
     pub fn refresh_csv_preview(&mut self) {
         if self.csv_preview.is_some() { return; }
+        if let Some(work) = &self.csv_work {
+            if let Some(data) = &work.pending {
+                self.csv_preview = Some(Ok(crate::csv_import::Data {
+                    columns: data.columns.clone(), types: data.types.clone(),
+                    rows: data.rows.iter().take(20 - usize::from(work.options.has_header)).cloned().collect(),
+                }));
+                return;
+            }
+        }
         let options = self.csv_options();
         self.csv_preview = Some(if self.overlay == Some(OverlayKind::PasteCsv) {
             crate::csv_import::text(&self.csv_paste, &options, 20)
         } else {
-            std::fs::File::open(&self.csv_path).map_err(|e| e.to_string()).and_then(|file| crate::csv_import::read(file, &options, 20))
+            std::fs::File::open(self.selected_csv_path()).map_err(|e| e.to_string()).and_then(|file| crate::csv_import::read(file, &options, 20))
         });
     }
 
@@ -2245,38 +2276,8 @@ impl AppState {
         }
     }
 
-    pub fn csv_target_exists(&mut self) -> Result<bool, String> {
-        self.guard_writable()?;
-        self.conn.as_ref().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=?1 COLLATE NOCASE)", [self.csv_table.trim()], |row| row.get(0)).map_err(|e| e.to_string())
-    }
-
     pub fn apply_csv_import(&mut self) -> Result<(), String> {
-        self.guard_writable()?;
-        let table = self.csv_table.trim().to_string();
-        if table.is_empty() {
-            return Err("Table name required".into());
-        }
-        let opts = self.csv_options();
-        // shortcut: full imports retain parsed rows; stream under a savepoint when adding import cancellation/progress.
-        let data = if self.overlay == Some(OverlayKind::PasteCsv) {
-            crate::csv_import::text(&self.csv_paste, &opts, 0)?
-        } else {
-            crate::csv_import::read(std::fs::File::open(&self.csv_path).map_err(|e| e.to_string())?, &opts, 0)?
-        };
-        let n = db::import_csv_data(self.conn.as_ref().unwrap(), &table, &data, &opts)?;
-        self.csv_preview = None;
-        self.prefs.csv_delimiter = opts.delimiter;
-        self.prefs.csv_import = Some(opts);
-        let settings_error = if cfg!(test) { None } else { self.prefs.save().err() };
-        self.log_sql(format!("-- import csv → {table} ({n} rows)"));
-        self.mark_dirty();
-        self.overlay = None;
-        self.refresh_schema()?;
-        *self.browse_mut() = BrowseTabState::new(Some(table.clone()));
-        self.refresh_browse()?;
-        self.status_msg = format!("Imported {n} rows into `{table}` (unwritten)");
-        if let Some(error) = settings_error { self.status_msg.push_str(&format!("; settings could not be saved: {error}")); }
-        Ok(())
+        self.start_csv_import_work()
     }
 
     pub fn pick_chart_source(&mut self) {
@@ -2520,6 +2521,8 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.csv_work=None;self.csv_files=None;self.csv_preview=None;
+        if matches!(self.overlay,Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.overlay=None;}
         if let Some(conn) = self.conn.take() {
             let _ = conn.execute_batch("ROLLBACK");
             drop(conn);
@@ -4884,9 +4887,109 @@ mod chart_default_tests {
         assert!(state.chart_table.is_none());
     }
 
+    fn csv_batch_state(contents:&[(&str,&str)]) -> (tempfile::TempDir,AppState) {
+        let directory=tempfile::tempdir().unwrap();let paths=contents.iter().map(|(name,text)| {let path=directory.path().join(name);std::fs::write(&path,text).unwrap();path}).collect();
+        let mut state=test_state();assert!(state.open_csv_files(paths));state.csv_has_header=true;state.csv_files.as_mut().unwrap().separate=true;
+        (directory,state)
+    }
+
+    #[test]
+    fn csv_batch_no_and_yes_all_import_only_accepted_files_and_preserve_pending_changes() {
+        use crate::csv_files::Answer;
+        let (_directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\ntwo\n"),("third.csv","v\nthree\n")]);
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE first(v TEXT);INSERT INTO first VALUES('old');CREATE TABLE second(v TEXT);INSERT INTO second VALUES('old');CREATE TABLE third(v TEXT);INSERT INTO third VALUES('old');INSERT INTO t VALUES('pending');").unwrap();
+        state.start_csv_import_work().unwrap();assert!(state.csv_work.as_ref().unwrap().pending.is_some());assert_eq!(state.csv_work.as_ref().unwrap().target(),"first");
+        state.continue_csv_import_work(Some(Answer::No)).unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert!(state.csv_files.as_ref().unwrap().files[0].done);
+        state.continue_csv_import_work(Some(Answer::YesAll)).unwrap();assert!(state.csv_work.is_none());assert!(state.csv_files.is_none());assert!(state.overlay.is_none());
+        let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(db::count_rows(conn,"second").unwrap(),2);assert_eq!(db::count_rows(conn,"third").unwrap(),2);assert_eq!(db::count_rows(conn,"t").unwrap(),2);assert!(!conn.is_autocommit());assert!(state.dirty);
+        assert!(state.prefs.csv_separate_tables);assert!(state.prefs.csv_import.as_ref().unwrap().has_header);
+        let (_directory,mut merged)=csv_batch_state(&[("one.csv","v\none\n"),("two.csv","v\ntwo\n"),("three.csv","v\nthree\n")]);
+        merged.csv_files.as_mut().unwrap().separate=false;merged.csv_table="merged".into();
+        merged.start_csv_import_work().unwrap();assert_eq!(merged.csv_work.as_ref().unwrap().target(),"merged");
+        assert_eq!(db::count_rows(merged.conn.as_ref().unwrap(),"merged").unwrap(),1);
+        merged.continue_csv_import_work(Some(Answer::Yes)).unwrap();
+        assert!(merged.csv_work.is_none());assert!(merged.overlay.is_none());
+        assert_eq!(merged.conn.as_ref().unwrap().query_row("SELECT group_concat(v,',') FROM merged",[],|row|row.get::<_,String>(0)).unwrap(),"one,two,three");
+    }
+
+    #[test]
+    fn csv_batch_cancel_and_retry_keep_unselected_files_and_never_duplicate_completed_files() {
+        use crate::csv_files::Answer;
+        let (_directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\ntwo\n"),("third.csv","v\nthree\n")]);
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE second(v TEXT);INSERT INTO second VALUES('old')").unwrap();state.csv_files.as_mut().unwrap().files[2].selected=false;
+        state.start_csv_import_work().unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert_eq!(db::count_rows(state.conn.as_ref().unwrap(),"first").unwrap(),1);
+        state.continue_csv_import_work(Some(Answer::Cancel)).unwrap();assert!(state.csv_work.is_none());assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert_eq!(state.csv_files.as_ref().unwrap().queue(),[1]);
+        state.start_csv_import_work().unwrap();state.continue_csv_import_work(Some(Answer::Yes)).unwrap();assert!(state.csv_work.is_none());assert!(state.overlay.is_some());assert!(state.csv_files.as_ref().unwrap().queue().is_empty());
+        state.csv_files.as_mut().unwrap().files[2].selected=true;state.start_csv_import_work().unwrap();assert!(state.overlay.is_none());assert!(state.csv_files.is_none());
+        let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(db::count_rows(conn,"second").unwrap(),2);assert_eq!(db::count_rows(conn,"third").unwrap(),1);
+    }
+
+    #[test]
+    fn csv_batch_failed_file_is_retryable_without_reimporting_successful_files() {
+        let (directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\n\"broken")]);
+        state.conn.as_ref().unwrap().execute("INSERT INTO t VALUES('pending')",[]).unwrap();
+        let error=state.start_csv_import_work().unwrap_err();assert!(error.contains("second.csv") && error.contains("Unterminated"));assert!(state.csv_work.is_none());assert_eq!(state.csv_files.as_ref().unwrap().queue(),[1]);
+        let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(db::count_rows(conn,"t").unwrap(),2);assert!(!conn.is_autocommit());
+        std::fs::write(directory.path().join("second.csv"),"v\nfixed\n").unwrap();state.start_csv_import_work().unwrap();assert!(state.overlay.is_none());
+        let conn=state.conn.as_ref().unwrap();assert_eq!(db::count_rows(conn,"first").unwrap(),1);assert_eq!(conn.query_row("SELECT v FROM second",[],|row|row.get::<_,String>(0)).unwrap(),"fixed");
+    }
+
+    #[test]
+    fn csv_batch_confirmation_uses_snapshot_and_cancel_keeps_current_unfinished_file() {
+        use crate::csv_files::Answer;
+        let (directory,mut state)=csv_batch_state(&[("first.csv","v\nunselected\n"),("second.csv","v\nconfirmed\n")]);
+        state.csv_files.as_mut().unwrap().files[0].selected=false;
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE second(v TEXT)").unwrap();
+        state.start_csv_import_work().unwrap();state.refresh_csv_preview();
+        assert_eq!(state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][0],"confirmed");
+        std::fs::write(directory.path().join("second.csv"),"v\nchanged after confirmation\n").unwrap();
+        state.csv_preview=None;state.refresh_csv_preview();
+        assert_eq!(state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][0],"confirmed");
+        state.continue_csv_import_work(Some(Answer::Cancel)).unwrap();
+        assert_eq!(state.csv_files.as_ref().unwrap().current,1);assert_eq!(state.csv_table,"second");
+        state.start_csv_import_work().unwrap();state.continue_csv_import_work(Some(Answer::Yes)).unwrap();
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM second",[],|row|row.get::<_,String>(0)).unwrap(),"changed after confirmation");
+        assert_eq!(state.csv_files.as_ref().unwrap().visible(),[0]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn csv_batch_retains_native_file_paths_without_lossy_roundtrip() {
+        use std::os::unix::ffi::OsStringExt;
+        let directory=tempfile::tempdir().unwrap();
+        let path=directory.path().join(std::ffi::OsString::from_vec(b"native-\xff.csv".to_vec()));
+        let written=std::fs::write(&path,"v\n日本\n");
+        let mut state=test_state();assert!(state.open_csv_files(vec![path.clone()]));
+        state.csv_has_header=true;state.csv_table="native_path".into();
+        assert_eq!(state.selected_csv_path(),path.as_path());
+        if let Err(error)=written {
+            // macOS filesystems reject invalid UTF-8 names before a file can exist.
+            assert!(cfg!(target_os="macos") && error.raw_os_error()==Some(92),"{error}");
+            assert!(state.start_csv_import_work().is_err());
+            assert!(!state.conn.as_ref().unwrap().is_autocommit());
+            assert!(db::table_columns(state.conn.as_ref().unwrap(),"native_path").unwrap().is_empty());
+            return;
+        }
+        state.refresh_csv_preview();
+        assert_eq!(state.csv_preview.as_ref().unwrap().as_ref().unwrap().rows[0][0],"日本");
+        state.start_csv_import_work().unwrap();
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM native_path",[],|row|row.get::<_,String>(0)).unwrap(),"日本");
+    }
+
+    #[test]
+    fn csv_batch_trigger_rollback_clears_progress_and_requires_explicit_reselection() {
+        use crate::csv_files::Answer;
+        let (_directory,mut state)=csv_batch_state(&[("first.csv","v\none\n"),("second.csv","v\nbad\n")]);
+        state.conn.as_ref().unwrap().execute_batch("COMMIT;CREATE TABLE second(v TEXT);INSERT INTO second VALUES('saved');CREATE TRIGGER stop_import BEFORE INSERT ON second WHEN new.v='bad' BEGIN SELECT RAISE(ROLLBACK,'stop import');END;BEGIN;INSERT INTO t VALUES('pending');").unwrap();
+        state.start_csv_import_work().unwrap();assert_eq!(state.csv_work.as_ref().unwrap().target(),"second");assert!(state.csv_files.as_ref().unwrap().files[0].done);
+        let error=state.continue_csv_import_work(Some(Answer::Yes)).unwrap_err();assert!(error.contains("SQLite rolled back"),"{error}");assert!(state.csv_work.is_none());assert!(state.overlay.is_some());assert!(!state.dirty);
+        let batch=state.csv_files.as_ref().unwrap();assert!(batch.queue().is_empty());assert!(batch.files.iter().all(|file|!file.done && !file.selected));
+        let conn=state.conn.as_ref().unwrap();assert!(!conn.is_autocommit());assert_eq!(db::count_rows(conn,"t").unwrap(),1);assert_eq!(db::count_rows(conn,"second").unwrap(),1);assert!(db::table_columns(conn,"first").unwrap().is_empty());
+    }
+
     #[test]
     fn csv_import_settings_roundtrip_custom_characters_and_upgrade_old_preferences() {
-        let mut state=test_state();state.prefs.csv_import=None;state.prefs.csv_delimiter=';';state.load_csv_import_settings();assert_eq!(state.csv_options().delimiter,';');
+        let mut state=test_state();state.prefs.csv_import=None;state.prefs.csv_delimiter=';';state.load_csv_import_settings();assert_eq!(state.csv_options().delimiter,';');assert!(!state.csv_options().has_header);assert!(state.csv_options().trim_fields);
         let options=CsvImportOptions {delimiter:'§',quote:None,encoding:"Shift_JIS".into(),has_header:false,trim_fields:true,detect_types:false,ignore_defaults:true,fail_on_missing:true,conflict:db::CsvConflict::Replace};
         state.prefs.csv_import=Some(options.clone());let json=serde_json::to_string(&state.prefs).unwrap();state.prefs=serde_json::from_str(&json).unwrap();state.load_csv_import_settings();assert_eq!(state.csv_options(),options);
         state.csv_delim_idx=5;state.csv_custom_delimiter="U+001F".into();state.csv_quote_idx=4;state.csv_custom_quote="34".into();assert_eq!(state.csv_options().delimiter,'\u{1f}');assert_eq!(state.csv_options().quote,Some('"'));
