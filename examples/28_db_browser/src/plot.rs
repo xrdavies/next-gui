@@ -203,7 +203,19 @@ impl DataType {
     }
 }
 
-#[derive(Debug, Default)]
+// shortcut: retain at most 256 MiB of points/labels; stream larger plots when required.
+const POINT_BUDGET: usize = 256 * 1024 * 1024;
+
+#[derive(Debug, Clone)]
+struct Full {
+    source: Source,
+    preview: Arc<()>,
+    result: Arc<crate::db::QueryResult>,
+    settings: Settings,
+    versions: Option<Vec<(String, i64)>>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct Model {
     pub settings: Settings,
     pub data: PlotData,
@@ -216,6 +228,7 @@ pub struct Model {
     snapshot: Option<Arc<()>>,
     offset: usize,
     dirty: bool,
+    full: Option<Full>,
 }
 
 impl Model {
@@ -228,6 +241,7 @@ impl Model {
         self.columns.clear();
         self.source = None;
         self.snapshot = None;
+        self.full = None;
         self.selected = None;
         self.linked_rows = Arc::default();
         self.title.clear();
@@ -387,6 +401,93 @@ impl Model {
         offset: usize,
         total: Option<usize>,
     ) -> Result<(), String> {
+        if self.full_matches(&source, result) {
+            self.data.show_legend = self.settings.show_legend;
+            self.full.as_mut().unwrap().settings.show_legend = self.settings.show_legend;
+            self.summary = format!("{} rows · all loaded", self.full.as_ref().unwrap().result.values.len());
+            return if self.dirty { Err("Full plot changes require a background rebuild".into()) } else { Ok(()) };
+        }
+        self.full = None;
+        self.sync_preview(source, result, offset, total, |_| Ok(()))
+    }
+
+    pub fn has_full(&self) -> bool { self.full.is_some() }
+
+    pub fn full_matches(&self, source: &Source, result: &crate::db::QueryResult) -> bool {
+        self.full.as_ref().is_some_and(|full| &full.source == source && Arc::ptr_eq(&full.preview, &result.values.identity()))
+    }
+
+    pub fn needs_full_rebuild(&self, source: &Source, result: &crate::db::QueryResult) -> bool {
+        self.dirty && self.full_matches(source, result)
+    }
+
+    pub fn reject_full_changes(&mut self) {
+        if let Some(full) = &self.full { self.settings = full.settings.clone(); }
+        self.dirty = false;
+    }
+
+    pub fn discard_full(&mut self) { self.full = None; self.invalidate(); }
+
+    pub fn set_full_versions(&mut self, versions: Vec<(String, i64)>) {
+        if let Some(full) = &mut self.full { full.versions = Some(versions); }
+    }
+
+    pub fn carry_full_preview(&mut self, from: &Arc<()>, to: Arc<()>, versions: Option<Vec<(String, i64)>>) {
+        if let Some(full) = &mut self.full {
+            if Arc::ptr_eq(&full.preview, from) {
+                if versions.is_some() && full.versions == versions { full.preview = to; }
+                else { self.discard_full(); }
+            }
+        }
+    }
+
+    pub fn load_all(&mut self, source: Source, preview: &crate::db::QueryResult, input: &crate::db::QueryResult, mut check: impl FnMut(usize) -> Result<(), String>) -> Result<(), String> {
+        let versions = self.full.as_ref().and_then(|full| full.versions.clone());
+        let result = if self.full_matches(&source, preview) {
+            self.full.as_ref().unwrap().result.clone()
+        } else {
+            let file = input.export_rows.as_ref().ok_or("Plot needs a complete typed result snapshot")?.clone();
+            let series = self.config().map_or(1, |c| c.series.iter().filter(|s| s.active).count().max(1));
+            let max_rows = POINT_BUDGET / std::mem::size_of::<PlotPoint>() / series;
+            let values = CellSnapshot::from_file(file, input.columns.len(), |rows| {
+                check(rows)?;
+                if rows > max_rows { return Err("Plot exceeds the 256 MiB point budget; select fewer series or filter rows".into()); }
+                Ok(())
+            })?;
+            if matches!(source, Source::Table { .. }) {
+                if input.columns != preview.columns { return Err("Browse columns changed; refresh before loading all rows".into()); }
+                if self.offset.checked_add(preview.values.len()).is_none_or(|end| end > values.len()) {
+                    return Err("Browse row count changed; refresh before loading all rows".into());
+                }
+                for row in 0..preview.values.len() {
+                    check(row)?;
+                    if values.row(self.offset.saturating_add(row))?.as_ref() != preview.values.row(row)?.as_ref() {
+                        return Err("Browse data changed; refresh before loading all rows".into());
+                    }
+                }
+            }
+            let mut full = input.clone();
+            full.values = values;
+            full.rows.clear();
+            full.truncated = false;
+            Arc::new(full)
+        };
+        check(0)?;
+        self.sync_preview(source.clone(), &result, 0, Some(result.values.len()), &mut check)?;
+        self.full = Some(Full { source, preview: preview.values.identity(), result, settings: self.settings.clone(), versions });
+        self.summary = format!("{} rows · all loaded", self.full.as_ref().unwrap().result.values.len());
+        Ok(())
+    }
+
+    fn sync_preview(
+        &mut self,
+        source: Source,
+        result: &crate::db::QueryResult,
+        offset: usize,
+        total: Option<usize>,
+        mut check: impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        check(0)?;
         self.data.show_legend = self.settings.show_legend;
         let identity = result.values.identity();
         self.summary = if let Some(total) = total {
@@ -468,19 +569,35 @@ impl Model {
                         .map(|i| (series, i))
                 })
                 .collect();
-            let mut points: Vec<Vec<PlotPoint>> = active
-                .iter()
-                .map(|_| Vec::with_capacity(result.values.len()))
-                .collect();
+            let point_bytes = result.values.len().checked_mul(active.len()).and_then(|n| n.checked_mul(std::mem::size_of::<PlotPoint>()))
+                .filter(|bytes| *bytes <= POINT_BUDGET).ok_or("Plot exceeds the 256 MiB point budget; select fewer series or filter rows")?;
+            let mut points = Vec::new();
+            for _ in &active {
+                let mut series = Vec::new();
+                series.try_reserve_exact(result.values.len()).map_err(|e| format!("Cannot allocate plot points: {e}"))?;
+                points.push(series);
+            }
             let mut labels = Vec::new();
-            for index in 0..result.values.len() {
-                let cells = result.values.row(index)?;
+            let rows = if active.is_empty() { 0 } else { result.values.len() };
+            let mut label_bytes = if x_type == DataType::Label {
+                let bytes = rows.checked_mul(std::mem::size_of::<String>()).filter(|bytes| bytes.saturating_add(point_bytes) <= POINT_BUDGET)
+                    .ok_or("Plot category labels exceed the 256 MiB memory budget; filter rows")?;
+                labels.try_reserve_exact(rows).map_err(|e| e.to_string())?;
+                bytes
+            } else { 0 };
+            for (index, cells) in result.values.rows()?.take(rows).enumerate() {
+                check(index + 1)?;
+                let cells = cells?;
+                if cells.len() != result.columns.len() { return Err("Plot source columns do not match its row values".into()); }
                 let row = offset.checked_add(index).ok_or("Plot row index overflow")?;
                 let ordinal = row.saturating_add(1) as f64;
                 let x = if x_index == 0 {
                     ordinal
                 } else if x_type == DataType::Label {
-                    labels.push(label(&cells[x_index - 1]));
+                    let text = label(&cells[x_index - 1]);
+                    label_bytes = label_bytes.checked_add(text.len())
+                        .filter(|n| n.saturating_add(point_bytes) <= POINT_BUDGET).ok_or("Plot category labels exceed the 256 MiB memory budget; filter rows")?;
+                    labels.push(text);
                     // Framework category coordinates start at zero; labels retain duplicates.
                     index as f64
                 } else {
@@ -581,8 +698,8 @@ fn value(value: &CellValue, kind: DataType) -> f64 {
 
 fn guess(values: &CellSnapshot, columns: usize) -> Result<Vec<DataType>, String> {
     let mut kinds = vec![DataType::Numeric; columns];
-    for row in 0..values.len().min(10) {
-        let cells = values.row(row)?;
+    for cells in values.rows()?.take(10) {
+        let cells = cells?;
         if cells.len() != columns {
             return Err("Plot source columns do not match its row values".into());
         }
@@ -621,6 +738,7 @@ pub struct Controls {
     pub color: WidgetId,
     pub fit: WidgetId,
     pub legend: WidgetId,
+    pub load_all: WidgetId,
 }
 impl Default for Controls {
     fn default() -> Self {
@@ -632,6 +750,7 @@ impl Default for Controls {
             color: WidgetId(0),
             fit: WidgetId(0),
             legend: WidgetId(0),
+            load_all: WidgetId(0),
         }
     }
 }
@@ -661,6 +780,7 @@ pub fn build(
         );
         if !model.settings.manual {
             ids.legend = r.checkbox("Legend", model.settings.show_legend);
+            ids.load_all = r.tool_button(if model.has_full() { "All loaded" } else { "Load All" });
         }
     });
     if model.settings.manual {
@@ -745,6 +865,7 @@ pub fn heights(available: f32) -> (f32, f32) {
 }
 
 pub fn configure(ui: &mut next_gui_ui::Ui, ids: Controls, model: &Model, bg: Color) {
+    if ids.load_all.0 != 0 { ui.set_button_enabled(ids.load_all, model.source.is_some() && !model.has_full()); }
     if ids.columns.0 != 0 {
         ui.set_table_check_cells(
             ids.columns,
@@ -799,6 +920,7 @@ pub fn configure(ui: &mut next_gui_ui::Ui, ids: Controls, model: &Model, bg: Col
         (ids.color, "Selected plot series color"),
         (ids.fit, "Fit plot to all loaded points"),
         (ids.legend, "Show plot legend"),
+        (ids.load_all, "Load all rows for the current plot"),
     ] {
         if id.0 != 0 {
             ui.set_accessible_name(id, name);
@@ -946,6 +1068,55 @@ mod tests {
         let settings: Settings =
             serde_json::from_str(&serde_json::to_string(&model.settings).unwrap()).unwrap();
         assert_eq!(settings, model.settings);
+    }
+
+    #[test]
+    fn full_plot_uses_the_executed_snapshot_and_rebuilds_without_replaying_returning() {
+        let count: usize = if std::env::var_os("NEXT_GUI_PLOT_LOAD_MILLION_QA").is_some() { 1_000_000 } else { 1003 };
+        let started = std::time::Instant::now();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!("CREATE TABLE counter(id INTEGER PRIMARY KEY,value); WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<{count}) INSERT INTO counter SELECT x,0 FROM n")).unwrap();
+        let result = crate::db::execute_sql(&conn, "UPDATE counter SET value=value+1 RETURNING id,value").unwrap();
+        let source = Source::Query(0);
+        let mut model = Model::default();
+        model.sync(source.clone(), &result, 0, None).unwrap();
+        model.check(1, 1, true);
+        model.check(2, 2, true);
+        model.sync(source.clone(), &result, 0, None).unwrap();
+        assert_eq!(model.data.series[0].points.len(), 500);
+        model.load_all(source.clone(), &result, &result, |_| Ok(())).unwrap();
+        assert_eq!(model.data.series[0].points.len(), count);
+        assert_eq!(model.data.series[0].points[count - 1], PlotPoint { x: count as f64, y: 1.0, row: count - 1 });
+        assert!(model.has_full());
+        let mut empty = model.clone();
+        empty.check(2, 2, false);
+        empty.load_all(source.clone(), &result, &result, |_| Ok(())).unwrap();
+        assert!(empty.data.series.is_empty());
+        let points = model.data.series[0].points.clone();
+        model.data.zoom(0.5, 0.5, 0.5);
+        let view = model.data.view();
+        model.settings.show_legend = true;
+        model.sync(source.clone(), &result, 0, None).unwrap();
+        assert_eq!(model.data.view(), view);
+        assert!(Arc::ptr_eq(&points, &model.data.series[0].points));
+        assert!(model.set_styles(2, 4));
+        assert!(model.needs_full_rebuild(&source, &result));
+        let mut worker = model.clone();
+        assert!(worker.load_all(source.clone(), &result, &result, |rows| if rows > 501 { Err("cancel".into()) } else { Ok(()) }).is_err());
+        model.reject_full_changes();
+        assert!(model.settings.show_legend);
+        assert_eq!(model.data.series[0].line, PlotLine::Line);
+        assert!(model.set_styles(2, 4));
+        model.load_all(source.clone(), &result, &result, |_| Ok(())).unwrap();
+        assert_eq!(model.data.series[0].line, PlotLine::StepLeft);
+        assert_eq!(model.data.series[0].marker, PlotMarker::Disc);
+        assert!(Arc::ptr_eq(model.full.as_ref().unwrap().result.export_rows.as_ref().unwrap(), result.export_rows.as_ref().unwrap()));
+        assert_eq!(conn.query_row("SELECT sum(value) FROM counter", [], |r| r.get::<_, i64>(0)).unwrap(), count as i64);
+        let refreshed = crate::db::execute_sql(&conn, "SELECT id,value FROM counter").unwrap();
+        model.sync(source, &refreshed, 0, None).unwrap();
+        assert!(!model.has_full());
+        assert_eq!(model.data.series[0].points.len(), 500);
+        eprintln!("Full typed plot QA: {count} executed RETURNING rows, complete load/cache/cancel/style/invalidation checks in {:?} (debug diagnostic, not benchmark)", started.elapsed());
     }
 
     #[test]

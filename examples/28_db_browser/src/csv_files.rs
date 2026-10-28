@@ -395,6 +395,7 @@ impl crate::state::AppState {
     }
 
     pub fn guard_background_idle(&self) -> Result<(), String> {
+        if self.plot_work.is_some() { return Err("Cancel or finish plot loading first".into()); }
         if self.export_work.is_some() { return Err("Cancel or finish data export first".into()); }
         if self.csv_work.is_some() {
             return Err("Cancel or finish CSV import first".into());

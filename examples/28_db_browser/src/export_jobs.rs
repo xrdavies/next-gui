@@ -52,12 +52,12 @@ impl Progress {
     }
 }
 
-type Completed = (Option<LoggedConnection>, Result<(), String>);
-pub enum Job {
-    Running(std::thread::JoinHandle<Completed>),
-    Ready(Completed),
+type Completed<T> = (Option<LoggedConnection>, Result<T, String>);
+pub enum Job<T = ()> {
+    Running(std::thread::JoinHandle<Completed<T>>),
+    Ready(Completed<T>),
 }
-impl Job {
+impl Job<()> {
     pub fn start(
         conn: LoggedConnection,
         outputs: Vec<data_export::Output>,
@@ -98,13 +98,15 @@ impl Job {
             crate::db::export_sql_dump_progress(conn, &path, &options, &progress)
         })
     }
-    fn start_task(
+}
+impl<T: Send + 'static> Job<T> {
+    pub(crate) fn start_task(
         conn: LoggedConnection,
-        task: impl FnOnce(&LoggedConnection) -> Result<(), String> + Send + 'static,
+        task: impl FnOnce(&LoggedConnection) -> Result<T, String> + Send + 'static,
     ) -> Self {
         let (sender, receiver) = mpsc::channel::<LoggedConnection>();
         let worker = std::thread::Builder::new()
-            .name("data-export".into())
+            .name("database-work".into())
             .spawn(move || {
                 let conn = match receiver.recv() {
                     Ok(conn) => conn,
@@ -120,7 +122,7 @@ impl Job {
                     let _ = handle.join();
                     Self::Ready((
                         Some(error.0),
-                        Err("Export connection handoff failed".into()),
+                        Err("Database worker connection handoff failed".into()),
                     ))
                 }
             },
@@ -133,13 +135,13 @@ impl Job {
             Self::Ready(_) => true,
         }
     }
-    pub fn join(self) -> Completed {
+    pub fn join(self) -> Completed<T> {
         match self {
             Self::Running(handle) => handle.join().unwrap_or_else(|_| {
                 (
                     None,
                     Err(
-                        "Export worker panicked; connection closed and pending changes rolled back"
+                        "Database worker panicked; connection closed and pending changes rolled back"
                             .into(),
                     ),
                 )

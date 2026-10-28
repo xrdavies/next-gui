@@ -512,17 +512,36 @@ pub fn browse_table_in(
     offset: usize,
 ) -> Result<QueryResult, String> {
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
+    let mut sql = browse_select_in(conn, schema, table, ordering, filter)?;
+    sql.push_str(&format!(
+        " LIMIT {} OFFSET {offset}",
+        limit.saturating_add(1)
+    ));
+    query_preview(conn, &sql, limit)
+}
+
+fn browse_select_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>) -> Result<String, String> {
     let mut sql = format!("SELECT * FROM {}", qualified_name(schema, table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
     }
     append_order_by(conn, schema, table, &mut sql, ordering)?;
-    sql.push_str(&format!(
-        " LIMIT {} OFFSET {offset}",
-        limit.saturating_add(1)
-    ));
-    query_preview(conn, &sql, limit)
+    Ok(sql)
+}
+
+pub fn browse_snapshot_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>) -> Result<QueryResult, String> {
+    let sql = browse_select_in(conn, schema, table, ordering, filter)?;
+    // Validate before the batch executor can prepare or execute any statement tail.
+    drop(prepare_browse(conn, &sql)?);
+    execute_sql(conn, &sql)
+}
+
+pub fn data_versions(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
+    database_names(conn)?.into_iter().map(|schema| {
+        let value = conn.query_row(&format!("PRAGMA {}.data_version", quote_ident(&schema)), [], |row| row.get(0)).map_err(|e| e.to_string())?;
+        Ok((schema, value))
+    }).collect()
 }
 
 /// Count the rows matching the same filter used by the browse preview.
@@ -2421,6 +2440,7 @@ mod tests {
             .unwrap();
         let filter = Some("1; DELETE FROM t; --");
         assert!(browse_table(&conn, "t", &[], filter, 500, 0).is_err());
+        assert!(browse_snapshot_in(&conn, "main", "t", &[], filter).is_err());
         assert!(browse_with_rowid(&conn, "t", &[], filter, 500, 0).is_err());
         assert!(count_browse_rows(&conn, "t", filter).is_err());
         assert_eq!(count_browse_rows(&conn, "t", Some("v = 1")).unwrap(), 1);
@@ -2435,6 +2455,7 @@ mod tests {
                 conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('; literal'); PRAGMA foreign_keys=OFF;").unwrap();
                 let browse = if rowids { browse_with_rowid } else { browse_table };
                 assert!(browse(&conn, "t", &[], Some(filter), 500, 0).is_err());
+                assert!(browse_snapshot_in(&conn, "main", "t", &[], Some(filter)).is_err());
                 assert_eq!(read_pragma(&conn, "foreign_keys").unwrap(), "0");
                 let dir = tempfile::tempdir().unwrap();
                 let output = dir.path().join("keep.json");

@@ -18,7 +18,7 @@ pub(crate) mod real_bits {
     }
 }
 
-/// Typed preview rows, spilling large cells to disk instead of retaining whole pages.
+/// Typed rows, spilling large cells and indexing immutable full results on disk.
 #[derive(Debug, Clone, Default)]
 pub struct CellSnapshot {
     identity: Arc<()>,
@@ -27,6 +27,46 @@ pub struct CellSnapshot {
     file: Option<Arc<tempfile::NamedTempFile>>,
     offsets: Vec<u64>,
     columns: Vec<usize>,
+    width: usize,
+}
+
+pub struct Rows<'a> {
+    source: RowSource<'a>,
+    columns: &'a [usize],
+    width: usize,
+}
+enum RowSource<'a> {
+    Memory(std::slice::Iter<'a, Vec<CellValue>>),
+    File { lines: std::io::Lines<std::io::BufReader<std::fs::File>>, remaining: usize },
+}
+impl<'a> Iterator for Rows<'a> {
+    type Item = Result<Cow<'a, [CellValue]>, String>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let row = match &mut self.source {
+            RowSource::Memory(rows) => Ok(Cow::Borrowed(rows.next()?.as_slice())),
+            RowSource::File { lines, remaining } => {
+                if *remaining == 0 { return None; }
+                *remaining -= 1;
+                lines.next().ok_or_else(|| "Typed snapshot ended before its indexed row".to_string())
+                    .and_then(|line| line.map_err(|e| e.to_string()))
+                    .and_then(|line| parse_row(&line, self.width)).map(Cow::Owned)
+            }
+        };
+        Some(row.and_then(|row| project_row(row, self.columns)))
+    }
+}
+
+fn parse_row(line: &str, width: usize) -> Result<Vec<CellValue>, String> {
+    let row: Vec<CellValue> = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    if row.len() != width { return Err("Typed snapshot row width does not match its columns".into()); }
+    Ok(row)
+}
+
+fn project_row<'a>(cells: Cow<'a, [CellValue]>, columns: &[usize]) -> Result<Cow<'a, [CellValue]>, String> {
+    if columns.iter().copied().eq(0..cells.len()) { Ok(cells) } else {
+        columns.iter().map(|&column| cells.get(column).cloned().ok_or_else(|| "No preview cell".into()))
+            .collect::<Result<Vec<_>, String>>().map(Cow::Owned)
+    }
 }
 
 fn write_row(file: &mut std::fs::File, cells: &[CellValue]) -> Result<u64, String> {
@@ -42,7 +82,9 @@ impl CellSnapshot {
     pub fn push(&mut self, cells: Vec<CellValue>) -> Result<(), String> {
         if self.is_empty() {
             self.columns = (0..cells.len()).collect();
+            self.width = cells.len();
         }
+        if cells.len() != self.width { return Err("Typed snapshot row width does not match its columns".into()); }
         let bytes = cells
             .iter()
             .map(|cell| match cell {
@@ -93,15 +135,33 @@ impl CellSnapshot {
         self.identity.clone()
     }
 
+    /// Index an immutable typed result without copying its cell payloads.
+    pub fn from_file(file: Arc<tempfile::NamedTempFile>, width: usize, mut check: impl FnMut(usize) -> Result<(), String>) -> Result<Self, String> {
+        let mut input = std::io::BufReader::new(file.reopen().map_err(|e| e.to_string())?);
+        let mut offsets = Vec::new();
+        let mut offset = 0u64;
+        loop {
+            check(offsets.len())?;
+            let bytes = input.skip_until(b'\n').map_err(|e| e.to_string())?;
+            if bytes == 0 { break; }
+            offsets.try_reserve(1).map_err(|e| e.to_string())?;
+            offsets.push(offset);
+            offset = offset.checked_add(bytes as u64).ok_or("Typed snapshot file offset overflow")?;
+        }
+        Ok(Self { file: Some(file), offsets, columns: (0..width).collect(), width, ..Default::default() })
+    }
+
+    pub fn rows(&self) -> Result<Rows<'_>, String> {
+        let source = if let Some(file) = &self.file {
+            RowSource::File { lines: std::io::BufReader::new(file.reopen().map_err(|e| e.to_string())?).lines(), remaining: self.len() }
+        } else { RowSource::Memory(self.rows.iter()) };
+        Ok(Rows { source, columns: &self.columns, width: self.width })
+    }
+
     /// Read a projected row once, including snapshots spilled to disk.
     pub fn row(&self, index: usize) -> Result<Cow<'_, [CellValue]>, String> {
         let cells = self.read_row(index)?;
-        if self.columns.iter().copied().eq(0..cells.len()) {
-            Ok(cells)
-        } else {
-            self.columns.iter().map(|&column| cells.get(column).cloned().ok_or_else(|| "No preview cell".into()))
-                .collect::<Result<Vec<_>, String>>().map(Cow::Owned)
-        }
+        project_row(cells, &self.columns)
     }
 
     fn read_row(&self, index: usize) -> Result<Cow<'_, [CellValue]>, String> {
@@ -115,9 +175,8 @@ impl CellSnapshot {
             std::io::BufReader::new(input)
                 .read_line(&mut line)
                 .map_err(|e| e.to_string())?;
-            serde_json::from_str::<Vec<CellValue>>(&line)
+            parse_row(&line, self.width)
                 .map(Cow::Owned)
-                .map_err(|e| e.to_string())
         } else {
             self.rows
                 .get(index)
@@ -180,6 +239,34 @@ mod tests {
         assert!(snapshot.is_empty());
         assert!(snapshot.cell(0, 0).is_err());
         assert!(snapshot.rectangle(0..=0, 0..=0).is_err());
+    }
+
+    #[test]
+    fn full_file_rows_stream_project_and_cancel_without_copying_the_payload() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let result = crate::db::execute_sql(&conn, "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1003) SELECT x, CASE WHEN x=2 THEN NULL ELSE x*0.5 END, x'ff00' FROM n").unwrap();
+        assert_eq!(result.values.len(), 500);
+        let file = result.export_rows.as_ref().unwrap().clone();
+        let mut count = 0;
+        let mut full = CellSnapshot::from_file(file.clone(), 3, |rows| { count = rows; Ok(()) }).unwrap();
+        assert_eq!((full.len(), count), (1003, 1003));
+        assert!(full.rows.is_empty());
+        assert!(Arc::ptr_eq(full.file.as_ref().unwrap(), &file));
+        full.remove_column(0);
+        let streamed: Vec<_> = full.rows().unwrap().map(|row| row.unwrap().into_owned()).collect();
+        assert_eq!(streamed.len(), 1003);
+        assert_eq!(streamed[1], [CellValue::Null, CellValue::Blob(vec![255, 0])]);
+        assert_eq!(streamed[1002], full.row(1002).unwrap().as_ref());
+        assert!(CellSnapshot::from_file(file, 3, |rows| if rows == 2 { Err("cancelled".into()) } else { Ok(()) }).unwrap_err().contains("cancelled"));
+        let mut invalid = tempfile::NamedTempFile::new().unwrap();
+        writeln!(invalid, "[]").unwrap();
+        let invalid = CellSnapshot::from_file(Arc::new(invalid), 1, |_| Ok(())).unwrap();
+        assert!(invalid.row(0).is_err());
+        assert!(invalid.rows().unwrap().next().unwrap().is_err());
+        let mut memory = CellSnapshot::default();
+        memory.push(vec![CellValue::Integer(7)]).unwrap();
+        assert!(memory.push(vec![]).is_err());
+        assert_eq!(memory.rows().unwrap().next().unwrap().unwrap().as_ref(), [CellValue::Integer(7)]);
     }
 
     #[test]

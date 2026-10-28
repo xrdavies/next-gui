@@ -86,6 +86,7 @@ pub struct BuiltUi {
     pub csv_files: crate::csv_files::Controls,
     pub data_export: crate::data_export::Controls,
     pub sql_export: crate::sql_export::Controls,
+    pub plot_load: crate::plot_load::Controls,
     pub column_picker: crate::column_picker::Controls,
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
@@ -2646,6 +2647,7 @@ pub fn build_ui(
     crate::sql_syntax::apply(&mut ui, sql_area, &theme);
     let data_export = crate::data_export::build(&mut ui,state,&theme,win_w,win_h);
     let sql_export = crate::sql_export::build(&mut ui,state,&theme,win_w,win_h);
+    let plot_load = crate::plot_load::build(&mut ui,state,&theme,win_w,win_h);
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
 
@@ -2654,6 +2656,7 @@ pub fn build_ui(
         csv_files,
         data_export,
         sql_export,
+        plot_load,
         column_picker,
         reference_editor,
         body_splitter,

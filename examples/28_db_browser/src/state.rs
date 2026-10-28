@@ -575,6 +575,7 @@ pub struct AppState {
     pub cipher_open_path: Option<(String, bool)>,
     pub export_dialog: Option<crate::data_export::Draft>,
     pub export_work: Option<crate::export_jobs::Work>,
+    pub plot_work: Option<crate::plot_load::Work>,
     pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
     pub prefs_frozen_cols: usize,
@@ -890,6 +891,7 @@ impl AppState {
             cipher_open_path: None,
             export_dialog: None,
             export_work: None,
+            plot_work: None,
             sql_export: None,
             prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
@@ -1187,6 +1189,7 @@ impl AppState {
             return Err("No database open".into());
         };
         db::commit_and_begin(conn)?;
+        self.plot.discard_full();
         self.dirty = false;
         self.log_sql("-- WRITE CHANGES (COMMIT)");
         self.status_msg = "Changes written".into();
@@ -1258,7 +1261,7 @@ impl AppState {
         Ok(())
     }
 
-    fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Result<Option<String>, String> {
+    pub(crate) fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Result<Option<String>, String> {
         let mut parts = Vec::new();
         if !tab.filter.trim().is_empty() {
             parts.push(format!("({})", tab.filter.trim()));
@@ -1307,6 +1310,7 @@ impl AppState {
     }
 
     pub fn refresh_browse(&mut self) -> Result<(), String> {
+        if self.plot_work.is_some() { return Err("Cancel or finish plot loading first".into()); }
         let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.conn.is_none() {
@@ -1530,11 +1534,17 @@ impl AppState {
             tab.sel_col = (!result.columns.is_empty()).then(|| previous.sel_col.unwrap_or(0).min(result.columns.len() - 1));
             tab.goto_record = (tab.offset + row + 1).to_string();
         } else { tab.goto_record = "0".into(); }
+        if let Some((from, to)) = previous.result.as_ref().zip(self.browse().result.as_ref()) {
+            let versions = self.conn.as_ref().and_then(|conn| db::data_versions(conn).ok());
+            self.plot.carry_full_preview(&from.values.identity(), to.values.identity(), versions);
+        }
         self.sync_edit_cell_from_selection();
         Ok(())
     }
 
     pub fn browse_page(&mut self, next: bool) -> Result<(), String> {
+        self.guard_background_idle()?;
+        let previous = self.browse().result.as_ref().map(|r| r.values.identity());
         let tab = self.browse_mut();
         if next
             && tab
@@ -1553,18 +1563,25 @@ impl AppState {
             self.browse_mut().offset = old;
             return Err(e);
         }
+        if let Some((from, to)) = previous.zip(self.browse().result.as_ref().map(|r| r.values.identity())) {
+            let versions = self.conn.as_ref().and_then(|conn| db::data_versions(conn).ok());
+            self.plot.carry_full_preview(&from, to, versions);
+        }
         Ok(())
     }
 
     pub fn sync_current_plot(&mut self) -> Result<(), String> {
+        if self.plot_work.is_some() { return Ok(()); }
         if self.plot.settings.manual { return Ok(()); }
         if self.tab == MainTab::ExecuteSql {
             if let Some(result) = &self.sql_result {
+                if self.plot.needs_full_rebuild(&crate::plot::Source::Query(self.sql_tab_idx), result) { return self.start_plot_load(); }
                 return self.plot.sync(crate::plot::Source::Query(self.sql_tab_idx), result, 0, None);
             }
         } else {
             let tab = &self.browse_tabs[self.browse_tab_idx];
             if let (Some(table), Some(result)) = (&tab.table, &tab.result) {
+                if self.plot.needs_full_rebuild(&crate::plot::Source::Table { schema: tab.schema.clone(), table: table.clone() }, result) { return self.start_plot_load(); }
                 return self.plot.sync(crate::plot::Source::Table { schema: tab.schema.clone(), table: table.clone() }, result, tab.offset, tab.total_rows);
             }
         }
@@ -2556,6 +2573,7 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.plot_work = None;
         self.plot.clear();
         self.plot.settings.configs.clear();
         self.csv_work=None;self.csv_files=None;self.csv_preview=None;

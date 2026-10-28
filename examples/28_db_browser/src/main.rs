@@ -14,6 +14,7 @@ mod export_jobs;
 mod cell_clipboard;
 mod cell_snapshot;
 mod plot;
+mod plot_load;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
@@ -36,7 +37,7 @@ mod sql_function_help;
 mod state;
 mod ui_build;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 use next_gui_platform::{
     AppCallbacks, Event, ImeEvent, KeyCode, Modifiers, PointerButton, PresentBackend, WindowAttrs,
@@ -62,6 +63,10 @@ const NATIVE_PLOT_QA_XML: &str = r##"<sqlb_project><db path=':memory:'/><tab_bro
     <y_axis name='revenue' line_style='2' point_shape='5' colour='#3385eb' active='1'/>
     <y2_axis name='expenses' line_style='5' point_shape='0' colour='#d7a132' active='1'/>
     </plot_y_axes></table></browse_table_settings></tab_browse></sqlb_project>"##;
+
+const FULL_PLOT_QA_SQL: &str = "CREATE TABLE telemetry(sequence INTEGER,measured REAL,reference REAL,region TEXT);
+WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3000)
+INSERT INTO telemetry SELECT x,CASE WHEN x%97=0 THEN NULL ELSE 1200+(x*73)%1100+(x%7)*70 END,520+(x%101)*30,CASE WHEN x%2=0 THEN 'APAC' ELSE 'EMEA' END FROM n;";
 
 const SCHEMA_NAMESPACE_QA_SQL: &str = "CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
     INSERT INTO main.customers VALUES(1, 'Main customer');
@@ -239,6 +244,7 @@ struct BuiltUiIds {
     csv_files: csv_files::Controls,
     data_export: data_export::Controls,
     sql_export: sql_export::Controls,
+    plot_load: plot_load::Controls,
     column_picker: column_picker::Controls,
     reference_editor: reference_editor::Controls,
     status: WidgetId,
@@ -477,6 +483,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             csv_files: b.csv_files,
             data_export: b.data_export,
             sql_export: b.sql_export,
+            plot_load: b.plot_load,
             column_picker: b.column_picker,
             reference_editor: b.reference_editor,
             status: b.status,
@@ -1301,6 +1308,48 @@ impl Demo {
                     state.plot.invalidate();
                 }
                 state.sync_current_plot().unwrap();
+                state.body_ratio = 0.52;
+                state.dock_focus = DockKind::Plot;
+                state.dock_plot = true;
+            }
+            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress") {
+                state.new_memory_db().unwrap();
+                state.conn.as_ref().unwrap().execute_batch(FULL_PLOT_QA_SQL).unwrap();
+                let gate = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<plot_load::Progress>>));
+                let table = if tab == "plot-all-progress" {
+                    let waiting = gate.clone();
+                    state.conn.as_ref().unwrap().create_scalar_function("qa_plot_wait", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+                        let deadline = Instant::now() + std::time::Duration::from_secs(30);
+                        while Instant::now() < deadline && !waiting.lock().unwrap().as_ref().is_some_and(|p| p.cancelled()) {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Ok(2501)
+                    }).unwrap();
+                    state.conn.as_ref().unwrap().execute_batch("CREATE VIEW gated AS SELECT sequence,CASE WHEN sequence=2501 THEN qa_plot_wait() ELSE measured END AS measured,reference,region FROM telemetry").unwrap();
+                    "gated"
+                } else { "telemetry" };
+                state.refresh_schema().unwrap();
+                state.switch_browse_table_in("main", table).unwrap();
+                state.tab = if tab.ends_with("sql") { MainTab::ExecuteSql } else { MainTab::Browse };
+                if state.tab == MainTab::ExecuteSql {
+                    *state.sql_editor_mut() = "SELECT sequence,measured,reference,region\nFROM telemetry ORDER BY sequence DESC;".into();
+                    state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
+                }
+                state.plot.settings.manual = false;
+                state.sync_current_plot().unwrap();
+                for (row, axis) in [(1, 1), (2, 2), (3, 3)] { state.plot.check(row, axis, true); }
+                state.plot.set_styles(1, 0);
+                state.sync_current_plot().unwrap();
+                state.start_plot_load().unwrap();
+                if tab == "plot-all-progress" { *gate.lock().unwrap() = Some(state.plot_work.as_ref().unwrap().progress.clone()); }
+                else {
+                    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+                    while state.plot_work.is_some() {
+                        assert!(Instant::now() < deadline);
+                        state.poll_plot_load().unwrap();
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
                 state.body_ratio = 0.52;
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
@@ -3900,6 +3949,13 @@ impl Demo {
 
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
+        if self.state.plot_work.is_some() { self.handle_plot_load_button(id); return; }
+        if id == self.ids.plot.load_all {
+            self.snapshot_inputs();
+            match self.state.start_plot_load() { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
+            self.rebuild = true;
+            return;
+        }
         if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_button(id);return;}
         if self.state.export_dialog.is_some() {self.handle_data_export_button(id);return;}
         if self.state.csv_work.is_some() {self.handle_csv_answer_button(id);return;}
@@ -4381,7 +4437,7 @@ impl Demo {
     }
 
     fn link_plot_selection(&mut self) {
-        if self.state.plot.settings.manual || self.last_tab != self.state.tab.index() { return; }
+        if self.state.plot.settings.manual || self.state.plot_work.is_some() || self.last_tab != self.state.tab.index() { return; }
         let rows = self.state.plot.data.state.selected_rows.clone();
         if rows == self.state.plot.linked_rows { return; }
         if self.state.has_cell_draft() {
@@ -4392,13 +4448,29 @@ impl Demo {
             self.rebuild = true;
             return;
         }
+        if self.state.tab == MainTab::Browse && self.state.plot.has_full() {
+            if let Some(&row) = rows.first() {
+                let tab = self.state.browse();
+                let end = tab.offset.saturating_add(tab.result.as_ref().map_or(0, |result| result.rows.len()));
+                if row < tab.offset || row >= end {
+                    if let Err(error) = self.state.goto_browse_record(row.saturating_add(1)) { self.set_error(error); self.rebuild = true; return; }
+                    self.state.plot.linked_rows = rows;
+                    self.rebuild = true;
+                    return;
+                }
+            }
+        }
         let target = match (&self.state.plot.source, self.state.tab) {
             (Some(plot::Source::Query(index)), MainTab::ExecuteSql) if *index == self.state.sql_tab_idx => Some((self.ids.sql_table, 0)),
             (Some(plot::Source::Table { schema, table }), MainTab::Browse) if schema == &self.state.browse().schema && self.state.browse().table.as_ref() == Some(table) => Some((self.ids.browse_table, self.state.browse().offset)),
             _ => None,
         };
         if let Some((table, offset)) = target.filter(|(id, _)| id.0 != 0) {
-            let range = rows.first().zip(rows.last()).and_then(|(a, b)| a.checked_sub(offset).zip(b.checked_sub(offset)));
+            let count = if table == self.ids.sql_table {
+                self.state.sql_result.as_ref().map_or(0, |result| result.rows.len())
+            } else { self.state.browse().result.as_ref().map_or(0, |result| result.rows.len()) };
+            let mut visible = rows.range(offset..offset.saturating_add(count));
+            let range = visible.next().copied().map(|first| (first - offset, visible.next_back().copied().unwrap_or(first) - offset));
             if self.ui.set_table_selected_rows(table, range) {
                 if self.ui.table_selected_col(table).is_none() { self.ui.set_table_selected_col(table, Some(0)); }
                 self.ui.reveal_table_selection(table);
@@ -4733,7 +4805,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         if let Some((id, color)) = self.ui.take_color_change() {
@@ -4789,6 +4861,7 @@ impl Demo {
 impl AppCallbacks for Demo {
     fn can_close(&self) -> bool {
         !self.state.dirty
+            && self.state.plot_work.is_none()
             && self.state.csv_work.is_none()
             && !self.state.sql_busy
             && !self.state.has_unsaved_drafts()
@@ -4856,7 +4929,9 @@ impl AppCallbacks for Demo {
                 }
             }
             Event::CloseRequested { .. } => {
-                if self.state.export_work.is_some() {
+                if self.state.plot_work.is_some() {
+                    self.cancel_plot_load();
+                } else if self.state.export_work.is_some() {
                     self.cancel_data_export();
                 } else if self.state.csv_work.is_some() {
                     if let Err(error)=self.state.continue_csv_import_work(Some(csv_files::Answer::Cancel)) {self.set_error(error);}
@@ -5098,6 +5173,9 @@ impl AppCallbacks for Demo {
                         return;
                     }
                     if matches!(ui_key, UiKey::Escape) {
+                        if self.state.plot_work.is_some() {
+                            self.cancel_plot_load(); self.do_rebuild(); ctx.request_redraw(); return;
+                        }
                         if self.state.export_work.is_some() {
                             self.cancel_data_export(); self.do_rebuild(); ctx.request_redraw(); return;
                         }
@@ -5208,6 +5286,11 @@ impl AppCallbacks for Demo {
             }
             if self.rebuild {self.do_rebuild();} else {self.update_csv_progress();}
             if self.state.csv_running() || csv_progress_qa && self.state.csv_work.is_some() {ctx.request_redraw();}
+        }
+        if self.state.plot_work.is_some() {
+            self.poll_plot_load();
+            if self.rebuild { self.do_rebuild(); }
+            if self.state.plot_work.is_some() { ctx.request_redraw(); }
         }
         if self.state.export_work.is_some() {
             if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("export-canceling")
