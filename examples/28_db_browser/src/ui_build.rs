@@ -756,7 +756,8 @@ pub fn build_ui(
     csv_style.close_on_backdrop = false;
     let docks_on = state.any_dock_visible() && (state.overlay.is_none() || workspace_modal);
     let pane_width = shell_w - 20.0;
-    let main_frac = if docks_on { state.body_ratio.clamp(340.0 / pane_width, 1.0 - 240.0 / pane_width) } else { 1.0 };
+    let dock_min = if state.dock_focus == DockKind::Plot { 400.0f32.min(pane_width - 340.0) } else { 240.0 };
+    let main_frac = if docks_on { state.body_ratio.clamp(340.0 / pane_width, 1.0 - dock_min / pane_width) } else { 1.0 };
     let main_w = (shell_w - 20.0) * main_frac;
     let dock_w = (shell_w - 20.0) * (1.0 - main_frac) - 8.0;
     let tab_page_h = (content_h - 36.0).max(240.0);
@@ -2222,7 +2223,7 @@ pub fn build_ui(
                                             });
                                             }
                                             let mut style = chart_style;
-                                            if !state.plot.settings.manual { style.height = crate::plot::heights(dock_col.height).1; }
+                                            if !state.plot.settings.manual { style.height = crate::plot::heights(dock_col.height, (dock_w - 40.0).max(180.0)).1; }
                                             c.tooltip(format!("{chart_title}\nWheel: zoom · Drag: pan · Home: fit · Ctrl/Cmd+click: select range"), |t| { chart = t.chart(chart_tiles.clone(), style); });
                                         });
                                     });

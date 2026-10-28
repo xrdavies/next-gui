@@ -176,6 +176,33 @@ mod tests {
     }
 
     #[test]
+    fn plot_controls_and_chart_stay_reachable_after_focus_and_resize() {
+        let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE samples(x,y);INSERT INTO samples VALUES(1,2),(2,3);").unwrap();
+        demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","samples").unwrap();
+        demo.state.tab=MainTab::Browse;demo.state.dock_focus=DockKind::Plot;demo.state.dock_plot=true;
+        demo.state.body_ratio=0.9;
+        demo.state.sync_current_plot().unwrap();
+        for (row,axis) in [(1,1),(2,2)] {demo.state.plot.check(row,axis,true);}
+        for theme in [next_gui_ui::Theme::dark(),next_gui_ui::Theme::light()] {
+            demo.theme=crate::ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            for (width,height) in [(800,600),(1000,760),(1400,1000)] {
+                demo.win_w=width;demo.win_h=height;demo.do_rebuild();
+                for id in [demo.ids.plot.mode,demo.ids.plot.legend,demo.ids.plot.load_all,demo.ids.plot.line,demo.ids.plot.marker,demo.ids.plot.color,demo.ids.plot.fit,demo.ids.plot.save,demo.ids.plot.copy,demo.ids.chart] {
+                    assert_ne!(id.0,0);
+                    demo.ui.set_focus(Some(id));demo.ui.sync(&mut demo.scene);
+                    let bounds=demo.scene.iter_paint_order().into_iter().find(|n|demo.ui.widget_from_node(n.id)==Some(id)).unwrap().bounds;
+                    assert!(bounds.x>=0.0 && bounds.x+bounds.width<=width as f32,"{width}: clipped {id:?} at {bounds:?}");
+                    assert_eq!(demo.ui.scroll_offset(demo.ids.dock_scroll).unwrap().0,0.0,"Focusing plot controls must not scroll away the chart");
+                    if id==demo.ids.chart {assert!(demo.ui.chart_plot_size(id,0).unwrap().0>=260);}
+                    demo.snapshot_inputs();assert_eq!(demo.state.body_ratio,0.9,"Adaptive sizing must preserve the saved ratio");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn plot_export_uses_current_view_selection_palette_and_no_query_replay() {
         let mut demo = Demo::new(1400,1000,PresentBackend::Softbuffer);
         demo.state.new_memory_db().unwrap();

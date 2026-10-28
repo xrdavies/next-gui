@@ -786,7 +786,7 @@ pub fn build(
             "source",
             select,
         );
-        if !model.settings.manual {
+        if !model.settings.manual && width >= 320.0 {
             ids.legend = r.checkbox("Legend", model.settings.show_legend);
             ids.load_all = r.tool_button(if model.has_full() { "All loaded" } else { "Load All" });
         }
@@ -794,9 +794,15 @@ pub fn build(
     if model.settings.manual {
         return ids;
     }
+    if width < 320.0 {
+        builder.row(row, |r| {
+            ids.legend = r.checkbox("Legend", model.settings.show_legend);
+            ids.load_all = r.tool_button(if model.has_full() { "All loaded" } else { "Load All" });
+        });
+    }
     let mut table = TableStyle::from_theme(theme);
     table.width = width;
-    table.height = heights(height).0;
+    table.height = heights(height, width).0;
     table.row_height = 26.0;
     table.header_height = 28.0;
     let name_width = (width - 210.0).max(120.0);
@@ -839,7 +845,7 @@ pub fn build(
     row.height = 34.0;
     builder.row(row, |r| {
         let mut style = select;
-        style.width = ((width - 302.0) / 2.0).max(64.0);
+        style.width = ((width - if width < 480.0 { 92.0 } else { 302.0 }) / 2.0).max(64.0);
         let (line, marker) = model.styles();
         ids.line = r.select(
             LINE_NAMES,
@@ -853,9 +859,11 @@ pub fn build(
             "Marker",
             style,
         );
-        ids.fit = r.tool_button("Fit");
-        ids.save = r.tool_button("Save…");
-        ids.copy = r.tool_button("Copy");
+        if width >= 480.0 {
+            ids.fit = r.tool_button("Fit");
+            ids.save = r.tool_button("Save…");
+            ids.copy = r.tool_button("Copy");
+        }
         if let Some(color) = model.selected_color() {
             let mut style = ColorPickerStyle::from_theme(theme);
             style.width = 84.0;
@@ -866,12 +874,20 @@ pub fn build(
             ids.color = r.color_picker_with_presets(color, [], style);
         }
     });
+    if width < 480.0 {
+        builder.row(row, |r| {
+            ids.fit = r.tool_button("Fit");
+            ids.save = r.tool_button("Save…");
+            ids.copy = r.tool_button("Copy");
+        });
+    }
     ids
 }
 
-pub fn heights(available: f32) -> (f32, f32) {
+pub fn heights(available: f32, width: f32) -> (f32, f32) {
     let columns = (available * 0.25 - 12.0).clamp(64.0, 154.0);
-    (columns, (available - columns - 90.0).max(160.0))
+    let extra = if width < 480.0 { 38.0 } else { 0.0 } + if width < 320.0 { 36.0 } else { 0.0 };
+    (columns, (available - columns - 90.0 - extra).max(160.0))
 }
 
 pub fn configure(ui: &mut next_gui_ui::Ui, ids: Controls, model: &Model, bg: Color) {

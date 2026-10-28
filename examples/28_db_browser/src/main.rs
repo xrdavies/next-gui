@@ -1313,7 +1313,7 @@ impl Demo {
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
-            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end" | "plot-image-clipboard") {
+            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end" | "plot-image-clipboard" | "plot-image-clipboard-narrow") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(FULL_PLOT_QA_SQL).unwrap();
                 let gate = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<plot_load::Progress>>));
@@ -1331,7 +1331,7 @@ impl Demo {
                 } else { "telemetry" };
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", table).unwrap();
-                state.tab = if tab.ends_with("sql") || matches!(tab.as_str(), "sql-results-end" | "plot-image-clipboard") { MainTab::ExecuteSql } else { MainTab::Browse };
+                state.tab = if tab.ends_with("sql") || matches!(tab.as_str(), "sql-results-end" | "plot-image-clipboard" | "plot-image-clipboard-narrow") { MainTab::ExecuteSql } else { MainTab::Browse };
                 if state.tab == MainTab::ExecuteSql {
                     *state.sql_editor_mut() = "SELECT sequence,measured,reference,region\nFROM telemetry ORDER BY sequence DESC;".into();
                     state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
@@ -1422,7 +1422,7 @@ impl Demo {
             built.ui.key_input(UiKey::SelectWordRight);
             built.ui.sync(&mut built.scene);
         }
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("plot-image-clipboard") {
+        if matches!(std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref(),Ok("plot-image-clipboard" | "plot-image-clipboard-narrow")) {
             built.ui.set_focus(Some(built.chart)); built.ui.sync(&mut built.scene);
         }
         if qa_calltip {
@@ -5390,10 +5390,11 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("plot-image-clipboard-narrow") {(800,600)} else {(1400,860)};
     let attrs = if use_native {
-        WindowAttrs::new("next-gui DB Browser", 1400, 860).with_gpu_surface()
+        WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
-        WindowAttrs::new("next-gui DB Browser", 1400, 860)
+        WindowAttrs::new("next-gui DB Browser", width, height)
     };
     let demo = Demo::new(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
