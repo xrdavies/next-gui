@@ -1,0 +1,208 @@
+{
+  "reviewed_commit": "60838586a5cb270e44c7b8b2632748f8c9176cee",
+  "tests": 701,
+  "test_groups": 43,
+  "checks": {
+    "v10": {
+      "clippy": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v10-clippy-final.log"
+      },
+      "workspace": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v10-workspace-final.log"
+      },
+      "build": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v10-build-final.log"
+      },
+      "macos": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v10-macos-final.log"
+      },
+      "windows": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v10-windows-final.log"
+      },
+      "render": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v10-render-final.log"
+      },
+      "convert": {
+        "exit": 0
+      },
+      "native": {
+        "exit": 0
+      },
+      "office": {
+        "exit": 0
+      }
+    },
+    "v11": {
+      "focused": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v11-focused-final.log"
+      },
+      "clippy": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v11-clippy-final.log"
+      },
+      "workspace": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v11-workspace-final.log"
+      },
+      "build": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v11-build-final.log"
+      },
+      "macos": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v11-macos-final.log"
+      },
+      "windows": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v11-windows-final.log"
+      }
+    },
+    "v12": {
+      "clippy": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v12-clippy-final.log"
+      },
+      "app": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v12-app-final.log"
+      },
+      "build": {
+        "exit": 0,
+        "log": "/tmp/next-gui-plot-hover-v12-build-final.log"
+      },
+      "native": {
+        "exit": 0
+      }
+    }
+  },
+  "whole_frame_comparisons": {
+    "window-hover-dark-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-hover-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-hover-light-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-hover-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "native_binary_sha256": "d76c1c7c2fc66d7b779ff3618d638a156b7c74a4c4f00705a64f26c358c5c7cd",
+  "native_windows": {
+    "dark-wide": [
+      {
+        "kCGWindowAlpha": 1,
+        "kCGWindowBounds": {
+          "Height": 892,
+          "Width": 1400,
+          "X": 260,
+          "Y": 48
+        },
+        "kCGWindowIsOnscreen": true,
+        "kCGWindowLayer": 0,
+        "kCGWindowNumber": 5970,
+        "kCGWindowSharingState": 1
+      }
+    ],
+    "light-wide": [
+      {
+        "kCGWindowAlpha": 1,
+        "kCGWindowBounds": {
+          "Height": 892,
+          "Width": 1400,
+          "X": 260,
+          "Y": 48
+        },
+        "kCGWindowIsOnscreen": true,
+        "kCGWindowLayer": 0,
+        "kCGWindowNumber": 5976,
+        "kCGWindowSharingState": 1
+      }
+    ],
+    "dark-narrow": [
+      {
+        "kCGWindowAlpha": 1,
+        "kCGWindowBounds": {
+          "Height": 632,
+          "Width": 800,
+          "X": 560,
+          "Y": 113
+        },
+        "kCGWindowIsOnscreen": true,
+        "kCGWindowLayer": 0,
+        "kCGWindowNumber": 5973,
+        "kCGWindowSharingState": 1
+      }
+    ],
+    "light-narrow": [
+      {
+        "kCGWindowAlpha": 1,
+        "kCGWindowBounds": {
+          "Height": 632,
+          "Width": 800,
+          "X": 560,
+          "Y": 113
+        },
+        "kCGWindowIsOnscreen": true,
+        "kCGWindowLayer": 0,
+        "kCGWindowNumber": 5979,
+        "kCGWindowSharingState": 1
+      }
+    ]
+  },
+  "native_keyboard": {
+    "pid": 94168,
+    "window": 5982,
+    "previous": 608
+  },
+  "keyboard_pixels": {
+    "height": 678,
+    "home_changed_channels": 0,
+    "pan_changed_channels": 8371,
+    "width": 846
+  },
+  "source_sha256": {
+    "crates/next-gui-ui/src/chart.rs": "939b64633b234e6d1f6094f3c397ce90365ddfe7ca85f4ab3666c08c0d272bc8",
+    "crates/next-gui-ui/src/dsl/build.rs": "fa4eb0f585d0ed2a24580a5ec7cf66b4006afc5949daab7e1ee86ae13cb326cb",
+    "crates/next-gui-ui/src/dsl/mod.rs": "6b168deb82cb9d410ea54571ae6965e72de2efbb5cca85bc277a5a24752bf633",
+    "crates/next-gui-ui/src/lib.rs": "148672649348b3c49b89be800b3376f8615bf14d7bf4c55cf8ac7319a183b75d",
+    "crates/next-gui-ui/src/plot.rs": "5cf946c556e53c80fad27f7107631265d0445a4ef6344344f6c44e9dba26aca3",
+    "crates/next-gui-ui/src/plot_raster.rs": "04871e3b3dc4f08e05ea093ddc9c9b1f20def94a6a1a41899aa4324bd61ba34a",
+    "crates/next-gui-ui/src/text_area_hint.rs": "c27585afb402220156a5b909b3cc0c88f45ae84ead8dd209677010eb38f05d20",
+    "crates/next-gui-ui/src/theme.rs": "3c6a15a51bdf6b75e8c23efe10af91d9d389cd8d6ef5b0c01ebbe1dc00d60868",
+    "docs/ngui-widgets.md": "b2b3816d5b1196cdb534d8c59a71da9f29f31d4f4e91e8bee02e2ae261a49d09",
+    "examples/28_db_browser/src/main.rs": "e67625636807f9f18929514998fc1560c19810a4960857128e3c79e5370673fe",
+    "examples/28_db_browser/src/plot_export.rs": "e464237951da7077ad72e3655bde9fab3dc93cfa7734c72965e35c1e346a7abe",
+    "examples/28_db_browser/src/ui_build.rs": "09e3a23af59ac199e3a3fae6821db9eeadd538021129191b091cbf9ca826409d"
+  },
+  "asset_sha256": {
+    "soft-contact.png": "d1f672410b5de1c4ee3f5058b56b9a88ee45fac601d3ee2c0c6acf39d4e6efb2",
+    "metal-contact.png": "94d3d6b7dbde27ce0ba77f814e691f452101609d82f8b1061cb320aba35c4952",
+    "native-contact.png": "b25323e45da7eb71209bb8069c2bb88d99d1906666829dc7d74fbf60e8c8689d",
+    "native-light-narrow.png": "5f0a60262b1fe3df9f2323875b36ec9dcc8f4f893c727c57569c13ab3521bfe7",
+    "native-keyboard-contact.png": "5b7b060f4a84398f86b3eaed53a8c363e6de4a2dd562b40cf0aee0b6b4833f53",
+    "office-contact-1.png": "59731d7b16a6a8a4493ac2312c19933c415f344a124a4487beeb7558de617688",
+    "office-contact-2.png": "038d404853ad1102920998e0c8cc8fa98cd3eedcfa10e478647caca33b93fe8b"
+  }
+}
