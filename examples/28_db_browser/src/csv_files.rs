@@ -267,7 +267,7 @@ pub struct Work {
     items: Vec<Item>,
     index: usize,
     pub options: CsvImportOptions,
-    pub pending: Option<csv_import::Data>,
+    pub pending: Option<csv_import::Prepared>,
     accepted: std::collections::HashSet<String>,
     yes_all: bool,
     rows: u64,
@@ -288,13 +288,13 @@ impl Work {
             Source::Clipboard => "Clipboard".into(),
         }
     }
-    fn read(&self, clipboard: &str) -> Result<csv_import::Data, String> {
-        // shortcut: full imports retain parsed rows; stream under a savepoint when adding cancellable progress.
+    fn read(&self, clipboard: &str) -> Result<csv_import::Prepared, String> {
+        // shortcut: preparation/insertion are synchronous; move them to a cancellable worker for interactive progress.
         match &self.items[self.index].source {
             Source::File(path) => std::fs::File::open(path)
                 .map_err(|error| error.to_string())
-                .and_then(|file| csv_import::read(file, &self.options, 0)),
-            Source::Clipboard => csv_import::text(clipboard, &self.options, 0),
+                .and_then(|file| csv_import::prepare(file, &self.options)),
+            Source::Clipboard => csv_import::prepare_text(clipboard, &self.options),
         }
     }
 }
@@ -453,11 +453,26 @@ impl crate::state::AppState {
         work.index += 1;
     }
 
-    fn insert_csv_item(&mut self, work: &mut Work, data: &csv_import::Data) -> Result<(), String> {
+    fn insert_csv_item(
+        &mut self,
+        work: &mut Work,
+        data: &csv_import::Prepared,
+    ) -> Result<(), String> {
         let table = work.target().to_string();
-        let rows =
-            crate::db::import_csv_data(self.conn.as_ref().unwrap(), &table, data, &work.options)
-                .map_err(|error| format!("{}: {error}", work.label()))?;
+        let rows = data
+            .rows()
+            .and_then(|rows| {
+                crate::db::import_csv_rows(
+                    self.conn.as_ref().unwrap(),
+                    &table,
+                    &data.preview.columns,
+                    &data.preview.types,
+                    rows,
+                    &work.options,
+                )
+            })
+            .map_err(|error| format!("{}: {error}", work.label()))?;
+        debug_assert!(rows <= data.row_count);
         self.mark_dirty();
         self.log_sql(format!("-- import csv → {table} ({rows} rows)"));
         work.rows += rows;

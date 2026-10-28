@@ -1697,21 +1697,26 @@ pub fn import_csv_into_table(
 
 /// Import CSV by column position, with the original empty/default/conflict policies.
 pub fn import_csv_data(conn: &Connection, table: &str, data: &crate::csv_import::Data, options: &CsvImportOptions) -> Result<u64, String> {
+    import_csv_rows(conn,table,&data.columns,&data.types,data.rows.iter().cloned().map(Ok),options)
+}
+
+pub fn import_csv_rows(conn: &Connection, table: &str, headers: &[String], types: &[&str], rows: impl IntoIterator<Item=Result<Vec<String>,String>>, options: &CsvImportOptions) -> Result<u64, String> {
     with_savepoint(conn, || {
-        if data.columns.is_empty() || data.types.len() != data.columns.len() { return Err("CSV has no valid column definition".into()); }
+        if headers.is_empty() || types.len() != headers.len() { return Err("CSV has no valid column definition".into()); }
         let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=?1 COLLATE NOCASE)", [table], |row| row.get(0)).map_err(|e| e.to_string())?;
         if !exists {
-            let ddl = data.columns.iter().zip(&data.types).map(|(name, kind)| format!("{} {kind}", quote_ident(name))).collect::<Vec<_>>().join(", ");
+            let ddl = headers.iter().zip(types).map(|(name, kind)| format!("{} {kind}", quote_ident(name))).collect::<Vec<_>>().join(", ");
             create_table_simple(conn, table, &ddl)?;
         }
         let columns = table_columns(conn, table)?;
-        if columns.len() != data.columns.len() { return Err("Import into an existing table requires the same number of writable columns".into()); }
+        if columns.len() != headers.len() { return Err("Import into an existing table requires the same number of writable columns".into()); }
         let strategy = match options.conflict { CsvConflict::Abort => " OR ABORT", CsvConflict::Ignore => " OR IGNORE", CsvConflict::Replace => " OR REPLACE" };
         let mut count = 0;
-        for (row_index, row) in data.rows.iter().enumerate() {
+        for (row_index, row) in rows.into_iter().enumerate() {
+            let row = row?;
             if row.len() != columns.len() { return Err(format!("CSV row {} has the wrong number of fields", row_index + 1)); }
             let mut names = Vec::new(); let mut values = Vec::new();
-            for (column, text) in columns.iter().zip(row) {
+            for (column, text) in columns.iter().zip(&row) {
                 let value = if !text.is_empty() { rusqlite::types::Value::Text(text.clone()) }
                     else if exists && !options.ignore_defaults && column.default_value.is_some() { continue; }
                     else if exists && column.notnull {

@@ -9,6 +9,8 @@ pub struct Data {
     pub types: Vec<&'static str>,
 }
 
+type RecordSink<'a> = dyn FnMut(&[String]) -> Result<(), String> + 'a;
+
 struct Parser<'a> {
     options: &'a CsvImportOptions,
     records: Vec<Vec<String>>,
@@ -18,6 +20,8 @@ struct Parser<'a> {
     closed: bool,
     skip_lf: bool,
     limit: usize,
+    count: usize,
+    sink: Option<&'a mut RecordSink<'a>>,
 }
 
 impl<'a> Parser<'a> {
@@ -38,6 +42,8 @@ impl<'a> Parser<'a> {
             closed: false,
             skip_lf: false,
             limit,
+            count: 0,
+            sink: None,
         })
     }
 
@@ -76,9 +82,9 @@ impl<'a> Parser<'a> {
                 self.field();
             } else if ch == '\r' || ch == '\n' {
                 self.field();
-                self.records.push(std::mem::take(&mut self.record));
+                self.record()?;
                 self.skip_lf = ch == '\r';
-                if self.limit != 0 && self.records.len() >= self.limit {
+                if self.limit != 0 && self.count >= self.limit {
                     return Ok(false);
                 }
             } else if self.closed {
@@ -92,13 +98,27 @@ impl<'a> Parser<'a> {
         Ok(true)
     }
 
+    fn record(&mut self) -> Result<(), String> {
+        let row = std::mem::take(&mut self.record);
+        self.count += 1;
+        if let Some(sink) = &mut self.sink {
+            sink(&row)?;
+            if self.records.len() < 20 {
+                self.records.push(row);
+            }
+        } else {
+            self.records.push(row);
+        }
+        Ok(())
+    }
+
     fn finish(mut self) -> Result<Data, String> {
         if self.quoted {
             return Err("Unterminated CSV quoted field".into());
         }
         if !self.field.is_empty() || !self.record.is_empty() || self.closed {
             self.field();
-            self.records.push(std::mem::take(&mut self.record));
+            self.record()?;
         }
         if self.records.is_empty() {
             return Err("empty CSV".into());
@@ -172,6 +192,124 @@ pub fn text(text: &str, options: &CsvImportOptions, limit: usize) -> Result<Data
     parser.finish()
 }
 
+/// Validated private snapshot, retaining only the original type/preview sample in memory.
+#[derive(Debug)]
+pub struct Prepared {
+    pub preview: Data,
+    pub row_count: u64,
+    header: bool,
+    file: std::fs::File,
+}
+
+struct SnapshotReader<'a> {
+    file: &'a std::fs::File,
+    offset: u64,
+}
+
+impl std::io::Read for SnapshotReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        #[cfg(unix)]
+        let result = std::os::unix::fs::FileExt::read_at(self.file, buffer, self.offset);
+        #[cfg(windows)]
+        let result = std::os::windows::fs::FileExt::seek_read(self.file, buffer, self.offset);
+        #[cfg(not(any(unix, windows)))]
+        let result = Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "CSV snapshots require positional file reads",
+        ));
+        let count = result?;
+        self.offset += count as u64;
+        Ok(count)
+    }
+}
+
+impl Prepared {
+    pub fn rows(&self) -> Result<impl Iterator<Item = Result<Vec<String>, String>> + '_, String> {
+        use std::io::BufRead;
+        let mut lines = std::io::BufReader::new(SnapshotReader {
+            file: &self.file,
+            offset: 0,
+        })
+        .lines();
+        if self.header {
+            let line = lines
+                .next()
+                .ok_or("CSV snapshot has no header")?
+                .map_err(|error| error.to_string())?;
+            serde_json::from_str::<Vec<String>>(&line).map_err(|error| error.to_string())?;
+        }
+        let mut remaining = self.row_count;
+        let mut ended = false;
+        Ok(std::iter::from_fn(move || {
+            if ended {
+                return None;
+            }
+            match lines.next() {
+                Some(line) if remaining > 0 => {
+                    remaining -= 1;
+                    Some(line.map_err(|error| error.to_string()).and_then(|line| {
+                        serde_json::from_str(&line).map_err(|error| error.to_string())
+                    }))
+                }
+                Some(_) => {
+                    ended = true;
+                    Some(Err("CSV snapshot contains unexpected extra rows".into()))
+                }
+                None if remaining > 0 => {
+                    ended = true;
+                    Some(Err(
+                        "CSV snapshot ended before all validated rows were read".into(),
+                    ))
+                }
+                None => {
+                    ended = true;
+                    None
+                }
+            }
+        }))
+    }
+}
+
+pub fn prepare(reader: impl std::io::Read, options: &CsvImportOptions) -> Result<Prepared, String> {
+    use std::io::Write;
+    // Anonymous files are removed by the OS when handles close, including process crashes.
+    let mut file = tempfile::tempfile().map_err(|error| error.to_string())?;
+    let mut writer = std::io::BufWriter::new(&mut file);
+    let mut width = None;
+    let mut count = 0;
+    let mut sink = |row: &[String]| {
+        if *width.get_or_insert(row.len()) != row.len() {
+            return Err(
+                "CSV needs unique headers and the same number of fields in every row".into(),
+            );
+        }
+        serde_json::to_writer(&mut writer, row).map_err(|error| error.to_string())?;
+        writer.write_all(b"\n").map_err(|error| error.to_string())?;
+        count += 1;
+        Ok(())
+    };
+    let mut parser = Parser::new(options, 0)?;
+    parser.sink = Some(&mut sink);
+    crate::csv_encoding::decode_reader(reader, &options.encoding, |text| parser.consume(text))?;
+    let preview = parser.finish()?;
+    writer.flush().map_err(|error| error.to_string())?;
+    drop(writer);
+    Ok(Prepared {
+        preview,
+        row_count: count - usize::from(options.has_header) as u64,
+        header: options.has_header,
+        file,
+    })
+}
+
+pub fn prepare_text(text: &str, options: &CsvImportOptions) -> Result<Prepared, String> {
+    let unicode = CsvImportOptions {
+        encoding: "UTF-8".into(),
+        ..options.clone()
+    };
+    prepare(text.trim_start_matches('\u{feff}').as_bytes(), &unicode)
+}
+
 pub fn character(value: &str, codepoint: bool) -> Option<char> {
     if codepoint {
         let value = value.trim();
@@ -203,6 +341,163 @@ mod tests {
             let len = out.len().min(1);
             self.0.read(&mut out[..len])
         }
+    }
+
+    #[test]
+    fn csv_stream_snapshot_keeps_only_sample_reopens_exact_rows_and_imports_large_files() {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        {
+            let mut writer = std::io::BufWriter::new(source.as_file_mut());
+            writeln!(writer, "id,note").unwrap();
+            for index in 0..50_000 {
+                writeln!(writer, "{index},\"日本\nrecord {index}\"").unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        source.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+        let options = CsvImportOptions::default();
+        let snapshot = prepare(source.as_file_mut(), &options).unwrap();
+        assert_eq!(snapshot.row_count, 50_000);
+        assert_eq!(snapshot.preview.rows.len(), 19);
+        assert_eq!(snapshot.preview.rows[18], ["18", "日本\nrecord 18"]);
+        assert_eq!(snapshot.preview.types, ["INTEGER", "TEXT"]);
+        source.as_file_mut().set_len(0).unwrap();
+        let mut seen = 0;
+        for row in snapshot.rows().unwrap() {
+            let row = row.unwrap();
+            assert_eq!(row, [seen.to_string(), format!("日本\nrecord {seen}")]);
+            seen += 1;
+        }
+        assert_eq!(seen, 50_000);
+        assert_eq!(snapshot.rows().unwrap().next().unwrap().unwrap()[0], "0");
+        let mut first = snapshot.rows().unwrap();
+        let mut second = snapshot.rows().unwrap();
+        for index in 0..3 {
+            assert_eq!(first.next().unwrap().unwrap()[0], index.to_string());
+            assert_eq!(second.next().unwrap().unwrap()[0], index.to_string());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            assert_eq!(snapshot.file.metadata().unwrap().nlink(),0);
+            assert_eq!(
+                snapshot.file.metadata().unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('saved');BEGIN;INSERT INTO keeper VALUES('pending')").unwrap();
+        assert_eq!(
+            crate::db::import_csv_rows(
+                &conn,
+                "streamed",
+                &snapshot.preview.columns,
+                &snapshot.preview.types,
+                snapshot.rows().unwrap(),
+                &options
+            )
+            .unwrap(),
+            50_000
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*),sum(id) FROM streamed", [], |row| Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, u64>(1)?
+            )))
+            .unwrap(),
+            (50_000, 1_249_975_000)
+        );
+        assert_eq!(crate::db::count_rows(&conn, "keeper").unwrap(), 2);
+        assert!(!conn.is_autocommit());
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert!(crate::db::table_columns(&conn, "streamed")
+            .unwrap()
+            .is_empty());
+        let no_header = prepare_text(
+            "1;日本\n2;other\n",
+            &CsvImportOptions {
+                has_header: false,
+                delimiter: ';',
+                ..options.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(no_header.row_count, 2);
+        assert_eq!(no_header.preview.columns, ["field1", "field2"]);
+        assert_eq!(
+            no_header
+                .rows()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            [["1", "日本"], ["2", "other"]]
+        );
+        let empty_table = prepare_text("v\n", &options).unwrap();
+        assert_eq!(empty_table.row_count, 0);
+        assert!(empty_table.rows().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn csv_stream_rejects_invalid_tail_and_rolls_back_snapshot_read_failures() {
+        use std::io::{BufRead, Seek, SeekFrom, Write};
+        let options = CsvImportOptions::default();
+        let prefix = format!(
+            "v\n{}",
+            (0..25)
+                .map(|index| format!("{index}\n"))
+                .collect::<String>()
+        );
+        for suffix in [b"wrong,width\n".as_slice(), b"\"unclosed", b"\xff"] {
+            let mut bytes = prefix.as_bytes().to_vec();
+            bytes.extend(suffix);
+            assert!(read(Fragmented(&bytes), &options, 20).is_ok());
+            assert!(prepare(Fragmented(&bytes), &options).is_err());
+        }
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('saved');CREATE TABLE existing(v INTEGER);INSERT INTO existing VALUES(42);BEGIN;INSERT INTO keeper VALUES('pending')").unwrap();
+        for truncate in [false, true] {
+            let mut snapshot = prepare_text(&prefix, &options).unwrap();
+            if truncate {
+                let mut reader = std::io::BufReader::new(snapshot.file.try_clone().unwrap());
+                reader.seek(SeekFrom::Start(0)).unwrap();
+                for _ in 0..6 {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                }
+                snapshot
+                    .file
+                    .set_len(reader.stream_position().unwrap())
+                    .unwrap();
+            } else {
+                snapshot.file.seek(SeekFrom::End(0)).unwrap();
+                snapshot.file.write_all(b"not JSON\n").unwrap();
+            }
+            for table in ["fresh", "existing"] {
+                assert!(crate::db::import_csv_rows(
+                    &conn,
+                    table,
+                    &snapshot.preview.columns,
+                    &snapshot.preview.types,
+                    snapshot.rows().unwrap(),
+                    &options
+                )
+                .is_err());
+                assert_eq!(crate::db::count_rows(&conn, "existing").unwrap(), 1);
+                assert_eq!(crate::db::count_rows(&conn, "keeper").unwrap(), 2);
+                assert!(!conn.is_autocommit());
+                assert!(crate::db::table_columns(&conn, "fresh").unwrap().is_empty());
+            }
+        }
+        let unicode = prepare_text(
+            "\u{feff}v\n日本\n",
+            &CsvImportOptions {
+                encoding: "unknown-codec".into(),
+                ..options
+            },
+        )
+        .unwrap();
+        assert_eq!(unicode.rows().unwrap().next().unwrap().unwrap(), ["日本"]);
     }
 
     #[test]
@@ -255,6 +550,23 @@ mod tests {
             .unwrap();
             assert_eq!(parsed.rows, expected.rows, "{encoding}");
             assert_eq!(parsed.types, expected.types);
+            let snapshot = prepare(
+                Fragmented(&raw),
+                &CsvImportOptions {
+                    encoding: encoding.into(),
+                    ..options.clone()
+                },
+            )
+            .unwrap();
+            assert_eq!(snapshot.preview.types, expected.types);
+            assert_eq!(
+                snapshot
+                    .rows()
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                expected.rows
+            );
         }
         let custom = CsvImportOptions {
             delimiter: '§',

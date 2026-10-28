@@ -2238,10 +2238,7 @@ impl AppState {
         if self.csv_preview.is_some() { return; }
         if let Some(work) = &self.csv_work {
             if let Some(data) = &work.pending {
-                self.csv_preview = Some(Ok(crate::csv_import::Data {
-                    columns: data.columns.clone(), types: data.types.clone(),
-                    rows: data.rows.iter().take(20 - usize::from(work.options.has_header)).cloned().collect(),
-                }));
+                self.csv_preview = Some(Ok(data.preview.clone()));
                 return;
             }
         }
