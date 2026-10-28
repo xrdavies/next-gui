@@ -21,6 +21,7 @@ pub(crate) mod real_bits {
 /// Typed preview rows, spilling large cells to disk instead of retaining whole pages.
 #[derive(Debug, Clone, Default)]
 pub struct CellSnapshot {
+    identity: Arc<()>,
     rows: Vec<Vec<CellValue>>,
     bytes: usize,
     file: Option<Arc<tempfile::NamedTempFile>>,
@@ -65,6 +66,7 @@ impl CellSnapshot {
             self.bytes = self.bytes.saturating_add(bytes);
             self.rows.push(cells);
         }
+        self.identity = Arc::new(());
         Ok(())
     }
 
@@ -81,7 +83,25 @@ impl CellSnapshot {
     }
 
     pub fn remove_column(&mut self, column: usize) {
-        if !self.is_empty() { self.columns.remove(column); }
+        if !self.is_empty() {
+            self.columns.remove(column);
+            self.identity = Arc::new(());
+        }
+    }
+
+    pub fn identity(&self) -> Arc<()> {
+        self.identity.clone()
+    }
+
+    /// Read a projected row once, including snapshots spilled to disk.
+    pub fn row(&self, index: usize) -> Result<Cow<'_, [CellValue]>, String> {
+        let cells = self.read_row(index)?;
+        if self.columns.iter().copied().eq(0..cells.len()) {
+            Ok(cells)
+        } else {
+            self.columns.iter().map(|&column| cells.get(column).cloned().ok_or_else(|| "No preview cell".into()))
+                .collect::<Result<Vec<_>, String>>().map(Cow::Owned)
+        }
     }
 
     fn read_row(&self, index: usize) -> Result<Cow<'_, [CellValue]>, String> {
@@ -193,6 +213,8 @@ mod tests {
         assert_eq!(snapshot.len(), 3);
         snapshot.remove_column(0);
         let cloned = snapshot.clone();
+        assert!(Arc::ptr_eq(&snapshot.identity(), &cloned.identity()));
+        assert_eq!(cloned.row(2).unwrap().as_ref(), &[CellValue::Null, CellValue::Real(f64::NEG_INFINITY)]);
         drop(snapshot);
         assert_eq!(cloned.cell(0, 0).unwrap(), CellValue::Text(vec![255]));
         assert_eq!(cloned.cell(1, 0).unwrap(), CellValue::Blob(blob));

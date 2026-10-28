@@ -533,6 +533,7 @@ pub struct AppState {
     pub pragma_drafts: Vec<String>,
 
     // Plot
+    pub plot: crate::plot::Model,
     pub chart_schema: String,
     pub chart_table: Option<String>,
     pub chart_column: String,
@@ -852,6 +853,7 @@ impl AppState {
             pragmas: Vec::new(),
             pragma_drafts: Vec::new(),
             chart_schema: "main".into(),
+            plot: crate::plot::Model::default(),
             chart_table: None,
             chart_column: "price".into(),
             chart_points: Arc::from([]),
@@ -1084,6 +1086,8 @@ impl AppState {
         self.sql_saved.swap(from, to);
         self.sql_edit_states.swap(from, to);
         self.sql_outputs.swap(from, to);
+        self.plot.settings.swap_queries(from, to);
+        self.plot.clear();
         if self.sql_tab_idx == from { self.sql_tab_idx = to; }
         else if self.sql_tab_idx == to { self.sql_tab_idx = from; }
     }
@@ -1102,6 +1106,8 @@ impl AppState {
         self.sql_saved.remove(index);
         self.sql_edit_states.remove(index);
         self.sql_outputs.remove(index);
+        self.plot.settings.close_query(index);
+        self.plot.clear();
         if self.sql_tabs.is_empty() {
             self.sql_tabs.push(String::new());
             self.sql_saved.push(String::new());
@@ -1547,6 +1553,22 @@ impl AppState {
             self.browse_mut().offset = old;
             return Err(e);
         }
+        Ok(())
+    }
+
+    pub fn sync_current_plot(&mut self) -> Result<(), String> {
+        if self.plot.settings.manual { return Ok(()); }
+        if self.tab == MainTab::ExecuteSql {
+            if let Some(result) = &self.sql_result {
+                return self.plot.sync(crate::plot::Source::Query(self.sql_tab_idx), result, 0, None);
+            }
+        } else {
+            let tab = &self.browse_tabs[self.browse_tab_idx];
+            if let (Some(table), Some(result)) = (&tab.table, &tab.result) {
+                return self.plot.sync(crate::plot::Source::Table { schema: tab.schema.clone(), table: table.clone() }, result, tab.offset, tab.total_rows);
+            }
+        }
+        self.plot.clear();
         Ok(())
     }
 
@@ -2111,6 +2133,7 @@ impl AppState {
                     if rule.schema == orig.schema && rule.table.as_deref() == Some(old_name) { rule.schema = schema.clone(); rule.table = Some(new_name.into()); }
                 }
                 if self.chart_schema == orig.schema && self.chart_table.as_deref() == Some(old_name) { self.chart_schema = schema.clone(); self.chart_table = Some(new_name.into()); }
+                self.plot.settings.rename_table((&orig.schema, old_name), (&schema, new_name));
             }
         }
         if original.is_some() && !renames.is_empty() {
@@ -2133,6 +2156,7 @@ impl AppState {
                 if rule.schema == schema && rule.table.as_deref() == Some(&name) { rename_column(&mut rule.column, &renames); }
             }
             if self.chart_schema == schema && self.chart_table.as_deref() == Some(&name) { rename_column(&mut self.chart_column, &renames); }
+            self.plot.settings.rename_columns(&schema, &name, &renames);
         }
         for view in &moved_views {
             let columns=db::table_column_names_in(self.conn.as_ref().unwrap(),&schema,view)?;
@@ -2145,6 +2169,7 @@ impl AppState {
             }
             for rule in &mut self.cond_rules {if rule.schema==schema && rule.table.as_deref()==Some(view) {rename_column(&mut rule.column,&changes);}}
             if self.chart_schema==schema && self.chart_table.as_deref()==Some(view) {rename_column(&mut self.chart_column,&changes);}
+            self.plot.settings.rename_columns(&schema, view, &changes);
         }
         self.refresh_schema()?;
         self.select_saved_object(&schema, ObjectKind::Table, &name, clean_ddl);
@@ -2360,6 +2385,8 @@ impl AppState {
         db::list_schema(&conn)?;
         conn.bind_log(&self.sql_log);
         self.conn = Some(conn);
+        self.plot.clear();
+        self.plot.settings.configs.clear();
         self.cipher_active = false;
         self.cipher_open_path = None;
         self.selected = None;
@@ -2529,6 +2556,8 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.plot.clear();
+        self.plot.settings.configs.clear();
         self.csv_work=None;self.csv_files=None;self.csv_preview=None;
         if matches!(self.overlay,Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.overlay=None;}
         if let Some(conn) = self.conn.take() {

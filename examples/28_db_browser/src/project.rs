@@ -18,6 +18,7 @@ pub struct ProjectFile {
     pub chart_schema: String,
     pub chart_table: Option<String>,
     pub chart_column: String,
+    pub plot_settings: crate::plot::Settings,
     pub ddl_draft: String,
     pub selected_object: Option<crate::state::SelectedObject>,
     pub main_tab: usize,
@@ -59,6 +60,7 @@ impl ProjectFile {
             chart_schema: state.chart_schema.clone(),
             chart_table: state.chart_table.clone(),
             chart_column: state.chart_column.clone(),
+            plot_settings: state.plot.settings.clone(),
             ddl_draft: state.ddl_draft.clone(),
             selected_object: state.selected.clone(),
             main_tab: state.tab.index(),
@@ -127,6 +129,8 @@ impl ProjectFile {
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
         state.cond_rules = self.cond_rules.clone();
         state.chart_schema = self.chart_schema.clone();
+        state.plot = crate::plot::Model::default();
+        state.plot.settings = self.plot_settings.clone();
         state.chart_points = std::sync::Arc::from([]);
         state.chart_state = next_gui_ui::PlotState::default();
         state.chart_table = self.chart_table.clone();
@@ -180,6 +184,7 @@ impl Default for ProjectFile {
             chart_schema: "main".into(),
             chart_table: None,
             chart_column: String::new(),
+            plot_settings: crate::plot::Settings::default(),
             ddl_draft: String::new(),
             selected_object: None,
             main_tab: 0,

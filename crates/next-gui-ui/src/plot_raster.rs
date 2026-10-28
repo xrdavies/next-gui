@@ -45,7 +45,7 @@ pub(crate) fn plot_area(width: f32, height: f32, data: &PlotData) -> Rect {
         50.0
     };
     let legend_columns = ((width - 24.0) / 150.0).floor().max(1.0) as usize;
-    let legend = (data.series.len().div_ceil(legend_columns) as f32 * 20.0).min(height * 0.25);
+    let legend = if data.show_legend { (data.series.len().div_ceil(legend_columns) as f32 * 20.0).min(height * 0.25) } else { 0.0 };
     let top = 24.0 + legend;
     Rect::new(
         left,
@@ -192,7 +192,7 @@ pub fn render_plot(
     }
     let columns = ((width as f32 - 24.0) / 150.0).floor().max(1.0) as usize;
     let cell_width = (width as f32 - 16.0) / columns as f32;
-    for (i, series) in data.series.iter().enumerate() {
+    for (i, series) in data.series.iter().take(if data.show_legend { data.series.len() } else { 0 }).enumerate() {
         let x = 8.0 + (i % columns) as f32 * cell_width;
         let y = 5.0 + (i / columns) as f32 * 20.0;
         if y + 18.0 > area.y - 20.0 {
@@ -804,6 +804,26 @@ mod tests {
         let right = render_plot(&font, &data, style, 400, 300).unwrap();
         assert!(red_near(&right, 5.0, 8.0));
         assert!(!red_near(&right, 5.0, 2.0));
+    }
+
+    #[test]
+    fn hiding_legend_releases_axis_space_and_removes_only_legend_ink() {
+        let font = next_gui_text::load_default_cjk_font().unwrap();
+        let mut data = PlotData {
+            series: vec![crate::PlotSeries {
+                name: "Legend sample".into(), color: Color::rgb(255, 0, 0), right_axis: false,
+                points: std::sync::Arc::from([crate::PlotPoint { x: 1.0, y: 2.0, row: 0 }]),
+                line: PlotLine::None, marker: PlotMarker::None,
+            }], ..PlotData::default()
+        };
+        let area = plot_area(400.0, 300.0, &data);
+        let visible = render_plot(&font, &data, PlotStyle::default(), 400, 300).unwrap();
+        data.show_legend = false;
+        let hidden = render_plot(&font, &data, PlotStyle::default(), 400, 300).unwrap();
+        assert!(plot_area(400.0, 300.0, &data).y < area.y);
+        let red = |image: &RgbaImage| image.pixels().chunks_exact(4).filter(|p| p[0] > 200 && p[1] < 40 && p[2] < 40).count();
+        assert!(red(&visible) > 0);
+        assert_eq!(red(&hidden), 0);
     }
 
     #[test]

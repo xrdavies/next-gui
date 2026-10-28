@@ -171,6 +171,7 @@ pub struct BuiltUi {
     pub chart_col: WidgetId,
     pub btn_chart: WidgetId,
     pub chart: WidgetId,
+    pub plot: crate::plot::Controls,
     pub status: WidgetId,
     pub modal: WidgetId,
     // Overlay widgets
@@ -576,6 +577,7 @@ pub fn build_ui(
     let mut chart_col = z;
     let mut btn_chart = z;
     let mut chart = z;
+    let mut plot_controls = crate::plot::Controls::default();
     let mut status = z;
     let mut ov_name = z;
     let mut ov_schema = z;
@@ -1592,15 +1594,15 @@ pub fn build_ui(
                     .map(|o| format!("{:?} · {}.{}", o.kind, db::quote_ident(&o.schema), db::quote_ident(&o.name)))
                     .collect()
             };
-            let chart_title = format!(
+            let chart_title = if !state.plot.settings.manual { format!("{} · {}", state.plot.title, state.plot.summary) } else { format!(
                 "{} · {} ({} samples)",
                 state.chart_table.as_ref().map(|name| db::qualified_name(&state.chart_schema, name)).unwrap_or_else(|| "—".into()),
                 state.chart_column,
                 state.chart_points.len()
-            );
+            ) };
             let chart_tiles = vec![ChartTile::plot(
                 chart_title.clone(),
-                PlotData {
+                if !state.plot.settings.manual { state.plot.data.clone() } else { PlotData {
                     x_label: "Source row".into(),
                     y1_label: state.chart_column.clone(),
                     series: vec![PlotSeries {
@@ -1609,7 +1611,7 @@ pub fn build_ui(
                         line: PlotLine::Line, marker: PlotMarker::None,
                     }],
                     state: state.chart_state.clone(), ..PlotData::default()
-                },
+                } },
                 PlotStyle { bg: theme.colors.input_bg, fg: theme.colors.text_primary,
                     grid: theme.colors.border, selection: theme.colors.accent,
                     ..PlotStyle::default()
@@ -2195,6 +2197,8 @@ pub fn build_ui(
                                 DockKind::Plot => {
                                     tb.page(DockKind::Plot.title(), |p| {
                                         dock_scroll = p.scroll_area(dock_col, |c| {
+                                            plot_controls = crate::plot::build(c, &state.plot, (dock_w - 40.0).max(180.0), dock_col.height, &theme);
+                                            if state.plot.settings.manual {
                                             c.row(dock_row, |row| {
                                                 let mut table_style = sel_style;
                                                 table_style.width = (dock_w - 52.0).max(160.0);
@@ -2213,7 +2217,10 @@ pub fn build_ui(
                                                 );
                                                 btn_chart = row.tool_button("Plot");
                                             });
-                                            c.tooltip(format!("{chart_title}\nWheel: zoom · Drag: pan · Home: fit · Ctrl/Cmd+click: select range"), |t| { chart = t.chart(chart_tiles.clone(), chart_style); });
+                                            }
+                                            let mut style = chart_style;
+                                            if !state.plot.settings.manual { style.height = crate::plot::heights(dock_col.height).1; }
+                                            c.tooltip(format!("{chart_title}\nWheel: zoom · Drag: pan · Home: fit · Ctrl/Cmd+click: select range"), |t| { chart = t.chart(chart_tiles.clone(), style); });
                                         });
                                     });
                                 }
@@ -2577,6 +2584,7 @@ pub fn build_ui(
     if csv_files.parent.0 != 0 { ui.set_dialog_open(csv_files.parent, true); }
     crate::csv_files::build_confirmation(&mut ui,&mut csv_files,state,&theme,width as f32);
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
+    crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
     ui.sync(&mut scene);
     crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
     crate::csv_files::restore(&mut ui,csv_files,state);
@@ -2731,6 +2739,7 @@ pub fn build_ui(
         chart_col,
         btn_chart,
         chart,
+        plot: plot_controls,
         status,
         modal,
         ov_name,

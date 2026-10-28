@@ -13,6 +13,7 @@ mod data_export;
 mod export_jobs;
 mod cell_clipboard;
 mod cell_snapshot;
+mod plot;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
@@ -51,6 +52,10 @@ use next_gui_ui::{ModalAction, Theme, ThemeMode, Ui, UiKey, WidgetId};
 use crate::db::{self as dbmod, ObjectKind};
 use crate::state::{AppState, ConfirmKind, DockKind, DocumentAction, MainTab, OverlayKind};
 use crate::ui_build::{build_ui, clear_color, mid, BuiltUi};
+
+const CURRENT_PLOT_QA_SQL: &str = "CREATE TABLE quarterly_revenue(observed TEXT, revenue REAL, expenses REAL, region TEXT);
+WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<18)
+INSERT INTO quarterly_revenue SELECT printf('2026-10-%02d',x), CASE WHEN x=9 THEN NULL ELSE 1200+x*150+(x%3)*80 END, 520+x*64, CASE WHEN x%2=0 THEN 'APAC' ELSE 'EMEA' END FROM n;";
 
 const SCHEMA_NAMESPACE_QA_SQL: &str = "CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
     INSERT INTO main.customers VALUES(1, 'Main customer');
@@ -302,6 +307,7 @@ struct BuiltUiIds {
     btn_edit_discard: WidgetId,
     btn_edit_cell: WidgetId,
     chart: WidgetId,
+    plot: plot::Controls,
     chart_select: WidgetId,
     chart_col: WidgetId,
     btn_chart: WidgetId,
@@ -539,6 +545,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_edit_discard: b.btn_edit_discard,
             btn_edit_cell: b.btn_edit_cell,
             chart: b.chart,
+            plot: b.plot,
             chart_select: b.chart_select,
             chart_col: b.chart_col,
             btn_chart: b.btn_chart,
@@ -1048,6 +1055,7 @@ impl Demo {
                     state.select_schema_node(10_000 + i as u64);
                     state.dock_focus = DockKind::Schema;
                     if tab == "plot-namespaces" || tab == "plot-caption" {
+                        state.plot.settings.manual = true;
                         state.conn.as_ref().unwrap().execute_batch("WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<15)
                             INSERT INTO analytics.customers SELECT x,'APAC',100+x*12+((x%3)*30) FROM n;").unwrap();
                         state.refresh_browse().unwrap();
@@ -1267,6 +1275,25 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql") {
+                state.new_memory_db().unwrap();
+                state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+                state.refresh_schema().unwrap();
+                state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+                state.tab = if tab.ends_with("sql") { MainTab::ExecuteSql } else { MainTab::Browse };
+                if state.tab == MainTab::ExecuteSql {
+                    *state.sql_editor_mut() = "SELECT observed, revenue, expenses, region\nFROM quarterly_revenue\nORDER BY observed DESC;".into();
+                    state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
+                }
+                state.plot.settings.manual = false;
+                state.sync_current_plot().unwrap();
+                for (row, axis) in [(1, 1), (2, 2), (3, 3)] { assert!(state.plot.check(row, axis, true)); }
+                state.plot.settings.marker = 4;
+                state.sync_current_plot().unwrap();
+                state.body_ratio = 0.52;
+                state.dock_focus = DockKind::Plot;
+                state.dock_plot = true;
+            }
             if matches!(tab.as_str(), "pragmas" | "pragmas-bottom" | "pragmas-confirm" | "pragmas-hold") {
                 state.new_memory_db().unwrap();
                 state.dock_edit = false;
@@ -1297,6 +1324,7 @@ impl Demo {
                 });
             }
         }
+        if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
             built.ui.key_input(UiKey::End);built.ui.sync(&mut built.scene);
@@ -1463,7 +1491,9 @@ impl Demo {
             self.ui.set_button_label(*button, self.state.sql_tab_label(index));
         }
         if let Some(plot)=self.ui.chart_plot(self.ids.chart,0) {
-            if plot.series.first().is_some_and(|series| std::sync::Arc::ptr_eq(&series.points,&self.state.chart_points)) {
+            if !self.state.plot.settings.manual && self.state.plot.matches_rendered(plot) {
+                self.state.plot.data.state = plot.state.clone();
+            } else if self.state.plot.settings.manual && plot.series.first().is_some_and(|series| std::sync::Arc::ptr_eq(&series.points,&self.state.chart_points)) {
                 self.state.chart_state=plot.state.clone();
             }
         }
@@ -2119,6 +2149,10 @@ impl Demo {
 
     fn handle_field_check_change(&mut self) {
         let Some((table,row,column,checked)) = self.ui.take_table_check_change() else { return; };
+        if table == self.ids.plot.columns && table.0 != 0 {
+            if self.state.plot.check(row, column, checked) { self.rebuild = true; }
+            return;
+        }
         if table==self.ids.sql_export.table && self.state.overlay==Some(OverlayKind::ExportSql) {
             if column==0 {if let Some(entry)=self.state.sql_export.as_mut().and_then(|draft|draft.objects.get_mut(row)) {entry.2=checked;self.rebuild=true;}}
             return;
@@ -2484,6 +2518,9 @@ impl Demo {
         let modal_session=self.ui.modal_state(self.ids.modal);
         let plot_session=self.ui.plot_session(self.ids.chart,0);
         let plot_focused=self.ui.focused()==Some(self.ids.chart);
+        let plot_source = self.state.plot.source.clone();
+        let plot_scroll = self.ui.table_scroll_offset(self.ids.plot.columns);
+        let plot_focus = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
         let pragma_scroll = self.ui.scroll_offset(self.ids.pragma_scroll);
         let pragma_session = if self.state.tab == MainTab::Pragmas && self.last_tab == MainTab::Pragmas.index() && self.state.overlay.is_none() {
             self.snapshot_inputs();
@@ -2578,6 +2615,7 @@ impl Demo {
         let tree_focused = self.state.tab == MainTab::Structure && self.ids.tree.0 != 0
             && self.ui.focused() == Some(self.ids.tree) && self.state.overlay.is_none() && !self.state.confirm_open;
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
+        if let Err(error) = self.state.sync_current_plot() { self.state.plot.clear(); self.set_error(error); }
         let built = build_ui(
             self.font.clone(),
             self.theme,
@@ -2593,6 +2631,13 @@ impl Demo {
         self.scene = built.scene;
         if let Some(session)=modal_session {if self.ui.restore_modal_state(self.ids.modal,&session) {self.ui.sync(&mut self.scene);}}
         if let Some(session)=plot_session {if self.ui.restore_plot_session(self.ids.chart,0,&session) {if plot_focused {self.ui.set_focus(Some(self.ids.chart));} self.ui.sync(&mut self.scene);}}
+        if plot_source == self.state.plot.source {
+            if let Some((x, y)) = plot_scroll { self.ui.set_table_scroll_offset(self.ids.plot.columns, x, y); }
+            if let Some(index) = plot_focus {
+                let id = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend][index];
+                if id.0 != 0 { self.ui.set_focus(Some(id)); }
+            }
+        }
         if let Some((x, y)) = pragma_scroll { self.ui.set_scroll_offset(self.ids.pragma_scroll, x, y); }
         if let Some((kind, index, text, select)) = pragma_session {
             if let Some(id) = [&self.ids.pragma_inputs, &self.ids.pragma_selects, &self.ids.pragma_switches][kind].get(index).copied().filter(|id| id.0 != 0) {
@@ -4270,8 +4315,15 @@ impl Demo {
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_chart {
+        if id == self.ids.plot.fit && id.0 != 0 {
+            self.state.plot.data.reset_view();
+            if let Some(data) = self.ui.chart_plot_mut(self.ids.chart, 0) { data.reset_view(); }
+            self.rebuild = true;
+            return;
+        }
+        if id == self.ids.btn_chart && id.0 != 0 {
             self.snapshot_inputs();
+            self.state.plot.settings.manual = true;
             self.apply_chart_select();
             match self.state.refresh_chart() {
                 Ok(()) => {
@@ -4317,8 +4369,59 @@ impl Demo {
         }
     }
 
+    fn link_plot_selection(&mut self) {
+        if self.state.plot.settings.manual || self.last_tab != self.state.tab.index() { return; }
+        let rows = self.state.plot.data.state.selected_rows.clone();
+        if rows == self.state.plot.linked_rows { return; }
+        if self.state.has_cell_draft() {
+            let previous = self.state.plot.linked_rows.clone();
+            self.state.plot.data.state.selected_rows = previous.clone();
+            if let Some(data) = self.ui.chart_plot_mut(self.ids.chart, 0) { data.state.selected_rows = previous; }
+            self.set_error("Apply or discard the cell draft first");
+            self.rebuild = true;
+            return;
+        }
+        let target = match (&self.state.plot.source, self.state.tab) {
+            (Some(plot::Source::Query(index)), MainTab::ExecuteSql) if *index == self.state.sql_tab_idx => Some((self.ids.sql_table, 0)),
+            (Some(plot::Source::Table { schema, table }), MainTab::Browse) if schema == &self.state.browse().schema && self.state.browse().table.as_ref() == Some(table) => Some((self.ids.browse_table, self.state.browse().offset)),
+            _ => None,
+        };
+        if let Some((table, offset)) = target.filter(|(id, _)| id.0 != 0) {
+            let range = rows.first().zip(rows.last()).and_then(|(a, b)| a.checked_sub(offset).zip(b.checked_sub(offset)));
+            if self.ui.set_table_selected_rows(table, range) {
+                if self.ui.table_selected_col(table).is_none() { self.ui.set_table_selected_col(table, Some(0)); }
+                self.ui.reveal_table_selection(table);
+            }
+        }
+        self.state.plot.linked_rows = rows;
+    }
+
     fn poll_selection_changes(&mut self) {
         if self.ui.is_dragging() { return; }
+        if let Some(mode) = self.ui.select_selected(self.ids.plot.mode) {
+            if (mode == 1) != self.state.plot.settings.manual {
+                self.state.plot.settings.manual = mode == 1;
+                self.rebuild = true;
+            }
+        }
+        if !self.state.plot.settings.manual {
+            if let Some(show) = self.ui.is_checked(self.ids.plot.legend) {
+                if show != self.state.plot.settings.show_legend {
+                    self.state.plot.settings.show_legend = show;
+                    self.state.plot.data.show_legend = show;
+                    self.rebuild = true;
+                }
+            }
+            let mut style_changed = false;
+            for (id, slot) in [(self.ids.plot.line, &mut self.state.plot.settings.line), (self.ids.plot.marker, &mut self.state.plot.settings.marker)] {
+                if let Some(index) = self.ui.select_selected(id) {
+                    if *slot != index { *slot = index; style_changed = true; }
+                }
+            }
+            if style_changed { self.state.plot.invalidate(); self.rebuild = true; }
+            let selected = self.ui.table_selected_row(self.ids.plot.columns).zip(self.ui.table_selected_col(self.ids.plot.columns));
+            if selected != self.state.plot.selected { self.state.plot.selected = selected; self.rebuild = true; }
+        }
         if let Some(index) = self.ui.select_selected(self.ids.log_filter) {
             if index != self.state.sql_log_filter {
                 self.state.sql_log_filter = index;
@@ -4326,6 +4429,7 @@ impl Demo {
                 self.rebuild = true;
             }
         }
+        self.link_plot_selection();
         if self.state.has_cell_draft() {
             let selection_changed = (self.ids.browse_table.0 != 0
                 && (self.ui.table_selected_row(self.ids.browse_table)
@@ -4624,6 +4728,9 @@ impl Demo {
         if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
+        if let Some((id, color)) = self.ui.take_color_change() {
+            if id == self.ids.plot.color && self.state.plot.set_color(color) { self.rebuild = true; }
+        }
         self.handle_table_cell_edit();
         while let Some(id) = self.ui.take_button_activate() {
             self.snapshot_inputs();
@@ -5862,8 +5969,143 @@ mod interaction_tests {
     }
 
     #[test]
+    fn current_plot_controls_link_rows_preserve_drafts_and_follow_browse_and_sql_results() {
+        use next_gui_ui::{PlotLine, PlotMarker};
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+        demo.state.browse_mut().filter = "expenses >= 700".into();
+        demo.state.refresh_browse().unwrap();
+        demo.state.sort_browse_column("observed".into(), false).unwrap();
+        demo.state.tab = MainTab::Browse;
+        demo.state.body_ratio = 0.52;
+        demo.state.dock_focus = DockKind::Plot;
+        demo.state.dock_plot = true;
+        demo.do_rebuild();
+        assert_eq!(demo.ui.table_cell_checked(demo.ids.plot.columns, 4, 2), None);
+        for (row, column) in [(1, 1), (2, 2), (3, 3)] {
+            demo.ui.set_table_selected_row(demo.ids.plot.columns, Some(row));
+            demo.ui.set_table_selected_col(demo.ids.plot.columns, Some(column));
+            demo.ui.set_focus(Some(demo.ids.plot.columns));
+            assert!(demo.ui.key_input(UiKey::Space));
+            demo.handle_field_check_change();
+            demo.poll_selection_changes();
+            demo.do_rebuild();
+            assert_eq!(demo.ui.focused(), Some(demo.ids.plot.columns));
+            assert_eq!(demo.ui.table_cell_checked(demo.ids.plot.columns, row, column), Some(true));
+        }
+        assert_eq!(demo.state.plot.data.series.len(), 2);
+        assert_eq!(demo.state.plot.data.series[0].points.len(), demo.state.browse().result.as_ref().unwrap().rows.len());
+        assert_eq!(demo.state.plot.data.x_format, next_gui_ui::PlotAxisFormat::Date);
+        assert!(demo.ids.plot.color.0 != 0);
+        demo.ui.set_select_selected(demo.ids.plot.line, Some(4));
+        demo.ui.set_select_selected(demo.ids.plot.marker, Some(4));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.state.plot.data.series[0].line, PlotLine::StepCenter);
+        assert_eq!(demo.state.plot.data.series[0].marker, PlotMarker::Disc);
+        let points = demo.state.plot.data.series[0].points.clone();
+        demo.ui.chart_plot_mut(demo.ids.chart, 0).unwrap().zoom(0.5, 0.5, 0.5);
+        demo.snapshot_inputs();
+        let view = demo.state.plot.data.view();
+        demo.do_rebuild();
+        assert!(std::sync::Arc::ptr_eq(&points, &demo.state.plot.data.series[0].points));
+        assert_eq!(demo.ui.chart_plot(demo.ids.chart, 0).unwrap().view(), view);
+        demo.ui.set_focus(Some(demo.ids.plot.legend));
+        assert!(demo.ui.key_input(UiKey::Space));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert_eq!(demo.ui.focused(), Some(demo.ids.plot.legend));
+        assert!(demo.ui.chart_plot(demo.ids.chart, 0).unwrap().show_legend);
+        assert_eq!(demo.ui.chart_plot(demo.ids.chart, 0).unwrap().view(), view);
+        assert!(std::sync::Arc::ptr_eq(&points, &demo.state.plot.data.series[0].points));
+        assert!(demo.ui.key_input(UiKey::Space));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert!(!demo.ui.chart_plot(demo.ids.chart, 0).unwrap().show_legend);
+        demo.handle_button(demo.ids.plot.fit);
+        demo.do_rebuild();
+        assert!(demo.ui.chart_plot(demo.ids.chart, 0).unwrap().state.view.is_none());
+        assert!(demo.ui.chart_plot_mut(demo.ids.chart, 0).unwrap().select_row(2, false));
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        assert_eq!(demo.state.browse().sel_row, Some(2));
+        demo.do_rebuild();
+        demo.ui.set_text_area_value(demo.ids.edit_value, "unsaved cell");
+        demo.snapshot_inputs();
+        assert!(demo.state.has_cell_draft());
+        assert!(demo.ui.chart_plot_mut(demo.ids.chart, 0).unwrap().select_row(5, false));
+        demo.snapshot_inputs();
+        demo.poll_selection_changes();
+        assert_eq!(demo.state.browse().sel_row, Some(2));
+        assert!(demo.state.error_msg.as_deref().unwrap().contains("cell draft"));
+        assert_eq!(*demo.state.plot.data.state.selected_rows, std::collections::BTreeSet::from([2]));
+        demo.state.discard_cell_draft();
+        demo.state.error_msg = None;
+        demo.do_rebuild();
+        let dir = tempfile::tempdir().unwrap();
+        let settings = demo.state.plot.settings.clone();
+        for suffix in ["json", "sqbpro"] {
+            let path = dir.path().join(format!("plot.{suffix}"));
+            project::ProjectFile::from_state(&demo.state).save(&path).unwrap();
+            assert_eq!(project::ProjectFile::load(&path).unwrap().plot_settings, settings);
+        }
+        for source in ["browse", "sql"] {
+            if source == "sql" {
+                *demo.state.sql_editor_mut() = "SELECT observed, expenses, revenue\nFROM quarterly_revenue\nORDER BY observed DESC;".into();
+                demo.state.sql_result = Some(db::execute_sql(demo.state.conn.as_ref().unwrap(), "SELECT observed, expenses, revenue FROM quarterly_revenue ORDER BY observed DESC").unwrap());
+                demo.state.tab = MainTab::ExecuteSql;
+                demo.do_rebuild();
+                assert!(demo.state.plot.data.series.is_empty());
+                for (row, axis) in [(1, 1), (2, 2), (3, 3)] { assert!(demo.state.plot.check(row, axis, true)); }
+                demo.do_rebuild();
+                assert!(demo.ui.chart_plot_mut(demo.ids.chart, 0).unwrap().select_row(3, false));
+                demo.snapshot_inputs();
+                demo.poll_selection_changes();
+                assert_eq!(demo.ui.table_selected_row(demo.ids.sql_table), Some(3));
+            }
+            for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                for (width, height) in [(1400, 1000), (800, 600)] {
+                    demo.win_w = width;
+                    demo.win_h = height;
+                    demo.do_rebuild();
+                    if let Ok(prefix) = std::env::var("NEXT_GUI_CURRENT_PLOT_QA_OUT") {
+                        demo.scene.mark_full_dirty(width as f32, height as f32);
+                        let dirty = demo.scene.take_dirty();
+                        let commands = encode_scene(&demo.scene, &dirty);
+                        let mut soft = SoftRenderer::new(width, height, clear_color(&demo.theme));
+                        soft.render(&commands, &dirty);
+                        write_ppm(&format!("{prefix}-{source}-{name}-{width}.ppm"), soft.frame_pixels().unwrap().0, width, height).unwrap();
+                        if let Ok(mut gpu) = GpuRenderer::try_new(width, height, clear_color(&demo.theme)) {
+                            gpu.render(&commands, &dirty);
+                            let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.chart)).unwrap().bounds;
+                            let soft_pixels = soft.frame_pixels().unwrap().0;
+                            let gpu_pixels = gpu.frame_pixels().unwrap().0;
+                            let mut delta = 0;
+                            let mut checked = 0;
+                            for y in (bounds.y.ceil().max(0.0) as usize + 2)..((bounds.y + bounds.height).floor().min(height as f32) as usize).saturating_sub(2) {
+                                for x in (bounds.x.ceil().max(0.0) as usize + 2)..((bounds.x + bounds.width).floor().min(width as f32) as usize).saturating_sub(2) {
+                                    for shift in [0, 8, 16] { delta = delta.max((((soft_pixels[y * width as usize + x] >> shift) & 255) as i32 - ((gpu_pixels[y * width as usize + x] >> shift) & 255) as i32).abs()); }
+                                    checked += 1;
+                                }
+                            }
+                            assert!(checked > 1000);
+                            assert!(delta <= 2, "{source}/{name}/{width}: delta {delta}");
+                            eprintln!("Current plot {source}/{name}/{width}: {checked} interior pixels, actual Soft/Metal max channel delta {delta}");
+                        } else { eprintln!("Current plot GPU comparison not_run: adapter unavailable"); }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn plot_namespace_selector_reads_the_selected_database_and_reports_errors() {
         let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.plot.settings.manual = true;
         demo.state.new_memory_db().unwrap();
         demo.state.conn.as_ref().unwrap().execute_batch(SCHEMA_NAMESPACE_QA_SQL).unwrap();
         demo.state.conn.as_ref().unwrap().execute_batch("WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<75)

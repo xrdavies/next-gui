@@ -299,7 +299,7 @@ pub struct PlotState {
 }
 
 /// Shared plot model; point buffers survive cheap model clones and UI rebuilds.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlotData {
     /// Horizontal axis caption.
     pub x_label: String,
@@ -313,6 +313,15 @@ pub struct PlotData {
     pub series: Vec<PlotSeries>,
     /// Navigation and selection session.
     pub state: PlotState,
+    /// Reserve space for series labels above the axes (enabled by default).
+    pub show_legend: bool,
+}
+
+impl Default for PlotData {
+    fn default() -> Self {
+        Self { x_label: String::new(), y1_label: String::new(), y2_label: String::new(),
+            x_format: PlotAxisFormat::default(), series: Vec::new(), state: PlotState::default(), show_legend: true }
+    }
 }
 
 impl PlotData {
@@ -565,17 +574,17 @@ impl Ui {
         area.x += body.x;
         area.y += body.y;
         let inside = area.contains(x, y);
-        data.state.active_axis = if inside {
-            PlotAxis::All
-        } else if y >= area.y + area.height {
-            PlotAxis::X
-        } else if x < area.x {
-            PlotAxis::Y1
-        } else if x > area.x + area.width {
-            PlotAxis::Y2
-        } else {
-            PlotAxis::All
-        };
+        if !inside {
+            data.state.active_axis = if y >= area.y + area.height {
+                PlotAxis::X
+            } else if x < area.x {
+                PlotAxis::Y1
+            } else if x > area.x + area.width {
+                PlotAxis::Y2
+            } else {
+                PlotAxis::All
+            };
+        }
         let view = data.view();
         let mut nearest = (64.0, None);
         if inside {
@@ -867,6 +876,20 @@ mod tests {
         assert!(ui.key_input(UiKey::Char('x')));
         assert!(ui.key_input(UiKey::Char('+')));
         assert_eq!(ui.chart_plot(id, 0).unwrap().view().y1, zoomed.y1);
+        let constrained = ui.chart_plot(id, 0).unwrap().view();
+        ui.sync(&mut scene);
+        let center = (area.x + area.width / 2.0, area.y + area.height / 2.0);
+        assert!(ui.pointer_pressed(&mut scene, center.0, center.1));
+        assert!(ui.pointer_moved(center.0 + 20.0, center.1 + 20.0));
+        ui.pointer_released();
+        assert_eq!(ui.chart_plot(id, 0).unwrap().state.active_axis, PlotAxis::X);
+        assert_eq!(ui.chart_plot(id, 0).unwrap().view().y1, constrained.y1);
+        assert_ne!(ui.chart_plot(id, 0).unwrap().view().x, constrained.x);
+        assert!(ui.key_input(UiKey::Escape));
+        assert!(ui.pointer_pressed(&mut scene, center.0, center.1));
+        assert!(ui.pointer_moved(center.0 + 20.0, center.1 + 20.0));
+        ui.pointer_released();
+        assert_ne!(ui.chart_plot(id, 0).unwrap().view().y1, constrained.y1);
         assert!(ui.key_input(UiKey::Home));
         assert_eq!(ui.chart_plot(id, 0).unwrap().view(), data.view());
         assert!(ui.chart_plot_image(id, 0, 400, 260).is_some());
