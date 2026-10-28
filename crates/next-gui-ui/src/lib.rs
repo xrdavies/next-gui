@@ -1175,14 +1175,16 @@ pub struct ModalStyle {
     pub panel_bg: Color,
     /// Title bar background.
     pub title_bg: Color,
-    /// Dim / scrim fill (opaque dark for Soft MVP).
+    /// Dim / scrim fill, including alpha.
     pub scrim: Color,
     /// Primary action button background.
     pub primary_bg: Color,
     /// Secondary action button background.
     pub secondary_bg: Color,
-    /// Action label color.
+    /// Focused action label color.
     pub action_fg: Color,
+    /// Unfocused action label color.
+    pub secondary_fg: Color,
     /// Close on backdrop click.
     pub close_on_backdrop: bool,
 }
@@ -1201,10 +1203,11 @@ impl Default for ModalStyle {
             body_fg: Color::rgb(0xc0, 0xc8, 0xd0),
             panel_bg: Color::rgb(0x2a, 0x2a, 0x32),
             title_bg: Color::rgb(0x32, 0x32, 0x3c),
-            scrim: Color::rgb(0x0c, 0x0c, 0x10),
-            primary_bg: Color::rgb(0x3b, 0x82, 0xf6),
+            scrim: Color::rgba(0x0c, 0x0c, 0x10, 160),
+            primary_bg: Color::rgb(0x2f, 0x5b, 0xa8),
             secondary_bg: Color::rgb(0x3a, 0x3a, 0x48),
             action_fg: Color::rgb(0xff, 0xff, 0xff),
+            secondary_fg: Color::rgb(0xf0, 0xf2, 0xf6),
             close_on_backdrop: true,
         }
     }
@@ -16547,7 +16550,7 @@ impl Ui {
                 btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
                 lm.width as f32, lm.height as f32,
             ));
-            scene.set_fill(text, style.action_fg);
+            scene.set_fill(text, if action_index == action_focus { style.action_fg } else { style.secondary_fg });
             scene.set_mask(text, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
             scene.set_visible(text, true);
             cursor_x = bx - 8.0;
@@ -21424,6 +21427,33 @@ mod tests {
         ui.set_focus(Some(slider));
         assert!(ui.key_input(UiKey::Right));
         assert!(ui.slider_value(slider).unwrap() > v);
+    }
+
+    #[test]
+    fn modal_themes_keep_context_and_both_action_states_readable() {
+        let luminance = |color: Color| [color.r, color.g, color.b].into_iter().zip([0.2126, 0.7152, 0.0722]).map(|(channel, weight)| {
+            let value = channel as f64 / 255.0;
+            weight * if value <= 0.04045 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) }
+        }).sum::<f64>();
+        for theme in [Theme::dark(), Theme::light()] {
+            let style = ModalStyle::from_theme(&theme);
+            let mut ui = Ui::new(); let mut scene = Scene::new(); ui.set_viewport(640.0, 480.0);
+            let modal = ui.modal("Remove field?", "The table stays visible behind the confirmation.", "Cancel", Some("Remove".into()), style);
+            ui.set_modal_open(modal, true);
+            for focused in 0..2 {
+                ui.sync(&mut scene);
+                let aux = &ui.widgets[&modal].aux;
+                assert!((1..255).contains(&scene.get(aux[0]).unwrap().fill.a));
+                for slot in 0..2 {
+                    let background = scene.get(aux[6 + slot * 2]).unwrap().fill;
+                    let foreground = scene.get(aux[7 + slot * 2]).unwrap().fill;
+                    assert_eq!(foreground, if slot == focused { style.action_fg } else { style.secondary_fg });
+                    let (a, b) = (luminance(background), luminance(foreground));
+                    assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+                }
+                ui.key_input(UiKey::Tab);
+            }
+        }
     }
 
     #[test]

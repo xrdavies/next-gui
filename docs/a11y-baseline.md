@@ -33,6 +33,11 @@ Tree exposes `tree_expanded` (including hidden descendants), finite/clamped `tre
 因此应用应先检查 `pointer_pressed` 的消费结果或查询启用状态。`sync` 后标签使用
 Theme 的 `disabled`、背景使用 `muted`，重新启用恢复原有样式。此状态尚未桥接到 OS 读屏接口。
 
+Modal / Drawer 的主题遮罩保留 alpha，使背景上下文可见。Modal 通过方向键或
+Tab/BackTab 切换按钮，聚焦按钮使用 `primary_bg` / `action_fg`，其余按钮使用
+`secondary_bg` / `secondary_fg`；默认深浅主题两种状态的文字对比度均至少4.5:1。
+应用在重建界面后须保留打开的 Modal 焦点，防止背景控件的焦点恢复覆盖确认框。
+
 ### 1.2 只读多行文本
 
 `Ui::set_text_area_read_only(id, true)` 允许焦点、导航、选择和复制，阻止输入、

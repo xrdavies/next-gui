@@ -615,6 +615,7 @@ pub enum ConfirmKind {
     None,
     DropObject,
     DeleteRow,
+    DeleteColumn(usize),
     Documents,
     Revert,
 }
@@ -1859,6 +1860,65 @@ impl AppState {
         self.wizard_constraint_columns[range.clone()].rotate_right(shift);
         if self.wizard_table_original.is_some() { self.wizard_col_sources[range].rotate_right(shift); }
         self.wizard_col_sel = target;
+        Ok(())
+    }
+
+    pub fn remove_wizard_column(&mut self, row: usize) -> Result<(), String> {
+        let count = self.wizard_cols.len();
+        if row >= count { return Err("Select an existing column to remove".into()); }
+        if self.wizard_constraint_columns.len() != count || self.wizard_column_edit_states.len() != count
+            || (self.wizard_table_original.is_some() && self.wizard_col_sources.len() != count)
+            || self.wizard_key_states.len() != self.wizard_index_constraints.len()
+            || self.wizard_foreign_key_states.len() != self.wizard_foreign_keys.len()
+            || self.wizard_check_states.len() != self.wizard_checks.len() {
+            return Err("Column identities do not match the table draft; reopen Modify Table".into());
+        }
+        let owner = &self.wizard_constraint_columns[row];
+        let mut indexes = Vec::new(); let mut index_states = Vec::new(); let mut key_sel = self.wizard_key_sel;
+        for (index, key) in self.wizard_index_constraints.iter().enumerate() {
+            let members = crate::table_sql::index_constraint_columns(key)?;
+            let retained: Vec<_> = members.iter().filter(|(name, _)| !name.eq_ignore_ascii_case(owner)).collect();
+            if retained.is_empty() { if index < self.wizard_key_sel { key_sel -= 1; } continue; }
+            let mut next = key.clone(); let changed = retained.len() != members.len();
+            if changed { next.columns = retained.iter().map(|(_, sql)| sql.as_str()).collect::<Vec<_>>().join(", "); }
+            indexes.push(next); index_states.push(if changed { None } else { self.wizard_key_states[index].clone() });
+        }
+        let mut foreign_keys = Vec::new(); let mut foreign_states = Vec::new(); let mut fk_sel = self.wizard_foreign_key_sel;
+        for (index, key) in self.wizard_foreign_keys.iter().enumerate() {
+            let members = crate::table_sql::foreign_key_columns(key)?;
+            let retained: Vec<_> = members.iter().filter(|(name, _)| !name.eq_ignore_ascii_case(owner)).collect();
+            if retained.is_empty() { if index < self.wizard_foreign_key_sel { fk_sel -= 1; } continue; }
+            let mut next = key.clone(); let changed = retained.len() != members.len();
+            // Keep the parent definition for review; existing SQL validation rejects any new arity mismatch.
+            if changed { next.columns = retained.iter().map(|(_, sql)| sql.as_str()).collect::<Vec<_>>().join(", "); }
+            foreign_keys.push(next); foreign_states.push(if changed { [None, None] } else { self.wizard_foreign_key_states[index].clone() });
+        }
+        let mut checks = Vec::new(); let mut check_states = Vec::new(); let mut check_sel = self.wizard_check_sel;
+        for (index, check) in self.wizard_checks.iter().enumerate() {
+            if check.column.as_ref().is_some_and(|name| name.eq_ignore_ascii_case(owner)) {
+                if index < self.wizard_check_sel { check_sel -= 1; } continue;
+            }
+            checks.push(check.clone()); check_states.push(self.wizard_check_states[index].clone());
+        }
+        // Constraint lists use stable identities even while draft field names are empty or duplicated.
+        let mut columns = self.wizard_cols.clone();
+        for (column, name) in columns.iter_mut().zip(&self.wizard_constraint_columns) { column.name = name.clone(); }
+        columns.remove(row);
+        let mut columns = crate::table_sql::columns_with_index_constraints(&columns, &indexes)?;
+        for (column, (_, original)) in columns.iter_mut().zip(self.wizard_cols.iter().enumerate().filter(|(index, _)| *index != row)) { column.name = original.name.clone(); }
+        self.wizard_cols = columns; self.wizard_constraint_columns.remove(row); self.wizard_column_edit_states.remove(row);
+        if self.wizard_table_original.is_some() { self.wizard_col_sources.remove(row); }
+        self.wizard_index_constraints = indexes; self.wizard_key_states = index_states;
+        self.wizard_key_sel = key_sel.min(self.wizard_index_constraints.len().saturating_sub(1));
+        self.wizard_table_options.index_constraints = Some(self.wizard_index_constraints.clone());
+        self.wizard_table_options.primary_key_conflict = self.wizard_index_constraints.iter().find(|key| key.primary).and_then(|key| key.conflict);
+        self.wizard_foreign_keys = foreign_keys; self.wizard_foreign_key_states = foreign_states;
+        self.wizard_foreign_key_sel = fk_sel.min(self.wizard_foreign_keys.len().saturating_sub(1));
+        self.wizard_checks = checks; self.wizard_check_states = check_states;
+        self.wizard_check_sel = check_sel.min(self.wizard_checks.len().saturating_sub(1));
+        self.store_wizard_checks(); self.store_wizard_foreign_keys();
+        self.wizard_col_sel = (self.wizard_col_sel - usize::from(self.wizard_col_sel > row)).min(self.wizard_cols.len().saturating_sub(1));
+        self.wizard_field_edit = None; self.wizard_constraint_edit = None; self.wizard_column_picker = None;
         Ok(())
     }
 

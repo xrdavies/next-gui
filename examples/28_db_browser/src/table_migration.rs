@@ -401,6 +401,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn removed_generated_fields_do_not_validate_values_after_retained_type_changes() {
+        for schema in ["main", "temp", "analytics"] {
+            let conn = Connection::open_in_memory().unwrap(); let table = db::qualified_name(schema, "records");
+            conn.execute_batch(&format!("ATTACH ':memory:' AS analytics;CREATE TABLE {table}(id INTEGER PRIMARY KEY,payload INTEGER,
+                gone INTEGER AS(CASE WHEN typeof(payload)='integer' THEN payload ELSE NULL END) STORED NOT NULL UNIQUE) STRICT;
+                INSERT INTO {table}(id,payload) VALUES(7,10),(11,20);")).unwrap();
+            let old = db::table_column_defs_in(&conn, schema, "records").unwrap();
+            let mut draft = old[..2].to_vec(); draft[1].type_name = "TEXT".into();
+            let mut options = db::table_options_in(&conn, schema, "records").unwrap();
+            options.index_constraints = Some(vec![table_sql::NamedIndexConstraint { primary:true, columns:"id".into(), inline:true, ..Default::default() }]);
+            db::recreate_table_columns_in(&conn,schema,"records","records",&draft,&[Some("id".into()),Some("payload".into())],Some(options)).unwrap_or_else(|error|panic!("{schema}: {error}"));
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {table} WHERE typeof(payload)='text'"),[],|row|row.get::<_,i64>(0)).unwrap(),2);
+            assert_eq!(conn.query_row(&format!("SELECT sum(id)+sum(payload) FROM {table}"),[],|row|row.get::<_,i64>(0)).unwrap(),48);
+        }
+    }
+
+    #[test]
+    fn removed_key_columns_keep_native_dependency_checks_and_rollback_staged_renames() {
+        for schema in ["main", "temp", "analytics"] {
+            for dependency in ["no_override", "index", "expression_index", "quoted_view", "trigger", "reused_name", "retained"] {
+                let conn = Connection::open_in_memory().unwrap();
+                let table = db::qualified_name(schema, "records");
+                conn.execute_batch(&format!("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS analytics;
+                    CREATE TABLE {table}(id INTEGER PRIMARY KEY AUTOINCREMENT,gone TEXT UNIQUE,payload TEXT);
+                    INSERT INTO {table}(id,gone,payload) VALUES(41,'a','first'),(57,'b','second');")).unwrap();
+                let guard = db::qualified_name(schema, "guarded");
+                let sql = match dependency {
+                    "index" => format!("CREATE INDEX {guard} ON records(gone)"),
+                    "expression_index" => format!("CREATE INDEX {guard} ON records(length(gone))"),
+                    "quoted_view" | "reused_name" => format!("CREATE VIEW {guard} AS SELECT \"gone\",payload FROM records"),
+                    "trigger" => format!("CREATE TRIGGER {guard} AFTER UPDATE OF payload ON records BEGIN SELECT new.gone;END"),
+                    "retained" => format!("CREATE VIEW {guard} AS SELECT payload FROM records;CREATE INDEX {} ON records(payload)", db::qualified_name(schema, "kept")),
+                    _ => String::new(),
+                };
+                conn.execute_batch(&sql).unwrap();
+                conn.execute_batch(&format!("BEGIN;INSERT INTO {table}(id,gone,payload) VALUES(99,'c','pending')")).unwrap();
+                let definitions = |conn: &Connection| conn.query_row(&format!("SELECT group_concat(coalesce(sql,''),char(10)) FROM (SELECT sql FROM {}.sqlite_schema ORDER BY type,name)", db::quote_ident(schema)), [], |row| row.get::<_, String>(0)).unwrap();
+                let before = definitions(&conn);
+                let quoted = [DbConfig::SQLITE_DBCONFIG_DQS_DDL, DbConfig::SQLITE_DBCONFIG_DQS_DML].map(|setting| conn.db_config(setting).unwrap());
+                let old = db::table_column_defs_in(&conn, schema, "records").unwrap();
+                let mut draft = vec![old[0].clone(), old[2].clone()];
+                if matches!(dependency, "reused_name" | "retained") { draft[1].name = "gone".into(); }
+                let sources = vec![Some("id".into()), Some("payload".into())];
+                let mut options = db::table_options_in(&conn, schema, "records").unwrap();
+                options.index_constraints = Some(vec![table_sql::NamedIndexConstraint { primary:true, auto_increment:true, columns:"id".into(), inline:true, ..Default::default() }]);
+                let result = db::recreate_table_columns_in(&conn, schema, "records", "records", &draft, &sources, (dependency != "no_override").then_some(options));
+                if dependency == "retained" {
+                    result.unwrap_or_else(|error| panic!("{schema}/{dependency}: {error}"));
+                    assert_eq!(conn.query_row(&format!("SELECT gone FROM {table} WHERE id=99"), [], |row| row.get::<_, String>(0)).unwrap(), "pending");
+                    assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {guard}"), [], |row| row.get::<_, i64>(0)).unwrap(), 3);
+                    conn.execute(&format!("INSERT INTO {table}(gone) VALUES('new')"), []).unwrap();
+                    assert_eq!(conn.last_insert_rowid(), 100);
+                    assert!(conn.prepare(&format!("SELECT gone FROM {table} INDEXED BY kept")).is_ok());
+                } else {
+                    assert!(result.is_err(), "{schema}/{dependency}: {result:?}");
+                    assert_eq!(definitions(&conn), before, "{schema}/{dependency}");
+                    assert_eq!(conn.query_row(&format!("SELECT gone||':'||payload FROM {table} WHERE id=99"), [], |row| row.get::<_, String>(0)).unwrap(), "c:pending");
+                    assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 197);
+                }
+                assert_eq!([DbConfig::SQLITE_DBCONFIG_DQS_DDL, DbConfig::SQLITE_DBCONFIG_DQS_DML].map(|setting| conn.db_config(setting).unwrap()), quoted);
+                assert!(!conn.is_autocommit());
+                assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY).unwrap());
+                assert!(!conn.db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE).unwrap());
+                conn.execute_batch("ROLLBACK").unwrap();
+                assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+            }
+        }
+    }
+
+    #[test]
     fn named_composite_foreign_keys_edit_clear_and_create_with_actions_and_atomic_validation() {
         for schema in ["main","temp","aux.\"db"] {
             let conn=Connection::open_in_memory().unwrap(); let child=db::qualified_name(schema,"child");

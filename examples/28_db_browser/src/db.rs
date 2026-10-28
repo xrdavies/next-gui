@@ -1532,9 +1532,11 @@ pub fn recreate_table_columns_in(
         .collect();
     if !removed.is_empty() {
         let mut stmt = conn.prepare(&format!("PRAGMA {}.index_list({})", quote_ident(schema), quote_literal(old_name))).map_err(|e| e.to_string())?;
-        let indexes = stmt.query_map([], |r| r.get::<_, String>(1)).map_err(|e| e.to_string())?;
+        let indexes = stmt.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, String>(3)?))).map_err(|e| e.to_string())?;
         for index in indexes {
-            let index = index.map_err(|e| e.to_string())?;
+            let (index, origin) = index.map_err(|e| e.to_string())?;
+            // Complete PK/UNIQUE drafts deliberately replace their SQLite-owned indexes.
+            if matches!(origin.as_str(), "u" | "pk") && options.as_ref().is_some_and(|options| options.index_constraints.is_some()) { continue; }
             let mut keys = conn.prepare(&format!("PRAGMA {}.index_info({})", quote_ident(schema), quote_literal(&index))).map_err(|e| e.to_string())?;
             let columns = keys.query_map([], |r| r.get::<_, Option<String>>(2)).map_err(|e| e.to_string())?;
             for column in columns {
@@ -1563,19 +1565,30 @@ pub fn recreate_table_columns_in(
         }
     }
     with_savepoint(conn, || {
+        let mut staged_removals = Vec::new();
+        if rebuild {
+            // Keep removed fields until native DROP can validate views/triggers after replacing their keys.
+            for column in &removed {
+                let mut number = reserved.len();
+                let temporary = loop {
+                    let candidate = format!("__next_gui_removed_{number}");
+                    if !reserved.iter().any(|name| name.eq_ignore_ascii_case(&candidate)) { break candidate; }
+                    number += 1;
+                };
+                reserved.push(temporary.clone());
+                execute_single_statement(conn, &format!("ALTER TABLE {} RENAME COLUMN {} TO {}",
+                    qualified_name(schema, old_name), quote_ident(&column.name), quote_ident(&temporary)))?;
+                staged_removals.push((&column.name, temporary));
+            }
+        }
         // Temporary column names let swaps and case-only renames preserve identity.
         for (source, _, temporary) in &renames {
             execute_single_statement(conn, &format!("ALTER TABLE {} RENAME COLUMN {} TO {}",
                 qualified_name(schema, old_name), quote_ident(source), quote_ident(temporary)))
                 .map_err(|error| format!("Cannot rename column {source}: {error}"))?;
         }
-        // shortcut: clear/save PK membership before removing its column; native DROP validates other dependencies.
-        for col in removed {
-            execute_single_statement(conn, &format!(
-                "ALTER TABLE {} DROP COLUMN {}",
-                qualified_name(schema, old_name),
-                quote_ident(&col.name)
-            ))?;
+        for col in removed.iter().filter(|_| !rebuild) {
+            drop_table_column_in(conn, schema, old_name, &col.name)?;
         }
         for (_, target, temporary) in &renames {
             execute_single_statement(conn, &format!("ALTER TABLE {} RENAME COLUMN {} TO {}",
@@ -1583,7 +1596,23 @@ pub fn recreate_table_columns_in(
                 .map_err(|error| format!("Cannot rename column to {target}: {error}"))?;
         }
         if rebuild {
-            crate::table_migration::rebuild(conn, schema, old_name, &existing, cols, sources, options)?;
+            if staged_removals.is_empty() {
+                crate::table_migration::rebuild(conn, schema, old_name, &existing, cols, sources, options)?;
+            } else {
+                let current = table_column_defs_in(conn, schema, old_name)?;
+                let mut staged = cols.to_vec();
+                let mut identities: Vec<_> = cols.iter().zip(sources).map(|(column, source)| source.as_ref().map(|_| column.name.clone())).collect();
+                for (_, temporary) in &staged_removals {
+                    // Retired fields only validate dependencies; discarded values need no generated/NOT NULL rules.
+                    let column = current.iter().find(|column| column.name == *temporary).map(|column| ColDef::new(&column.name, "ANY")).ok_or("Removed column identity disappeared")?;
+                    staged.push(column); identities.push(Some(temporary.clone()));
+                }
+                crate::table_migration::rebuild(conn, schema, old_name, &current, &staged, &identities, options)?;
+                for (original, temporary) in staged_removals {
+                    drop_table_column_in(conn, schema, old_name, &temporary)
+                        .map_err(|error| format!("Cannot remove column {original}: {error}"))?;
+                }
+            }
         } else {
             for col in added {
                 let ddl = create_table_ddl("unused", std::slice::from_ref(col));
@@ -1610,6 +1639,22 @@ pub fn recreate_table_columns_in(
         }
         Ok(())
     })
+}
+
+fn drop_table_column_in(conn: &Connection, schema: &str, table: &str, column: &str) -> Result<(), String> {
+    // A removed quoted identifier must never silently become a string in a dependent view.
+    let settings = [rusqlite::config::DbConfig::SQLITE_DBCONFIG_DQS_DDL, rusqlite::config::DbConfig::SQLITE_DBCONFIG_DQS_DML]
+        .into_iter().map(|setting| conn.db_config(setting).map(|value| (setting, value)).map_err(|error| error.to_string())).collect::<Result<Vec<_>, _>>()?;
+    let mut result = (|| {
+        for (setting, _) in &settings { conn.set_db_config(*setting, false).map_err(|error| error.to_string())?; }
+        execute_single_statement(conn, &format!("ALTER TABLE {} DROP COLUMN {}", qualified_name(schema, table), quote_ident(column)))
+    })();
+    for (setting, value) in settings {
+        if let Err(error) = conn.set_db_config(setting, value) {
+            result = Err(format!("{}Restoring quoted-string compatibility failed: {error}", result.err().map(|error| format!("{error}; ")).unwrap_or_default()));
+        }
+    }
+    result
 }
 
 pub fn with_savepoint<T>(

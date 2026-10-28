@@ -2300,6 +2300,11 @@ pub fn build_ui(
                 .unwrap_or_else(|| "Delete selected object?".into()),
             "Delete",
         ),
+        ConfirmKind::DeleteColumn(row) => (
+            "Remove Field",
+            format!("Remove field '{}'?\nThe field and its data will be removed when you save.", state.wizard_cols.get(row).map_or("", |column| column.name.as_str())),
+            "Cancel",
+        ),
         ConfirmKind::DeleteRow => (
             "Delete Record",
             "Delete the selected browse row (by rowid)?".into(),
@@ -2321,12 +2326,14 @@ pub fn build_ui(
         ),
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
+    let mut modal_style = ModalStyle::from_theme(&theme);
+    if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { modal_style.height = 170.0; }
     let modal = ui.modal(
         modal_title,
         modal_body,
         modal_primary,
-        Some(if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
-        ModalStyle::from_theme(&theme),
+        Some(if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
+        modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
         ui.set_modal_tertiary(modal, Some("Cancel".into()));
