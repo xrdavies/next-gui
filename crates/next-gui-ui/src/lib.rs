@@ -20,6 +20,10 @@ mod dsl;
 mod icon;
 mod p1_deferred;
 mod chart;
+mod plot;
+pub use plot::{PlotAxis, PlotAxisFormat, PlotData, PlotLine, PlotMarker, PlotPoint, PlotSeries, PlotSession, PlotState, PlotView};
+mod plot_raster;
+pub use plot_raster::{render_plot, PlotStyle};
 mod prose;
 mod modal;
 pub use modal::ModalState;
@@ -1955,6 +1959,8 @@ enum Kind {
     Chart {
         tiles: Vec<ChartTile>,
         style: ChartStyle,
+        plot_bounds: Vec<Rect>,
+        plot_images: Vec<Option<RgbaImage>>,
     },
     Drawer {
         title: String,
@@ -2192,6 +2198,17 @@ impl Widget {
 
 #[derive(Debug, Clone)]
 enum DragState {
+    Plot {
+        chart: WidgetId,
+        tile: usize,
+        bounds: Rect,
+        start_x: f32,
+        start_y: f32,
+        view: PlotView,
+        moved: bool,
+        row: Option<usize>,
+        extend: bool,
+    },
     IntegerInput {
         input: WidgetId,
         delta: i64,
@@ -3231,9 +3248,19 @@ impl Ui {
         self.pointer_press(scene, x, y, false)
     }
 
+    /// Begin a primary press, extending a plot's source selection when requested.
+    /// Applications map their platform's Ctrl/Cmd modifier to `extend`.
+    pub fn pointer_pressed_with_range_selection(&mut self, scene: &mut Scene, x: f32, y: f32, extend: bool) -> bool {
+        self.pointer_press_impl(scene, x, y, false, extend)
+    }
+
     /// Begin a pointer press with primary (`secondary = false`) or secondary
     /// / right button (`secondary = true`, opens [`Kind::ContextMenu`]).
     pub fn pointer_press(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool) -> bool {
+        self.pointer_press_impl(scene, x, y, secondary, false)
+    }
+
+    fn pointer_press_impl(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool, extend: bool) -> bool {
         self.cancel_pointer_repeat();
         self.enforce_dialog_scope();
         if self.pointer_text_area_hint(scene, x, y, secondary) { return true; }
@@ -3336,6 +3363,7 @@ impl Ui {
         }
 
         match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Chart { .. }) => self.pointer_plot(id, x, y, extend),
             Some(Kind::TextInput { .. }) => {
                 self.focus = Some(id);
                 if self.pointer_integer_input(scene, id, x, y) { return true; }
@@ -3540,6 +3568,7 @@ impl Ui {
             return self.update_tooltip_hover_xy(x, y);
         };
         match drag {
+            DragState::Plot {..} => self.move_plot(x, y),
             DragState::IntegerInput { .. } => self.move_integer_repeat(x, y),
             DragState::TableSelection { table, bounds } => self.drag_table_selection(table, bounds, x, y),
             DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
@@ -3604,6 +3633,13 @@ impl Ui {
 
     /// End an active drag.
     pub fn pointer_released(&mut self) {
+        if let Some(DragState::Plot {chart,tile,moved:false,row:Some(row),extend,..}) = self.drag.take() {
+            if let Some(data) = self.chart_plot_mut(chart,tile) {data.select_row(row,extend);}
+        }
+    }
+
+    /// Cancel pointer capture without committing a pending click, e.g. on focus loss.
+    pub fn cancel_pointer_capture(&mut self) {
         self.drag = None;
     }
 
@@ -3648,6 +3684,7 @@ impl Ui {
         let Some(id) = self.hit_widget(scene, x, y) else {
             return repeat_cancelled;
         };
+        if self.wheel_plot(id, x, y, dy) {return true;}
         let mut node = self.widgets.get(&id).and_then(|w| w.node);
         // Start at the hit control, then bubble at its limits to enclosing viewports.
         while let Some(n) = node.and_then(|n| scene.get(n)) {
@@ -3821,7 +3858,12 @@ impl Ui {
             }
             Kind::Tabs { titles, selected, .. } => titles.get(*selected).cloned(),
             Kind::Chart { tiles, .. } => {
-                let titles: Vec<_> = tiles.iter().filter(|tile| !tile.title.is_empty()).map(|tile| tile.title.as_str()).collect();
+                let titles: Vec<_> = tiles.iter().filter_map(|tile| {
+                    if let ChartKind::Plot {data,..}=&tile.kind {
+                        let names:Vec<_>=data.series.iter().map(|s|s.name.as_str()).collect();
+                        Some(format!("{}\nX: {} · Y1: {} · Y2: {}\n{}\nHome: fit; +/-: zoom; arrows: pan; X/Y/R: constrain axes; Escape: all axes",tile.title,data.x_label,data.y1_label,data.y2_label,names.join(", ")))
+                    } else {(!tile.title.is_empty()).then(||tile.title.clone())}
+                }).collect();
                 (!titles.is_empty()).then(|| titles.join("\n"))
             }
             Kind::Segmented { options, selected, .. } => options.get(*selected).cloned(),
@@ -3946,6 +3988,7 @@ impl Ui {
     /// (actions are hit targets on the Result host — no separate child widgets).
     fn kind_is_focusable(kind: &Kind) -> bool {
         match kind {
+            Kind::Chart {tiles,..} => tiles.iter().any(|tile|matches!(tile.kind,ChartKind::Plot {..})),
             Kind::Result {
                 primary_action,
                 secondary_action,
@@ -5116,6 +5159,7 @@ impl Ui {
             key
         };
         match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Chart { .. }) => self.key_plot(id,key),
             Some(Kind::TextInput { .. }) => self.key_text_input(id, key),
             Some(Kind::TextArea { .. }) => self.key_text_area(id, key),
             Some(Kind::InputNumber { .. }) => self.key_input_number(id, key),
@@ -17028,8 +17072,10 @@ impl Ui {
     /// Replace all Chart tiles.
     pub fn set_chart_tiles(&mut self, id: WidgetId, tiles: Vec<ChartTile>) -> bool {
         if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Chart { tiles: slot, .. } = &mut w.kind {
+            if let Kind::Chart { tiles: slot, plot_bounds, plot_images, .. } = &mut w.kind {
                 *slot = tiles;
+                plot_bounds.clear();
+                plot_images.clear();
                 return true;
             }
         }
@@ -17727,7 +17773,7 @@ impl Ui {
 
     fn paint_chart(&mut self, scene: &mut Scene, id: WidgetId) {
         let Some(Widget {
-            kind: Kind::Chart { tiles, style },
+            kind: Kind::Chart { tiles, style, plot_images, .. },
             node,
             ..
         }) = self.widgets.get(&id)
@@ -17735,6 +17781,8 @@ impl Ui {
             return;
         };
         let tiles = tiles.clone();
+        let mut plot_images = plot_images.clone();
+        plot_images.resize(tiles.len(), None);
         let style = *style;
         let Some(node) = *node else { return };
         let bounds = scene.get(node).map(|n| n.bounds).unwrap_or_else(Rect::empty);
@@ -17755,6 +17803,7 @@ impl Ui {
         }
 
         let rects = chart::chart_tile_rects(style, tiles.len());
+        let mut plot_bounds = vec![Rect::empty(); tiles.len()];
         for (i, tile) in tiles.iter().enumerate() {
             let Some(&(lx, ly, cw, ch)) = rects.get(i) else {
                 break;
@@ -17796,6 +17845,27 @@ impl Ui {
                 (cell.height - title_h).max(8.0),
             );
             match &tile.kind {
+                ChartKind::Plot { data, style } => {
+                    plot_bounds[i] = body;
+                    if let Some(focus_node)=b {
+                        scene.set_bounds(focus_node,Rect::new(cell.x,body.y-2.0,cell.width,2.0));
+                        scene.set_fill(focus_node,style.selection);
+                        scene.set_mask(focus_node,None);
+                        scene.set_image(focus_node,None);
+                        scene.set_visible(focus_node,self.focus==Some(id));
+                    }
+                    if let Some(image_node) = a {
+                        scene.set_bounds(image_node, body);
+                        scene.set_fill(image_node, Color::rgb(255, 255, 255));
+                        scene.set_mask(image_node, None);
+                        let (width,height)=(body.width.round().max(1.0) as u32,body.height.round().max(1.0) as u32);
+                        let image=plot_images[i].take().filter(|image|image.width()==width && image.height()==height)
+                            .or_else(||render_plot(&self.font,data,*style,width,height));
+                        scene.set_image(image_node, image.clone());
+                        plot_images[i]=image;
+                        scene.set_visible(image_node, true);
+                    }
+                }
                 ChartKind::Gauge {
                     value,
                     min,
@@ -17804,11 +17874,13 @@ impl Ui {
                     label,
                     style: gs,
                 } => {
+                    for child in [a, b, c].into_iter().flatten() {scene.set_image(child, None);}
                     self.paint_gauge_tile(
                         scene, body, *value, *min, *max, unit, label, *gs, a, b, c,
                     );
                 }
                 ChartKind::Trend { points, style: ts } => {
+                    for child in [a, b, c].into_iter().flatten() {scene.set_image(child, None);}
                     // Subtle per-tile bg via fill layer under line
                     if let Some(fill_n) = a {
                         scene.set_bounds(fill_n, body);
@@ -17827,6 +17899,10 @@ impl Ui {
                     self.paint_trend_tile(scene, inset, points, *ts, b, c);
                 }
             }
+        }
+        if let Some(Widget {kind: Kind::Chart {plot_bounds: slot, plot_images: images, ..}, ..}) = self.widgets.get_mut(&id) {
+            *slot = plot_bounds;
+            *images = plot_images;
         }
     }
 
@@ -19042,13 +19118,13 @@ impl FlexBuilder<'_> {
         id
     }
 
-    /// Multi-tile Chart panel (Gauge + Trend grid; Office enhancement).
+    /// Multi-tile chart with gauges, trends and interactive Cartesian plots.
     pub fn chart(&mut self, tiles: Vec<ChartTile>, style: ChartStyle) -> WidgetId {
         let id = self.ui.alloc();
         self.ui.widgets.insert(
             id,
             Widget {
-                kind: Kind::Chart { tiles, style },
+                kind: Kind::Chart { tiles, style, plot_bounds: Vec::new(), plot_images: Vec::new() },
                 node: None,
                 label_node: None,
                 chrome_node: None,

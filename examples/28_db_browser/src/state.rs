@@ -536,7 +536,8 @@ pub struct AppState {
     pub chart_schema: String,
     pub chart_table: Option<String>,
     pub chart_column: String,
-    pub chart_points: Vec<f32>,
+    pub chart_points: Arc<[next_gui_ui::PlotPoint]>,
+    pub chart_state: next_gui_ui::PlotState,
 
     pub sql_log: SqlLog,
     pub sql_log_filter: usize,
@@ -853,7 +854,8 @@ impl AppState {
             chart_schema: "main".into(),
             chart_table: None,
             chart_column: "price".into(),
-            chart_points: Vec::new(),
+            chart_points: Arc::from([]),
+            chart_state: next_gui_ui::PlotState::default(),
             sql_log: SqlLog::default(),
             sql_log_filter: 0,
             sql_log_view: None,
@@ -1550,19 +1552,23 @@ impl AppState {
 
     pub fn refresh_chart(&mut self) -> Result<(), String> {
         let Some(conn) = self.conn.as_ref() else {
-            self.chart_points.clear();
+            self.chart_points = Arc::from([]);
+            self.chart_state = next_gui_ui::PlotState::default();
             return Ok(());
         };
         let Some(table) = self.chart_table.clone() else {
-            self.chart_points.clear();
+            self.chart_points = Arc::from([]);
+            self.chart_state = next_gui_ui::PlotState::default();
             return Ok(());
         };
         if self.chart_column.trim().is_empty() {
-            self.chart_points.clear();
+            self.chart_points = Arc::from([]);
+            self.chart_state = next_gui_ui::PlotState::default();
             return Ok(());
         }
-        self.chart_points.clear();
-        self.chart_points = db::numeric_series_in(conn, &self.chart_schema, &table, self.chart_column.trim(), 64)?;
+        self.chart_points = Arc::from([]);
+        self.chart_state = next_gui_ui::PlotState::default();
+        self.chart_points = db::numeric_series_in(conn, &self.chart_schema, &table, self.chart_column.trim(), db::DEFAULT_LIMIT)?.into();
         Ok(())
     }
 
@@ -2503,7 +2509,8 @@ impl AppState {
         if self.chart_schema != "main" {
             self.chart_schema = "main".into();
             self.chart_table = None;
-            self.chart_points.clear();
+            self.chart_points = Arc::from([]);
+            self.chart_state = next_gui_ui::PlotState::default();
         }
         self.status_msg = format!("Saved As {dst}");
         Ok(())
@@ -2544,7 +2551,8 @@ impl AppState {
         self.pragmas.clear();
         self.chart_schema = "main".into();
         self.chart_table = None;
-        self.chart_points.clear();
+        self.chart_points = Arc::from([]);
+        self.chart_state = next_gui_ui::PlotState::default();
         self.path.clear();
         self.read_only = false;
         self.dirty = false;
@@ -2570,7 +2578,8 @@ impl AppState {
             tab.total_rows = None;
             tab.clear_selection();
         }
-        self.chart_points.clear();
+        self.chart_points = Arc::from([]);
+        self.chart_state = next_gui_ui::PlotState::default();
         self.refresh_schema()?;
         if self.selected.as_ref().is_some_and(|selected| !self.schema.iter().any(|o| o.schema == selected.schema && o.kind == selected.kind && o.name == selected.name)) {
             self.selected = None;
@@ -3371,7 +3380,8 @@ impl AppState {
         self.refresh_schema()?;
         self.refresh_pragmas()?;
         self.refresh_browse()?;
-        self.chart_points.clear();
+        self.chart_points = Arc::from([]);
+        self.chart_state = next_gui_ui::PlotState::default();
         Ok(())
     }
 
@@ -4164,7 +4174,7 @@ mod chart_default_tests {
         assert_eq!(state.browse().options(), expected);
         assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 1);
         assert_eq!(state.chart_column, "a");
-        assert_eq!(state.chart_points, [50.0, 51.0]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), [50.0, 51.0]);
         assert_eq!(state.cond_rules[0].column, "b");
         assert_eq!(state.cond_rules[0].table.as_deref(), Some("renamed.\"t"));
         assert_eq!(state.cond_rules[1].column, "a");
@@ -4192,7 +4202,7 @@ mod chart_default_tests {
                 let mut expected=options.clone();expected.column_names=vec!["label".into(),"metric".into()];expected.ordering[0].column="label".into();
                 assert_eq!(state.browse_tabs[0].schema,target);assert_eq!(state.browse_tabs[0].table.as_deref(),Some("visible"));assert_eq!(state.browse_tabs[0].options(),expected);assert_eq!(state.browse_tabs[0].stored_options(target,"visible"),Some(&expected));assert!(state.browse_tabs[0].stored_options(source,"visible").is_none());
                 assert_eq!(state.browse_tabs[1].schema,target);assert_eq!(state.browse_tabs[1].table.as_deref(),Some("aliased"));assert_eq!(state.browse_tabs[1].options(),aliases);assert_eq!(state.browse_tabs[1].stored_options(target,"aliased"),Some(&aliases));assert!(state.browse_tabs[1].stored_options(source,"aliased").is_none());
-                assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("visible"));assert_eq!(state.chart_column,"metric");assert_eq!(state.chart_points,[50.0,51.0]);assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,target);assert_eq!(state.cond_rules[1].column,"a");
+                assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("visible"));assert_eq!(state.chart_column,"metric");assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(),[50.0,51.0]);assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,target);assert_eq!(state.cond_rules[1].column,"a");
                 for index in [0,1] {state.switch_browse_tab(index).unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),1);assert_eq!(state.browse().result.as_ref().unwrap().rows[0],["25","50"]);}
                 let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap()).unwrap();assert_eq!(restored.browse_tabs[0].options(),expected);assert_eq!(restored.browse_tabs[1].options(),aliases);
             }
@@ -4225,7 +4235,7 @@ mod chart_default_tests {
                 for tab in &state.browse_tabs {assert_eq!(tab.stored_options(target,"archive.\"t"),Some(&expected));assert!(tab.stored_options(source,"records").is_none());}
                 assert_eq!(state.browse_tabs.last().unwrap().stored_options(other,"records"),Some(&options));
                 assert_eq!(state.browse().schema,target);assert_eq!(state.browse().table.as_deref(),Some("archive.\"t"));assert_eq!(state.browse().options(),expected);assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),1);
-                assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("archive.\"t"));assert_eq!(state.chart_points,[50.0,51.0]);
+                assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("archive.\"t"));assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(),[50.0,51.0]);
                 assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,other);assert_eq!(state.cond_rules[1].column,"a");
                 let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap()).unwrap();assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(),expected);
                 assert_eq!(state.conn.as_ref().unwrap().query_row(&format!("SELECT a FROM {}",db::qualified_name(target,"records")),[],|row|row.get::<_,i64>(0)).unwrap(),99);
@@ -4296,7 +4306,7 @@ mod chart_default_tests {
         assert_eq!(state.selected.as_ref().unwrap().name, "renamed.\"t");
         assert!(state.ddl_draft.contains("renamed."));
         assert_eq!(state.chart_table.as_deref(), Some("renamed.\"t"));
-        assert_eq!(state.chart_points, [25.0]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), [25.0]);
         assert_eq!(state.cond_rules[0].table.as_deref(), Some("renamed.\"t"));
         assert_eq!(db::browse_table(state.conn.as_ref().unwrap(), "t", &[], None, 5, 0).unwrap().rows[0][0], "saved");
         assert_eq!(db::browse_table_in(state.conn.as_ref().unwrap(), "temp", "t", &[], None, 5, 0).unwrap().rows[0][0], "temp");
@@ -4504,7 +4514,7 @@ mod chart_default_tests {
         state.chart_table = Some("parent".into());
         state.chart_column = "aux_id".into();
         state.refresh_chart().unwrap();
-        assert_eq!(state.chart_points, [1.0]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), [1.0]);
         state.save_as(copy.to_str().unwrap()).unwrap();
         assert!(state.chart_table.is_none() && state.chart_points.is_empty());
         assert_eq!(state.schema_names, ["main"]);
@@ -4847,15 +4857,15 @@ mod chart_default_tests {
             conn.execute_batch(&format!("CREATE TABLE {}(\"v\"\"alue\"); INSERT INTO {} VALUES({value}),('2.5'),('bad'),('1e100'),(NULL),(X'31');",
                 db::qualified_name(schema, "same.\"table"), db::qualified_name(schema, "same.\"table"))).unwrap();
         }
-        assert_eq!(db::numeric_series(conn, "same.\"table", "v\"alue", 1).unwrap(), [11.0]);
-        assert_eq!(db::numeric_series_in(conn, "temp", "same.\"table", "v\"alue", 1).unwrap(), [22.0]);
+        assert_eq!(db::numeric_series(conn, "same.\"table", "v\"alue", 1).unwrap().iter().map(|p|p.y).collect::<Vec<_>>(), [11.0]);
+        assert_eq!(db::numeric_series_in(conn, "temp", "same.\"table", "v\"alue", 1).unwrap().iter().map(|p|p.y).collect::<Vec<_>>(), [22.0]);
         state.chart_schema = "aux.\"db".into();
         state.chart_table = Some("same.\"table".into());
         state.chart_column = "v\"alue".into();
         state.refresh_chart().unwrap();
-        assert_eq!(state.chart_points, [33.0, 2.5]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), [33.0, 2.5, 1e100]);
         state.conn.as_ref().unwrap().execute_batch("CREATE TABLE main.generated(v, doubled AS (v*2)); INSERT INTO main.generated(v) VALUES(5);").unwrap();
-        assert_eq!(db::numeric_series(state.conn.as_ref().unwrap(), "generated", "DOUBLED", 10).unwrap(), [10.0]);
+        assert_eq!(db::numeric_series(state.conn.as_ref().unwrap(), "generated", "DOUBLED", 10).unwrap().iter().map(|p|p.y).collect::<Vec<_>>(), [10.0]);
         state.chart_column = "missing".into();
         assert!(state.refresh_chart().is_err());
         assert!(state.chart_points.is_empty());
@@ -5069,7 +5079,7 @@ mod chart_default_tests {
         state.chart_table = Some("t".into());
         state.chart_column = "v".into();
         state.refresh_chart().unwrap();
-        assert_eq!(state.chart_points, vec![42.0, 2.5]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), vec![42.0, 1e100, 2.5]);
         state.chart_table = Some("missing".into());
         assert!(state.refresh_chart().is_err());
         assert!(state.chart_points.is_empty());
@@ -5959,7 +5969,7 @@ mod chart_default_tests {
         state.chart_table = Some("numbers".into());
         state.chart_column = "v".into();
         state.refresh_chart().unwrap();
-        assert_eq!(state.chart_points, [8.0]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), [8.0]);
         state.save_project(&path).unwrap();
         let source = std::fs::read_to_string(&path).unwrap();
         assert!(source.contains("unknown=\"retained\""));
@@ -5968,7 +5978,7 @@ mod chart_default_tests {
         assert_eq!(state.browse_tabs.len(), 2);
         assert_eq!(state.browse_tab_idx, 1);
         assert_eq!(state.chart_schema, schema);
-        assert_eq!(state.chart_points, [8.0]);
+        assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(), [8.0]);
         assert_eq!(state.browse().schema, schema);
         assert_eq!(state.browse().column_widths, [310.0]);
         assert_eq!(state.browse().frozen_cols, Some(0));
@@ -6221,7 +6231,7 @@ mod chart_default_tests {
         assert_eq!(state.chart_table.as_deref(), Some("products"));
         assert_eq!(state.chart_column, "price");
         assert!(!state.chart_points.is_empty());
-        assert!(state.chart_points.iter().any(|v| *v > 10.0));
+        assert!(state.chart_points.iter().any(|v| v.y > 10.0));
         let _ = db::default_demo_path();
     }
 

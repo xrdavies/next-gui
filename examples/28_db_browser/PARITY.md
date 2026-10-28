@@ -152,7 +152,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Edit Database Cell | partial | Shared multiline TextArea, explicit storage type/NULL, validated Hex and PNG/JPEG view; full binary/XML/RTL/evaluation and generic import/export remain. |
 | DB Schema | partial | Flat main/temp/attached object list; no column tree, filter or SQL insertion. |
 | SQL Log | partial | SQLite statement/trigger tracing with expanded ordinary values; User/Application/Error/All, full read-only text, copy, scoped clear/export and visible eviction counts (200/category). Global SQLite diagnostics and native acceptance remain. |
-| Plot | partial | One numeric-column trend from an explicit main/temp/attached table/view, at most 64 source rows; invalid samples skipped and query errors clear stale data (F07 addressed). Database identity survives local projects; absent sources are reported. No X/Y1/Y2 or result-set source. |
+| Plot | partial | Numeric table/view samples now use a Cartesian Chart with real numeric ticks, retained zoom/pan, point/range highlighting and keyboard fit/axis controls. Shared rendering supports dual Y axes, ISO date/time/category ticks, six line styles, fifteen markers, bars and bounded RGBA export; straight-line sampling preserves per-pixel extrema and gaps. The current example adapter reads the first 500 source rows as f64 with original row ordinals. Namespace/project identity and failed-query clearing remain. Original current Browse/SQL model binding, X/Y1/Y2 column controls, table-selection linkage, Load All and file-export entry points are still pending. |
 | Remote | partial | Local path list; cloud protocol/auth/sync not implemented |
 
 ## Dialogs

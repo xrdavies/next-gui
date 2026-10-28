@@ -127,7 +127,8 @@ impl ProjectFile {
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
         state.cond_rules = self.cond_rules.clone();
         state.chart_schema = self.chart_schema.clone();
-        state.chart_points.clear();
+        state.chart_points = std::sync::Arc::from([]);
+        state.chart_state = next_gui_ui::PlotState::default();
         state.chart_table = self.chart_table.clone();
         state.chart_column = self.chart_column.clone();
         state.ddl_draft = self.ddl_draft.clone();

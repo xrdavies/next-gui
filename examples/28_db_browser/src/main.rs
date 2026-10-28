@@ -301,6 +301,7 @@ struct BuiltUiIds {
     edit_type: WidgetId,
     btn_edit_discard: WidgetId,
     btn_edit_cell: WidgetId,
+    chart: WidgetId,
     chart_select: WidgetId,
     chart_col: WidgetId,
     btn_chart: WidgetId,
@@ -537,6 +538,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             edit_type: b.edit_type,
             btn_edit_discard: b.btn_edit_discard,
             btn_edit_cell: b.btn_edit_cell,
+            chart: b.chart,
             chart_select: b.chart_select,
             chart_col: b.chart_col,
             btn_chart: b.btn_chart,
@@ -1459,6 +1461,11 @@ impl Demo {
         }
         for (index, button) in self.ids.sql_tab_btns.iter().enumerate() {
             self.ui.set_button_label(*button, self.state.sql_tab_label(index));
+        }
+        if let Some(plot)=self.ui.chart_plot(self.ids.chart,0) {
+            if plot.series.first().is_some_and(|series| std::sync::Arc::ptr_eq(&series.points,&self.state.chart_points)) {
+                self.state.chart_state=plot.state.clone();
+            }
         }
         if self.ids.chart_col.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.chart_col) {
@@ -2475,6 +2482,8 @@ impl Demo {
 
     fn do_rebuild(&mut self) {
         let modal_session=self.ui.modal_state(self.ids.modal);
+        let plot_session=self.ui.plot_session(self.ids.chart,0);
+        let plot_focused=self.ui.focused()==Some(self.ids.chart);
         let pragma_scroll = self.ui.scroll_offset(self.ids.pragma_scroll);
         let pragma_session = if self.state.tab == MainTab::Pragmas && self.last_tab == MainTab::Pragmas.index() && self.state.overlay.is_none() {
             self.snapshot_inputs();
@@ -2583,6 +2592,7 @@ impl Demo {
         self.ui = built.ui;
         self.scene = built.scene;
         if let Some(session)=modal_session {if self.ui.restore_modal_state(self.ids.modal,&session) {self.ui.sync(&mut self.scene);}}
+        if let Some(session)=plot_session {if self.ui.restore_plot_session(self.ids.chart,0,&session) {if plot_focused {self.ui.set_focus(Some(self.ids.chart));} self.ui.sync(&mut self.scene);}}
         if let Some((x, y)) = pragma_scroll { self.ui.set_scroll_offset(self.ids.pragma_scroll, x, y); }
         if let Some((kind, index, text, select)) = pragma_session {
             if let Some(id) = [&self.ids.pragma_inputs, &self.ids.pragma_selects, &self.ids.pragma_switches][kind].get(index).copied().filter(|id| id.0 != 0) {
@@ -4726,7 +4736,7 @@ impl AppCallbacks for Demo {
             }
             Event::FocusChanged {focused: false, ..} => {
                 if self.ui.is_dragging() {
-                    self.ui.pointer_released();
+                    self.ui.cancel_pointer_capture();
                     self.after_ui(ctx);
                 }
             }
@@ -4778,7 +4788,7 @@ impl AppCallbacks for Demo {
             } => {
                 let xf = x as f32;
                 let yf = y as f32;
-                if self.ui.pointer_pressed(&mut self.scene, xf, yf) {
+                if self.ui.pointer_pressed_with_range_selection(&mut self.scene, xf, yf, modifiers.ctrl || modifiers.meta) {
                     self.snapshot_inputs();
                     self.poll_header_sort(modifiers.commandish());
                     self.after_ui(ctx);
@@ -5872,8 +5882,8 @@ mod interaction_tests {
         assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
         assert_eq!(demo.state.chart_schema, "analytics");
         assert_eq!(demo.state.chart_table.as_deref(), Some("customers"));
-        assert_eq!(demo.state.chart_points.len(), 64);
-        assert_eq!(demo.state.chart_points[0], 125.5);
+        assert_eq!(demo.state.chart_points.len(), 75);
+        assert_eq!(demo.state.chart_points[0].y, 125.5);
         assert!(demo.state.status_msg.contains("\"analytics\".\"customers\""));
         for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
             demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
@@ -5914,7 +5924,7 @@ mod interaction_tests {
         demo.handle_button(demo.ids.btn_chart);
         assert!(demo.state.error_msg.is_none());
         assert_eq!(demo.state.chart_schema, "main");
-        assert_eq!(demo.state.chart_points, [1.0]);
+        assert_eq!(demo.state.chart_points.iter().map(|p|p.y).collect::<Vec<_>>(), [1.0]);
     }
 
     #[test]

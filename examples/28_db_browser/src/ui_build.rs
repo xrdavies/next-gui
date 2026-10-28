@@ -7,7 +7,7 @@ use next_gui_ui::{
     AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, ImageStyle, ListStyle, MenuItem,
     MenuStyle, ModalStyle, PanelStyle, RowStyle, SelectStyle, SplitterStyle, StatusBarStyle,
     SwitchStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme,
-    ToolbarStyle, TreeNode, TreeStyle, TrendStyle, Ui, WidgetId,
+    ToolbarStyle, TreeNode, TreeStyle, PlotData, PlotSeries, PlotLine, PlotMarker, PlotStyle, Ui, WidgetId,
 };
 
 use crate::db::{self, ObjectKind};
@@ -1598,10 +1598,22 @@ pub fn build_ui(
                 state.chart_column,
                 state.chart_points.len()
             );
-            let chart_tiles = vec![ChartTile::trend(
+            let chart_tiles = vec![ChartTile::plot(
                 chart_title.clone(),
-                state.chart_points.clone(),
-                TrendStyle::from_theme(&theme),
+                PlotData {
+                    x_label: "Source row".into(),
+                    y1_label: state.chart_column.clone(),
+                    series: vec![PlotSeries {
+                        name: state.chart_column.clone(), color: theme.colors.accent,
+                        right_axis: false, points: state.chart_points.clone(),
+                        line: PlotLine::Line, marker: PlotMarker::None,
+                    }],
+                    state: state.chart_state.clone(), ..PlotData::default()
+                },
+                PlotStyle { bg: theme.colors.input_bg, fg: theme.colors.text_primary,
+                    grid: theme.colors.border, selection: theme.colors.accent,
+                    ..PlotStyle::default()
+                },
             )];
 
             let mut body_split = SplitterStyle::from_theme(&theme);
@@ -2201,7 +2213,7 @@ pub fn build_ui(
                                                 );
                                                 btn_chart = row.tool_button("Plot");
                                             });
-                                            c.tooltip(chart_title.clone(), |t| { chart = t.chart(chart_tiles.clone(), chart_style); });
+                                            c.tooltip(format!("{chart_title}\nWheel: zoom · Drag: pan · Home: fit · Ctrl/Cmd+click: select range"), |t| { chart = t.chart(chart_tiles.clone(), chart_style); });
                                         });
                                     });
                                 }

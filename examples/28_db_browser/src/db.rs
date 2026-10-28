@@ -1723,7 +1723,7 @@ pub fn numeric_series(
     table: &str,
     column: &str,
     limit: usize,
-) -> Result<Vec<f32>, String> {
+) -> Result<Vec<next_gui_ui::PlotPoint>, String> {
     numeric_series_in(conn, "main", table, column, limit)
 }
 
@@ -1733,7 +1733,7 @@ pub fn numeric_series_in(
     table: &str,
     column: &str,
     limit: usize,
-) -> Result<Vec<f32>, String> {
+) -> Result<Vec<next_gui_ui::PlotPoint>, String> {
     if !table_column_names_in(conn, schema, table)?.iter().any(|name| name.eq_ignore_ascii_case(column)) {
         return Err(format!("Unknown plot column {column}"));
     }
@@ -1747,7 +1747,7 @@ pub fn numeric_series_in(
         .query_map([], |row| row.get::<_, rusqlite::types::Value>(0))
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for r in rows {
+    for (row_index, r) in rows.enumerate() {
         let v = match r.map_err(|e| e.to_string())? {
             rusqlite::types::Value::Integer(v) => v as f64,
             rusqlite::types::Value::Real(v) => v,
@@ -1756,9 +1756,9 @@ pub fn numeric_series_in(
                 Err(_) => continue,
             },
             _ => continue,
-        } as f32;
+        };
         if v.is_finite() {
-            out.push(v);
+            out.push(next_gui_ui::PlotPoint {x: row_index as f64, y:v, row:row_index});
         }
     }
     Ok(out)

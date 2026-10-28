@@ -1,13 +1,13 @@
-//! Retained multi-chart panel (Office enhancement on top of Gauge / Trend).
+//! Retained multi-chart panel with Cartesian plots, gauges and trends.
 //!
-//! [`Chart`] hosts a grid of [`ChartTile`]s (Gauge dials and/or Trend sparklines).
+//! [`Chart`] hosts a grid of [`ChartTile`]s, including interactive Cartesian plots.
 //! Standalone [`crate::Ui`] `gauge` / `trend` builders remain; paint/raster helpers are shared.
 
 use next_gui_scene::Color;
 use next_gui_text::{Font, TextLayout};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{GaugeStyle, TrendStyle};
+use crate::{GaugeStyle, TrendStyle, PlotData, PlotStyle};
 
 /// One tile inside a [`Chart`] panel.
 #[derive(Debug, Clone)]
@@ -15,13 +15,20 @@ pub struct ChartTile {
     /// Title above the body; wraps to at most three lines and half the tile height.
     /// Longer titles use a grapheme-safe ellipsis; the full text remains accessible.
     pub title: String,
-    /// Gauge dial or Trend series.
+    /// Cartesian plot, gauge dial or trend series.
     pub kind: ChartKind,
 }
 
 /// Tile content kind.
 #[derive(Debug, Clone)]
 pub enum ChartKind {
+    /// Cartesian series with axes, legend, source selection and navigation.
+    Plot {
+        /// Shared samples, axis labels and retained interaction state.
+        data: PlotData,
+        /// Plot palette and typography.
+        style: PlotStyle,
+    },
     /// Dial gauge (same semantics as standalone Gauge).
     Gauge {
         /// Current value.
@@ -47,6 +54,10 @@ pub enum ChartKind {
 }
 
 impl ChartTile {
+    /// Cartesian plot tile.
+    pub fn plot(title: impl Into<String>, data: PlotData, style: PlotStyle) -> Self {
+        Self {title: title.into(), kind: ChartKind::Plot {data, style}}
+    }
     /// Gauge tile.
     pub fn gauge(
         title: impl Into<String>,

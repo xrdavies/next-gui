@@ -1621,7 +1621,8 @@ impl crate::Demo {
             self.state.dirty = false;
             self.state.schema.clear();
             self.state.selected = None;
-            self.state.chart_points.clear();
+            self.state.chart_points = std::sync::Arc::from([]);
+            self.state.chart_state = next_gui_ui::PlotState::default();
             for tab in &mut self.state.browse_tabs {
                 tab.result = None;
                 tab.rowids.clear();

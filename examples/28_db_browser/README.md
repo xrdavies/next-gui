@@ -168,7 +168,7 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   the script after execution does not change the view source.
 - PRAGMA writes are read back; settings that do not take effect report the actual
   value and possible earlier partial application. NONE→auto_vacuum requires an
-  explicit VACUUM. Plot skips nonnumeric/non-finite values and reports query errors.
+  explicit VACUUM. Plot now shows numeric axes for the first 500 source rows, keeps f64 values and source row positions, and reports query errors. Wheel zoom, drag pan, point selection, Ctrl/Cmd-click range selection, Home fit, +/- zoom, arrow pan and X/Y/R axis constraints work on the chart. Matching UI rebuilds retain its viewport and highlights. Full Browse/SQL source binding, multi-column controls, table-selection linkage, Load All and plot file export remain unfinished.
 - CSV import resets the old table's filter/order/page/selection. Conditional formats
   are scoped to a table and saved with plot source, read-only mode and DDL text in
   JSON projects. Canceling Preferences does not change frozen columns.
