@@ -1,0 +1,169 @@
+{
+  "target": "fa43090d0524a14665826ce0063b5aa891cf5409",
+  "source_sha256": {
+    "crates/next-gui-ui/src/button_tests.rs": "fd6f2b8cfb3b2290c5feaaec68d61a10bbea397aac71990062f2903c4908b89b",
+    "crates/next-gui-ui/src/dsl/build.rs": "8b9f72e60d624dad7f51a4ad527c1b7505fbd3f08a206d4372ebfb26420101ba",
+    "crates/next-gui-ui/src/dsl/mod.rs": "42e28a834813ad8b84a82d7bb39d48e9f1931e2249356c2aaf19761441bb4c3b",
+    "crates/next-gui-ui/src/lib.rs": "b8c0d97d3554d013481aa25ca35def688a11110ec46f73c08146d6fcc177fc0f",
+    "docs/ngui-widgets.md": "080ccbaefb6917c926cc96676416787af13f23f144fa12d6f51b85e1a62bd0c3",
+    "examples/28_db_browser/src/file_dlg.rs": "c67e7c031e9c0a1ad0241ae222213e5b70767cc1c69673bf858d38f8a2353a6d",
+    "examples/28_db_browser/src/main.rs": "e29a0f05e10d71734343efda059cd989491dfce69a0d59b3941b84e2a2ffd866",
+    "examples/28_db_browser/src/prefs.rs": "e3a548bac45dc094dd547e680d34597706e30a1ec2c8c8a6dc63e30a6c2b0ddd",
+    "examples/28_db_browser/src/state.rs": "29ad17b551baadadd2bedebec95b8f428d702a69fd1d71dff28cec67195feb3c",
+    "examples/28_db_browser/src/ui_build.rs": "f958a942a55f1d7017c75eaa780812fccf18aa3594e35a74f62bc8ff145fb18b",
+    "examples/28_db_browser/src/toolbar_tests.rs": "d1a29bea085c778ef3b00ef0052ef380bb3cc6c5e35496b6dda486d87f637816"
+  },
+  "binary_sha256": {
+    "e10_office_panel": "fbb6a7715a90723b389dff07b0e982d7a0057ed0f841f4ec4fa61a91e3c2cf8a",
+    "e11_office_shell": "883f47b2979224b0764b88245341796aeafd50ced184ad9bcd918126ffbf6e20",
+    "e12_office_inputs": "f7d3db1590206ac67b5a8870a7ee7bdfbca4f2ff2d8c22a0b7a8093dffa8818b",
+    "e13_office_data": "35f3fbe0ca9d4c511182d9feb349064a0ea5ee9f154761a5ba6b48b8a8a0eb50",
+    "e14_office_nav": "bcab765b85edd2f97aba8efcd76b1a607481ce29daa663d632f165ff19d35cb0",
+    "e15_office_feedback": "bbef2441f154989deb1b713363e8b5e560335977fc0aecff7da823a6c5f2e9b6",
+    "e20_office_industrial": "e816330e56cc2d65cab8b289c2cc6033af9253f58a6ce39bf2fb632cdb80726c",
+    "e21_office_p1_rest": "67bc717841bbf6ec3dec87fc6dd0cc78df95ed3e5b1215b8899cecae4ca464f0",
+    "e22_office_p1_deferred": "7cc485afd2d11cae52df04b8f4253d1cb194a6fcd60cf8793c95bb28250dc5e9",
+    "e23_office_charts": "28a3d0223cd8820241148d03c96a56f982fd172ad8dcad3c0150dac7d90c6a2f",
+    "e24_profile_dual": "347d212b784a086f68808c26c20cc27394029a7fdc6b3fd070f2429eaacebf05",
+    "e25_immediate_viewport": "d56eff1a5a6793841d6281fa0044e105e5f5e3d70bc777f40fcb1c4d461597d9",
+    "e26_office_p2": "03548a520ea40bb3e59d3e8c0ab1014c43463061b8960fda760d23b8ff0165b7",
+    "e27_theme_tokens": "f91c41433face18c5f00128010618f0edcffcd613f11bbe960fd23ff2fb25a4c",
+    "e28_db_browser": "9ba1b0b53f7f403c695a9cde5ce5c824a050054a3300fb6f97aa5bee89ec3c90"
+  },
+  "checks": {
+    "clippy": {
+      "exit": 0,
+      "log": "/tmp/next-gui-toolbar-styles-v13-clippy-final.log"
+    },
+    "workspace": {
+      "exit": 0,
+      "log": "/tmp/next-gui-toolbar-styles-v13-workspace-final.log"
+    },
+    "build": {
+      "exit": 0,
+      "log": "/tmp/next-gui-toolbar-styles-v13-build-final.log"
+    },
+    "macos": {
+      "exit": 0,
+      "log": "/tmp/next-gui-toolbar-styles-v13-macos-final.log"
+    },
+    "windows": {
+      "exit": 0,
+      "log": "/tmp/next-gui-toolbar-styles-v13-windows-final.log"
+    }
+  },
+  "frames": {
+    "window-toolbar-prefs-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-toolbar-prefs-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-0-dark-browse-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-1-light-sql-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-2-dark-structure-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-2-light-browse-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-3-dark-sql-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-3-dark-structure-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-3-light-browse-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-toolbar-style-4-light-sql-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "native": {
+    "dark-toolbar-style-0-browse": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/dark-toolbar-style-0-browse.driver.log"
+    },
+    "light-toolbar-style-1-sql-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/light-toolbar-style-1-sql-narrow.driver.log"
+    },
+    "dark-toolbar-style-2-structure-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/dark-toolbar-style-2-structure-narrow.driver.log"
+    },
+    "light-toolbar-style-2-browse": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/light-toolbar-style-2-browse.driver.log"
+    },
+    "dark-toolbar-style-3-structure": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/dark-toolbar-style-3-structure.driver.log"
+    },
+    "light-toolbar-style-3-browse-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/light-toolbar-style-3-browse-narrow.driver.log"
+    },
+    "dark-toolbar-style-3-sql-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/dark-toolbar-style-3-sql-narrow.driver.log"
+    },
+    "light-toolbar-style-4-sql": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/light-toolbar-style-4-sql.driver.log"
+    },
+    "dark-prefs-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/dark-prefs-narrow.driver.log"
+    },
+    "light-prefs-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-toolbar-styles-v13-native/light-prefs-narrow.driver.log"
+    }
+  },
+  "assets_sha256": {
+    "prefs-open-light-800.png": "b1889785393da3ca58c8e9ba73069bb23b32043d4ff192776deaace719237172",
+    "native-light-prefs-800.png": "c86e32a8c9818a6a4bdb53f844ccfc14a4a32a8ce8b1084a39e858b67a2ba27d",
+    "metal-contact.png": "00918d49b6097e84970b9b4ad09a181a09a26d219980f273ef27dbe9a4ca1724",
+    "office-2.png": "0d9c2e7beaaf652fb107e17884dce09bc0bc50b9a8ce273a7e77cda40baab493",
+    "office-1.png": "7eb41e0e0510d7f0aa3263d53805786c46c0bc908a0fd4ad74e5a2c112782886",
+    "under-icon-dark-sql-800.png": "f2d207e35491a58467d5bc55892af76ad345ced040d755728f0595246fe0ad7d",
+    "soft-contact.png": "7d4cdfd7534fad079919bf2c19c9b3f133d5ec54ba620be60a81303e424ac422",
+    "native-contact.png": "06f022ff461ee7bbcfb9ad70205c204c91b3c32538b41a33149607d9a0e72a5d"
+  }
+}
