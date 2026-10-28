@@ -2319,6 +2319,8 @@ impl Demo {
             && self.ui.text_input_value(self.ids.ov_name)==Some(self.state.wizard_table_name.as_str());
         let constraint_editor_focused=self.state.wizard_constraint_edit.is_some() && self.ids.ov_constraint_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_constraint_editor);
         let field_editor_focused=self.state.wizard_field_edit.is_some() && self.ids.ov_field_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_field_editor);
+        let cell_select_session=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent].into_iter().enumerate().find_map(|(index,id)|
+            (id.0!=0 && self.ui.focused()==Some(id)).then(||self.ui.select_state(id).map(|session|(index,session))).flatten());
         let fields_focused = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_fields_table);
         let reveal_field = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.table_selected_row(self.ids.ov_fields_table)!=Some(self.state.wizard_col_sel);
         let constraint_ids=[self.ids.ov_keys_table,self.ids.ov_fks_table,self.ids.ov_checks_table];
@@ -2404,6 +2406,10 @@ impl Demo {
         if fields_focused { self.ui.set_focus(Some(self.ids.ov_fields_table)); self.ui.sync(&mut self.scene); }
         if constraint_editor_focused && self.ids.ov_constraint_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_constraint_editor));self.ui.sync(&mut self.scene);}
         if field_editor_focused && self.ids.ov_field_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_field_editor));self.ui.sync(&mut self.scene);}
+        if let Some((index,session))=cell_select_session {
+            let id=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent][index];
+            if self.ui.restore_select_state(id,&session) {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
+        }
         if table_tabs_focused { self.ui.set_focus(Some(self.ids.ov_table_tabs)); self.ui.sync(&mut self.scene); }
         for (index,table) in [self.ids.ov_keys_table,self.ids.ov_fks_table,self.ids.ov_checks_table].into_iter().enumerate() {
             if constraint_reveal[index] {self.ui.reveal_table_selection(table);}
@@ -4866,6 +4872,11 @@ impl AppCallbacks for Demo {
             && self.ids.ov_constraint_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_constraint_editor)
             && self.ui.select_selected(self.ids.ov_constraint_editor).is_some() && !self.ui.has_open_popup() {
             self.ui.key_input(UiKey::Space);self.ui.sync(&mut self.scene);self.needs_paint=true;
+        }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"table-field-type-dropdown"|"table-field-collation-dropdown"|"table-field-strict-dropdown"))
+            && self.ids.ov_field_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_field_editor) && !self.ui.has_open_popup() {
+            if self.ui.is_select(self.ids.ov_field_editor) {self.ui.key_input(UiKey::Space);} else {self.ui.open_autocomplete_options(self.ids.ov_field_editor);}
+            self.ui.sync(&mut self.scene);self.needs_paint=true;
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("header-menu") && !self.ui.has_open_popup() {
             let bounds = self.scene.iter_paint_order().into_iter().find(
@@ -8181,6 +8192,26 @@ mod interaction_tests {
     }
 
     #[test]
+    fn constraint_and_reference_select_popups_survive_resize_and_keep_escape_local() {
+        for theme in [Theme::dark(),Theme::light()] {
+            let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE p1(id INTEGER PRIMARY KEY);CREATE TABLE p2(id INTEGER PRIMARY KEY);INSERT INTO p1 VALUES(1);INSERT INTO p2 VALUES(1);CREATE TABLE records(id INTEGER PRIMARY KEY,p INTEGER REFERENCES p1(id));INSERT INTO records VALUES(7,1);").unwrap();demo.state.refresh_schema().unwrap();
+            let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.do_rebuild();
+            let finish=|demo:&mut Demo| {demo.handle_table_cell_edit();if demo.rebuild {demo.do_rebuild();}demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}demo.ui.sync(&mut demo.scene);};
+            demo.ui.set_table_selected_row(demo.ids.ov_fields_table,Some(1));demo.ui.set_table_selected_col(demo.ids.ov_fields_table,Some(9));demo.ui.set_focus(Some(demo.ids.ov_fields_table));demo.snapshot_inputs();demo.do_rebuild();demo.ui.set_focus(Some(demo.ids.ov_fields_table));assert!(demo.ui.key_input(UiKey::Edit));finish(&mut demo);
+            assert_eq!(demo.ui.focused(),Some(demo.ids.reference_editor.parent));assert!(demo.ui.key_input(UiKey::Space));demo.snapshot_inputs();demo.win_w=800;demo.win_h=600;demo.do_rebuild();
+            assert!(demo.ui.has_open_popup());assert_eq!(demo.ui.select_value(demo.ids.reference_editor.parent),Some("p1"));assert_eq!(demo.ui.focused(),Some(demo.ids.reference_editor.parent));
+            assert!(demo.ui.key_input(UiKey::Down));demo.snapshot_inputs();demo.win_w=1400;demo.win_h=1000;demo.do_rebuild();assert!(demo.ui.has_open_popup());assert_eq!(demo.ui.select_value(demo.ids.reference_editor.parent),Some("p2"));
+            assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(!demo.ui.has_open_popup());assert!(demo.state.wizard_field_edit.is_some());demo.do_rebuild();assert!(!demo.ui.has_open_popup());
+            assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());assert_eq!(table_sql::foreign_key_reference(&demo.state.wizard_cols[1].foreign_key_clause).unwrap().table,"p1");
+            demo.state.wizard_table_page=1;demo.state.wizard_key_sel=0;demo.do_rebuild();demo.ui.set_table_selected_row(demo.ids.ov_keys_table,Some(0));demo.ui.set_table_selected_col(demo.ids.ov_keys_table,Some(1));demo.ui.set_focus(Some(demo.ids.ov_keys_table));demo.snapshot_inputs();assert!(demo.ui.key_input(UiKey::Edit));finish(&mut demo);
+            assert!(demo.ui.is_select(demo.ids.ov_constraint_editor));assert!(demo.ui.has_open_popup());demo.snapshot_inputs();demo.win_w=800;demo.win_h=600;demo.do_rebuild();assert!(demo.ui.has_open_popup());assert_eq!(demo.ui.select_value(demo.ids.ov_constraint_editor),Some("PRIMARY KEY"));
+            assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(demo.state.wizard_constraint_edit.is_some());assert!(!demo.ui.has_open_popup());demo.do_rebuild();assert!(!demo.ui.has_open_popup());assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(demo.state.wizard_constraint_edit.is_none());
+            demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT id+p FROM records",[],|row|row.get::<_,i64>(0)).unwrap(),8);assert!(conn.execute("UPDATE records SET p=2",[]).is_err());
+        }
+    }
+
+    #[test]
     fn field_dropdowns_open_on_first_click_keep_custom_types_and_save_collation() {
         for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
             for (width,height) in [(1400,1000),(800,600)] {
@@ -8198,6 +8229,7 @@ mod interaction_tests {
                     demo.snapshot_inputs();finish(demo);assert_eq!(demo.state.wizard_col_sel,1);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,column);assert!(demo.ui.has_open_popup());
                 };
                 let capture=|demo:&mut Demo,phase| {
+                    let (width,height)=(demo.win_w,demo.win_h);
                     if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_FIELD_DROPDOWN_QA_OUT") {
                         demo.scene.mark_full_dirty(width as f32,height as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(width,height,clear);soft.render(&commands,&dirty);
                         write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
@@ -8212,8 +8244,8 @@ mod interaction_tests {
                 click(&mut demo,1);demo.ui.paste_into_focused_text("VARCHAR(48)");demo.snapshot_inputs();assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);
                 click(&mut demo,8);assert!(demo.ui.is_select(demo.ids.ov_field_editor));assert!(!demo.ui.paste_into_focused_text("invalid_collation"));capture(&mut demo,"collation");
                 assert!(demo.ui.key_input(UiKey::Down));demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].collation,"RTRIM");
-                demo.do_rebuild();assert_eq!(demo.ui.select_value(demo.ids.ov_field_editor),Some("RTRIM"));
-                demo.ui.set_focus(Some(demo.ids.ov_field_editor));assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());
+                demo.win_w=if width==800 {1400} else {800};demo.win_h=if height==600 {1000} else {600};demo.do_rebuild();assert_eq!(demo.ui.select_value(demo.ids.ov_field_editor),Some("RTRIM"));assert!(demo.ui.has_open_popup());capture(&mut demo,"resized-collation");
+                demo.ui.set_focus(Some(demo.ids.ov_field_editor));assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_some());assert!(!demo.ui.has_open_popup());demo.do_rebuild();assert!(!demo.ui.has_open_popup());assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());
                 demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());
                 let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT id FROM records WHERE name='alpha'",[],|row|row.get::<_,i64>(0)).unwrap(),7);
                 let defs=dbmod::table_column_defs_in(conn,"main","records").unwrap();assert_eq!(defs[1].type_name.replace(' ',""),"VARCHAR(48)");assert_eq!(defs[1].collation,"RTRIM");assert_eq!(defs[1].default_value,"'kept'");

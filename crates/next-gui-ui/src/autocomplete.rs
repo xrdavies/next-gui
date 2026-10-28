@@ -15,7 +15,31 @@ pub struct AutocompleteState {
     highlighted: Option<String>,
 }
 
+/// A Select popup session, restored only while its selected value still matches.
+#[derive(Debug, Clone)]
+pub struct SelectState {
+    value: Option<String>,
+    open: bool,
+}
+
 impl Ui {
+    /// Snapshot a Select popup without retaining widget IDs or option indices.
+    pub fn select_state(&self,id:WidgetId)->Option<SelectState> {
+        let Kind::Select {open,..}=&self.widgets.get(&id)?.kind else {return None;};
+        Some(SelectState {value:self.select_value(id).map(str::to_owned),open:*open})
+    }
+
+    /// Restore popup visibility when the selected value still matches; does not focus or emit.
+    pub fn restore_select_state(&mut self,id:WidgetId,state:&SelectState)->bool {
+        if !self.is_select(id) || self.select_value(id)!=state.value.as_deref() {return false;}
+        if state.open {self.close_popup_internal();}
+        if let Some(crate::Widget {kind:Kind::Select {open,options,..},..})=self.widgets.get_mut(&id) {
+            *open=state.open && !options.is_empty();
+            if *open {self.open_popup=Some(id);} else if self.open_popup==Some(id) {self.open_popup=None;}
+        }
+        true
+    }
+
     /// Snapshot text editing, IME composition and the highlighted suggestion.
     pub fn autocomplete_state(&self, id: WidgetId) -> Option<AutocompleteState> {
         let Kind::Autocomplete {
@@ -329,6 +353,18 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn select_sessions_keep_popup_by_value_without_reopening_changed_values_or_emitting() {
+        let mut ui=crate::Ui::new();let mut id=crate::WidgetId(0);let mut other=crate::WidgetId(0);
+        ui.column(crate::ColumnStyle::default(),|c|{id=c.select(["A","B"],Some(1),"",crate::SelectStyle::default());other=c.select(["Other"],None,"",crate::SelectStyle::default());});
+        ui.set_focus(Some(id));ui.key_input(crate::UiKey::Space);let session=ui.select_state(id).unwrap();
+        ui.set_focus(Some(other));ui.key_input(crate::UiKey::Space);assert!(ui.restore_select_state(id,&session));assert_eq!(ui.focused(),Some(other));assert!(matches!(ui.widgets[&other].kind,crate::Kind::Select {open:false,..}));
+        let mut rebuilt=crate::Ui::new();let mut next=crate::WidgetId(0);rebuilt.column(crate::ColumnStyle::default(),|c|{next=c.select(["B","A"],Some(0),"",crate::SelectStyle::default());});
+        assert!(rebuilt.restore_select_state(next,&session));assert_eq!(rebuilt.select_value(next),Some("B"));assert!(rebuilt.has_open_popup());assert_eq!(rebuilt.focused(),None);
+        rebuilt.set_focus(Some(next));rebuilt.key_input(crate::UiKey::Escape);let closed=rebuilt.select_state(next).unwrap();rebuilt.key_input(crate::UiKey::Space);assert!(rebuilt.restore_select_state(next,&closed));assert!(!rebuilt.has_open_popup());
+        rebuilt.set_select_selected(next,Some(1));assert!(!rebuilt.restore_select_state(next,&session));assert!(!rebuilt.has_open_popup());assert!(!rebuilt.restore_select_state(crate::WidgetId(0),&session));
+    }
+
     #[test]
     fn select_popup_fits_viewport_reveals_selection_and_hits_the_visible_option() {
         for theme in [crate::Theme::dark(),crate::Theme::light()] {

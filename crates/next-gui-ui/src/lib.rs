@@ -32,7 +32,7 @@ pub use text_completion::TextAreaCompletionItem;
 use text_completion::TextAreaCompletion;
 mod tabs;
 mod autocomplete;
-pub use autocomplete::AutocompleteState;
+pub use autocomplete::{AutocompleteState, SelectState};
 mod dialog;
 mod table_edit;
 pub use table_edit::TableCellEditEvent;
