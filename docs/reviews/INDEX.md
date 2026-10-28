@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261028-db667354719c-F01 | verified | P2 | codex | e28 / all | data export formatter | data_export::csv_value | CSV REAL decimal/rounding/exponent/Inf text matches linked SQLite column conversion | [F01](R-20261028-db667354719c.md#r-20261028-db667354719c-f01) | db667354719c | db667354719c |
 | R-20261028-f2c8a25c4926-F01 | verified | P2 | codex | e28 / macOS+Unix | existing project path | project_xml::relative_path | Same-directory project DB stays relative across symlink/canonical parent aliases | [F01](R-20261028-f2c8a25c4926.md#r-20261028-f2c8a25c4926-f01) | f2c8a25c4926 | f2c8a25c4926 |
 | R-20261028-db71e556cb1f-F01 | verified | P1 | codex | e28 / all | db71e556cb1f | CSV Abort conflict strategy | Explicit OR ABORT preserves earlier pending changes when table constraints specify ROLLBACK; reproduced failure and regression pass | [F01](R-20261028-db71e556cb1f.md#r-20261028-db71e556cb1f-f01) | bece52e36f84 | 83bec7daaef8 |
 | R-20261028-cdf760f3ad1d-F01 | verified | P2 | codex | shared / all | existing single-line input | key_text_input / paste / IME | Shared history/session logic plus native rename/Undo/Redo/Save/Browse verified at0da0f3c | [F01](R-20261028-cdf760f3ad1d.md#r-20261028-cdf760f3ad1d-f01) | 56b5b3eebc46 | 0da0f3c214c0 |
@@ -90,6 +91,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-28 | `4a30e27..db667354719c` | Codex | CSV numeric text reproduced/fixed;617 tests/strict checks; prior worker visual evidence retained,full parity pending | [Report](R-20261028-db667354719c.md) |
 | 2026-10-28 | `3d5a791..cebdb5d0e520` | Codex | issues — table/query worker progress/cooperative cancel/live connection and destination safety verified;616 tests/eight render pairs/four native windows; native/full parity pending | [Report](R-20261028-cebdb5d0e520.md) |
 | 2026-10-28 | `5a5cd34..6e53402e1918` | Codex | issues — compact SQL result export options/raw typed snapshots/shared buffered formatter verified;613 tests/20 render pairs/four native windows; background and full parity pending | [Report](R-20261028-6e53402e1918.md) |
 | 2026-10-28 | `24affff..f2c8a25c4926` | Codex | Incoming CI fixes merged; same-directory alias regression fixed;610 tests/strict checks,compact Find Soft inspection; native/full parity pending | [Report](R-20261028-f2c8a25c4926.md) |
