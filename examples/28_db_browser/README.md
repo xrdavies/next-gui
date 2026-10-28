@@ -45,8 +45,10 @@ pretty output and preserves integers/NULL, with BLOBs encoded as base64. Multipl
 objects export to a chosen directory using safe filenames. Existing destinations
 require confirmation; all queries stage before any replacement, and each file
 replaces atomically. A filesystem failure during final publication may leave
-some files completed, with the completed count reported. Staging currently runs
-synchronously; large exports can block the window until it finishes.
+some files completed, with the completed count reported. Staging runs in a background worker with row/file progress. Cancel waits for the
+current SQLite row or filesystem write, keeps all existing destinations and
+returns the live connection with pending edits intact. Final publication disables
+Cancel; a multi-file filesystem failure still reports already completed files.
 SQL result CSV/JSON buttons share the format options in a compact dialog. They
 export the complete captured result without executing SQL again; raw typed
 snapshots retain BLOB/text distinctions, invalid UTF-8 and non-finite numbers

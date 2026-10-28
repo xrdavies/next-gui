@@ -394,7 +394,8 @@ impl crate::state::AppState {
         self.csv_work.as_ref().is_some_and(Work::running)
     }
 
-    pub fn guard_csv_idle(&self) -> Result<(), String> {
+    pub fn guard_background_idle(&self) -> Result<(), String> {
+        if self.export_work.is_some() { return Err("Cancel or finish data export first".into()); }
         if self.csv_work.is_some() {
             return Err("Cancel or finish CSV import first".into());
         }

@@ -291,7 +291,7 @@ impl BrowseTabState {
         self.additional_order = ordering;
     }
 
-    fn clear_selection(&mut self) {
+    pub(crate) fn clear_selection(&mut self) {
         self.sel_row = None;
         self.sel_row_start = None;
         self.sel_row_end = None;
@@ -572,6 +572,7 @@ pub struct AppState {
     pub cipher_active: bool,
     pub cipher_open_path: Option<(String, bool)>,
     pub export_dialog: Option<crate::data_export::Draft>,
+    pub export_work: Option<crate::export_jobs::Work>,
     pub export_structure: bool,
     pub export_data: bool,
     pub export_drop: bool,
@@ -886,6 +887,7 @@ impl AppState {
             cipher_active: false,
             cipher_open_path: None,
             export_dialog: None,
+            export_work: None,
             export_structure: true,
             export_data: true,
             export_drop: false,
@@ -1174,7 +1176,7 @@ impl AppState {
     }
 
     pub fn write_changes(&mut self) -> Result<(), String> {
-        self.guard_csv_idle()?;
+        self.guard_background_idle()?;
         if self.read_only {
             return Err("Database is open read-only".into());
         }
@@ -1189,7 +1191,7 @@ impl AppState {
     }
 
     pub fn revert_changes(&mut self) -> Result<(), String> {
-        self.guard_csv_idle()?;
+        self.guard_background_idle()?;
         if self.read_only {
             return Err("Database is open read-only".into());
         }
@@ -2467,7 +2469,7 @@ impl AppState {
     }
 
     pub fn save_as(&mut self, dst: &str) -> Result<(), String> {
-        self.guard_csv_idle()?;
+        self.guard_background_idle()?;
         if self.sql_busy {
             return Err("Wait for SQL to finish".into());
         }
@@ -2513,7 +2515,7 @@ impl AppState {
     }
 
     fn guard_replace(&self) -> Result<(), String> {
-        self.guard_csv_idle()?;
+        self.guard_background_idle()?;
         if self.sql_busy {
             return Err("Stop or finish SQL before changing databases".into());
         }
@@ -2592,7 +2594,7 @@ impl AppState {
     }
 
     pub fn guard_writable(&mut self) -> Result<(), String> {
-        self.guard_csv_idle()?;
+        self.guard_background_idle()?;
         if self.conn.is_none() {
             return Err("No database open".into());
         }
@@ -2645,6 +2647,7 @@ impl AppState {
     }
 
     pub fn add_browse_tab(&mut self) -> Result<(), String> {
+        self.guard_background_idle()?;
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let (schema, table) = if let Some(table) = &self.browse().table {
@@ -2664,6 +2667,7 @@ impl AppState {
     }
 
     pub fn close_browse_tab(&mut self) -> Result<(), String> {
+        self.guard_background_idle()?;
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.browse_tabs.len() <= 1 {
@@ -2685,6 +2689,7 @@ impl AppState {
     }
 
     pub fn switch_browse_tab(&mut self, index: usize) -> Result<(), String> {
+        self.guard_background_idle()?;
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if index >= self.browse_tabs.len() { return Err("Browse tab no longer exists".into()); }
@@ -2808,7 +2813,7 @@ impl AppState {
     }
 
     pub fn start_sql_text(&mut self, sql: String) -> Result<(), String> {
-        self.guard_csv_idle()?;
+        self.guard_background_idle()?;
         if self.sql_busy {
             return Err("SQL already running".into());
         }

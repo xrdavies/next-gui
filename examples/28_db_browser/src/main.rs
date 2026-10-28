@@ -10,6 +10,7 @@ mod csv_files;
 mod csv_jobs;
 mod csv_numbers;
 mod data_export;
+mod export_jobs;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
@@ -1222,6 +1223,25 @@ impl Demo {
                     draft.set_query(state.sql_result.as_ref().unwrap()).unwrap();
                 }
                 state.export_dialog=Some(draft);
+            }
+            if matches!(tab.as_str(), "export-progress" | "export-canceling") {
+                state.new_memory_db().unwrap();
+                let conn = state.conn.as_ref().unwrap();
+                conn.create_scalar_function("wait_export", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, |_| {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    Ok(2)
+                }).unwrap();
+                conn.execute_batch("CREATE VIEW export_sample AS SELECT 1 AS value UNION ALL SELECT wait_export()").unwrap();
+                state.refresh_schema().unwrap();
+                state.export_dialog = Some(data_export::Draft::new(&state, false));
+                let path = std::path::PathBuf::from(std::env::var_os("NEXT_GUI_EXPORT_QA_PATH").expect("Export progress QA needs an owned output path"));
+                let progress = std::sync::Arc::new(export_jobs::Progress::default());
+                let options = data_export::Options::default();
+                let outputs = vec![data_export::Output { schema: "main".into(), table: "export_sample".into(), path }];
+                state.export_work = Some(export_jobs::Work {
+                    job: export_jobs::Job::start(state.conn.take().unwrap(), outputs, None, false, options.clone(), true, progress.clone()),
+                    progress, options, count: 1,
+                });
             }
         }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
@@ -2718,7 +2738,7 @@ impl Demo {
     }
 
     fn request_document_action(&mut self, action: DocumentAction) {
-        if let Err(error) = self.state.guard_csv_idle() {
+        if let Err(error) = self.state.guard_background_idle() {
             self.set_error(error);
             return;
         }
@@ -2741,7 +2761,7 @@ impl Demo {
     }
 
     fn perform_document_action(&mut self, action: DocumentAction) {
-        if let Err(error) = self.state.guard_csv_idle() {
+        if let Err(error) = self.state.guard_background_idle() {
             self.set_error(error);
             return;
         }
@@ -3126,7 +3146,7 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
-        if let Err(error)=self.state.guard_csv_idle() {self.set_error(error);return;}
+        if let Err(error)=self.state.guard_background_idle() {self.set_error(error);return;}
         if self.state.wizard_column_picker.is_some() { return; }
         self.snapshot_inputs();
         if self.handle_browse_header_action(item) { return; }
@@ -4652,7 +4672,9 @@ impl AppCallbacks for Demo {
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event) {
         match event {
             Event::CloseRequested { .. } => {
-                if self.state.csv_work.is_some() {
+                if self.state.export_work.is_some() {
+                    self.cancel_data_export();
+                } else if self.state.csv_work.is_some() {
                     if let Err(error)=self.state.continue_csv_import_work(Some(csv_files::Answer::Cancel)) {self.set_error(error);}
                     self.rebuild=true;
                 } else if self.state.sql_busy {
@@ -4891,6 +4913,9 @@ impl AppCallbacks for Demo {
                         return;
                     }
                     if matches!(ui_key, UiKey::Escape) {
+                        if self.state.export_work.is_some() {
+                            self.cancel_data_export(); self.do_rebuild(); ctx.request_redraw(); return;
+                        }
                         if self.state.csv_work.is_some() {
                             if let Err(error) = self.state.continue_csv_import_work(Some(csv_files::Answer::Cancel)) {
                                 self.set_error(error);
@@ -4978,6 +5003,15 @@ impl AppCallbacks for Demo {
             }
             if self.rebuild {self.do_rebuild();} else {self.update_csv_progress();}
             if self.state.csv_running() || csv_progress_qa && self.state.csv_work.is_some() {ctx.request_redraw();}
+        }
+        if self.state.export_work.is_some() {
+            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("export-canceling")
+                && self.state.export_work.as_ref().is_some_and(|work| work.progress.counts().0 > 0 && work.progress.can_cancel()) {
+                self.cancel_data_export();
+            }
+            self.poll_data_export();
+            if self.rebuild { self.do_rebuild(); } else { self.update_data_export_progress(); }
+            if self.state.export_work.is_some() { ctx.request_redraw(); }
         }
         if self.state.sql_busy {
             self.snapshot_inputs();

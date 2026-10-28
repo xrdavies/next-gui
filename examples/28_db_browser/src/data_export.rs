@@ -175,7 +175,9 @@ fn write_rows(
     rows: impl IntoIterator<Item = Result<Vec<crate::db::CellValue>, String>>,
     json: bool,
     options: &Options,
+    progress: &crate::export_jobs::Progress,
 ) -> Result<(), String> {
+    progress.check()?;
     if json
         && columns
             .iter()
@@ -196,6 +198,7 @@ fn write_rows(
     let mut count = 0u64;
     for cells in rows {
         let cells = cells?;
+        progress.check()?;
         if cells.len() != columns.len() {
             return Err("Stored result has an incomplete row".into());
         }
@@ -224,7 +227,9 @@ fn write_rows(
             options.record(&mut out, cells.iter().map(|cell| csv_value(cell.as_ref())))?;
         }
         count += 1;
+        progress.row();
     }
+    progress.check()?;
     if json {
         if count > 0 && options.pretty {
             writeln!(out).map_err(|e| e.to_string())?;
@@ -239,7 +244,9 @@ fn stage(
     output: &Output,
     json: bool,
     options: &Options,
+    progress: &crate::export_jobs::Progress,
 ) -> Result<tempfile::NamedTempFile, String> {
+    progress.check()?;
     crate::db::guard_output_path(conn, &output.path)?;
     let sql = format!(
         "SELECT * FROM {}",
@@ -270,11 +277,13 @@ fn stage(
         rows.map(|row| row.map_err(|e| e.to_string())),
         json,
         options,
+        progress,
     )?;
     out.as_file_mut().sync_all().map_err(|e| e.to_string())?;
     Ok(out)
 }
 
+#[derive(Clone)]
 pub struct QuerySource {
     columns: Vec<String>,
     rows: std::sync::Arc<tempfile::NamedTempFile>,
@@ -302,6 +311,27 @@ pub fn export_query(
     options: &Options,
     replace: bool,
 ) -> Result<(), String> {
+    export_query_progress(
+        conn,
+        source,
+        path,
+        json,
+        options,
+        replace,
+        &crate::export_jobs::Progress::default(),
+    )
+}
+
+pub fn export_query_progress(
+    conn: &Connection,
+    source: &QuerySource,
+    path: &Path,
+    json: bool,
+    options: &Options,
+    replace: bool,
+    progress: &crate::export_jobs::Progress,
+) -> Result<(), String> {
+    progress.check()?;
     use std::io::BufRead;
     crate::db::guard_output_path(conn, path)?;
     if !replace && path.exists() {
@@ -318,8 +348,10 @@ pub fn export_query(
             serde_json::from_str::<Vec<crate::db::CellValue>>(&line.map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())
         });
-    write_rows(&mut out, &source.columns, rows, json, options)?;
+    write_rows(&mut out, &source.columns, rows, json, options, progress)?;
     out.as_file_mut().sync_all().map_err(|e| e.to_string())?;
+    progress.staged();
+    progress.begin_publish()?;
     let result = if replace {
         out.persist(path)
     } else {
@@ -329,7 +361,7 @@ pub fn export_query(
 }
 
 /// Stage every selected result before replacing any destination. Each final file is atomic.
-// shortcut: staging runs synchronously; move connection-owned export work to a worker for large-file UI responsiveness.
+#[cfg(test)]
 pub fn export(
     conn: &Connection,
     outputs: &[Output],
@@ -337,6 +369,25 @@ pub fn export(
     options: &Options,
     replace: bool,
 ) -> Result<(), String> {
+    export_progress(
+        conn,
+        outputs,
+        json,
+        options,
+        replace,
+        &crate::export_jobs::Progress::default(),
+    )
+}
+
+pub fn export_progress(
+    conn: &Connection,
+    outputs: &[Output],
+    json: bool,
+    options: &Options,
+    replace: bool,
+    progress: &crate::export_jobs::Progress,
+) -> Result<(), String> {
+    progress.check()?;
     if !json {
         options.validate()?;
     }
@@ -371,8 +422,13 @@ pub fn export(
     }
     let staged = outputs
         .iter()
-        .map(|output| stage(conn, output, json, options))
+        .map(|output| {
+            let staged = stage(conn, output, json, options, progress)?;
+            progress.staged();
+            Ok::<_, String>(staged)
+        })
         .collect::<Result<Vec<_>, _>>()?;
+    progress.begin_publish()?;
     for (index, (output, file)) in outputs.iter().zip(staged).enumerate() {
         let result = if replace {
             file.persist(&output.path)
@@ -392,6 +448,108 @@ pub fn export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn export_progress_modal_cancel_keeps_workspace_transaction_and_allows_retry() {
+        use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
+        use next_gui_ui::{Theme, UiKey};
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let directory = tempfile::tempdir().unwrap();
+                let output = directory.path().join("keep.csv");
+                std::fs::write(&output, "previous").unwrap();
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                let (entered, waiting) = std::sync::mpsc::channel();
+                let (release, resume) = std::sync::mpsc::channel();
+                demo.state
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .create_scalar_function(
+                        "wait_export",
+                        0,
+                        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+                        move |_| {
+                            entered.send(()).unwrap();
+                            resume
+                                .recv_timeout(std::time::Duration::from_secs(20))
+                                .unwrap();
+                            Ok(1234)
+                        },
+                    )
+                    .unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('pending');CREATE VIEW slow AS SELECT wait_export() AS v").unwrap();
+                demo.state.dirty = true;
+                demo.state.refresh_schema().unwrap();
+                demo.open_data_export(false);
+                demo.do_rebuild();
+                let outputs = || {
+                    vec![Output {
+                        schema: "main".into(),
+                        table: "slow".into(),
+                        path: output.clone(),
+                    }]
+                };
+                demo.perform_data_export(outputs(), true);
+                waiting
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                demo.do_rebuild();
+                assert!(demo.state.conn.is_none());
+                assert_eq!(
+                    demo.ui.active_dialog(),
+                    Some(demo.ids.data_export.progress_dialog)
+                );
+                assert!(demo.ui.button_enabled(demo.ids.data_export.stop).unwrap());
+                assert!(demo.state.guard_background_idle().is_err());
+                assert!(demo.state.start_sql_text("SELECT 1".into()).is_err());
+                assert!(demo.state.add_browse_tab().is_err());
+                demo.request_document_action(crate::state::DocumentAction::Exit);
+                assert!(!demo.exit_requested);
+                demo.clear_error();
+                demo.update_data_export_progress();
+                capture(&mut demo, theme_name, width, "export-progress");
+                demo.ui.key_input(UiKey::Escape);
+                demo.handle_data_export_dismiss();
+                demo.do_rebuild();
+                assert!(demo
+                    .state
+                    .export_work
+                    .as_ref()
+                    .unwrap()
+                    .progress
+                    .cancelled());
+                assert_eq!(
+                    demo.ui.active_dialog(),
+                    Some(demo.ids.data_export.progress_dialog)
+                );
+                assert!(!demo.ui.button_enabled(demo.ids.data_export.stop).unwrap());
+                capture(&mut demo, theme_name, width, "export-canceling");
+                release.send(()).unwrap();
+                demo.settle_export_test();
+                assert!(demo.state.export_dialog.is_some());
+                assert!(demo.state.error_msg.is_none());
+                assert!(demo.state.dirty);
+                assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
+                assert_eq!(
+                    crate::db::count_rows(demo.state.conn.as_ref().unwrap(), "keeper").unwrap(),
+                    1
+                );
+                assert_eq!(std::fs::read_to_string(&output).unwrap(), "previous");
+                demo.perform_data_export(outputs(), true);
+                waiting
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                release.send(()).unwrap();
+                demo.settle_export_test();
+                assert!(demo.state.export_dialog.is_none());
+                assert!(std::fs::read_to_string(&output).unwrap().contains("1234"));
+                assert!(demo.state.dirty);
+                demo.state.revert_changes().unwrap();
+            }
+        }
+    }
     #[test]
     fn query_formats_use_raw_snapshot_types_and_original_csv_json_options() {
         let conn = Connection::open_in_memory().unwrap();
@@ -527,6 +685,7 @@ mod tests {
                 }]);
                 demo.do_rebuild();
                 demo.handle_button(demo.ids.data_export.replace);
+                demo.settle_export_test();
                 assert!(demo.state.export_dialog.is_none());
                 assert_eq!(
                     std::fs::read_to_string(&path).unwrap(),
@@ -546,6 +705,7 @@ mod tests {
                 }]);
                 demo.do_rebuild();
                 demo.handle_button(demo.ids.data_export.replace);
+                demo.settle_export_test();
                 assert_eq!(
                     std::fs::read_to_string(&path).unwrap(),
                     "[{\"changed\":\"later result\"}]"
@@ -645,6 +805,7 @@ mod tests {
                 }]);
                 demo.do_rebuild();
                 demo.handle_button(demo.ids.data_export.replace);
+                demo.settle_export_test();
                 assert!(demo.state.export_dialog.is_none());
                 assert!(std::fs::read_to_string(&output).unwrap().contains("日本"));
                 assert_eq!(demo.state.prefs.data_export.separator, Some('§'));
@@ -962,6 +1123,10 @@ pub struct Controls {
     confirm: next_gui_ui::WidgetId,
     replace: next_gui_ui::WidgetId,
     keep: next_gui_ui::WidgetId,
+    progress_dialog: next_gui_ui::WidgetId,
+    progress_text: next_gui_ui::WidgetId,
+    progress_bar: next_gui_ui::WidgetId,
+    stop: next_gui_ui::WidgetId,
 }
 
 impl Default for Controls {
@@ -984,6 +1149,10 @@ impl Default for Controls {
             confirm: zero,
             replace: zero,
             keep: zero,
+            progress_dialog: zero,
+            progress_text: zero,
+            progress_bar: zero,
+            stop: zero,
         }
     }
 }
@@ -994,7 +1163,7 @@ pub struct Session {
     select: Option<next_gui_ui::SelectState>,
 }
 impl Controls {
-    fn focus_ids(&self) -> [next_gui_ui::WidgetId; 15] {
+    fn focus_ids(&self) -> [next_gui_ui::WidgetId; 16] {
         [
             self.table,
             self.toggle,
@@ -1011,6 +1180,7 @@ impl Controls {
             self.keep,
             self.replace,
             self.confirm,
+            self.stop,
         ]
     }
     pub fn session(&self, ui: &next_gui_ui::Ui) -> Option<Session> {
@@ -1209,7 +1379,33 @@ pub fn build(
         draft.query.is_some() || draft.tables.iter().any(|(_, _, selected)| *selected),
     );
     ui.set_dialog_open(ids.dialog, true);
-    if let Some(outputs) = &draft.pending {
+    if let Some(work) = &state.export_work {
+        let mut progress_style = ModalStyle::from_theme(theme);
+        progress_style.width = (width - 80.0).min(620.0);
+        progress_style.height = 230.0;
+        progress_style.close_on_backdrop = false;
+        let mut message = TextAreaStyle::from_theme(theme);
+        message.width = progress_style.width - 48.0;
+        message.height = 100.0;
+        let mut bar = next_gui_ui::ProgressStyle::from_theme(theme);
+        bar.width = message.width;
+        let (value, caption) = work.info();
+        ids.progress_dialog = ui.dialog(
+            "Exporting data",
+            progress_style,
+            |body| {
+                ids.progress_text = body.text_area(caption, "", message);
+                ids.progress_bar = body.progress_styled(value, true, bar);
+            },
+            |footer| {
+                ids.stop = footer.tool_button("Cancel");
+            },
+        );
+        ui.set_text_area_read_only(ids.progress_text, true);
+        ui.set_accessible_name(ids.progress_text, "Data export progress");
+        ui.set_button_enabled(ids.stop, work.progress.can_cancel());
+        ui.set_dialog_open(ids.progress_dialog, true);
+    } else if let Some(outputs) = &draft.pending {
         let mut decision = ModalStyle::from_theme(theme);
         decision.width = (width - 80.0).min(580.0);
         decision.height = 260.0;
@@ -1252,7 +1448,7 @@ impl crate::Demo {
             self.set_error("Open an idle database before exporting");
             return;
         }
-        if let Err(error) = self.state.guard_csv_idle() {
+        if let Err(error) = self.state.guard_background_idle() {
             self.set_error(error);
             return;
         }
@@ -1279,6 +1475,9 @@ impl crate::Demo {
         }
     }
     pub(crate) fn snapshot_data_export(&mut self) {
+        if self.state.export_work.is_some() {
+            return;
+        }
         let ids = self.ids.data_export;
         if ids.dialog.0 == 0 {
             return;
@@ -1325,6 +1524,12 @@ impl crate::Demo {
     pub(crate) fn handle_data_export_dismiss(&mut self) {
         let ids = self.ids.data_export;
         match self.ui.take_dialog_dismiss() {
+            Some(id)
+                if self.state.export_work.is_some()
+                    && (id == ids.progress_dialog || id == ids.dialog) =>
+            {
+                self.cancel_data_export();
+            }
             Some(id) if id == ids.confirm => {
                 if let Some(draft) = &mut self.state.export_dialog {
                     draft.pending = None;
@@ -1347,17 +1552,67 @@ impl crate::Demo {
                 return;
             }
         };
-        let conn = self.state.conn.as_ref().unwrap();
-        let result = if let Some(query) = &draft.query {
-            export_query(conn, query, &outputs[0].path, draft.json, &options, replace)
-        } else {
-            export(conn, &outputs, draft.json, &options, replace)
+        let Some(conn) = self.state.conn.take() else {
+            self.set_error("No idle database available");
+            return;
         };
+        let count = outputs.len();
+        let progress = std::sync::Arc::new(crate::export_jobs::Progress::default());
+        let query = draft.query.clone();
+        let json = draft.json;
+        self.state.export_dialog.as_mut().unwrap().pending = None;
+        self.state.export_work = Some(crate::export_jobs::Work {
+            job: crate::export_jobs::Job::start(
+                conn,
+                outputs,
+                query,
+                json,
+                options.clone(),
+                replace,
+                progress.clone(),
+            ),
+            progress,
+            options,
+            count,
+        });
+        self.clear_error();
+        self.rebuild = true;
+    }
+    pub(crate) fn cancel_data_export(&mut self) {
+        if let Some(work) = &self.state.export_work {
+            work.progress.cancel();
+            self.rebuild = true;
+        }
+    }
+    pub(crate) fn poll_data_export(&mut self) -> bool {
+        if !self
+            .state
+            .export_work
+            .as_ref()
+            .is_some_and(|work| work.job.is_finished())
+        {
+            return false;
+        }
+        let work = self.state.export_work.take().unwrap();
+        let (conn, result) = work.job.join();
+        self.state.conn = conn;
+        if self.state.conn.is_none() {
+            self.state.dirty = false;
+            self.state.schema.clear();
+            self.state.selected = None;
+            self.state.chart_points.clear();
+            for tab in &mut self.state.browse_tabs {
+                tab.result = None;
+                tab.rowids.clear();
+                tab.total_rows = None;
+                tab.clear_selection();
+            }
+        }
         match result {
             Ok(()) => {
-                self.state.prefs.data_export = options;
+                self.state.prefs.data_export = work.options;
                 self.state.export_dialog = None;
-                self.state.status_msg = format!("Exported {} file(s)", outputs.len());
+                self.state.status_msg = format!("Exported {} file(s)", work.count);
                 self.clear_error();
                 if !cfg!(test) && std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none() {
                     if let Err(error) = self.state.prefs.save() {
@@ -1367,16 +1622,50 @@ impl crate::Demo {
                     }
                 }
             }
-            Err(error) => {
-                if let Some(draft) = &mut self.state.export_dialog {
-                    draft.pending = None;
-                }
-                self.set_error(error);
+            Err(error) if error == crate::export_jobs::CANCELLED => {
+                self.clear_error();
+                self.state.status_msg = "Export canceled; destination files kept".into();
             }
+            Err(error) => self.set_error(error),
+        }
+        if let Err(error) = self.state.recover_ended_transaction() {
+            self.set_error(error);
         }
         self.rebuild = true;
+        true
+    }
+    pub(crate) fn update_data_export_progress(&mut self) {
+        if let Some(work) = &self.state.export_work {
+            let (value, caption) = work.info();
+            self.ui
+                .set_text_area_value(self.ids.data_export.progress_text, caption);
+            self.ui
+                .set_progress_value(self.ids.data_export.progress_bar, value);
+            self.ui
+                .set_button_enabled(self.ids.data_export.stop, work.progress.can_cancel());
+            self.ui.sync(&mut self.scene);
+            self.needs_paint = true;
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn settle_export_test(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while self.state.export_work.is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Export worker did not finish"
+            );
+            self.poll_data_export();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
     pub(crate) fn handle_data_export_button(&mut self, id: next_gui_ui::WidgetId) {
+        if self.state.export_work.is_some() {
+            if id == self.ids.data_export.stop {
+                self.cancel_data_export();
+            }
+            return;
+        }
         self.snapshot_data_export();
         let ids = self.ids.data_export;
         if id == ids.cancel {
