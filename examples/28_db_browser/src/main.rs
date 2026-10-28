@@ -1002,6 +1002,16 @@ impl Demo {
                     });
                     MainTab::Structure
                 }
+                "long-confirm" | "long-confirm-bottom" => {
+                    state.new_memory_db().unwrap();
+                    let name="Quarterly database 日本語 'quoted' identifier ".repeat(80);
+                    state.conn.as_ref().unwrap().execute_batch(&format!("CREATE TABLE {}(v);",db::quote_ident(&name))).unwrap();
+                    state.refresh_schema().unwrap();
+                    state.select_schema_node(10_000);
+                    state.confirm_kind=ConfirmKind::DropObject;
+                    state.confirm_open=true;
+                    MainTab::Structure
+                }
                 "save-prompt" => {
                     *state.sql_editor_mut() = "SELECT 'unsaved draft';".into();
                     state.pending_document = Some(DocumentAction::Exit);
@@ -1280,6 +1290,9 @@ impl Demo {
             }
         }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
+            built.ui.key_input(UiKey::End);built.ui.sync(&mut built.scene);
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("pragmas-bottom") {
             built.ui.set_scroll_offset(built.pragma_scroll, 0.0, 10000.0);
             built.ui.sync(&mut built.scene);
@@ -2453,6 +2466,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let modal_session=self.ui.modal_state(self.ids.modal);
         let pragma_scroll = self.ui.scroll_offset(self.ids.pragma_scroll);
         let pragma_session = if self.state.tab == MainTab::Pragmas && self.last_tab == MainTab::Pragmas.index() && self.state.overlay.is_none() {
             self.snapshot_inputs();
@@ -2560,6 +2574,7 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(session)=modal_session {if self.ui.restore_modal_state(self.ids.modal,&session) {self.ui.sync(&mut self.scene);}}
         if let Some((x, y)) = pragma_scroll { self.ui.set_scroll_offset(self.ids.pragma_scroll, x, y); }
         if let Some((kind, index, text, select)) = pragma_session {
             if let Some(id) = [&self.ids.pragma_inputs, &self.ids.pragma_selects, &self.ids.pragma_switches][kind].get(index).copied().filter(|id| id.0 != 0) {
@@ -5113,6 +5128,68 @@ fn main() {
 
 #[cfg(test)]
 mod interaction_tests {
+    #[test]
+    fn long_object_confirmation_retains_scroll_action_and_cancel_across_rebuild_and_resize() {
+        use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
+        use next_gui_ui::{Theme, UiKey};
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                let name = "Quarterly database 日本語 'quoted' identifier ".repeat(80);
+                demo.state
+                    .conn
+                    .as_ref()
+                    .unwrap()
+                    .execute_batch(&format!(
+                        "CREATE TABLE {}(v);INSERT INTO {} VALUES(7)",
+                        crate::db::quote_ident(&name),
+                        crate::db::quote_ident(&name)
+                    ))
+                    .unwrap();
+                demo.state.refresh_schema().unwrap();
+                demo.state.select_schema_node(10_000);
+                demo.state.prefs.confirm_drops = true;
+                demo.handle_menu(ui_build::mid::EDIT_DELETE);
+                demo.do_rebuild();
+                assert!(demo
+                    .ui
+                    .accessible_description(demo.ids.modal)
+                    .unwrap()
+                    .contains(&name));
+                let top = demo.ui.modal_state(demo.ids.modal).unwrap();
+                capture(&mut demo, theme_name, width, "long-modal-top");
+                demo.ui.key_input(UiKey::Tab);
+                demo.ui.key_input(UiKey::End);
+                demo.ui.sync(&mut demo.scene);
+                let bottom = demo.ui.modal_state(demo.ids.modal).unwrap();
+                assert_ne!(bottom, top);
+                assert!(demo.ui.take_modal_action().is_none());
+                demo.do_rebuild();
+                assert_eq!(demo.ui.modal_state(demo.ids.modal), Some(bottom.clone()));
+                demo.win_w = if width == 800 { 1400 } else { 800 };
+                demo.win_h = if height == 600 { 1000 } else { 600 };
+                demo.do_rebuild();
+                assert_ne!(demo.ui.modal_state(demo.ids.modal), Some(top));
+                demo.win_w = width;
+                demo.win_h = height;
+                demo.do_rebuild();
+                demo.ui.key_input(UiKey::End);
+                demo.ui.sync(&mut demo.scene);
+                capture(&mut demo, theme_name, width, "long-modal-bottom");
+                demo.ui.key_input(UiKey::Enter);
+                demo.handle_modal();
+                demo.do_rebuild();
+                assert!(!demo.state.confirm_open);
+                assert_eq!(
+                    crate::db::count_rows(demo.state.conn.as_ref().unwrap(), &name).unwrap(),
+                    1
+                );
+            }
+        }
+    }
+
     use super::*;
 
     fn remove_selected_field_or_index(demo: &mut Demo) {

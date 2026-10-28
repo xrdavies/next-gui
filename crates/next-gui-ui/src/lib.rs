@@ -21,6 +21,8 @@ mod icon;
 mod p1_deferred;
 mod chart;
 mod prose;
+mod modal;
+pub use modal::ModalState;
 mod p1_raster;
 mod p1_rest;
 mod office_p2;
@@ -1893,6 +1895,9 @@ enum Kind {
     Modal {
         title: String,
         body: String,
+        scroll_y: f32,
+        body_view: Rect,
+        body_height: f32,
         primary: Option<String>,
         secondary: Option<String>,
         tertiary: Option<String>,
@@ -3619,6 +3624,12 @@ impl Ui {
                 return true;
             }
         }
+        if let Some(id)=self.open_popup {
+            if let Some(Widget {kind:Kind::Modal {body_view,scroll_y,open:true,..},..})=self.widgets.get(&id) {
+                if body_view.contains(x,y) {self.scroll_modal(id,*scroll_y+dy);}
+                return true;
+            }
+        }
         if self.wheel_text_area_hint(scene, x, y, dy) { return true; }
         if let Some(dialog)=self.dialog_focus_scope() {
             if !self.hit_widget(scene,x,y).is_some_and(|id|id!=dialog && self.widget_contains(dialog,id)) {return true;}
@@ -3692,6 +3703,14 @@ impl Ui {
         if let Some(w) = self.widgets.get_mut(&id) {
             let s = name.into();
             w.accessible_name = if s.is_empty() { None } else { Some(s) };
+        }
+    }
+
+    /// Full modal explanation, including text outside its scrolled viewport.
+    pub fn accessible_description(&self,id:WidgetId)->Option<&str> {
+        match &self.widgets.get(&id)?.kind {
+            Kind::Modal {body,..} if !body.is_empty()=>Some(body),
+            _=>None,
         }
     }
 
@@ -4413,7 +4432,7 @@ impl Ui {
             Some(Kind::ScrollArea {
                 scroll_x, scroll_y, ..
             }) => Some((*scroll_x, *scroll_y)),
-            Some(Kind::TextArea { scroll_y, .. }) => Some((0.0, *scroll_y)),
+            Some(Kind::TextArea { scroll_y, .. } | Kind::Modal {scroll_y,open:true,..}) => Some((0.0, *scroll_y)),
             Some(Kind::List { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Tree { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Table { scroll_x, scroll_y, .. }) => Some((*scroll_x, *scroll_y)),
@@ -4427,6 +4446,7 @@ impl Ui {
 
     fn set_any_scroll(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
         if !sx.is_finite() || !sy.is_finite() { return false; }
+        if matches!(self.widgets.get(&id).map(|w| &w.kind),Some(Kind::Modal {..})) {return self.scroll_modal(id,sy);}
         if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { .. })) {
             return self.set_text_area_scroll(id, sy);
         }
@@ -5158,6 +5178,7 @@ impl Ui {
     }
 
     fn key_modal(&mut self, id: WidgetId, key: UiKey) -> bool {
+        if self.key_modal_scroll(id,key) {return true;}
         let Some(Widget { kind: Kind::Modal { secondary, tertiary, action_focus, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
         let mut actions = vec![ModalAction::Primary];
         if secondary.is_some() { actions.push(ModalAction::Secondary); }
@@ -6902,7 +6923,8 @@ impl Ui {
                 }
             }
             if let Some(w) = self.widgets.get_mut(&id) {
-                if let Kind::Modal { open: o, action_focus, .. } = &mut w.kind {
+                if let Kind::Modal { open: o, action_focus, scroll_y, .. } = &mut w.kind {
+                    if !*o {*scroll_y=0.0;}
                     *o = true;
                     *action_focus = 0;
                 }
@@ -8232,6 +8254,9 @@ impl Ui {
                 kind: Kind::Modal {
                     title: title.into(),
                     body: body.into(),
+                    scroll_y: 0.0,
+                    body_view: Rect::empty(),
+                    body_height: 0.0,
                     primary: Some(primary.into()),
                     secondary,
                     tertiary: None,
@@ -9340,6 +9365,7 @@ impl Ui {
     }
 
     fn pointer_modal(&mut self, scene: &mut Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        if self.pointer_scrollbar(scene,id,x,y) {return true;}
         let (style, aux) = match self.widgets.get(&id) {
             Some(Widget {
                 kind: Kind::Modal { style, open: true, .. },
@@ -16440,31 +16466,35 @@ impl Ui {
     }
 
     fn paint_modal_popup(&mut self, scene: &mut Scene, id: WidgetId) {
-        let (title, body, primary, secondary, tertiary, action_focus, style) = match self.widgets.get(&id) {
-            Some(Widget {
-                kind:
-                    Kind::Modal {
-                        title,
-                        body,
-                        primary,
-                        secondary,
-                        tertiary,
-                        action_focus,
-                        open: true,
-                        style,
-                    },
-                ..
-            }) => (
-                title.clone(),
-                body.clone(),
-                primary.clone(),
-                secondary.clone(),
-                tertiary.clone(),
-                *action_focus,
-                *style,
-            ),
-            _ => return,
-        };
+        let (title, body, primary, secondary, tertiary, action_focus, scroll_y, style) =
+            match self.widgets.get(&id) {
+                Some(Widget {
+                    kind:
+                        Kind::Modal {
+                            title,
+                            body,
+                            primary,
+                            secondary,
+                            tertiary,
+                            action_focus,
+                            open: true,
+                            style,
+                            scroll_y,
+                            ..
+                        },
+                    ..
+                }) => (
+                    title.clone(),
+                    body.clone(),
+                    primary.clone(),
+                    secondary.clone(),
+                    tertiary.clone(),
+                    *action_focus,
+                    *scroll_y,
+                    *style,
+                ),
+                _ => return,
+            };
         let (vw, vh) = self.viewport;
         let panel_w = style.width.min(vw - 40.0).max(200.0);
         let action_h = if primary.is_some() || secondary.is_some() || tertiary.is_some() {
@@ -16472,23 +16502,76 @@ impl Ui {
         } else {
             0.0
         };
-        let body_layout = prose::layout(&self.font, &body, style.body_size, (panel_w - 2.0 * style.padding).max(1.0));
-        let body_mask = self.font.rasterize_layout(&body_layout, style.body_size);
-        let body_th = body_mask.height as f32;
-        let panel_h = (style.title_height
-            + style.padding * 2.0
-            + body_th.max(40.0)
-            + action_h)
+        let mut body_layout = prose::layout(
+            &self.font,
+            &body,
+            style.body_size,
+            (panel_w - 2.0 * style.padding).max(1.0),
+        );
+        let body_th = body_layout.height.ceil();
+        let panel_h = (style.title_height + style.padding * 2.0 + body_th.max(40.0) + action_h)
             .max(style.height)
             .min(vh - 40.0);
         let px = ((vw - panel_w) * 0.5).max(0.0);
         let py = ((vh - panel_h) * 0.5).max(0.0);
         let panel = Rect::new(px, py, panel_w, panel_h);
+        let body_view = Rect::new(
+            px + style.padding,
+            py + style.title_height + style.padding,
+            (panel_w - 2.0 * style.padding).max(1.0),
+            (panel_h - style.title_height - 2.0 * style.padding - action_h).max(1.0),
+        );
+        let overflow = body_layout.height > body_view.height;
+        if overflow {
+            body_layout = prose::layout(
+                &self.font,
+                &body,
+                style.body_size,
+                (body_view.width - 12.0).max(1.0),
+            );
+        }
+        let body_height = body_layout.height;
+        let scroll_y = scroll_y.clamp(0.0, (body_height - body_view.height).max(0.0));
+        let top = if overflow {
+            (scroll_y / body_layout.line_height).floor() * body_layout.line_height
+        } else {
+            0.0
+        };
+        if overflow {
+            body_layout.glyphs.retain(|glyph| {
+                glyph.baseline_y >= top
+                    && glyph.baseline_y - body_layout.line_height < scroll_y + body_view.height
+            });
+            for glyph in &mut body_layout.glyphs {
+                glyph.baseline_y -= top;
+            }
+            body_layout.height = body_view.height + body_layout.line_height;
+        }
+        let body_mask = self.font.rasterize_layout(&body_layout, style.body_size);
+        if let Some(Widget {
+            kind:
+                Kind::Modal {
+                    scroll_y: current,
+                    body_view: view,
+                    body_height: height,
+                    ..
+                },
+            ..
+        }) = self.widgets.get_mut(&id)
+        {
+            *current = scroll_y;
+            *view = body_view;
+            *height = body_height;
+        }
 
         // Stable action slots preserve existing primary/secondary hit geometry.
-        self.ensure_overlay_aux(scene, id, 12);
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if aux.len() < 12 {
+        self.ensure_overlay_aux(scene, id, 14);
+        let aux = self
+            .widgets
+            .get(&id)
+            .map(|w| w.aux.clone())
+            .unwrap_or_default();
+        if aux.len() < 14 {
             return;
         }
         let scrim = aux[0];
@@ -16497,7 +16580,6 @@ impl Ui {
         let title_l = aux[3];
         let close_n = aux[4];
         let body_n = aux[5];
-
 
         scene.set_bounds(scrim, Rect::new(0.0, 0.0, vw, vh));
         scene.set_fill(scrim, style.scrim);
@@ -16527,7 +16609,10 @@ impl Ui {
             ),
         );
         scene.set_fill(title_l, style.title_fg);
-        scene.set_mask(title_l, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
+        scene.set_mask(
+            title_l,
+            Some(AlphaMask::new(tm.width, tm.height, tm.pixels)),
+        );
         scene.set_visible(title_l, true);
 
         let (_, cm) = self.font.rasterize_text("×", style.title_size, None);
@@ -16535,10 +16620,18 @@ impl Ui {
         let close_y = panel.y + ((style.title_height - cm.height as f32) * 0.5).max(0.0);
         scene.set_bounds(
             close_n,
-            Rect::new(close_x - 4.0, close_y - 4.0, cm.width as f32 + 8.0, cm.height as f32 + 8.0),
+            Rect::new(
+                close_x - 4.0,
+                close_y - 4.0,
+                cm.width as f32 + 8.0,
+                cm.height as f32 + 8.0,
+            ),
         );
         scene.set_fill(close_n, style.title_fg);
-        scene.set_mask(close_n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
+        scene.set_mask(
+            close_n,
+            Some(AlphaMask::new(cm.width, cm.height, cm.pixels)),
+        );
         scene.set_visible(close_n, true);
 
         let bm = body_mask;
@@ -16546,11 +16639,21 @@ impl Ui {
             body_n,
             Rect::new(
                 panel.x + style.padding,
-                panel.y + style.title_height + style.padding,
+                body_view.y + top - scroll_y,
                 bm.width as f32,
                 bm.height as f32,
             ),
         );
+        scene.set_clip(
+            body_n,
+            Some(Rect::new(
+                body_view.x,
+                body_view.y,
+                body_view.width - if overflow { 12.0 } else { 0.0 },
+                body_view.height,
+            )),
+        );
+        self.paint_modal_scrollbar(scene, id, aux[12], aux[13]);
         scene.set_fill(body_n, style.body_fg);
         scene.set_mask(body_n, Some(AlphaMask::new(bm.width, bm.height, bm.pixels)));
         scene.set_visible(body_n, true);
@@ -16571,17 +16674,35 @@ impl Ui {
             let bw = (tw + 24.0).max(72.0);
             let bx = cursor_x - bw;
             scene.set_bounds(button, Rect::new(bx, btn_y, bw, style.action_height));
-            scene.set_fill(button, if action_index == action_focus { style.primary_bg } else { style.secondary_bg });
+            scene.set_fill(
+                button,
+                if action_index == action_focus {
+                    style.primary_bg
+                } else {
+                    style.secondary_bg
+                },
+            );
             scene.set_mask(button, None);
             scene.set_visible(button, true);
             self.apply_corner_radius(scene, button, true);
             let (_, lm) = self.font.rasterize_text(label, style.body_size, None);
-            scene.set_bounds(text, Rect::new(
-                bx + ((bw - lm.width as f32) * 0.5).max(0.0),
-                btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
-                lm.width as f32, lm.height as f32,
-            ));
-            scene.set_fill(text, if action_index == action_focus { style.action_fg } else { style.secondary_fg });
+            scene.set_bounds(
+                text,
+                Rect::new(
+                    bx + ((bw - lm.width as f32) * 0.5).max(0.0),
+                    btn_y + ((style.action_height - lm.height as f32) * 0.5).max(0.0),
+                    lm.width as f32,
+                    lm.height as f32,
+                ),
+            );
+            scene.set_fill(
+                text,
+                if action_index == action_focus {
+                    style.action_fg
+                } else {
+                    style.secondary_fg
+                },
+            );
             scene.set_mask(text, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
             scene.set_visible(text, true);
             cursor_x = bx - 8.0;
@@ -21489,6 +21610,18 @@ mod tests {
                 ui.key_input(UiKey::Tab);
             }
         }
+    }
+
+    #[test]
+    fn long_modal_body_clips_above_fixed_actions() {
+        let mut ui=Ui::new();let mut scene=Scene::new();ui.set_viewport(640.0,320.0);
+        let modal=ui.modal("Save database changes?","A long explanation with database paths and pending edits.\n".repeat(100),"Cancel",Some("Save".into()),ModalStyle::default());
+        ui.set_modal_open(modal,true);ui.sync(&mut scene);
+        let aux=&ui.widgets[&modal].aux;
+        let body=scene.get(aux[5]).unwrap();let footer=scene.get(aux[6]).unwrap().bounds;
+        let clip=body.clip.expect("Long modal prose needs a clipped viewport");
+        assert!(clip.y+clip.height<=footer.y);
+        assert!(body.mask.as_ref().unwrap().height as f32<=clip.height+2.0*ui.font.metrics(ModalStyle::default().body_size).line_height);
     }
 
     #[test]

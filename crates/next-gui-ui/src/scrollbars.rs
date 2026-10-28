@@ -78,9 +78,12 @@ impl Ui {
         let Some(widget) = self.widgets.get(&id) else {
             return Vec::new();
         };
-        let Some(bounds) = widget.node.and_then(|n| scene.get(n)).map(|n| n.bounds) else {
+        let Some(mut bounds) = widget.node.and_then(|n| scene.get(n)).map(|n| n.bounds) else {
             return Vec::new();
         };
+        if let Kind::Modal { body_view, .. } = &widget.kind {
+            bounds = *body_view;
+        }
         let Some((sx, sy)) = self.any_scroll_offset(id) else {
             return Vec::new();
         };
@@ -114,6 +117,11 @@ impl Ui {
                     self.data_max_scroll_y(id),
                 )
             }
+            Kind::Modal {
+                open: true,
+                body_height,
+                ..
+            } => (bounds, 0.0, (body_height - bounds.height).max(0.0)),
             Kind::TextArea { value, style, .. } => {
                 let view = Rect::new(
                     bounds.x,
@@ -187,7 +195,39 @@ impl Ui {
         bars
     }
 
+    pub(super) fn paint_modal_scrollbar(
+        &self,
+        scene: &mut Scene,
+        id: WidgetId,
+        track: NodeId,
+        thumb: NodeId,
+    ) {
+        let bar = self
+            .scrollbar_geometry(scene, id)
+            .into_iter()
+            .find(|bar| bar.axis == Axis::Vertical);
+        for node in [track, thumb] {
+            scene.set_visible(node, bar.is_some());
+        }
+        if let Some(bar) = bar {
+            for (node, bounds, fill) in [
+                (track, bar.track, self.theme.colors.track),
+                (thumb, bar.thumb, self.theme.colors.text_secondary),
+            ] {
+                scene.set_bounds(node, bounds);
+                scene.set_fill(node, fill);
+                scene.set_corner_radius(node, 2.0);
+            }
+        }
+    }
+
     pub(super) fn paint_scrollbars(&mut self, scene: &mut Scene, id: WidgetId) {
+        if matches!(
+            self.widgets.get(&id).map(|widget| &widget.kind),
+            Some(Kind::Modal { .. })
+        ) {
+            return;
+        }
         let bars = self.scrollbar_geometry(scene, id);
         if bars.is_empty() && !self.scrollbars.contains_key(&id) {
             return;

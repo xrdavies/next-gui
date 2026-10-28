@@ -275,3 +275,9 @@ right-side arrows, use Up/Down for one or PageUp/PageDown for ten, or edit/paste
 the integer directly. Changes retain Undo/Redo and focus through resizing.
 The original form's labels share a measured alignment column; compact forms
 stack labels above controls. Validation still runs before applying any setting.
+
+Long confirmation messages keep their actions fixed while the explanation scrolls.
+Use the wheel, scrollbar, Up/Down, PageUp/PageDown or Home/End to read the full
+message. Rebuilding or resizing retains the reading position and active action
+for the same question; a new question starts at its defaults. Long table names
+also use bounded GPU texture tiles instead of exceeding the adapter limit.
