@@ -1754,6 +1754,7 @@ enum Kind {
     },
     Button {
         label: String,
+        icon: Option<IconName>,
         enabled: bool,
         bg: Color,
         fg: Color,
@@ -1903,7 +1904,7 @@ enum Kind {
     },
     Tooltip {
         text: String,
-        plot_owner: Option<WidgetId>,
+        content_owner: Option<WidgetId>,
         style: TooltipStyle,
         children: Vec<WidgetId>,
     },
@@ -3148,6 +3149,15 @@ impl Ui {
             return true;
         }
         false
+    }
+
+    /// Display a centered icon instead of the button's text; its accessible label is retained.
+    /// `None` restores the authored text sizing. Sync after changing it.
+    pub fn set_button_icon(&mut self, id: WidgetId, icon: Option<IconName>) -> bool {
+        let Some(Widget { kind: Kind::Button { icon: current, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        if *current == icon { return false; }
+        *current = icon;
+        true
     }
 
     /// Whether a button accepts pointer, keyboard and focus navigation.
@@ -9416,7 +9426,7 @@ impl Ui {
             .hit_widget(scene, x, y)
             .and_then(|id| self.find_tooltip_ancestor(id));
         let coordinates = tip.is_some_and(|id| matches!(self.widgets[&id].kind,
-            Kind::Tooltip { plot_owner: Some(_), .. }));
+            Kind::Tooltip { content_owner: Some(owner), .. } if self.is_chart(owner)));
         let changed = tip != self.tooltip_hover || previous_row != self.popup_menu_row || (moved && coordinates);
         self.tooltip_hover = tip;
         changed
@@ -10113,11 +10123,16 @@ impl Ui {
             }
             Some(Kind::Button {
                 label,
+                icon,
                 size,
                 min_width,
                 height,
                 ..
             }) => {
+                if icon.is_some() {
+                    let side = (*height).max(*size + 12.0);
+                    return ChildMeasure::new(side, side);
+                }
                 let (tw, th) = self.font.measure_line(label, *size);
                 let pad_x = 16.0;
                 // Keep authored height, but never shorter than font line box + padding
@@ -11794,6 +11809,7 @@ impl Ui {
             }
             Kind::Button {
                 label,
+                icon,
                 fg,
                 size,
                 bg,
@@ -11801,15 +11817,21 @@ impl Ui {
                 ..
             } => {
                 let label = label.clone();
+                let icon = *icon;
                 let fg = if *enabled { *fg } else { self.theme.colors.disabled };
                 let size = *size;
                 let bg = if *enabled { *bg } else { self.theme.colors.muted };
                 scene.set_fill(node, bg);
                 scene.set_mask(node, None);
                 self.apply_corner_radius(scene, node, false);
-                let (_, mask) = self.font.rasterize_text(&label, size, None);
+                let mask = if let Some(icon) = icon {
+                    rasterize_icon(icon, (size * 1.4).max(16.0).min((bounds.width.min(bounds.height) - 8.0).max(8.0)))
+                } else {
+                    let (_, mask) = self.font.rasterize_text(&label, size, None);
+                    AlphaMask::new(mask.width, mask.height, mask.pixels)
+                };
                 if let Some(lid) = label_node {
-                    let lx = bounds.x + 16.0;
+                    let lx = bounds.x + if icon.is_some() { ((bounds.width - mask.width as f32) * 0.5).max(0.0) } else { 16.0 };
                     let ly = bounds.y + ((bounds.height - mask.height as f32) * 0.5).max(0.0);
                     scene.set_bounds(
                         lid,
@@ -11818,7 +11840,7 @@ impl Ui {
                     scene.set_fill(lid, fg);
                     scene.set_mask(
                         lid,
-                        Some(AlphaMask::new(mask.width, mask.height, mask.pixels)),
+                        Some(mask),
                     );
                     scene.set_visible(lid, true);
                 }
@@ -16528,11 +16550,11 @@ impl Ui {
         }
         let Some(id) = active else { return; };
         let (text, style, host_bounds) = match self.widgets.get(&id) {
-            Some(Widget { kind: Kind::Tooltip { text, style, plot_owner, .. }, node, .. }) => {
-                if let Some(chart) = plot_owner {
+            Some(Widget { kind: Kind::Tooltip { text, style, content_owner, .. }, node, .. }) => {
+                if let Some(chart) = content_owner.filter(|owner| self.is_chart(*owner)) {
                     let (x,y) = self.last_pointer.unwrap_or((f32::NAN,f32::NAN));
-                    let text = self.plot_coordinate_text(*chart,x,y).or_else(|| {
-                        let Widget { kind: Kind::Chart { tiles, .. }, aux, .. } = self.widgets.get(chart)? else { return None; };
+                    let text = self.plot_coordinate_text(chart,x,y).or_else(|| {
+                        let Widget { kind: Kind::Chart { tiles, .. }, aux, .. } = self.widgets.get(&chart)? else { return None; };
                         aux.chunks(4).zip(tiles).find_map(|(nodes, tile)| {
                             scene.get(*nodes.first()?).filter(|node| node.visible && node.bounds.contains(x,y))
                                 .map(|_| tile.title.clone())
@@ -16542,7 +16564,7 @@ impl Ui {
                         Rect::new(x+style.gap*2.0,y+style.gap,1.0,1.0))
                 } else {
                     let bounds = hint.map(|(_, b)| b).or_else(|| node.and_then(|n| scene.get(n).map(|n| n.bounds))).unwrap_or_else(Rect::empty);
-                    (text.clone(), *style, bounds)
+                    (content_owner.and_then(|owner| self.accessible_name(owner)).unwrap_or_else(|| text.clone()), *style, bounds)
                 }
             }
             _ => return,
@@ -18050,6 +18072,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
+                    icon: None,
                     enabled: true,
                     bg,
                     fg,
@@ -18085,6 +18108,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Button {
                     label: label.into(),
+                    icon: None,
                     enabled: true,
                     bg,
                     fg,
@@ -18101,6 +18125,25 @@ impl FlexBuilder<'_> {
         );
         self.push_child(id);
         id
+    }
+
+    /// Square toolbar icon button with a live label tooltip and normal keyboard/accessibility behavior.
+    pub fn tool_icon_button(&mut self, icon: IconName, label: impl Into<String>) -> WidgetId {
+        let theme = self.ui.theme;
+        self.tool_icon_button_styled(icon, label, theme.colors.button_bg, theme.colors.button_fg)
+    }
+
+    /// Toolbar icon button with semantic colors; the full label remains available on hover.
+    pub fn tool_icon_button_styled(&mut self, icon: IconName, label: impl Into<String>, bg: Color, fg: Color) -> WidgetId {
+        let mut button = WidgetId(0);
+        let tooltip = self.tooltip("", |t| {
+            button = t.tool_button_styled(label, bg, fg);
+            t.ui.set_button_icon(button, Some(icon));
+        });
+        if let Kind::Tooltip { content_owner, .. } = &mut self.ui.widgets.get_mut(&tooltip).unwrap().kind {
+            *content_owner = Some(button);
+        }
+        button
     }
 
     /// Built-in icon glyph (theme secondary text color).
@@ -18968,7 +19011,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Tooltip {
                     text: text.into(),
-                    plot_owner: None,
+                    content_owner: None,
                     style,
                     children: Vec::new(),
                 },
@@ -19203,7 +19246,7 @@ impl FlexBuilder<'_> {
         );
         let host = if style.show_plot_coordinates {
             self.ui.alloc_container(Kind::Tooltip {
-                text: String::new(), plot_owner: Some(id),
+                text: String::new(), content_owner: Some(id),
                 style: self.ui.tooltip_style(), children: vec![id],
             })
         } else { id };

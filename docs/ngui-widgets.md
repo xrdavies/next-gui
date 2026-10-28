@@ -81,6 +81,22 @@ Column {
 cargo test -p next-gui-ui --lib dsl::
 ```
 
+## Icon buttons
+
+`Button("Save database") { icon: save }` uses a square house icon while retaining
+the full label for accessibility and the existing keyboard, pointer, focus and
+disabled behavior. Unknown/empty glyph names are rejected. Omit `icon` for the
+original text button. `Tooltip("Save database") { Button("Save database") { icon: save } }`
+adds explicit help in `.ngui`.
+
+Rust toolbar builders `tool_icon_button(IconName::Save, "Save database")` and
+`tool_icon_button_styled` automatically show a tooltip from the current accessible
+name, including later `set_button_label` changes. They return the actual button ID.
+`Ui::set_button_icon(id, None)` restores the authored text sizing after `sync`.
+The new house glyphs are `database`, `undo`, `step` and `code`; consumers matching
+`IconName` exhaustively need corresponding arms. Existing button style structs and
+text builders are unchanged.
+
 ## TextArea editing API
 
 `FlexBuilder::text_area` keeps its existing builder/DSL interface. Shared TextArea now

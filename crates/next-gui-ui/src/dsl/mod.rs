@@ -198,6 +198,18 @@ Column {
     }
 
     #[test]
+    fn button_icon_keeps_label_and_validates_named_glyphs() {
+        let loaded = load_ngui("Column { Button(\"Save database\") @save { icon: save } }").unwrap();
+        let id = loaded.widget("save").unwrap();
+        let crate::Kind::Button { icon, .. } = loaded.ui.widgets[&id].kind else { panic!() };
+        assert_eq!(icon, Some(crate::IconName::Save));
+        assert_eq!(loaded.ui.accessible_name(id).as_deref(), Some("Save database"));
+        for value in ["missing", "blank", "123"] {
+            assert!(load_ngui(&format!("Column {{ Button(\"Save\") {{ icon: {value} }} }}")).is_err());
+        }
+    }
+
+    #[test]
     fn load_all_widgets_fixture() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

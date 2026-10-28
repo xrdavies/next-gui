@@ -41,6 +41,14 @@ pub enum IconName {
     Menu,
     /// Home house.
     Home,
+    /// Database cylinder.
+    Database,
+    /// Return arrow (undo/revert).
+    Undo,
+    /// Execute one step / line.
+    Step,
+    /// Code / comment delimiters.
+    Code,
 }
 
 impl IconName {
@@ -65,6 +73,10 @@ impl IconName {
             "refresh" | "reload" => Self::Refresh,
             "menu" | "hamburger" => Self::Menu,
             "home" => Self::Home,
+            "database" | "db" => Self::Database,
+            "undo" | "revert" => Self::Undo,
+            "step" => Self::Step,
+            "code" | "comment" => Self::Code,
             _ => Self::Blank,
         }
     }
@@ -90,6 +102,10 @@ impl IconName {
             Self::Refresh => "refresh",
             Self::Menu => "menu",
             Self::Home => "home",
+            Self::Database => "database",
+            Self::Undo => "undo",
+            Self::Step => "step",
+            Self::Code => "code",
         }
     }
 }
@@ -149,6 +165,16 @@ impl Pix<'_> {
         self.line(x0, y1, x0, y0, a);
     }
 
+    fn stroke_ellipse(&mut self, cx: i32, cy: i32, rx: i32, ry: i32, a: u8) {
+        let mut last = (cx + rx, cy);
+        for step in 1..=64 {
+            let angle = step as f32 * std::f32::consts::TAU / 64.0;
+            let next = (cx + (rx as f32 * angle.cos()).round() as i32, cy + (ry as f32 * angle.sin()).round() as i32);
+            self.line(last.0, last.1, next.0, next.1, a);
+            last = next;
+        }
+    }
+
     fn fill_circle(&mut self, cx: i32, cy: i32, r: i32, a: u8) {
         for y in (cy - r)..=(cy + r) {
             for x in (cx - r)..=(cx + r) {
@@ -177,6 +203,34 @@ pub fn rasterize_icon(name: IconName, size: f32) -> AlphaMask {
 
     match name {
         IconName::Blank => {}
+        IconName::Database => {
+            let (cx, rx, ry) = (m / 2, ((m - inset * 2) / 2).max(1), (s as i32 / 8).max(1));
+            let top = inset + ry; let bottom = m - inset - ry;
+            for cy in [top, (top + bottom) / 2, bottom] { p.stroke_ellipse(cx, cy, rx, ry, a); }
+            p.line(cx - rx, top, cx - rx, bottom, a);
+            p.line(cx + rx, top, cx + rx, bottom, a);
+        }
+        IconName::Undo => {
+            let cy = s as i32 / 2; let arm = (s as i32 / 4).max(1);
+            p.line(inset, cy, inset + arm, cy - arm, a);
+            p.line(inset, cy, inset + arm, cy + arm, a);
+            p.line(inset, cy, m - inset, cy, a);
+            p.line(m - inset, cy, m - inset, m - inset, a);
+        }
+        IconName::Step => {
+            p.line(inset, inset, inset, m - inset, a);
+            p.line(inset, inset, m - inset - 2, s as i32 / 2, a);
+            p.line(inset, m - inset, m - inset - 2, s as i32 / 2, a);
+            p.line(m - inset, inset, m - inset, m - inset, a);
+        }
+        IconName::Code => {
+            let c = s as i32 / 2; let arm = (s as i32 / 6).max(1);
+            p.line(inset + arm, inset + 1, inset, c, a);
+            p.line(inset, c, inset + arm, m - inset - 1, a);
+            p.line(m - inset - arm, inset + 1, m - inset, c, a);
+            p.line(m - inset, c, m - inset - arm, m - inset - 1, a);
+            p.line(c + 1, inset, c - 1, m - inset, a);
+        }
         IconName::Folder => {
             let top = inset;
             let mid = s as i32 / 3;
@@ -383,6 +437,21 @@ mod tests {
         let m = rasterize_icon(IconName::Save, 16.0);
         assert_eq!(m.width, 16);
         assert!(m.pixels.iter().any(|&p| p > 0));
+    }
+
+    #[test]
+    fn database_action_icons_roundtrip_and_remain_distinct_at_supported_sizes() {
+        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code];
+        for size in [8.0, 18.0, 32.0, 64.0] {
+            let mut masks = Vec::new();
+            for icon in icons {
+                assert_eq!(IconName::from_name(icon.as_str()), icon);
+                let mask = rasterize_icon(icon, size);
+                assert_eq!((mask.width, mask.height), (size as u32, size as u32));
+                assert!(mask.pixels.iter().any(|&p| p > 0));
+                assert!(!masks.contains(&mask.pixels)); masks.push(mask.pixels);
+            }
+        }
     }
 
     #[test]

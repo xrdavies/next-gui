@@ -138,7 +138,7 @@ impl Ui {
                 Widget {
                     kind: Kind::Tooltip {
                         text: String::new(),
-                        plot_owner: None,
+                        content_owner: None,
                         style: self.tooltip_style(),
                         children: Vec::new(),
                     },

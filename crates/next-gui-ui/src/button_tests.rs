@@ -102,3 +102,48 @@ fn disabled_button_theme_colors_restore_authored_colors_and_geometry() {
         }
     }
 }
+
+
+#[test]
+fn icon_buttons_keep_live_help_focus_activation_disabled_colors_and_reversible_text_sizing() {
+    for theme in [Theme::light(), Theme::dark()] {
+        for density in [UiDensity::Compact, UiDensity::Default, UiDensity::Comfortable] {
+            let mut ui = Ui::new(); ui.set_theme(theme); ui.set_config(UiConfig { density, ..UiConfig::default() });
+            ui.set_viewport(360.0, 220.0); let mut scene = Scene::new();
+            let (mut icon, mut text) = (WidgetId(0), WidgetId(0));
+            ui.row(RowStyle { width: 360.0, ..RowStyle::default() }, |row| {
+                icon = row.tool_icon_button(IconName::Save, "Save complete database");
+                text = row.tool_button("Text action");
+            });
+            ui.sync(&mut scene);
+            let node = ui.widgets[&icon].node.unwrap(); let label = ui.widgets[&icon].label_node.unwrap();
+            let bounds = scene.get(node).unwrap().bounds; let glyph = scene.get(label).unwrap();
+            assert_eq!(bounds.width, bounds.height); assert!(bounds.width >= 24.0 && bounds.width < 40.0);
+            assert!((glyph.bounds.x - bounds.x - (bounds.width - glyph.bounds.width) * 0.5).abs() < 0.001);
+            assert!((glyph.bounds.y - bounds.y - (bounds.height - glyph.bounds.height) * 0.5).abs() < 0.001);
+            assert!(glyph.mask.as_ref().unwrap().pixels.iter().any(|&p| p > 0));
+            assert_eq!(ui.accessible_name(icon).as_deref(), Some("Save complete database"));
+            assert_eq!(ui.focus_next(), Some(icon)); assert!(ui.key_input(UiKey::Enter)); assert_eq!(ui.take_button_activate(), Some(icon));
+            assert_eq!(ui.focus_next(), Some(text));
+            let (x, y) = (bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5);
+            assert_eq!(ui.hit_widget(&scene, x, y), Some(icon));
+            assert!(!ui.pointer_pressed(&mut scene, x, y)); assert_eq!(ui.focused(), Some(icon));
+            let tip = ui.find_tooltip_ancestor(icon).unwrap();
+            ui.set_button_label(icon, "Save changes"); ui.pointer_hover(&scene, x, y); ui.sync(&mut scene);
+            let tip_label = scene.get(ui.widgets[&tip].aux[1]).unwrap();
+            let expected = ui.font.rasterize_text("Save changes", ui.tooltip_style().size, None).1;
+            assert_eq!(tip_label.mask.as_ref().unwrap().pixels, expected.pixels);
+            ui.set_button_enabled(icon, false); ui.sync(&mut scene);
+            assert_eq!(scene.get(label).unwrap().fill, theme.colors.disabled); assert_eq!(scene.get(node).unwrap().bounds, bounds);
+            assert!(!ui.focusable_widgets().contains(&icon)); assert!(ui.pointer_pressed(&mut scene, x, y));
+            assert_eq!(ui.take_button_activate(), None);
+            ui.set_button_enabled(icon, true); ui.sync(&mut scene);
+            assert_eq!(scene.get(label).unwrap().fill, theme.colors.button_fg);
+            assert!(ui.set_button_icon(icon, None)); ui.sync(&mut scene);
+            assert!(scene.get(node).unwrap().bounds.width > bounds.width * 2.0);
+            assert!(!ui.set_button_icon(icon, None)); assert!(!ui.set_button_icon(WidgetId(0), Some(IconName::Save)));
+            assert!(ui.set_button_icon(icon, Some(IconName::Open))); ui.sync(&mut scene);
+            assert_eq!(scene.get(node).unwrap().bounds, bounds);
+        }
+    }
+}

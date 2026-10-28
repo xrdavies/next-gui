@@ -501,6 +501,13 @@ fn build_widget(
                 (None, Some(fg)) => builder.button_styled(label, theme.colors.button_bg, fg),
                 (None, None) => builder.button(label),
             };
+            if let Some(name) = prop_string(&w.props, "icon").map_err(|m| err_at(w.line, w.column, m))? {
+                let icon = IconName::from_name(&name);
+                if icon == IconName::Blank {
+                    return Err(err_at(w.line, w.column, format!("icon: unknown or empty button icon `{name}`")));
+                }
+                builder.ui.set_button_icon(id, Some(icon));
+            }
             register(names, &w.name, id);
         }
         "Icon" => {
