@@ -40,8 +40,8 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Close Database | done | confirm modal |
 | Save Database As… | done | SQLite live backup includes WAL and in-memory data; new destination required; commits pending edits first; encrypted databases use encrypted export |
 | Import → Database from SQL file… | done | Atomic savepoint import; dump transaction wrappers cannot commit prior edits |
-| Import → Table from CSV file… | partial | Selectable supported legacy/Unicode codecs and BOMs, quoted multiline fields, strict counts, atomic insert; original preview/advanced/multifile/settings and Qt-only codecs pending |
-| Import → Table from CSV clipboard… | partial | Unicode clipboard and common parse options; original preview/advanced import workflow pending |
+| Import → Table from CSV file… | partial | Bounded preview, supported codecs/BOMs, custom characters/codepoints, trim/type/default/missing/conflict policies, positional append confirmation and settings; multi-file/locale/Qt codecs/cancellable streaming import/original modal pending |
+| Import → Table from CSV clipboard… | partial | Unicode clipboard, shared preview/options/type/policy engine and safe positional append; full original import workflow pending |
 | Export → Database to SQL file… | done | Uncapped typed rows, generated columns, triggers after data, AUTOINCREMENT sequence; virtual tables fail explicitly |
 | Export → Table(s) as CSV… | partial | Complete current filtered table; no multi-table chooser; BLOB as hex; CSV does not preserve NULL/type distinctions |
 | Export → Table(s) to JSON… | partial | Complete current filtered table; typed numbers/null, BLOB hex string; no multi-table chooser |
@@ -689,3 +689,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### CSV file encodings — 2026-10-28
 
 [Review](../../docs/reviews/R-20261028-7ef6e54e267d.md): original UTF-8/UTF-16/ISO-8859-1/Other selector and custom completion now decode supported legacy codecs and UTF-32, including BOM override. Strict malformed/unknown-codec errors occur before mutation; real imports and rollback preserve existing pending changes. Control sessions survive rebuild/resize and corrected labels import successfully; clipboard remains Unicode.572 tests/strict checks, eight Soft/Metal pairs (delta1–2) and four native static windows inspected. CSV preview/trim/type/default/conflict/multifile/custom separators/settings/Qt-only codecs and broader product/native parity remain unfinished.
+
+### CSV preview and import policies — 2026-10-28
+
+[Review](../../docs/reviews/R-20261028-db71e556cb1f.md): files decode in chunks and share a parser with Unicode clipboard input; preview stops at20 records and displays inferred types. Custom character/codepoint separators/quotes, trimming, type detection, defaults/missing values and Abort/Ignore/Replace policies reach actual SQLite imports. Existing tables match writable-column position with default-Cancel confirmation. Saved settings, focus/Undo/scroll/refresh and pending-transaction safety are verified.577 tests/strict checks,12 Soft/Metal pairs (delta1–2), six native static windows inspected. Multi-file/separate tables, local number conventions/Qt-only codecs, cancellation/progress/streamed insertion/parser compatibility, original modal presentation and broader product/native parity remain unfinished.
