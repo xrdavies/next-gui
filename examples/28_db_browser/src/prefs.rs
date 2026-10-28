@@ -14,6 +14,7 @@ pub struct Prefs {
     pub csv_delimiter: char,
     pub csv_import: Option<crate::db::CsvImportOptions>,
     pub data_export: crate::data_export::Options,
+    pub sql_export: crate::db::ExportSqlOptions,
     pub csv_separate_tables: bool,
     pub frozen_cols_default: usize,
 }
@@ -29,6 +30,7 @@ impl Default for Prefs {
             csv_delimiter: ',',
             csv_import: None,
             data_export: crate::data_export::Options::default(),
+            sql_export: crate::db::ExportSqlOptions::default(),
             csv_separate_tables: false,
             frozen_cols_default: 0,
         }

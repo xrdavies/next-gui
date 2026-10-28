@@ -32,11 +32,12 @@ pub fn pick_open_sql() -> Option<PathBuf> {
         .pick_file()
 }
 
-pub fn pick_save_sql() -> Option<PathBuf> {
-    rfd::FileDialog::new()
+pub fn pick_save_sql(filename: Option<&str>) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
         .add_filter("SQL", &["sql"])
-        .set_title("Save SQL")
-        .save_file()
+        .set_title("Save SQL");
+    if let Some(filename) = filename { dialog = dialog.set_file_name(filename); }
+    dialog.save_file()
 }
 
 pub fn pick_save_log() -> Option<PathBuf> {

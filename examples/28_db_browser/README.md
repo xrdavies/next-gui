@@ -64,6 +64,14 @@ The form keeps focused editing/Undo, dropdown sessions and scrolling on rebuild.
 
 Native file pickers use `rfd`. Cancel means no operation.
 
+File → Export → Database to SQL opens a table/view chooser with structure/data,
+existing-schema, column-name, multi-row and original-CREATE options. It runs on
+a background worker with row progress and cooperative cancellation; completed
+output replaces the destination atomically. Cancel keeps the original file and
+pending database edits. Export settings persist after success; table selection
+stays specific to the current database. Without INSERT column names, implicit
+rowids cannot be included. Selected virtual tables still require Save Database As.
+
 Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. File CSV/JSON commands export all selected tables/views; SQL result exports include every captured row beyond the 500-row display preview. Use SQL dumps for a type-preserving round trip.
 
 Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open/Close/Exit use Save/Discard/Cancel for pending database and document edits.

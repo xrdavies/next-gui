@@ -67,6 +67,41 @@ impl Job {
         replace: bool,
         progress: Arc<Progress>,
     ) -> Self {
+        Self::start_task(conn, move |conn| {
+            if let Some(source) = query {
+                outputs
+                    .first()
+                    .ok_or("Export needs a destination".into())
+                    .and_then(|output| {
+                        data_export::export_query_progress(
+                            conn,
+                            &source,
+                            &output.path,
+                            json,
+                            &options,
+                            replace,
+                            &progress,
+                        )
+                    })
+            } else {
+                data_export::export_progress(conn, &outputs, json, &options, replace, &progress)
+            }
+        })
+    }
+    pub fn start_sql(
+        conn: LoggedConnection,
+        path: std::path::PathBuf,
+        options: crate::db::ExportSqlOptions,
+        progress: Arc<Progress>,
+    ) -> Self {
+        Self::start_task(conn, move |conn| {
+            crate::db::export_sql_dump_progress(conn, &path, &options, &progress)
+        })
+    }
+    fn start_task(
+        conn: LoggedConnection,
+        task: impl FnOnce(&LoggedConnection) -> Result<(), String> + Send + 'static,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel::<LoggedConnection>();
         let worker = std::thread::Builder::new()
             .name("data-export".into())
@@ -75,26 +110,7 @@ impl Job {
                     Ok(conn) => conn,
                     Err(error) => return (None, Err(error.to_string())),
                 };
-                let result = if let Some(source) = query {
-                    outputs
-                        .first()
-                        .ok_or("Export needs a destination".into())
-                        .and_then(|output| {
-                            data_export::export_query_progress(
-                                &conn,
-                                &source,
-                                &output.path,
-                                json,
-                                &options,
-                                replace,
-                                &progress,
-                            )
-                        })
-                } else {
-                    data_export::export_progress(
-                        &conn, &outputs, json, &options, replace, &progress,
-                    )
-                };
+                let result = task(&conn);
                 (Some(conn), result)
             });
         match worker {
@@ -133,10 +149,15 @@ impl Job {
     }
 }
 
+pub enum Options {
+    Data(data_export::Options),
+    Sql(crate::db::ExportSqlOptions),
+}
+
 pub struct Work {
     pub job: Job,
     pub progress: Arc<Progress>,
-    pub options: data_export::Options,
+    pub options: Options,
     pub count: usize,
 }
 impl Work {
@@ -147,7 +168,10 @@ impl Work {
         } else if !self.progress.can_cancel() {
             "Finishing export…"
         } else {
-            "Exporting data…"
+            match self.options {
+                Options::Data(_) => "Exporting data…",
+                Options::Sql(_) => "Exporting SQL…",
+            }
         };
         (
             files as f32 / self.count.max(1) as f32,
@@ -164,6 +188,55 @@ impl Work {
             ),
         )
     }
+}
+
+pub fn build_progress(
+    ui: &mut next_gui_ui::Ui,
+    work: &Work,
+    theme: &next_gui_ui::Theme,
+    width: f32,
+    height: f32,
+) -> (
+    next_gui_ui::WidgetId,
+    next_gui_ui::WidgetId,
+    next_gui_ui::WidgetId,
+    next_gui_ui::WidgetId,
+) {
+    use next_gui_ui::{ModalStyle, TextAreaStyle};
+    let mut progress_style = ModalStyle::from_theme(theme);
+    progress_style.width = (width - 80.0).min(620.0);
+    progress_style.height = (height - 48.0).min(230.0);
+    progress_style.close_on_backdrop = false;
+    let mut message = TextAreaStyle::from_theme(theme);
+    message.width = progress_style.width - 48.0;
+    message.height = 100.0;
+    let mut bar = next_gui_ui::ProgressStyle::from_theme(theme);
+    bar.width = message.width;
+    let (value, caption) = work.info();
+    let mut text = next_gui_ui::WidgetId(0);
+    let mut bar_id = next_gui_ui::WidgetId(0);
+    let mut stop = next_gui_ui::WidgetId(0);
+    let dialog = ui.dialog(
+        if matches!(work.options, Options::Sql(_)) {
+            "Exporting SQL"
+        } else {
+            "Exporting data"
+        },
+        progress_style,
+        |body| {
+            text = body.text_area(caption, "", message);
+            bar_id = body.progress_styled(value, true, bar);
+        },
+        |footer| {
+            stop = footer.tool_button("Cancel");
+        },
+    );
+    ui.set_text_area_read_only(text, true);
+    ui.set_accessible_name(text, "Data export progress");
+    ui.set_button_enabled(stop, work.progress.can_cancel());
+    ui.set_dialog_open(dialog, true);
+    ui.set_focus(Some(stop));
+    (dialog, text, bar_id, stop)
 }
 
 #[cfg(test)]

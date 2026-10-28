@@ -2649,8 +2649,14 @@ mod tests {
 }
 
 /// Options for Export → Database to SQL file (DB4S ExportSqlDialog).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ExportSqlOptions {
+    #[serde(skip)]
+    pub selected: Option<Vec<String>>,
+    pub insert_column_names: bool,
+    pub multiple_rows: bool,
+    pub keep_original_create: bool,
     pub structure: bool,
     pub data: bool,
     pub drop_if_exists: bool,
@@ -2660,6 +2666,10 @@ pub struct ExportSqlOptions {
 impl Default for ExportSqlOptions {
     fn default() -> Self {
         Self {
+            selected: None,
+            insert_column_names: true,
+            multiple_rows: false,
+            keep_original_create: false,
             structure: true,
             data: true,
             drop_if_exists: false,
@@ -2673,18 +2683,54 @@ pub fn export_sql_dump_opts(
     path: &Path,
     opts: &ExportSqlOptions,
 ) -> Result<(), String> {
+    export_sql_dump_progress(conn, path, opts, &crate::export_jobs::Progress::default())
+}
+
+pub fn export_sql_dump_progress(
+    conn: &Connection,
+    path: &Path,
+    opts: &ExportSqlOptions,
+    progress: &crate::export_jobs::Progress,
+) -> Result<(), String> {
+    progress.check()?;
+    if !opts.structure && !opts.data {
+        return Err("Select structure and/or data".into());
+    }
+    if opts.selected.as_ref().is_some_and(Vec::is_empty) {
+        return Err("Select at least one table or view".into());
+    }
     guard_output_path(conn, path)?;
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let mut f = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let mut f = std::io::BufWriter::new(file.as_file_mut());
     let snapshot = if conn.is_autocommit() {
         Some(conn.unchecked_transaction().map_err(|e| e.to_string())?)
     } else {
         None
     };
-    let schema = list_schema(conn)?;
+    let mut schema = list_schema(conn)?;
+    if let Some(selected) = &opts.selected {
+        for name in selected {
+            if !schema.iter().any(|object| {
+                object.name == *name && matches!(object.kind, ObjectKind::Table | ObjectKind::View)
+            }) {
+                return Err(format!("Export table or view no longer exists: {name}"));
+            }
+        }
+        schema.retain(|object| {
+            if matches!(object.kind, ObjectKind::Table | ObjectKind::View) {
+                selected.contains(&object.name)
+            } else {
+                object
+                    .tbl_name
+                    .as_ref()
+                    .is_some_and(|table| selected.contains(table))
+            }
+        });
+    }
     if schema.iter().any(|o| {
         o.sql
             .as_deref()
@@ -2711,30 +2757,47 @@ pub fn export_sql_dump_opts(
             }
         }
         for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
+            progress.check()?;
             if let Some(sql) = &obj.sql {
-                writeln!(f, "{};", sql.trim().trim_end_matches(';')).map_err(|e| e.to_string())?;
+                let create = crate::table_sql::export_create(
+                    sql,
+                    opts.keep_original_create,
+                    !opts.drop_if_exists,
+                )?;
+                writeln!(f, "{};", create.trim().trim_end_matches(';'))
+                    .map_err(|e| e.to_string())?;
             }
         }
     }
     if opts.data {
         for obj in schema.iter().filter(|o| o.kind == ObjectKind::Table) {
+            progress.check()?;
             // Generated columns are recomputed and cannot be inserted into.
             let mut cols: Vec<String> = table_columns(conn, &obj.name)?
                 .iter()
                 .map(|c| quote_ident(&c.name))
                 .collect();
             let all_columns: Vec<String> = conn
-                .prepare(&format!("SELECT * FROM {}", qualified_name("main", &obj.name)))
+                .prepare(&format!(
+                    "SELECT * FROM {}",
+                    qualified_name("main", &obj.name)
+                ))
                 .map_err(|e| e.to_string())?
                 .column_names()
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
             // Preserve implicit rowids where an unshadowed alias is available.
-            for alias in ["rowid", "_rowid_", "oid"] {
+            for alias in ["rowid", "_rowid_", "oid"]
+                .into_iter()
+                .filter(|_| opts.insert_column_names)
+            {
                 if !all_columns.iter().any(|c| c.eq_ignore_ascii_case(alias))
                     && conn
-                        .prepare(&format!("SELECT {alias} FROM {}", qualified_name("main", &obj.name)))
+                        .prepare(&format!(
+                            "SELECT {alias} FROM {}",
+                            qualified_name("main", &obj.name)
+                        ))
                         .is_ok()
                 {
                     cols.insert(0, alias.into());
@@ -2743,41 +2806,68 @@ pub fn export_sql_dump_opts(
             }
             let cols = cols.join(", ");
             let mut stmt = conn
-                .prepare(&format!("SELECT {cols} FROM {}", qualified_name("main", &obj.name)))
+                .prepare(&format!(
+                    "SELECT {cols} FROM {}",
+                    qualified_name("main", &obj.name)
+                ))
                 .map_err(|e| e.to_string())?;
             let n = stmt.column_count();
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+            let mut batch_rows = 0;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                progress.check()?;
                 let values = (0..n)
                     .map(|i| row.get_ref(i).map(sql_literal))
                     .collect::<rusqlite::Result<Vec<_>>>()
                     .map_err(|e| e.to_string())?;
-                writeln!(
-                    f,
-                    "INSERT INTO {} ({cols}) VALUES ({});",
-                    quote_ident(&obj.name),
-                    values.join(", ")
-                )
-                .map_err(|e| e.to_string())?;
+                if batch_rows == 0 {
+                    write!(
+                        f,
+                        "INSERT INTO {}{} VALUES ",
+                        quote_ident(&obj.name),
+                        if opts.insert_column_names {
+                            format!(" ({cols})")
+                        } else {
+                            String::new()
+                        }
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    writeln!(f, ",").map_err(|e| e.to_string())?;
+                }
+                write!(f, "({})", values.join(", ")).map_err(|e| e.to_string())?;
+                batch_rows += 1;
+                progress.row();
+                // Bound each batch to 500 rows while retaining the original multi-row option.
+                if !opts.multiple_rows || batch_rows == 500 {
+                    writeln!(f, ";").map_err(|e| e.to_string())?;
+                    batch_rows = 0;
+                }
+            }
+            if batch_rows > 0 {
+                writeln!(f, ";").map_err(|e| e.to_string())?;
             }
         }
         if conn
             .prepare("SELECT name, seq FROM main.sqlite_sequence")
             .is_ok()
         {
-            writeln!(f, "DELETE FROM sqlite_sequence;").map_err(|e| e.to_string())?;
             let mut stmt = conn
                 .prepare("SELECT name, seq FROM main.sqlite_sequence")
                 .map_err(|e| e.to_string())?;
             let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
             while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                writeln!(
-                    f,
-                    "INSERT INTO sqlite_sequence VALUES ({}, {});",
-                    sql_literal(row.get_ref(0).map_err(|e| e.to_string())?),
-                    sql_literal(row.get_ref(1).map_err(|e| e.to_string())?)
-                )
-                .map_err(|e| e.to_string())?;
+                let name: String = row.get(0).map_err(|e| e.to_string())?;
+                if !schema
+                    .iter()
+                    .any(|object| object.kind == ObjectKind::Table && object.name == name)
+                {
+                    continue;
+                }
+                let name = sql_literal(row.get_ref(0).map_err(|e| e.to_string())?);
+                let sequence = sql_literal(row.get_ref(1).map_err(|e| e.to_string())?);
+                writeln!(f, "UPDATE sqlite_sequence SET seq=MAX(COALESCE(seq,0),{sequence}) WHERE name={name};").map_err(|e|e.to_string())?;
+                writeln!(f, "INSERT INTO sqlite_sequence SELECT {name},{sequence} WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name={name});").map_err(|e|e.to_string())?;
             }
         }
     }
@@ -2785,7 +2875,13 @@ pub fn export_sql_dump_opts(
     if opts.structure {
         for obj in schema.iter().filter(|o| o.kind != ObjectKind::Table) {
             if let Some(sql) = &obj.sql {
-                writeln!(f, "{};", sql.trim().trim_end_matches(';')).map_err(|e| e.to_string())?;
+                let create = crate::table_sql::export_create(
+                    sql,
+                    opts.keep_original_create,
+                    !opts.drop_if_exists,
+                )?;
+                writeln!(f, "{};", create.trim().trim_end_matches(';'))
+                    .map_err(|e| e.to_string())?;
             }
         }
     }
@@ -2794,8 +2890,12 @@ pub fn export_sql_dump_opts(
         writeln!(f, "PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
     }
     drop(snapshot);
-    f.as_file().sync_all().map_err(|e| e.to_string())?;
-    f.persist(path).map_err(|e| e.to_string())?;
+    f.flush().map_err(|e| e.to_string())?;
+    drop(f);
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    progress.staged();
+    progress.begin_publish()?;
+    file.persist(path).map_err(|e| e.to_string())?;
     Ok(())
 }
 

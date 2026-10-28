@@ -1424,31 +1424,8 @@ pub fn build(
     );
     ui.set_dialog_open(ids.dialog, true);
     if let Some(work) = &state.export_work {
-        let mut progress_style = ModalStyle::from_theme(theme);
-        progress_style.width = (width - 80.0).min(620.0);
-        progress_style.height = 230.0;
-        progress_style.close_on_backdrop = false;
-        let mut message = TextAreaStyle::from_theme(theme);
-        message.width = progress_style.width - 48.0;
-        message.height = 100.0;
-        let mut bar = next_gui_ui::ProgressStyle::from_theme(theme);
-        bar.width = message.width;
-        let (value, caption) = work.info();
-        ids.progress_dialog = ui.dialog(
-            "Exporting data",
-            progress_style,
-            |body| {
-                ids.progress_text = body.text_area(caption, "", message);
-                ids.progress_bar = body.progress_styled(value, true, bar);
-            },
-            |footer| {
-                ids.stop = footer.tool_button("Cancel");
-            },
-        );
-        ui.set_text_area_read_only(ids.progress_text, true);
-        ui.set_accessible_name(ids.progress_text, "Data export progress");
-        ui.set_button_enabled(ids.stop, work.progress.can_cancel());
-        ui.set_dialog_open(ids.progress_dialog, true);
+        (ids.progress_dialog,ids.progress_text,ids.progress_bar,ids.stop) =
+            crate::export_jobs::build_progress(ui,work,theme,width,height);
     } else if let Some(outputs) = &draft.pending {
         let mut decision = ModalStyle::from_theme(theme);
         decision.width = (width - 80.0).min(580.0);
@@ -1616,7 +1593,7 @@ impl crate::Demo {
                 progress.clone(),
             ),
             progress,
-            options,
+            options: crate::export_jobs::Options::Data(options),
             count,
         });
         self.clear_error();
@@ -1654,8 +1631,17 @@ impl crate::Demo {
         }
         match result {
             Ok(()) => {
-                self.state.prefs.data_export = work.options;
-                self.state.export_dialog = None;
+                match work.options {
+                    crate::export_jobs::Options::Data(options) => {
+                        self.state.prefs.data_export = options;
+                        self.state.export_dialog = None;
+                    }
+                    crate::export_jobs::Options::Sql(options) => {
+                        self.state.prefs.sql_export = options;
+                        self.state.sql_export = None;
+                        self.state.overlay = None;
+                    }
+                }
                 self.state.status_msg = format!("Exported {} file(s)", work.count);
                 self.clear_error();
                 if !cfg!(test) && std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none() {
@@ -1680,17 +1666,20 @@ impl crate::Demo {
     }
     pub(crate) fn update_data_export_progress(&mut self) {
         if let Some(work) = &self.state.export_work {
-            let (value, caption) = work.info();
-            self.ui
-                .set_text_area_value(self.ids.data_export.progress_text, caption);
-            self.ui
-                .set_progress_value(self.ids.data_export.progress_bar, value);
-            self.ui
-                .set_button_enabled(self.ids.data_export.stop, work.progress.can_cancel());
+            let (text, bar, stop) = if self.state.overlay == Some(crate::state::OverlayKind::ExportSql) {
+                self.ids.sql_export.progress_ids()
+            } else {
+                (self.ids.data_export.progress_text,self.ids.data_export.progress_bar,self.ids.data_export.stop)
+            };
+            let (value,caption)=work.info();
+            self.ui.set_text_area_value(text,caption);
+            self.ui.set_progress_value(bar,value);
+            self.ui.set_button_enabled(stop,work.progress.can_cancel());
             self.ui.sync(&mut self.scene);
-            self.needs_paint = true;
+            self.needs_paint=true;
         }
     }
+
     #[cfg(test)]
     pub(crate) fn settle_export_test(&mut self) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

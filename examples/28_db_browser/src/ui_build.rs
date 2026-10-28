@@ -85,6 +85,7 @@ pub struct BuiltUi {
     pub ui: Ui,
     pub csv_files: crate::csv_files::Controls,
     pub data_export: crate::data_export::Controls,
+    pub sql_export: crate::sql_export::Controls,
     pub column_picker: crate::column_picker::Controls,
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
@@ -285,10 +286,6 @@ pub struct BuiltUi {
     pub ov_prefs_upper_keywords: WidgetId,
     pub ov_prefs_delim: WidgetId,
     pub ov_frozen: WidgetId,
-    pub ov_export_struct: WidgetId,
-    pub ov_export_data: WidgetId,
-    pub ov_export_drop: WidgetId,
-    pub ov_export_fk: WidgetId,
     pub ov_cond_col: WidgetId,
     pub ov_cond_op: WidgetId,
     pub ov_cond_val: WidgetId,
@@ -694,10 +691,6 @@ pub fn build_ui(
     let mut ov_prefs_upper_keywords = z;
     let mut ov_prefs_delim = z;
     let mut ov_frozen = z;
-    let mut ov_export_struct = z;
-    let mut ov_export_data = z;
-    let mut ov_export_drop = z;
-    let mut ov_export_fk = z;
     let mut ov_cond_col = z;
     let mut ov_cond_op = z;
     let mut ov_cond_val = z;
@@ -751,13 +744,14 @@ pub fn build_ui(
         + if project_visible { 40.0 } else { 0.0 };
     let content_h = (shell_h - chrome_h).max(300.0);
     let csv_modal = matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
+    let workspace_modal = csv_modal || state.overlay == Some(OverlayKind::ExportSql);
     let mut csv_style = ModalStyle::from_theme(&theme);
     csv_style.width = (win_w - 48.0).min(1240.0);
     csv_style.height = (win_h - 48.0).min(780.0);
     csv_style.title_height = 44.0;
     csv_style.action_height = 36.0;
     csv_style.close_on_backdrop = false;
-    let docks_on = state.any_dock_visible() && (state.overlay.is_none() || csv_modal);
+    let docks_on = state.any_dock_visible() && (state.overlay.is_none() || workspace_modal);
     let pane_width = shell_w - 20.0;
     let main_frac = if docks_on { state.body_ratio.clamp(340.0 / pane_width, 1.0 - 240.0 / pane_width) } else { 1.0 };
     let main_w = (shell_w - 20.0) * main_frac;
@@ -935,7 +929,7 @@ pub fn build_ui(
             });
         }
 
-        if let Some(kind) = state.overlay {
+        if let Some(kind) = state.overlay.filter(|kind| *kind != OverlayKind::ExportSql) {
             // —— Overlay wizard panel ——
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
@@ -1482,14 +1476,7 @@ pub fn build_ui(
                                 ov_frozen = r.text_input_styled(format!("{}", state.prefs_frozen_cols), "0", name_s);
                             });
                         }
-                        OverlayKind::ExportSql => {
-                            c.text("Choose what to include in the SQL dump");
-                            ov_export_struct = c.switch_styled("Export structure", state.export_structure, sw);
-                            ov_export_data = c.switch_styled("Export data", state.export_data, sw);
-                            ov_export_drop = c.switch_styled("DROP IF EXISTS before create", state.export_drop, sw);
-                            ov_export_fk = c.switch_styled("Keep/check foreign keys", state.export_keep_fk, sw);
-                            c.text("OK writes via Save dialog after options are set.");
-                        }
+                        OverlayKind::ExportSql => unreachable!("SQL export has its own dialog"),
                         OverlayKind::LoadExtension => {
                             c.text("Load a SQLite extension (.so / .dylib / .dll)");
                             c.row(row, |r| {
@@ -1555,7 +1542,7 @@ pub fn build_ui(
                 ov_btn_cancel = cancel;
             }
         }
-        if state.overlay.is_none() || csv_modal {
+        if state.overlay.is_none() || workspace_modal {
             // —— Main + docks ——
             let browse_tables = state.browse_tables();
             let browse_opts: Vec<String> = if browse_tables.is_empty() {
@@ -2638,6 +2625,7 @@ pub fn build_ui(
     }
     crate::sql_syntax::apply(&mut ui, sql_area, &theme);
     let data_export = crate::data_export::build(&mut ui,state,&theme,win_w,win_h);
+    let sql_export = crate::sql_export::build(&mut ui,state,&theme,win_w,win_h);
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
 
@@ -2645,6 +2633,7 @@ pub fn build_ui(
         ui,
         csv_files,
         data_export,
+        sql_export,
         column_picker,
         reference_editor,
         body_splitter,
@@ -2844,10 +2833,6 @@ pub fn build_ui(
         ov_prefs_upper_keywords,
         ov_prefs_delim,
         ov_frozen,
-        ov_export_struct,
-        ov_export_data,
-        ov_export_drop,
-        ov_export_fk,
         ov_cond_col,
         ov_cond_op,
         ov_cond_val,

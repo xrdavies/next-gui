@@ -25,6 +25,7 @@ mod pragmas;
 mod project;
 mod project_xml;
 mod sql_log;
+mod sql_export;
 mod sql_search;
 mod sql_editor;
 mod sql_syntax;
@@ -225,6 +226,7 @@ struct Demo {
 struct BuiltUiIds {
     csv_files: csv_files::Controls,
     data_export: data_export::Controls,
+    sql_export: sql_export::Controls,
     column_picker: column_picker::Controls,
     reference_editor: reference_editor::Controls,
     status: WidgetId,
@@ -414,10 +416,6 @@ struct BuiltUiIds {
     ov_prefs_upper_keywords: WidgetId,
     ov_prefs_delim: WidgetId,
     ov_frozen: WidgetId,
-    ov_export_struct: WidgetId,
-    ov_export_data: WidgetId,
-    ov_export_drop: WidgetId,
-    ov_export_fk: WidgetId,
     ov_cond_col: WidgetId,
     ov_cond_op: WidgetId,
     ov_cond_val: WidgetId,
@@ -464,6 +462,7 @@ impl From<&BuiltUi> for BuiltUiIds {
         Self {
             csv_files: b.csv_files,
             data_export: b.data_export,
+            sql_export: b.sql_export,
             column_picker: b.column_picker,
             reference_editor: b.reference_editor,
             status: b.status,
@@ -653,10 +652,6 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_prefs_upper_keywords: b.ov_prefs_upper_keywords,
             ov_prefs_delim: b.ov_prefs_delim,
             ov_frozen: b.ov_frozen,
-            ov_export_struct: b.ov_export_struct,
-            ov_export_data: b.ov_export_data,
-            ov_export_drop: b.ov_export_drop,
-            ov_export_fk: b.ov_export_fk,
             ov_cond_col: b.ov_cond_col,
             ov_cond_op: b.ov_cond_op,
             ov_cond_val: b.ov_cond_val,
@@ -1088,7 +1083,7 @@ impl Demo {
                     state.overlay = Some(OverlayKind::Preferences);
                     MainTab::Structure
                 }
-                "exportsql" | "export" => {
+                "exportsql" | "export" | "sql-export-data" | "sql-export-progress" | "sql-export-canceling" => {
                     state.overlay = Some(OverlayKind::ExportSql);
                     MainTab::Structure
                 }
@@ -1216,6 +1211,33 @@ impl Demo {
             state.csv_preview = None;
         }
         if matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) { state.refresh_csv_preview(); }
+        if state.overlay==Some(OverlayKind::ExportSql) {
+            state.sql_export=Some(sql_export::Draft::new(state.conn.as_ref().unwrap(), &state.prefs.sql_export, None).unwrap());
+            let qa_tab=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap_or_default();
+            if qa_tab=="sql-export-data" { state.sql_export.as_mut().unwrap().options.structure=false; }
+            if matches!(qa_tab.as_str(),"sql-export-progress"|"sql-export-canceling") {
+                let progress=std::sync::Arc::new(export_jobs::Progress::default());
+                let observing=progress.clone();
+                let (entered,waiting)=std::sync::mpsc::channel();
+                let mut paused=false;
+                state.conn.as_ref().unwrap().progress_handler(1,Some(move || {
+                    if !paused && observing.counts().0>0 {
+                        paused=true;let _=entered.send(());
+                        std::thread::sleep(std::time::Duration::from_secs(30));
+                    }
+                    false
+                }));
+                let path=std::path::PathBuf::from(std::env::var_os("NEXT_GUI_EXPORT_QA_PATH").expect("SQL progress QA needs an owned output path"));
+                let options=state.sql_export.as_ref().unwrap().options().unwrap();
+                state.export_work=Some(export_jobs::Work {
+                    job:export_jobs::Job::start_sql(state.conn.take().unwrap(),path,options.clone(),progress.clone()),
+                    progress:progress.clone(),options:export_jobs::Options::Sql(options),count:1,
+                });
+                waiting.recv_timeout(std::time::Duration::from_secs(10)).expect("SQL progress QA never staged a row");
+                if qa_tab=="sql-export-canceling" {progress.cancel();}
+            }
+
+        }
         if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             if matches!(tab.as_str(),"export-csv"|"export-json"|"query-export-csv"|"query-export-json") {
                 state.new_memory_db().unwrap();db::seed_demo(state.conn.as_ref().unwrap()).unwrap();state.refresh_schema().unwrap();
@@ -1253,7 +1275,7 @@ impl Demo {
                 let outputs = vec![data_export::Output { schema: "main".into(), table: "export_sample".into(), path }];
                 state.export_work = Some(export_jobs::Work {
                     job: export_jobs::Job::start(state.conn.take().unwrap(), outputs, None, false, options.clone(), true, progress.clone()),
-                    progress, options, count: 1,
+                    progress, options: export_jobs::Options::Data(options), count: 1,
                 });
             }
         }
@@ -1763,28 +1785,7 @@ impl Demo {
                     }
                 }
             }
-            OverlayKind::ExportSql => {
-                if self.ids.ov_export_struct.0 != 0 {
-                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_struct) {
-                        self.state.export_structure = on;
-                    }
-                }
-                if self.ids.ov_export_data.0 != 0 {
-                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_data) {
-                        self.state.export_data = on;
-                    }
-                }
-                if self.ids.ov_export_drop.0 != 0 {
-                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_drop) {
-                        self.state.export_drop = on;
-                    }
-                }
-                if self.ids.ov_export_fk.0 != 0 {
-                    if let Some(on) = self.ui.is_checked(self.ids.ov_export_fk) {
-                        self.state.export_keep_fk = on;
-                    }
-                }
-            }
+            OverlayKind::ExportSql => { self.snapshot_sql_export(); }
             OverlayKind::LoadExtension => {
                 if self.ids.ov_ext_path.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_ext_path) {
@@ -2090,6 +2091,10 @@ impl Demo {
 
     fn handle_field_check_change(&mut self) {
         let Some((table,row,column,checked)) = self.ui.take_table_check_change() else { return; };
+        if table==self.ids.sql_export.table && self.state.overlay==Some(OverlayKind::ExportSql) {
+            if column==0 {if let Some(entry)=self.state.sql_export.as_mut().and_then(|draft|draft.objects.get_mut(row)) {entry.2=checked;self.rebuild=true;}}
+            return;
+        }
         if table==self.ids.data_export.table && self.state.export_dialog.is_some() {
             if column==0 {if let Some(entry)=self.state.export_dialog.as_mut().and_then(|draft|draft.tables.get_mut(row)) {entry.2=checked;self.rebuild=true;}}
             return;
@@ -2455,6 +2460,8 @@ impl Demo {
                 ids.iter().enumerate().find_map(|(index, id)| (id.0 != 0 && self.ui.focused() == Some(*id)).then(|| (kind, index, self.ui.text_input_state(*id), self.ui.select_state(*id))))
             })
         } else { None };
+        let sql_export_session=self.ids.sql_export.session(&self.ui);
+        self.snapshot_sql_export();
         let export_session=self.ids.data_export.session(&self.ui);
         if self.state.export_dialog.is_some() {self.snapshot_data_export();}
         self.snapshot_column_picker();
@@ -2561,6 +2568,7 @@ impl Demo {
                 self.ui.set_focus(Some(id));
             }
         }
+        if let Some(session)=sql_export_session {self.ids.sql_export.restore(&mut self.ui,&session);}
         if let Some(session)=export_session {self.ids.data_export.restore(&mut self.ui,&session);}
         if let Some((index, session)) = csv_input_session { let id = [self.ids.ov_csv_table,self.ids.ov_csv_custom_delimiter,self.ids.ov_csv_custom_quote][index]; if self.ui.restore_text_input_state(id, &session) { self.ui.set_focus(Some(id)); } }
         if let Some(session) = csv_paste_session { if self.ui.restore_text_area_state(self.ids.ov_csv_paste, &session) { self.ui.set_focus(Some(self.ids.ov_csv_paste)); } }
@@ -2852,7 +2860,7 @@ impl Demo {
         if let DocumentAction::CloseSqlTab(index) = action {
             match decision {
                 ModalAction::Primary => {
-                    let path = self.state.sql_files.get(index).and_then(|f| f.as_ref()).map(|f| f.path.clone()).or_else(file_dlg::pick_save_sql);
+                    let path = self.state.sql_files.get(index).and_then(|f| f.as_ref()).map(|f| f.path.clone()).or_else(||file_dlg::pick_save_sql(None));
                     if let Some(path) = path {
                         match self.state.save_sql_file(index, &path) {
                             Ok(()) => self.perform_document_action(action),
@@ -2895,7 +2903,7 @@ impl Demo {
         self.snapshot_inputs();
         let path = if save_as { None } else {
             self.state.sql_files.get(self.state.sql_tab_idx).and_then(|f| f.as_ref()).map(|f| f.path.clone())
-        }.or_else(file_dlg::pick_save_sql);
+        }.or_else(||file_dlg::pick_save_sql(None));
         if let Some(path) = path {
             match self.state.save_sql_file(self.state.sql_tab_idx, &path) {
                 Ok(()) => self.clear_error(),
@@ -2971,30 +2979,6 @@ impl Demo {
                 let _ = self.state.refresh_schema();
                 let _ = self.state.refresh_browse();
                 self.state.status_msg = "SQL import ok (unwritten)".into();
-                self.clear_error();
-            }
-            Err(e) => self.set_error(e),
-        }
-        self.rebuild = true;
-    }
-
-    fn action_export_sql(&mut self) {
-        if !self.require_conn() {
-            return;
-        }
-        self.state.overlay = Some(OverlayKind::ExportSql);
-        self.rebuild = true;
-    }
-
-    fn action_export_sql_do(&mut self) {
-        let Some(path) = file_dlg::pick_save_sql() else {
-            return;
-        };
-        match self.state.export_sql_with_options(&path) {
-            Ok(()) => {
-                self.state.io_path = path.display().to_string();
-                self.state.log_sql(format!("-- dump {}", path.display()));
-                self.state.overlay = None;
                 self.clear_error();
             }
             Err(e) => self.set_error(e),
@@ -3363,7 +3347,7 @@ impl Demo {
                 if !self.require_conn() {
                     return;
                 }
-                let Some(path) = file_dlg::pick_save_sql() else {
+                let Some(path) = file_dlg::pick_save_sql(None) else {
                     return;
                 };
                 match self.state.print_schema_to(&path) {
@@ -3827,6 +3811,7 @@ impl Demo {
 
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
+        if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_button(id);return;}
         if self.state.export_dialog.is_some() {self.handle_data_export_button(id);return;}
         if self.state.csv_work.is_some() {self.handle_csv_answer_button(id);return;}
         if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
@@ -4595,7 +4580,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         self.handle_table_cell_edit();

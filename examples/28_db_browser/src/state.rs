@@ -9,7 +9,7 @@ use rusqlite::{Connection, InterruptHandle};
 use crate::sql_log::{LoggedConnection, Source, SqlLog};
 
 use crate::db::{
-    self, ColDef, CsvImportOptions, ExportSqlOptions, ObjectKind, QueryResult, SchemaObject,
+    self, ColDef, CsvImportOptions, ObjectKind, QueryResult, SchemaObject,
     COLUMN_TYPES,
 };
 
@@ -573,10 +573,7 @@ pub struct AppState {
     pub cipher_open_path: Option<(String, bool)>,
     pub export_dialog: Option<crate::data_export::Draft>,
     pub export_work: Option<crate::export_jobs::Work>,
-    pub export_structure: bool,
-    pub export_data: bool,
-    pub export_drop: bool,
-    pub export_keep_fk: bool,
+    pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
     pub prefs_frozen_cols: usize,
     pub prefs_theme_dark: bool,
@@ -889,10 +886,7 @@ impl AppState {
             cipher_open_path: None,
             export_dialog: None,
             export_work: None,
-            export_structure: true,
-            export_data: true,
-            export_drop: false,
-            export_keep_fk: true,
+            sql_export: None,
             prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
             prefs_theme_dark: true,
@@ -3000,24 +2994,6 @@ impl AppState {
         self.cipher_active = true;
         self.cipher_passphrase.clear();
         self.status_msg = "Encrypted database opened".into();
-        Ok(())
-    }
-
-    pub fn export_sql_with_options(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let Some(conn) = self.conn.as_ref() else {
-            return Err("No database open".into());
-        };
-        let opts = ExportSqlOptions {
-            structure: self.export_structure,
-            data: self.export_data,
-            drop_if_exists: self.export_drop,
-            keep_fk: self.export_keep_fk,
-        };
-        if !opts.structure && !opts.data {
-            return Err("Select structure and/or data".into());
-        }
-        db::export_sql_dump_opts(conn, path, &opts)?;
-        self.status_msg = format!("Exported SQL → {}", path.display());
         Ok(())
     }
 

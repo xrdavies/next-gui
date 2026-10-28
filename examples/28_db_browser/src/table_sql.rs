@@ -740,6 +740,69 @@ fn replace_table_constraints(command: &mut Cmd, replacements: Vec<NamedTableCons
     Ok(())
 }
 
+pub fn export_create(
+    sql: &str,
+    keep_original: bool,
+    if_not_exists: bool,
+) -> Result<String, String> {
+    if !keep_original {
+        if let Ok(Cmd::Stmt(mut statement)) = parse(sql) {
+            match &mut statement {
+                Stmt::CreateTable {
+                    if_not_exists: flag,
+                    ..
+                }
+                | Stmt::CreateIndex {
+                    if_not_exists: flag,
+                    ..
+                }
+                | Stmt::CreateView {
+                    if_not_exists: flag,
+                    ..
+                }
+                | Stmt::CreateTrigger {
+                    if_not_exists: flag,
+                    ..
+                }
+                | Stmt::CreateVirtualTable {
+                    if_not_exists: flag,
+                    ..
+                } => *flag = if_not_exists,
+                _ => return Err("Expected a CREATE statement".into()),
+            }
+            return Ok(SqlFragment(statement).to_string());
+        }
+    }
+    if !if_not_exists {
+        return Ok(sql.into());
+    }
+    let mut scanner = Scanner::new(Tokenizer::new());
+    let mut insertion = None;
+    loop {
+        let (_, token, end) = scanner
+            .scan(sql.as_bytes())
+            .map_err(|error| error.to_string())?;
+        let Some((_, kind)) = token else {
+            break;
+        };
+        if let Some(position) = insertion {
+            if kind == TokenType::TK_IF {
+                return Ok(sql.into());
+            }
+            let mut output = sql.to_string();
+            output.insert_str(position, " IF NOT EXISTS");
+            return Ok(output);
+        }
+        if matches!(
+            kind,
+            TokenType::TK_TABLE | TokenType::TK_INDEX | TokenType::TK_VIEW | TokenType::TK_TRIGGER
+        ) {
+            insertion = Some(end);
+        }
+    }
+    Err("Cannot locate the CREATE object name".into())
+}
+
 fn parse(sql: &str) -> Result<Cmd, String> {
     let mut scanner = Scanner::new(Tokenizer::new());
     let mut tokens = Vec::new();
