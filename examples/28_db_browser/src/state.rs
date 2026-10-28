@@ -5032,7 +5032,7 @@ mod chart_default_tests {
     #[test]
     fn csv_import_settings_roundtrip_custom_characters_and_upgrade_old_preferences() {
         let mut state=test_state();state.prefs.csv_import=None;state.prefs.csv_delimiter=';';state.load_csv_import_settings();assert_eq!(state.csv_options().delimiter,';');assert!(!state.csv_options().has_header);assert!(state.csv_options().trim_fields);
-        let options=CsvImportOptions {delimiter:'§',quote:None,encoding:"Shift_JIS".into(),has_header:false,trim_fields:true,detect_types:false,ignore_defaults:true,fail_on_missing:true,conflict:db::CsvConflict::Replace};
+        let options=CsvImportOptions {delimiter:'§',quote:None,encoding:"Shift_JIS".into(),has_header:false,trim_fields:true,detect_types:false,local_conventions:true,ignore_defaults:true,fail_on_missing:true,conflict:db::CsvConflict::Replace};
         state.prefs.csv_import=Some(options.clone());let json=serde_json::to_string(&state.prefs).unwrap();state.prefs=serde_json::from_str(&json).unwrap();state.load_csv_import_settings();assert_eq!(state.csv_options(),options);
         state.csv_delim_idx=5;state.csv_custom_delimiter="U+001F".into();state.csv_quote_idx=4;state.csv_custom_quote="34".into();assert_eq!(state.csv_options().delimiter,'\u{1f}');assert_eq!(state.csv_options().quote,Some('"'));
         state.csv_custom_delimiter="55296".into();assert_eq!(state.csv_options().delimiter,'\0');state.csv_custom_quote="U+110000".into();assert_eq!(state.csv_options().quote,Some('\0'));

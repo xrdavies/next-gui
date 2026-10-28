@@ -123,3 +123,9 @@ All three winit hosts forward named PageUp/PageDown on press and release as
 consumers must handle these new variants. Office key adapters map them to shared
 Table page movement; Shift-aware adapters use `SelectPageUp` / `SelectPageDown`.
 Windows runtime/hardware acceptance and TextArea page movement remain unverified.
+
+## System numeric conventions
+
+`number_conventions::NumberConventions::system()` returns an owned, thread-safe snapshot without changing the process locale. CSV import freezes this snapshot for preview and insertion.
+
+The Windows provider reads the current user locale with GetLocaleInfoEx, including decimal/grouping/native digits and signs. ASCII exponent fallback remains a documented Qt parity gap; host feature checks do not compile or execute this target-specific branch.

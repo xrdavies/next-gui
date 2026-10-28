@@ -151,6 +151,7 @@ impl Job {
                         &prepared.preview.types,
                         rows,
                         &options,
+                        &prepared.preview.number_conventions,
                     )
                 });
                 (Some(conn), result)

@@ -1,12 +1,14 @@
 //! One parser for bounded previews, files and Unicode clipboard imports.
 
 use crate::db::CsvImportOptions;
+use next_gui_platform::number_conventions::NumberConventions;
 
 #[derive(Debug, Clone)]
 pub struct Data {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
     pub types: Vec<&'static str>,
+    pub number_conventions: Box<NumberConventions>,
 }
 
 type RecordSink<'a> = dyn FnMut(&[String]) -> Result<(), String> + 'a;
@@ -22,6 +24,7 @@ struct Parser<'a> {
     limit: usize,
     count: usize,
     width: usize,
+    number_conventions: NumberConventions,
     sink: Option<&'a mut RecordSink<'a>>,
 }
 
@@ -45,6 +48,11 @@ impl<'a> Parser<'a> {
             limit,
             count: 0,
             width: 0,
+            number_conventions: if options.local_conventions {
+                NumberConventions::system()?
+            } else {
+                NumberConventions::default()
+            },
             sink: None,
         })
     }
@@ -161,13 +169,10 @@ impl<'a> Parser<'a> {
                     let Some(value) = row.get(column) else {
                         continue;
                     };
-                    let value = value.trim();
-                    let next = if value.parse::<i64>().is_ok() {
-                        "INTEGER"
-                    } else if value.parse::<f64>().is_ok_and(f64::is_finite) {
-                        "REAL"
-                    } else {
-                        "TEXT"
+                    let next = match crate::csv_numbers::parse(value, &self.number_conventions) {
+                        Some(crate::csv_numbers::Number::Integer(_)) => "INTEGER",
+                        Some(crate::csv_numbers::Number::Real(_)) => "REAL",
+                        None => "TEXT",
                     };
                     kind = match (kind, next) {
                         ("TEXT", _) | (_, "TEXT") => "TEXT",
@@ -182,6 +187,7 @@ impl<'a> Parser<'a> {
             columns,
             rows: self.records,
             types,
+            number_conventions: Box::new(self.number_conventions),
         })
     }
 }
@@ -400,7 +406,8 @@ mod tests {
                 &snapshot.preview.columns,
                 &snapshot.preview.types,
                 snapshot.rows().unwrap(),
-                &options
+                &options,
+                &snapshot.preview.number_conventions,
             )
             .unwrap(),
             50_000
@@ -485,7 +492,8 @@ mod tests {
                     &snapshot.preview.columns,
                     &snapshot.preview.types,
                     snapshot.rows().unwrap(),
-                    &options
+                    &options,
+                    &snapshot.preview.number_conventions,
                 )
                 .is_err());
                 assert_eq!(crate::db::count_rows(&conn, "existing").unwrap(), 1);
@@ -503,6 +511,138 @@ mod tests {
         )
         .unwrap();
         assert_eq!(unicode.rows().unwrap().next().unwrap().unwrap(), ["日本"]);
+    }
+
+    fn german_data(input: &str, options: &CsvImportOptions) -> Data {
+        let parsing_options = CsvImportOptions {
+            local_conventions: false,
+            ..options.clone()
+        };
+        let mut parser = Parser::new(&parsing_options, 0).unwrap();
+        parser.number_conventions = NumberConventions {
+            decimal: ",".into(),
+            group: ".".into(),
+            ..NumberConventions::default()
+        };
+        parser.consume(input).unwrap();
+        parser.finish().unwrap()
+    }
+
+    #[test]
+    fn csv_local_numbers_freeze_conventions_for_inference_and_typed_sqlite_binding() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("BEGIN").unwrap();
+        for detect_types in [true, false] {
+            let options = CsvImportOptions {
+                local_conventions: true,
+                detect_types,
+                ..CsvImportOptions::default()
+            };
+            let data = german_data("id,amount,note\n\"9.223.372.036.854.775.807\",\"1.234,50\",first\n\"-9.223.372.036.854.775.808\",\"-12,5\",second\n", &options);
+            assert_eq!(
+                data.types,
+                if detect_types {
+                    vec!["INTEGER", "REAL", "TEXT"]
+                } else {
+                    vec!["", "", ""]
+                }
+            );
+            let table = if detect_types { "typed" } else { "untyped" };
+            assert_eq!(
+                crate::db::import_csv_data(&conn, table, &data, &options).unwrap(),
+                2
+            );
+            let row = conn.query_row(&format!("SELECT id,amount,typeof(id),typeof(amount) FROM {table} WHERE note='first'"), [], |row| Ok((row.get::<_,i64>(0)?,row.get::<_,f64>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).unwrap();
+            assert_eq!(row, (i64::MAX, 1234.5, "integer".into(), "real".into()));
+            assert_eq!(
+                conn.query_row(
+                    &format!("SELECT id FROM {table} WHERE note='second'"),
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+                i64::MIN
+            );
+            let raw = format!("raw_{table}");
+            crate::db::import_csv_data(
+                &conn,
+                &raw,
+                &data,
+                &CsvImportOptions {
+                    local_conventions: false,
+                    ..options
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                conn.query_row(
+                    &format!("SELECT id,amount FROM {raw} WHERE note='first'"),
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                )
+                .unwrap(),
+                ("9.223.372.036.854.775.807".into(), "1.234,50".into())
+            );
+        }
+        let c = text("v\n\"1,234\"\n", &CsvImportOptions::default(), 0).unwrap();
+        assert_eq!(c.types, ["INTEGER"]);
+        crate::db::import_csv_data(&conn, "c_locale", &c, &CsvImportOptions::default()).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT v FROM c_locale", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "1,234"
+        );
+    }
+
+    #[test]
+    fn csv_local_numbers_keep_invalid_text_and_match_non_finite_sqlite_values() {
+        let options = CsvImportOptions {
+            local_conventions: true,
+            detect_types: false,
+            ..CsvImportOptions::default()
+        };
+        let data = german_data("v\n\"1,25\"\n\"1.2\"\nNaN\nINF\n1e309\n", &options);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('saved');BEGIN;INSERT INTO keeper VALUES('pending')").unwrap();
+        crate::db::import_csv_data(&conn, "values_local", &data, &options).unwrap();
+        let types = conn
+            .prepare("SELECT typeof(v) FROM values_local ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(types, ["real", "text", "null", "real", "text"]);
+        assert_eq!(
+            conn.query_row("SELECT v FROM values_local WHERE rowid=1", [], |row| row
+                .get::<_, f64>(0))
+                .unwrap(),
+            1.25
+        );
+        assert_eq!(
+            conn.query_row("SELECT v FROM values_local WHERE rowid=2", [], |row| row
+                .get::<_, String>(
+                0
+            ))
+            .unwrap(),
+            "1.2"
+        );
+        assert!(conn
+            .query_row("SELECT v FROM values_local WHERE rowid=4", [], |row| row
+                .get::<_, f64>(0))
+            .unwrap()
+            .is_infinite());
+        assert_eq!(
+            conn.query_row("SELECT v FROM values_local WHERE rowid=5", [], |row| row
+                .get::<_, String>(
+                0
+            ))
+            .unwrap(),
+            "1e309"
+        );
+        assert_eq!(crate::db::count_rows(&conn, "keeper").unwrap(), 2);
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(crate::db::count_rows(&conn, "keeper").unwrap(), 1);
     }
 
     #[test]

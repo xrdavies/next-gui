@@ -1259,6 +1259,76 @@ mod interaction_tests {
     }
 
     #[test]
+    fn csv_local_switch_keeps_focus_updates_preview_and_types_real_worker_values() {
+        let format = next_gui_platform::number_conventions::NumberConventions::system().unwrap();
+        let native = format!(
+            "{}{}{}{}",
+            format.digits[1], format.digits[2], format.decimal, format.digits[5]
+        );
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("values.csv");
+                std::fs::write(&path, format!("value\n\"{native}\"\n")).unwrap();
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                assert!(demo.state.open_csv_files(vec![path.clone()]));
+                demo.state.csv_has_header = true;
+                demo.state.csv_import_settings.detect_types = false;
+                demo.do_rebuild();
+                assert_eq!(demo.ui.is_checked(demo.ids.ov_csv_local), Some(false));
+                demo.ui.set_focus(Some(demo.ids.ov_csv_local));
+                assert!(demo.ui.key_input(UiKey::Space));
+                finish(&mut demo);
+                assert!(demo.state.csv_options().local_conventions);
+                assert_eq!(demo.ui.focused(), Some(demo.ids.ov_csv_local));
+                assert_eq!(
+                    demo.state
+                        .csv_preview
+                        .as_ref()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .number_conventions
+                        .as_ref(),
+                    &format
+                );
+                demo.win_w = if width == 800 { 1400 } else { 800 };
+                demo.win_h = if height == 600 { 1000 } else { 600 };
+                demo.do_rebuild();
+                assert_eq!(demo.ui.focused(), Some(demo.ids.ov_csv_local));
+                demo.win_w = width;
+                demo.win_h = height;
+                demo.do_rebuild();
+                capture(&mut demo, theme_name, width, "local");
+                demo.handle_button(demo.ids.ov_btn_ok);
+                demo.settle_csv_test();
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert!(demo.state.overlay.is_none());
+                let conn = demo.state.conn.as_ref().unwrap();
+                assert_eq!(
+                    conn.query_row("SELECT value,typeof(value) FROM \"values\"", [], |row| Ok(
+                        (row.get::<_, f64>(0)?, row.get::<_, String>(1)?)
+                    ))
+                    .unwrap(),
+                    (12.5, "real".into())
+                );
+                assert!(
+                    demo.state
+                        .prefs
+                        .csv_import
+                        .as_ref()
+                        .unwrap()
+                        .local_conventions
+                );
+                assert!(demo.state.open_csv_files(vec![path]));
+                assert!(demo.state.csv_options().local_conventions);
+            }
+        }
+    }
+
+    #[test]
     fn csv_original_preview_and_worker_import_keep_missing_cells_and_expanded_headers() {
         for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
             for (width, height) in [(1400, 1000), (800, 600)] {

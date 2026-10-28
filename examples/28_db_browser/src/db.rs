@@ -990,8 +990,8 @@ pub enum CsvConflict { #[default] Abort, Ignore, Replace }
 #[serde(default)]
 pub struct CsvImportOptions {
     pub trim_fields: bool,
-    // shortcut: numeric inference uses the C locale; add system conventions with locale preference parity.
     pub detect_types: bool,
+    pub local_conventions: bool,
     pub ignore_defaults: bool,
     pub fail_on_missing: bool,
     pub conflict: CsvConflict,
@@ -1004,7 +1004,7 @@ pub struct CsvImportOptions {
 impl Default for CsvImportOptions {
     fn default() -> Self {
         Self {
-            trim_fields: false, detect_types: true, ignore_defaults: false, fail_on_missing: false, conflict: CsvConflict::Abort,
+            trim_fields: false, detect_types: true, local_conventions: false, ignore_defaults: false, fail_on_missing: false, conflict: CsvConflict::Abort,
             encoding: "UTF-8".into(),
             has_header: true,
             delimiter: ',',
@@ -1697,10 +1697,10 @@ pub fn import_csv_into_table(
 
 /// Import CSV by column position, with the original empty/default/conflict policies.
 pub fn import_csv_data(conn: &Connection, table: &str, data: &crate::csv_import::Data, options: &CsvImportOptions) -> Result<u64, String> {
-    import_csv_rows(conn,table,&data.columns,&data.types,data.rows.iter().cloned().map(Ok),options)
+    import_csv_rows(conn,table,&data.columns,&data.types,data.rows.iter().cloned().map(Ok),options,&data.number_conventions)
 }
 
-pub fn import_csv_rows(conn: &Connection, table: &str, headers: &[String], types: &[&str], rows: impl IntoIterator<Item=Result<Vec<String>,String>>, options: &CsvImportOptions) -> Result<u64, String> {
+pub fn import_csv_rows(conn: &Connection, table: &str, headers: &[String], types: &[&str], rows: impl IntoIterator<Item=Result<Vec<String>,String>>, options: &CsvImportOptions, number_conventions: &next_gui_platform::number_conventions::NumberConventions) -> Result<u64, String> {
     with_savepoint(conn, || {
         if headers.is_empty() || types.len() != headers.len() { return Err("CSV has no valid column definition".into()); }
         let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=?1 COLLATE NOCASE)", [table], |row| row.get(0)).map_err(|e| e.to_string())?;
@@ -1719,7 +1719,11 @@ pub fn import_csv_rows(conn: &Connection, table: &str, headers: &[String], types
             for (index, column) in columns.iter().enumerate() {
                 let value = match row.get(index) {
                     None => rusqlite::types::Value::Null,
-                    Some(text) if !text.is_empty() => rusqlite::types::Value::Text(text.clone()),
+                    Some(text) if !text.is_empty() => match options.local_conventions.then(||crate::csv_numbers::parse(text,number_conventions)).flatten() {
+                        Some(crate::csv_numbers::Number::Integer(value)) => rusqlite::types::Value::Integer(value),
+                        Some(crate::csv_numbers::Number::Real(value)) => rusqlite::types::Value::Real(value),
+                        None => rusqlite::types::Value::Text(text.clone()),
+                    },
                     Some(_) if exists && !options.ignore_defaults && column.default_value.is_some() => continue,
                     Some(_) if exists && column.notnull => {
                         if options.fail_on_missing {

@@ -253,6 +253,7 @@ pub struct BuiltUi {
     pub ov_csv_custom_delimiter: WidgetId,
     pub ov_csv_custom_quote: WidgetId,
     pub ov_csv_trim: WidgetId,
+    pub ov_csv_local: WidgetId,
     pub ov_csv_types: WidgetId,
     pub ov_csv_defaults: WidgetId,
     pub ov_csv_missing: WidgetId,
@@ -656,6 +657,7 @@ pub fn build_ui(
     let mut ov_csv_custom_delimiter = z;
     let mut ov_csv_custom_quote = z;
     let mut ov_csv_trim = z;
+    let mut ov_csv_local = z;
     let mut ov_csv_types = z;
     let mut ov_csv_defaults = z;
     let mut ov_csv_missing = z;
@@ -1328,6 +1330,7 @@ pub fn build_ui(
                                         ov_csv_header = r.switch_styled("Header row", state.csv_has_header, sw);
                                         ov_csv_trim = r.switch_styled("Trim fields", state.csv_import_settings.trim_fields, sw);
                                     });
+                                    ov_csv_local = c.switch_styled("Use local number conventions", state.csv_import_settings.local_conventions, sw);
                                     let mut select = type_sel; select.width = 180.0;
                                     c.row(option_row, |r| { r.text("Separator"); ov_csv_delim = r.select(["Comma ,", "Semicolon ;", "Tab", "Pipe |", "Other character", "Other code point"], Some(state.csv_delim_idx), "Separator", select); });
                                     if state.csv_delim_idx >= 4 { ov_csv_custom_delimiter = c.text_input_styled(&state.csv_custom_delimiter, if state.csv_delim_idx == 5 { "e.g. 31 or U+001F" } else { "One character" }, input); }
@@ -2773,6 +2776,7 @@ pub fn build_ui(
         ov_csv_custom_delimiter,
         ov_csv_custom_quote,
         ov_csv_trim,
+        ov_csv_local,
         ov_csv_types,
         ov_csv_defaults,
         ov_csv_missing,

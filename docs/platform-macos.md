@@ -165,3 +165,9 @@ exhaustive key matches must handle the two new variants. Office key adapters map
 them to `UiKey::PageUp` / `UiKey::PageDown`; Table supports visible-page movement
 and the `SelectPageUp` / `SelectPageDown` range variants. TextArea page movement
 and native hardware/IME acceptance remain separate work.
+
+## System numeric conventions
+
+`number_conventions::NumberConventions::system()` returns an owned, thread-safe snapshot without changing the process locale. CSV import freezes this snapshot for preview and insertion.
+
+The macOS provider uses owned Core Foundation locale/formatter objects, copies decimal/group/digit/sign/exponent properties, then releases all native objects. Native named-locale checks cover German, Indian grouping and Arabic digits.

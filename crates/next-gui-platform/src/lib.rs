@@ -516,6 +516,9 @@ pub mod touch_synth;
 /// P6b physical ↔ logical DPI helpers ([`dpi`]).
 pub mod dpi;
 
+/// Snapshots of operating-system numeric conventions.
+pub mod number_conventions;
+
 /// P6e soak / leak probe env helpers ([`soak`]); backends honor `NEXT_GUI_SOAK`.
 pub mod soak;
 

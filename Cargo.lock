@@ -1527,6 +1527,7 @@ name = "next-gui-platform"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "libc",
  "softbuffer",
  "winit",
 ]

@@ -8,6 +8,7 @@ mod csv_encoding;
 mod csv_import;
 mod csv_files;
 mod csv_jobs;
+mod csv_numbers;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
@@ -378,6 +379,7 @@ struct BuiltUiIds {
     ov_csv_custom_delimiter: WidgetId,
     ov_csv_custom_quote: WidgetId,
     ov_csv_trim: WidgetId,
+    ov_csv_local: WidgetId,
     ov_csv_types: WidgetId,
     ov_csv_defaults: WidgetId,
     ov_csv_missing: WidgetId,
@@ -614,6 +616,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_csv_custom_delimiter: b.ov_csv_custom_delimiter,
             ov_csv_custom_quote: b.ov_csv_custom_quote,
             ov_csv_trim: b.ov_csv_trim,
+            ov_csv_local: b.ov_csv_local,
             ov_csv_types: b.ov_csv_types,
             ov_csv_defaults: b.ov_csv_defaults,
             ov_csv_missing: b.ov_csv_missing,
@@ -1200,6 +1203,11 @@ impl Demo {
             }
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
+        if std::env::var_os("NEXT_GUI_DB_BROWSER_QA_CSV_LOCAL").is_some()
+            && matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {
+            state.csv_import_settings.local_conventions = true;
+            state.csv_preview = None;
+        }
         if matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) { state.refresh_csv_preview(); }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
@@ -1618,6 +1626,7 @@ impl Demo {
                     if let Some(value) = self.ui.text_input_value(id) { *setting = value.into(); }
                 }
                 if let Some(value) = self.ui.is_checked(self.ids.ov_csv_trim) { self.state.csv_import_settings.trim_fields = value; }
+                if let Some(value) = self.ui.is_checked(self.ids.ov_csv_local) { self.state.csv_import_settings.local_conventions = value; }
                 if let Some(value) = self.ui.is_checked(self.ids.ov_csv_types) { self.state.csv_import_settings.detect_types = !value; }
                 if let Some(value) = self.ui.is_checked(self.ids.ov_csv_defaults) { self.state.csv_import_settings.ignore_defaults = value; }
                 if let Some(value) = self.ui.is_checked(self.ids.ov_csv_missing) { self.state.csv_import_settings.fail_on_missing = value; }
@@ -2398,7 +2407,7 @@ impl Demo {
         let csv_open=csv_overlay && !csv_waiting;
         let csv_input_session = csv_open.then(|| [(self.ids.ov_csv_table,self.state.csv_table.as_str()),(self.ids.ov_csv_custom_delimiter,self.state.csv_custom_delimiter.as_str()),(self.ids.ov_csv_custom_quote,self.state.csv_custom_quote.as_str())].into_iter().enumerate().find_map(|(index, (id,value))| (id.0 != 0 && self.ui.focused() == Some(id) && self.ui.text_input_value(id)==Some(value)).then(|| self.ui.text_input_state(id).map(|session| (index, session))).flatten())).flatten();
         let csv_paste_session = (csv_open && self.ids.ov_csv_paste.0 != 0 && self.ui.focused() == Some(self.ids.ov_csv_paste) && self.ui.text_area_value(self.ids.ov_csv_paste)==Some(self.state.csv_paste.as_str())).then(|| self.ui.text_area_state(self.ids.ov_csv_paste)).flatten();
-        let csv_control_focus = csv_open.then(|| [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
+        let csv_control_focus = csv_open.then(|| [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_local,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let advanced_focused=self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_table_advanced);
         let column_input_session = self.state.wizard_cols.get(self.state.wizard_col_sel).and_then(|column| {
             if self.state.overlay!=Some(OverlayKind::EditTable) || self.ui.text_input_value(self.ids.ov_col_name)!=Some(column.name.as_str()) { return None; }
@@ -2488,7 +2497,7 @@ impl Demo {
         self.scene = built.scene;
         if let Some((index, session)) = csv_input_session { let id = [self.ids.ov_csv_table,self.ids.ov_csv_custom_delimiter,self.ids.ov_csv_custom_quote][index]; if self.ui.restore_text_input_state(id, &session) { self.ui.set_focus(Some(id)); } }
         if let Some(session) = csv_paste_session { if self.ui.restore_text_area_state(self.ids.ov_csv_paste, &session) { self.ui.set_focus(Some(self.ids.ov_csv_paste)); } }
-        if let Some(index) = csv_control_focus { let id = [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh][index]; if id.0 != 0 { self.ui.set_focus(Some(id)); } }
+        if let Some(index) = csv_control_focus { let id = [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_local,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh][index]; if id.0 != 0 { self.ui.set_focus(Some(id)); } }
         if advanced_focused { self.ui.set_focus(Some(self.ids.ov_table_advanced)); self.ui.sync(&mut self.scene); }
         if let Some((index,session))=column_input_session {
             let id=[self.ids.ov_col_name,self.ids.ov_default][index];
