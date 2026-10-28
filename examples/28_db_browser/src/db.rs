@@ -1486,6 +1486,10 @@ pub fn recreate_table_columns_in(
             *checks = crate::table_sql::rename_checks(checks, new_name, old_name, &[])?;
         }
         for column in &mut draft {
+            if !column.foreign_key_clause.trim().is_empty() {
+                let key=crate::table_sql::NamedForeignKey {name:None,columns:quote_ident(&column.name),clause:column.foreign_key_clause.clone(),inline:true};
+                column.foreign_key_clause=crate::table_sql::rename_foreign_keys(&[key],new_name,old_name,&[])?.remove(0).clause;
+            }
             if !column.check_expression.trim().is_empty() {
                 let check = crate::table_sql::NamedCheck { column:None, name: None, expression: column.check_expression.clone() };
                 column.check_expression = crate::table_sql::rename_checks(&[check], new_name, old_name, &[])?.remove(0).expression;

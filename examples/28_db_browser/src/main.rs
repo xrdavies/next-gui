@@ -793,11 +793,16 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-advanced" => {
+                "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-reference-editor" | "table-field-reference-empty" | "table-advanced" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE DEFAULT 'customer' CHECK(length(name)>0) COLLATE NOCASE,parent_id INTEGER REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL,amount REAL DEFAULT 0 CHECK(amount>=0),total REAL AS(amount*1.2) STORED); INSERT INTO records(name,parent_id,amount) VALUES('First customer',1,12.5),('Second customer',1,24);").unwrap();state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_col_sel=1;state.wizard_scroll=(0.0,180.0);state.wizard_field_column=Some(if tab=="table-fields-references" {9} else {0});state.wizard_field_scroll=(if tab=="table-fields-references" {10000.0} else {0.0},0.0);
                     if tab=="table-field-checks" || tab=="table-field-editor" {state.wizard_scroll=(0.0,0.0);}
-                    if tab=="table-field-editor" {state.wizard_field_edit=Some(state::FieldCellEdit {column:0,original:"name".into(),input:None,autocomplete:None});}
+                    if tab=="table-field-editor" {state.wizard_field_edit=Some(state::FieldCellEdit {column:0,original:"name".into(),reference:None,input:None,autocomplete:None});}
+                    if tab=="table-field-reference-editor" || tab=="table-field-reference-empty" {
+                        state.wizard_col_sel=if tab.ends_with("-empty") {1} else {2};state.wizard_field_column=Some(9);state.wizard_scroll=(0.0,0.0);
+                        let original=state.wizard_cols[state.wizard_col_sel].foreign_key_clause.clone();let reference=reference_editor::Draft::new(&state,&original).ok();
+                        state.wizard_field_edit=Some(state::FieldCellEdit {column:9,original,reference,input:None,autocomplete:None});
+                    }
                     if tab=="table-advanced" { state.wizard_table_advanced=true; state.wizard_table_page=2; }
                     MainTab::Structure
                 }
@@ -1120,7 +1125,7 @@ impl Demo {
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
-        if state.wizard_field_edit.is_some() {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);built.ui.sync(&mut built.scene);}
+        if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);}built.ui.sync(&mut built.scene);}
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
             built.ui.find_in_text_area(built.sql_area, &state.find_text);
@@ -1709,12 +1714,14 @@ impl Demo {
             1=>{if self.ui.autocomplete_value(self.ids.ov_col_type)!=Some(value) {self.ui.set_autocomplete_value(self.ids.ov_col_type,value);}}
             6=>{if self.ui.text_input_value(self.ids.ov_default)!=Some(value) {self.ui.set_text_input(self.ids.ov_default,value);}}
             8=>{if self.ui.autocomplete_value(self.ids.ov_collation)!=Some(value) {self.ui.set_autocomplete_value(self.ids.ov_collation,value);}}
+            9=>{if self.ui.text_area_value(self.ids.ov_foreign_key)!=Some(value) {self.ui.set_text_area_value(self.ids.ov_foreign_key,value);sql_syntax::apply(&mut self.ui,self.ids.ov_foreign_key,&self.theme);}}
             _=>{}
         }
     }
 
     fn snapshot_field_cell_editor(&mut self) {
         if self.ids.ov_field_editor.0==0 {return;}
+        if self.state.wizard_field_edit.as_ref().is_some_and(|edit|edit.column==9) {self.snapshot_field_reference(true);return;}
         let Some(edit)=&mut self.state.wizard_field_edit else {return;};
         let id=self.ids.ov_field_editor;
         edit.input=self.ui.text_input_state(id);edit.autocomplete=self.ui.autocomplete_state(id);
@@ -1722,6 +1729,24 @@ impl Demo {
         let value=if column==1 || column==8 {self.ui.autocomplete_value(id)} else {self.ui.text_input_value(id)}.map(str::to_owned);
         if let Some(value)=value {self.set_field_cell_value(column,&value);}
         if self.ui.focused()!=Some(id) {self.state.wizard_field_edit=None;self.rebuild=true;}
+    }
+
+    fn snapshot_field_reference(&mut self,finish_on_blur:bool) {
+        let Some(edit)=&mut self.state.wizard_field_edit else {return;};
+        let (changed,value)=if let Some(draft)=&mut edit.reference {(draft.snapshot(&mut self.ui,self.ids.reference_editor),draft.sql())}
+            else {edit.input=self.ui.text_input_state(self.ids.ov_field_editor);(false,self.ui.text_input_value(self.ids.ov_field_editor).unwrap_or(&edit.original).to_owned())};
+        self.set_field_cell_value(9,&value);
+        if finish_on_blur && !self.ui.focused().is_some_and(|id|self.ui.table_cell_editor_contains(self.ids.ov_fields_table,id)) {self.finish_field_reference(false);}
+        else if changed {self.rebuild=true;}
+    }
+
+    fn finish_field_reference(&mut self,cancel:bool) {
+        if cancel {if let Some(edit)=&self.state.wizard_field_edit {let original=edit.original.clone();self.set_field_cell_value(9,&original);}}
+        self.flush_wizard_col();self.state.wizard_field_edit=None;
+        let owner=self.state.wizard_constraint_columns.get(self.state.wizard_col_sel);
+        if let Some(index)=self.state.wizard_foreign_keys.iter().position(|key|key.inline && key.clause.trim().is_empty()
+            && owner.is_some_and(|owner|table_sql::inline_foreign_key_column(key).is_ok_and(|name|name.eq_ignore_ascii_case(owner)))) {self.remove_reference_key(index);}
+        self.rebuild=true;
     }
 
     fn set_constraint_cell_value(&mut self,page:usize,column:usize,value:&str) {
@@ -1866,15 +1891,22 @@ impl Demo {
         }
         if table!=self.ids.ov_fields_table {return;}
         let previous=self.state.wizard_field_edit.clone();
+        if let next_gui_ui::TableCellEditEvent::End {cancel}=event {
+            if previous.as_ref().is_some_and(|edit|edit.column==9) {
+                self.snapshot_field_reference(false);self.finish_field_reference(cancel);self.do_rebuild();self.ui.set_focus(Some(self.ids.ov_fields_table));self.ui.sync(&mut self.scene);return;
+            }
+        }
         if !self.rebuild {self.snapshot_inputs();}
         if self.rebuild {self.do_rebuild();}
         match event {
             next_gui_ui::TableCellEditEvent::Begin {row,column,key}=> {
-                if row!=self.state.wizard_col_sel || ![0,1,6,8].contains(&column) {return;}
+                if row!=self.state.wizard_col_sel || ![0,1,6,8,9].contains(&column) {return;}
                 let Some(definition)=self.state.wizard_cols.get(row) else {return;};
-                let original=match column {0=>&definition.name,1=>&definition.type_name,6=>&definition.default_value,8=>&definition.collation,_=>unreachable!()}.clone();
-                self.state.wizard_field_edit=Some(state::FieldCellEdit {column,original,input:None,autocomplete:None});
-                self.do_rebuild();let editor=self.ids.ov_field_editor;self.ui.set_focus(Some(editor));self.ui.key_input(UiKey::SelectAll);
+                let original=match column {0=>&definition.name,1=>&definition.type_name,6=>&definition.default_value,8=>&definition.collation,9=>&definition.foreign_key_clause,_=>unreachable!()}.clone();
+                let reference=if column==9 {reference_editor::Draft::new(&self.state,&original).ok()} else {None};
+                self.state.wizard_field_edit=Some(state::FieldCellEdit {column,original,reference,input:None,autocomplete:None});
+                self.do_rebuild();let editor=self.ids.ov_field_editor;
+                if self.state.wizard_field_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {self.ids.reference_editor.focus(&mut self.ui,0);} else {self.ui.set_focus(Some(editor));self.ui.key_input(UiKey::SelectAll);}
                 if let Some(key)=key {self.ui.key_input(key);}
                 self.ui.sync(&mut self.scene);
             }
@@ -2122,7 +2154,7 @@ impl Demo {
             let clause = self.state.wizard_cols[sel].foreign_key_clause.clone();
             let index = self.state.wizard_foreign_keys.iter().position(|key| key.inline && table_sql::inline_foreign_key_column(key).is_ok_and(|name|name.eq_ignore_ascii_case(&owner)));
             match index {
-                Some(index) if clause.trim().is_empty() => {
+                Some(index) if clause.trim().is_empty() && self.state.wizard_field_edit.as_ref().is_none_or(|edit|edit.column!=9) => {
                     self.state.wizard_foreign_keys.remove(index); self.state.wizard_foreign_key_states.remove(index);
                     if index < self.state.wizard_foreign_key_sel { self.state.wizard_foreign_key_sel -= 1; }
                     self.state.wizard_foreign_key_sel = self.state.wizard_foreign_key_sel.min(self.state.wizard_foreign_keys.len().saturating_sub(1));
@@ -3627,8 +3659,9 @@ impl Demo {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
         if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
         if id==self.ids.reference_editor.reset {
-            if let Some(draft)=self.state.wizard_constraint_edit.as_mut().and_then(|edit|edit.reference.as_mut()) {draft.reset();}
-            self.do_rebuild();self.snapshot_reference_cell(false);self.flush_table_foreign_key();return;
+            if let Some(draft)=self.state.wizard_constraint_edit.as_mut().and_then(|edit|edit.reference.as_mut()) {draft.reset();self.do_rebuild();self.snapshot_reference_cell(false);self.flush_table_foreign_key();}
+            else if let Some(draft)=self.state.wizard_field_edit.as_mut().and_then(|edit|edit.reference.as_mut()) {draft.reset();self.do_rebuild();self.snapshot_field_reference(false);self.flush_wizard_col();}
+            return;
         }
         self.snapshot_inputs();
         if id == self.ids.log_clear {
@@ -7982,7 +8015,9 @@ mod interaction_tests {
             assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,8);demo.ui.paste_into_focused_text("RTRIM");demo.snapshot_inputs();assert!(demo.ui.has_open_popup());
             assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_some());assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());assert_eq!(demo.state.wizard_cols[1].collation,"RTRIM");
             begin(&mut demo,1,8,UiKey::Edit);assert!(demo.ui.key_input(UiKey::BackTab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,6);assert_eq!(demo.ui.text_input_value(demo.ids.ov_field_editor),Some("4"));
-            assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_col_sel,2);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,0);
+            assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,9);
+            for _ in 0..3 {assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);}
+            assert_eq!(demo.state.wizard_col_sel,2);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,0);
             demo.ui.paste_into_focused_text("qty");demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[2].name,"qty");assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert_eq!(demo.state.wizard_cols[1].default_value,"4");
             // A second click on the already selected Name cell starts the standard input.
             demo.ui.set_table_selected_col(demo.ids.ov_fields_table,Some(0));demo.ui.set_table_scroll_offset(demo.ids.ov_fields_table,0.0,0.0);demo.ui.sync(&mut demo.scene);

@@ -119,6 +119,7 @@ impl Ui {
                 self.focus = closed[0].1.filter(|id| {
                     self.widgets.contains_key(id)
                         && self.button_enabled(*id) != Some(false)
+                        && self.text_input_enabled(*id) != Some(false)
                         && self
                             .dialog_focus_scope()
                             .is_none_or(|dialog| self.widget_contains(dialog, *id))

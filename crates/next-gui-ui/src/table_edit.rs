@@ -126,6 +126,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn disabled_input_blocks_focus_pointer_clipboard_ime_and_preserves_undo() {
+        for theme in [Theme::dark(),Theme::light()] {
+            let mut ui=Ui::new();ui.set_theme(theme);let mut scene=Scene::new();let mut input=WidgetId(0);let mut button=WidgetId(0);
+            ui.row(RowStyle {width:400.0,..Default::default()},|r| {input=r.text_input_styled("before","",TextInputStyle::from_theme(&theme));button=r.tool_button("Next");});
+            ui.sync(&mut scene);ui.set_focus(Some(input));ui.key_input(UiKey::SelectAll);ui.paste_into_focused_text("after");ui.ime_preedit("候選",Some((0,3)));
+            assert!(ui.set_text_input_enabled(input,false));assert!(!ui.set_text_input_enabled(input,false));
+            assert_eq!(ui.text_input_enabled(input),Some(false));assert_eq!(ui.text_input_enabled(button),None);
+            ui.set_focus(Some(input));assert_eq!(ui.focused(),None);assert!(!ui.focusable_widgets().contains(&input));
+            assert!(!ui.paste_into_focused_text("bad"));assert!(!ui.ime_commit("bad"));assert!(!ui.ime_preedit("bad",None));
+            assert!(!ui.key_text_input(input,UiKey::Char('x')));assert!(!ui.key_text_input(input,UiKey::Undo));assert_eq!(ui.text_input_value(input),Some("after"));
+            ui.sync(&mut scene);let node=scene.get(ui.widgets[&input].node.unwrap()).unwrap();let bounds=node.bounds;
+            assert_eq!(node.fill,theme.colors.muted);assert_eq!(scene.get(ui.widgets[&input].label_node.unwrap()).unwrap().fill,theme.colors.disabled);
+            assert!(ui.pointer_pressed(&mut scene,bounds.x+5.0,bounds.y+5.0));ui.pointer_released();assert_eq!(ui.focused(),None);
+            ui.key_input(UiKey::Tab);assert_eq!(ui.focused(),Some(button));
+            assert!(ui.set_text_input_enabled(input,true));ui.set_focus(Some(input));ui.key_input(UiKey::Undo);assert_eq!(ui.text_input_value(input),Some("before"));
+            ui.key_input(UiKey::Redo);assert_eq!(ui.text_input_value(input),Some("after"));ui.sync(&mut scene);assert_eq!(scene.get(ui.widgets[&input].node.unwrap()).unwrap().fill,theme.colors.input_bg);
+            let dialog=ui.dialog("Options",ModalStyle::default(),|c|{c.tool_button("Done");},|_|{});
+            assert!(ui.set_dialog_open(dialog,true));ui.set_text_input_enabled(input,false);assert!(ui.set_dialog_open(dialog,false));
+            assert_eq!(ui.focused(),None);assert!(!ui.text_input_wants_ime());assert!(!ui.ime_commit("late commit"));assert_eq!(ui.text_input_value(input),Some("after"));
+        }
+    }
+
+    #[test]
     fn composite_cell_rows_layout_clip_and_navigate_controls_before_neighboring_cells() {
         for theme in [Theme::dark(),Theme::light()] {
             let mut ui=Ui::new();ui.set_theme(theme);ui.set_viewport(700.0,400.0);
@@ -150,6 +173,7 @@ mod tests {
             ui.set_focus(Some(parent));assert!(ui.key_input(UiKey::Space));ui.sync(&mut scene);
             assert!(ui.has_open_popup());assert!(ui.key_input(UiKey::Escape));assert_eq!(ui.focused(),Some(parent));assert_eq!(ui.take_table_cell_edit(),None);
             for child in [target,clause,reset] {assert!(ui.key_input(UiKey::Tab));assert_eq!(ui.focused(),Some(child));assert_eq!(ui.take_table_cell_edit(),None);}
+            ui.set_text_input_enabled(clause,false);ui.set_focus(Some(target));ui.key_input(UiKey::Tab);assert_eq!(ui.focused(),Some(reset));ui.set_text_input_enabled(clause,true);
             assert!(ui.key_input(UiKey::Enter));assert_eq!(ui.take_button_activate(),Some(reset));assert_eq!(ui.take_table_cell_edit(),None);
             ui.key_input(UiKey::BackTab);assert_eq!(ui.focused(),Some(clause));ui.key_input(UiKey::SelectAll);ui.ime_preedit("候選",Some((0,3)));
             assert!(ui.key_input(UiKey::Escape));assert_eq!(ui.take_table_cell_edit(),None);assert_eq!(ui.focused(),Some(clause));

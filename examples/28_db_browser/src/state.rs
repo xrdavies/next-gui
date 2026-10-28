@@ -24,6 +24,7 @@ pub struct ConstraintTableView {
 pub struct FieldCellEdit {
     pub column: usize,
     pub original: String,
+    pub reference: Option<crate::reference_editor::Draft>,
     pub input: Option<next_gui_ui::TextInputState>,
     pub autocomplete: Option<next_gui_ui::AutocompleteState>,
 }

@@ -1756,6 +1756,7 @@ enum Kind {
         content_h: f32,
     },
     TextInput {
+        enabled: bool,
         value: String,
         edit: InputEdit,
         secret: bool,
@@ -3238,6 +3239,7 @@ impl Ui {
             if id==dialog {return self.pointer_dialog(scene,dialog,x,y,secondary);}
             if !self.widget_contains(dialog,id) {return true;}
         }
+        if self.text_input_enabled(id)==Some(false) {return true;}
         if secondary {
             // Right-click: open context menu if host (or ancestor) is ContextMenu.
             if let Some(cm) = self.find_context_menu_ancestor(id) {
@@ -3667,7 +3669,7 @@ impl Ui {
     /// Set focus explicitly.
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
         if id.is_some_and(|id|self.dialog_focus_scope().is_some_and(|dialog|!self.widget_contains(dialog,id))) {return;}
-        self.focus = id.filter(|id| self.button_enabled(*id) != Some(false));
+        self.focus = id.filter(|id| self.button_enabled(*id) != Some(false) && self.text_input_enabled(*id)!=Some(false));
     }
 
     /// Override the accessible name for `id` (P6d). Empty string clears to fallback.
@@ -3903,9 +3905,8 @@ impl Ui {
                 secondary_action,
                 ..
             } => primary_action.is_some() || secondary_action.is_some(),
-            Kind::Button { enabled, .. } => *enabled,
-            Kind::TextInput { .. }
-            | Kind::TextArea { .. }
+            Kind::Button { enabled, .. } | Kind::TextInput {enabled,..} => *enabled,
+            Kind::TextArea { .. }
             | Kind::InputNumber { .. }
             | Kind::Checkbox { .. }
             | Kind::Radio { .. }
@@ -4043,6 +4044,23 @@ impl Ui {
             Some(Kind::TextInput { value, .. }) => Some(value.as_str()),
             _ => None,
         }
+    }
+
+    /// Whether a TextInput accepts pointer, keyboard, clipboard and IME input.
+    pub fn text_input_enabled(&self,id:WidgetId)->Option<bool> {
+        match self.widgets.get(&id).map(|widget|&widget.kind) {Some(Kind::TextInput {enabled,..})=>Some(*enabled),_=>None}
+    }
+
+    /// Disable user editing/focus without changing the value or Undo history; sync to repaint.
+    pub fn set_text_input_enabled(&mut self,id:WidgetId,value:bool)->bool {
+        let Some(Widget {kind:Kind::TextInput {enabled,preedit,preedit_cursor,select_all,..},..})=self.widgets.get_mut(&id) else {return false;};
+        let changed=*enabled!=value;*enabled=value;
+        if !value {
+            preedit.clear();*preedit_cursor=None;*select_all=false;
+            if self.focus==Some(id) {self.focus=None;}
+            if self.open_popup.is_some_and(|popup|self.text_completion_owner(popup)==Some(id)) {self.close_popup_internal();}
+        }
+        changed
     }
 
     /// Mask a password input and exclude its value from copy and accessible labels.
@@ -5259,6 +5277,7 @@ impl Ui {
     }
 
     fn key_text_input(&mut self, id: WidgetId, key: UiKey) -> bool {
+        if self.text_input_enabled(id)==Some(false) {return false;}
         if matches!(key, UiKey::Undo | UiKey::Redo) { return self.input_history(id, key); }
         let before = matches!(key, UiKey::Char(_) | UiKey::Backspace | UiKey::Delete).then(|| self.input_snapshot(id)).flatten();
         let handled = self.edit_text_input(id, key);
@@ -11673,7 +11692,8 @@ impl Ui {
                 scene.set_mask(node, None);
                 scene.set_visible(node, true);
             }
-            Kind::TextInput {placeholder,select_all,preedit_cursor,style,..} => {
+            Kind::TextInput {enabled,placeholder,select_all,preedit_cursor,style,..} => {
+                let enabled=*enabled;
                 let placeholder=placeholder.replace(['\r','\n','\t']," ");
                 let select_all=*select_all;let preedit_cursor=*preedit_cursor;let style=*style;
                 let focused=self.focus==Some(id);
@@ -11683,7 +11703,8 @@ impl Ui {
                 let before:String=text.chars().take(composition.start).collect();
                 let preedit:String=text.chars().skip(composition.start).take(composition.end-composition.start).collect();
                 let (display,fg)=if text.is_empty() {(placeholder,style.placeholder_fg)} else {(text,style.fg)};
-                scene.set_fill(node,if selected {style.focus_border} else {style.bg});
+                let fg=if enabled {fg} else {self.theme.colors.disabled};
+                scene.set_fill(node,if !enabled {self.theme.colors.muted} else if selected {style.focus_border} else {style.bg});
                 scene.set_mask(node,None);self.apply_corner_radius(scene,node,false);
                 let (_,mask)=self.font.rasterize_text(&display,style.size,None);
                 let prefix: String = display.chars().take(caret_chars).collect();
@@ -18081,6 +18102,7 @@ impl FlexBuilder<'_> {
             id,
             Widget {
                 kind: Kind::TextInput {
+                    enabled: true,
                     value,
                     edit: InputEdit::default(),
                     secret: false,

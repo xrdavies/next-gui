@@ -251,3 +251,10 @@ each control's edit session and restore the focused control after rebuilding.
 Lists can opt into Enter and primary double-click activation with
 `set_list_activatable` / `take_list_activate`. Single clicks and navigation retain
 selection behavior; activation reports the list and row. Other lists are unchanged.
+
+`set_text_input_enabled` excludes a TextInput from focus, pointer and user editing,
+clears pending composition/selection and closes its completion popup. Its value and
+Undo history remain; programmatic setters still work. Sync paints theme disabled
+text/muted background. `text_input_enabled` returns None for other widget kinds.
+Dialog close does not restore focus to an input disabled while the dialog was open.
+Composite cell Tab navigation skips disabled inputs.

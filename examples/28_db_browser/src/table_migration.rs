@@ -1900,6 +1900,33 @@ mod tests {
     }
 
     #[test]
+    fn first_column_self_reference_uses_the_existing_table_during_a_renamed_rebuild() {
+        for schema in ["main","temp","analytics"] {
+            for override_keys in [false,true] {
+                let conn=Connection::open_in_memory().unwrap();
+                conn.execute_batch("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS analytics;").unwrap();
+                let table=db::qualified_name(schema,"nodes");
+                conn.execute_batch(&format!("CREATE TABLE {table}(id INTEGER PRIMARY KEY,parent INTEGER REFERENCES nodes(id) ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED);
+                    INSERT INTO {table} VALUES(1,NULL),(2,1);BEGIN;INSERT INTO {table} VALUES(3,2);")).unwrap();
+                let original=db::table_column_defs_in(&conn,schema,"nodes").unwrap();let sources=original.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+                let mut draft=original.clone();draft[0].name="node.\"key".into();draft[1].type_name="NUMERIC".into();
+                draft[1].foreign_key_clause="REFERENCES \"tree.\"\"node\"(\"node.\"\"key\") ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED".into();
+                let options=if override_keys {
+                    let sql=conn.query_row(&format!("SELECT sql FROM {}.sqlite_schema WHERE name='nodes'",db::quote_ident(schema)),[],|row|row.get::<_,String>(0)).unwrap();
+                    let mut options=table_sql::table_options(&sql).unwrap();options.inline_foreign_keys=Some(vec![table_sql::NamedForeignKey {name:None,columns:"parent".into(),clause:draft[1].foreign_key_clause.clone(),inline:true}]);Some(options)
+                } else {None};
+                db::recreate_table_columns_in(&conn,schema,"nodes","tree.\"node",&draft,&sources,options).unwrap_or_else(|error|panic!("{schema} {override_keys}: {error}"));
+                assert!(!conn.is_autocommit());assert!(foreign_key_violations(&conn,schema).unwrap().is_empty());
+                let table=db::qualified_name(schema,"tree.\"node");assert_eq!(count(&conn,&format!("SELECT count(*) FROM {table}")),3);
+                conn.execute(&format!("UPDATE {table} SET \"node.\"\"key\"=4 WHERE \"node.\"\"key\"=1"),[]).unwrap();
+                assert_eq!(count(&conn,&format!("SELECT parent FROM {table} WHERE \"node.\"\"key\"=2")),4);
+                conn.execute_batch("ROLLBACK").unwrap();assert_eq!(count(&conn,&format!("SELECT count(*) FROM {}",db::qualified_name(schema,"nodes"))),2);
+                assert_eq!(db::table_column_defs_in(&conn,schema,"nodes").unwrap()[0].name,"id");
+            }
+        }
+    }
+
+    #[test]
     fn existing_without_rowid_violations_cannot_hide_new_invalid_foreign_keys() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=OFF; CREATE TABLE parent(v INTEGER UNIQUE); INSERT INTO parent VALUES(1);

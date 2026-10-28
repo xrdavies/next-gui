@@ -257,6 +257,7 @@ pub fn restore(ui: &mut Ui, controls: Controls, draft: &Draft) {
     if let Some(session) = &draft.clauses {
         ui.restore_text_input_state(controls.clauses, session);
     }
+    ui.set_text_input_enabled(controls.clauses, !draft.value.table.is_empty());
     ui.set_accessible_name(controls.parent, "Foreign key parent table");
     ui.set_accessible_name(
         controls.columns,
@@ -300,6 +301,292 @@ mod tests {
         assert!(demo.ui.key_input(UiKey::Edit));
         finish(demo);
         assert_eq!(demo.ui.focused(), Some(demo.ids.reference_editor.parent));
+    }
+
+    fn begin_field(demo: &mut Demo, row: usize) {
+        demo.state.wizard_table_page = 0;
+        demo.do_rebuild();
+        demo.ui
+            .set_table_selected_row(demo.ids.ov_fields_table, Some(row));
+        demo.ui
+            .set_table_selected_col(demo.ids.ov_fields_table, Some(9));
+        demo.ui.set_focus(Some(demo.ids.ov_fields_table));
+        demo.snapshot_inputs();
+        if demo.rebuild {
+            demo.do_rebuild();
+        }
+        demo.ui.set_focus(Some(demo.ids.ov_fields_table));
+        assert!(demo.ui.key_input(UiKey::Edit));
+        finish(demo);
+        assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column, 9);
+        assert_eq!(demo.ui.focused(), Some(demo.ids.reference_editor.parent));
+    }
+
+    #[test]
+    fn fields_reference_cells_create_cancel_reset_and_preserve_multiple_named_constraints() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+            demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            demo.state.new_memory_db().unwrap();
+            demo.state.conn.as_ref().unwrap().execute_batch("PRAGMA foreign_keys=ON;
+                CREATE TABLE parents(id INTEGER PRIMARY KEY);INSERT INTO parents VALUES(1);
+                CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,a INTEGER CONSTRAINT first REFERENCES parents(id)
+                    CONSTRAINT later DEFERRABLE INITIALLY DEFERRED CHECK(a>0) CONSTRAINT second REFERENCES parents,
+                    b INTEGER); INSERT INTO records(id,a,b) VALUES(7,1,1);
+                CREATE VIEW visible AS SELECT id,a,b FROM records;").unwrap();
+            demo.state.refresh_schema().unwrap();
+            let index = demo
+                .state
+                .schema
+                .iter()
+                .position(|object| object.name == "records")
+                .unwrap();
+            demo.state.select_schema_node(10_000 + index as u64);
+            demo.state.open_modify_table_wizard().unwrap();
+            demo.do_rebuild();
+            let original = demo.state.wizard_foreign_keys.clone();
+            begin_field(&mut demo, 1);
+            paint(&mut demo, theme_name, "field");
+            demo.handle_button(demo.ids.reference_editor.reset);
+            finish(&mut demo);
+            assert_eq!(
+                demo.ui
+                    .text_input_enabled(demo.ids.reference_editor.clauses),
+                Some(false)
+            );
+            assert_eq!(demo.state.wizard_foreign_keys.len(), 2);
+            assert_eq!(demo.state.wizard_foreign_keys[0].clause, "");
+            demo.ui.key_input(UiKey::Escape);
+            finish(&mut demo);
+            assert_eq!(demo.state.wizard_foreign_keys, original);
+            begin_field(&mut demo, 2);
+            assert_eq!(
+                demo.ui
+                    .text_input_enabled(demo.ids.reference_editor.clauses),
+                Some(false)
+            );
+            paint(&mut demo, theme_name, "empty");
+            demo.ui.key_input(UiKey::Tab);
+            demo.ui.key_input(UiKey::Tab);
+            assert_eq!(demo.ui.focused(), Some(demo.ids.reference_editor.reset));
+            let parent = demo
+                .state
+                .wizard_field_edit
+                .as_ref()
+                .unwrap()
+                .reference
+                .as_ref()
+                .unwrap()
+                .tables
+                .iter()
+                .position(|(name, _)| name == "parents")
+                .unwrap()
+                + 1;
+            demo.ui
+                .set_select_selected(demo.ids.reference_editor.parent, Some(parent));
+            demo.ids.reference_editor.focus(&mut demo.ui, 0);
+            finish(&mut demo);
+            assert_eq!(
+                demo.ui
+                    .text_input_enabled(demo.ids.reference_editor.clauses),
+                Some(true)
+            );
+            assert_eq!(demo.state.wizard_foreign_keys.len(), 3);
+            demo.ui.key_input(UiKey::Escape);
+            finish(&mut demo);
+            assert_eq!(demo.state.wizard_foreign_keys, original);
+
+            begin_field(&mut demo, 2);
+            demo.ui
+                .set_select_selected(demo.ids.reference_editor.parent, Some(parent));
+            finish(&mut demo);
+            demo.ui.set_focus(Some(demo.ids.reference_editor.clauses));
+            demo.ui
+                .paste_into_focused_text("ON UPDATE CASCADE ON DELETE SET NULL");
+            finish(&mut demo);
+            demo.win_w = 800;
+            demo.win_h = 600;
+            demo.do_rebuild();
+            assert_eq!(demo.ui.focused(), Some(demo.ids.reference_editor.clauses));
+            paint(&mut demo, theme_name, "field-small");
+            demo.ui.key_input(UiKey::Undo);
+            finish(&mut demo);
+            assert!(!demo.state.wizard_cols[2]
+                .foreign_key_clause
+                .contains("CASCADE"));
+            demo.ui.key_input(UiKey::Redo);
+            finish(&mut demo);
+            demo.ui.key_input(UiKey::Enter);
+            finish(&mut demo);
+            assert_eq!(demo.state.wizard_foreign_keys.len(), 3);
+            demo.win_w = 1400;
+            demo.win_h = 1000;
+            begin_field(&mut demo, 1);
+            demo.handle_button(demo.ids.reference_editor.reset);
+            finish(&mut demo);
+            demo.ui.set_focus(Some(demo.ids.ov_name));
+            demo.snapshot_inputs();
+            if demo.rebuild {
+                demo.do_rebuild();
+            }
+            assert_eq!(demo.state.wizard_foreign_keys.len(), 2);
+            assert_eq!(demo.state.wizard_foreign_keys[0], original[1]);
+            demo.handle_button(demo.ids.ov_btn_ok);
+            assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+            let conn = demo.state.conn.as_ref().unwrap();
+            assert_eq!(
+                conn.query_row("SELECT id FROM visible", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            conn.execute("UPDATE records SET a=NULL", []).unwrap();
+            conn.execute("UPDATE parents SET id=2", []).unwrap();
+            assert_eq!(
+                conn.query_row("SELECT b FROM records", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+            conn.execute("DELETE FROM parents", []).unwrap();
+            assert!(conn
+                .query_row("SELECT b IS NULL FROM records", [], |row| row
+                    .get::<_, bool>(0))
+                .unwrap());
+            conn.execute("INSERT INTO records(a,b) VALUES(NULL,NULL)", [])
+                .unwrap();
+            assert_eq!(conn.last_insert_rowid(), 8);
+        }
+    }
+
+    #[test]
+    fn fields_reference_candidates_use_renamed_self_drafts_and_keep_missing_targets() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("PRAGMA foreign_keys=ON;CREATE TABLE nodes(id INTEGER PRIMARY KEY,parent_id INTEGER REFERENCES nodes(id));INSERT INTO nodes VALUES(1,NULL),(2,1);").unwrap();
+        demo.state.refresh_schema().unwrap();
+        let index = demo
+            .state
+            .schema
+            .iter()
+            .position(|object| object.name == "nodes")
+            .unwrap();
+        demo.state.select_schema_node(10_000 + index as u64);
+        demo.state.open_modify_table_wizard().unwrap();
+        demo.state.wizard_table_name = "tree.\"node".into();
+        demo.state.wizard_cols[0].name = "node.\"key".into();
+        demo.state.sync_table_constraint_names().unwrap();
+        demo.do_rebuild();
+        begin_field(&mut demo, 1);
+        let draft = demo
+            .state
+            .wizard_field_edit
+            .as_ref()
+            .unwrap()
+            .reference
+            .as_ref()
+            .unwrap();
+        assert_eq!(draft.value.table, "tree.\"node");
+        assert_eq!(draft.value.columns, "\"node.\"\"key\"");
+        assert!(draft
+            .tables
+            .iter()
+            .any(|(name, columns)| name == "tree.\"node"
+                && columns.contains(&"\"node.\"\"key\"".into())));
+        assert!(!draft.tables.iter().any(|(name, _)| name == "nodes"));
+        demo.ui.key_input(UiKey::Enter);
+        finish(&mut demo);
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        let conn = demo.state.conn.as_ref().unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT parent_id FROM \"tree.\"\"node\" WHERE \"node.\"\"key\"=2",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        let draft = super::Draft::new(
+            &demo.state,
+            "REFERENCES missing(unknown) ON DELETE RESTRICT",
+        )
+        .unwrap();
+        assert_eq!(draft.value.table, "missing");
+        assert!(draft.tables.iter().any(|(name, _)| name == "missing"));
+        assert_eq!(
+            draft.sql(),
+            "REFERENCES missing(unknown) ON DELETE RESTRICT"
+        );
+    }
+
+    #[test]
+    fn fields_reference_raw_repair_cancel_retains_the_named_constraint() {
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parents(id PRIMARY KEY);CREATE TABLE records(v CONSTRAINT named_reference REFERENCES parents(id));").unwrap();
+        demo.state.refresh_schema().unwrap();
+        let index = demo
+            .state
+            .schema
+            .iter()
+            .position(|object| object.name == "records")
+            .unwrap();
+        demo.state.select_schema_node(10_000 + index as u64);
+        demo.state.open_modify_table_wizard().unwrap();
+        demo.do_rebuild();
+        demo.ui
+            .set_text_area_value(demo.ids.ov_foreign_key, "REFERENCES (");
+        demo.snapshot_inputs();
+        if demo.rebuild {
+            demo.do_rebuild();
+        }
+        let original = demo.state.wizard_foreign_keys.clone();
+        demo.ui
+            .set_table_selected_col(demo.ids.ov_fields_table, Some(9));
+        demo.ui.set_focus(Some(demo.ids.ov_fields_table));
+        assert!(demo.ui.key_input(UiKey::Edit));
+        finish(&mut demo);
+        assert!(demo
+            .state
+            .wizard_field_edit
+            .as_ref()
+            .unwrap()
+            .reference
+            .is_none());
+        assert_eq!(
+            demo.ui.text_input_value(demo.ids.ov_field_editor),
+            Some("REFERENCES (")
+        );
+        demo.ui.key_input(UiKey::SelectAll);
+        demo.ui.key_input(UiKey::Delete);
+        finish(&mut demo);
+        assert_eq!(demo.state.wizard_foreign_keys.len(), 1);
+        demo.ui.key_input(UiKey::Escape);
+        finish(&mut demo);
+        assert_eq!(demo.state.wizard_foreign_keys, original);
+        demo.ui
+            .set_text_area_value(demo.ids.ov_foreign_key, "REFERENCES parents(id)");
+        demo.snapshot_inputs();
+        if demo.rebuild {
+            demo.do_rebuild();
+        }
+        demo.handle_button(demo.ids.ov_btn_ok);
+        assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+        assert_eq!(
+            demo.state
+                .conn
+                .as_ref()
+                .unwrap()
+                .query_row(
+                    "SELECT sql FROM sqlite_schema WHERE name='records'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap()
+                .matches("named_reference")
+                .count(),
+            1
+        );
     }
 
     fn paint(demo: &mut Demo, theme: &str, name: &str) {
