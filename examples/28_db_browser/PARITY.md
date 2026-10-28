@@ -127,9 +127,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Scroll form of pragmas | partial | Scrollable form for ten PRAGMA keys; full upstream setting list remains absent. |
-| Save / Apply pragmas | partial | Writes are read back; unapplied values report actual state and earlier partial application (F03 addressed). No automatic VACUUM for auto_vacuum. |
-| Bool / Select editors | done | journal_mode / synchronous / FK switches |
+| Scroll form of pragmas | partial | All original18 fields plus cache_size/busy_timeout; accessible boolean/enum/numeric controls and retained focus/Undo/scroll. Numeric stepper affordances/layout polish remain. |
+| Save / Apply pragmas | partial | Validated before any COMMIT; dirty edits require default-Cancel confirmation. Writes read actual state; page_size/auto_vacuum run VACUUM and clear cached row identities. File persistence and partial errors verified. VACUUM is synchronous; native input acceptance remains. |
+| Bool / Select editors | done | All original boolean/enum fields, including Page Size, Temp Store and secure_delete Fast retained. |
 
 ## Execute SQL tab
 
@@ -717,3 +717,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### CSV layered modals — 2026-10-28
 
 [Review](../../docs/reviews/R-20261028-1b3a0d8d26b2.md): file/clipboard previews now use real centered modal focus above retained database tabs/docks, fixed Cancel/Import actions and nested existing-table/progress dialogs. Escape/title-close/Cancel, focused edit/Undo/resize, blocked background actions and existing batch recovery pass.605 tests/strict checks,36 Soft/Metal pairs (maxdelta2), eight native Retina windows and limited actual OS toggle/Space/import/Browse/clipboard verified. Qt-only codecs/parser edges/localized Windows/POSIX symbols and complete original/interface/native acceptance remain unfinished.
+
+### Full original PRAGMA catalog and safe apply — 2026-10-28
+
+[Review](../../docs/reviews/R-20261028-2850bcb3abde.md): original18 fields plus two retained extras now share validated accessible controls. Default-Cancel confirmation protects pending edits, invalid input precedes all writes, page/auto-vacuum rebuilds persist, actual states/errors and fresh transactions are retained.623 tests/strict checks,12 Soft/Metal pairs and six native static windows verified. Numeric steppers, shared word wrapping/layout polish, asynchronous VACUUM and complete native/product parity remain.
