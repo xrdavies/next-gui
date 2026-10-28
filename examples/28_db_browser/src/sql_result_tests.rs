@@ -101,8 +101,8 @@ fn sql_cell_dock_follows_complete_selection_and_keeps_read_only_modes_and_browse
     for (column, mode) in [(3, crate::state::EditCellMode::Json), (2, crate::state::EditCellMode::Image)] {
         demo.ui.set_table_selected_cells(demo.ids.sql_table, Some((2999, 2999)), Some((column, column)));
         demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
-        let button = if column == 3 { demo.ids.btn_edit_json } else { demo.ids.btn_edit_image };
-        demo.handle_button(button); demo.do_rebuild();
+        demo.ui.set_select_selected(demo.ids.edit_mode, Some(mode as usize));
+        demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
         assert_eq!(demo.state.edit_mode, mode); assert!(!demo.state.has_cell_draft());
         if column == 3 { assert!(demo.state.edit_value.contains("\n")); }
         else { assert_eq!(demo.state.edit_image_rgba.as_ref().map(|(w,h,_)| (*w,*h)), Some((2,2))); }

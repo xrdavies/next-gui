@@ -312,10 +312,7 @@ pub struct BuiltUi {
     pub btn_sql_comment: WidgetId,
     pub btn_sql_view: WidgetId,
     pub sql_view_name: WidgetId,
-    pub btn_edit_text: WidgetId,
-    pub btn_edit_hex: WidgetId,
-    pub btn_edit_json: WidgetId,
-    pub btn_edit_image: WidgetId,
+    pub edit_mode: WidgetId,
     pub btn_fk_nav: WidgetId,
     pub btn_freeze: WidgetId,
     pub btn_cond_fmt: WidgetId,
@@ -750,10 +747,7 @@ pub fn build_ui(
     let mut btn_sql_comment = z;
     let mut btn_sql_view = z;
     let mut sql_view_name = z;
-    let mut btn_edit_text = z;
-    let mut btn_edit_hex = z;
-    let mut btn_edit_json = z;
-    let mut btn_edit_image = z;
+    let mut edit_mode = z;
     let mut btn_fk_nav = z;
     let mut btn_freeze = z;
     let mut btn_cond_fmt = z;
@@ -2193,16 +2187,15 @@ pub fn build_ui(
                             }
                         });
                         c.row(tool_row, |r| {
-                            btn_edit_text = r.tool_button("Text");
-                            btn_edit_hex = r.tool_button("Hex");
-                            btn_edit_json = r.tool_button("JSON");
-                            btn_edit_image = r.tool_button("Image");
+                            r.text("Mode");
+                            let mut style = sel_style; style.width = (dock_w - 100.0).clamp(140.0, 320.0);
+                            edit_mode = r.select(crate::state::EditCellMode::LABELS, Some(state.edit_mode as usize), "Editor mode", style);
                         });
                         c.scroll_row(RowStyle { width: dock_w-40.0, height: toolbar_heights[4]+4.0, ..tool_row }, |r| {
                             btn_cell_import = r.tool_icon_button(IconName::Open, "Import…");
                             btn_cell_export = r.tool_icon_button(IconName::Save, "Export…");
                             btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
-                            btn_cell_indent = r.tool_icon_button(IconName::Code, "Indent JSON");
+                            btn_cell_indent = r.tool_icon_button(IconName::Code, "Indent");
                         });
                         let mut cell_style = TextAreaStyle::from_theme(&theme);
                         cell_style.width = edit_val_style.width;
@@ -2218,6 +2211,8 @@ pub fn build_ui(
                             crate::state::EditCellMode::Hex => "Hex",
                             crate::state::EditCellMode::Json => "JSON",
                             crate::state::EditCellMode::Image => "Image",
+                            crate::state::EditCellMode::Xml => "XML",
+                            crate::state::EditCellMode::Evaluation => "SQL expression",
                         };
                         let record = if let Some((row, _)) = state.sql_cell_position() {
                             let total = state.sql_result.as_ref().map_or(0, |result| result.all_values.as_ref().map_or(result.rows.len(), |values| values.len()));
@@ -2665,13 +2660,13 @@ pub fn build_ui(
     ui.set_button_enabled(ov_fk_down, fk_can_swap(state.wizard_foreign_key_sel+1));
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_input_enabled(edit_col, !cell_read_only);
-    ui.set_text_area_read_only(edit_value, cell_read_only);
+    ui.set_text_area_read_only(edit_value, cell_read_only || state.edit_mode == crate::state::EditCellMode::Image);
     ui.set_button_enabled(btn_edit_cell, !cell_read_only);
     ui.set_button_enabled(btn_edit_discard, !cell_read_only);
     ui.set_button_enabled(btn_cell_import, !cell_read_only);
     ui.set_button_enabled(btn_cell_null, !cell_read_only);
     ui.set_button_enabled(btn_cell_export, !state.edit_col.is_empty());
-    ui.set_button_enabled(btn_cell_indent, !state.edit_col.is_empty());
+    ui.set_button_enabled(btn_cell_indent, !state.edit_col.is_empty() && matches!(state.edit_mode, crate::state::EditCellMode::Json | crate::state::EditCellMode::Xml));
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
     ui.set_accessible_name(ov_pk_conflict, "Primary key conflict action");
@@ -2783,6 +2778,7 @@ pub fn build_ui(
     ui.set_accessible_name(edit_col,"Selected cell column");
     ui.set_accessible_name(edit_type,"Cell storage type");
     ui.set_accessible_name(edit_value,"Cell value");
+    ui.set_accessible_name(edit_mode,"Cell editor mode");
     if let Some(view) = &state.edit_view { ui.restore_text_area_state(edit_value, view); }
     if let Some(view) = &state.edit_col_view { ui.restore_text_input_state(edit_col, view); }
     ui.set_accessible_name(btn_dock_close,"Close selected dock page");
@@ -3048,10 +3044,7 @@ pub fn build_ui(
         btn_sql_comment,
         btn_sql_view,
         sql_view_name,
-        btn_edit_text,
-        btn_edit_hex,
-        btn_edit_json,
-        btn_edit_image,
+        edit_mode,
         btn_fk_nav,
         btn_freeze,
         btn_cond_fmt,

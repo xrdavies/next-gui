@@ -40,7 +40,8 @@ fn cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_
                 demo.ui.paste_into_focused_text("unsafe"); demo.ui.ime_commit("替换"); demo.snapshot_inputs();
                 assert_eq!(demo.state.edit_value, original); assert!(!demo.state.has_cell_draft());
                 assert!(demo.state.apply_cell_draft().unwrap_err().contains("read-only"));
-                let button = demo.ids.btn_edit_json; demo.handle_button(button); demo.do_rebuild();
+                demo.ui.set_select_selected(demo.ids.edit_mode, Some(EditCellMode::Json as usize));
+                demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
                 assert!(demo.state.edit_value.contains('\n')); assert!(!demo.state.has_cell_draft());
                 demo.do_rebuild(); assert_eq!(demo.state.edit_mode, EditCellMode::Json);
                 if let Some(folder) = &folder { crate::plot_export::capture(&mut demo, folder, &format!("cell-policy-{name}-{page}-{width}")); }

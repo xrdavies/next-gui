@@ -378,8 +378,17 @@ fn main_schema() -> String { "main".into() }
 pub enum EditCellMode {
     Text = 0,
     Hex = 1,
-    Json = 2,
-    Image = 3,
+    Image = 2,
+    Json = 3,
+    Xml = 4,
+    Evaluation = 5,
+}
+
+impl EditCellMode {
+    pub const LABELS: [&'static str; 6] = ["Text", "Binary", "Image", "JSON", "XML", "Evaluation"];
+    pub fn from_index(index: usize) -> Option<Self> {
+        [Self::Text, Self::Hex, Self::Image, Self::Json, Self::Xml, Self::Evaluation].get(index).copied()
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -562,6 +571,7 @@ pub struct AppState {
     pub edit_revision: u64,
     pub edit_view: Option<next_gui_ui::TextAreaState>,
     pub edit_col_view: Option<next_gui_ui::TextInputState>,
+    edit_display_baseline: Option<(usize, String)>,
     pub prefs: crate::prefs::Prefs,
     pub frozen_cols: usize,
     pub cond_rules: Vec<CondFormatRule>,
@@ -901,6 +911,7 @@ impl AppState {
             edit_revision: 0,
             edit_view: None,
             edit_col_view: None,
+            edit_display_baseline: None,
             prefs: crate::prefs::Prefs::load(),
             frozen_cols: 0,
             cond_rules: Vec::new(),
@@ -1164,6 +1175,8 @@ impl AppState {
         if self.edit_mode == EditCellMode::Image {
             return self.edit_original != self.edit_saved;
         }
+        if self.edit_original == self.edit_saved && self.edit_display_unchanged() { return false; }
+        if self.edit_mode == EditCellMode::Evaluation { return true; }
         !matches!(self.edited_cell_value(), Ok(value) if value == self.edit_saved)
     }
 
@@ -3255,12 +3268,30 @@ impl AppState {
         let column = self.edit_col.trim().to_string();
         if column.is_empty() { return Err("Select a column first".into()); }
         if self.edit_cell_generated() { return Err("Generated columns are read-only; edit their source columns".into()); }
-        let value = self.edited_cell_value()?;
+        let applied_mode = self.edit_mode;
+        let evaluating = self.edit_mode == EditCellMode::Evaluation;
+        let value = if evaluating { crate::cell_format::evaluate(self.conn.as_ref().unwrap(), &self.edit_value)? }
+            else { self.edited_cell_value()? };
         db::update_cell_in(self.conn.as_ref().unwrap(), &schema, &table, rowid, &column, &value)?;
         self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
         self.mark_dirty();
         self.edit_saved = value;
+        if evaluating {
+            self.edit_original = self.edit_saved.clone(); self.edit_mode = EditCellMode::Text;
+            self.edit_type = match self.edit_saved { rusqlite::types::Value::Null=>0, rusqlite::types::Value::Integer(_)=>1,
+                rusqlite::types::Value::Real(_)=>2, rusqlite::types::Value::Text(_)=>3, rusqlite::types::Value::Blob(_)=>4 };
+            self.show_edit_value();
+        }
         self.refresh_browse()?;
+        // Refresh clears the editor; recover the updated record by identity, not its old row index.
+        if let Some(row) = self.browse().rowids.iter().position(|id| *id == rowid) {
+            let col = self.browse().result.as_ref().and_then(|result| result.columns.iter().position(|name| name == &column));
+            let tab = self.browse_mut();
+            tab.sel_row = Some(row); tab.sel_col = col;
+            tab.goto_record = (tab.offset + row + 1).to_string();
+            self.sync_edit_cell_from_selection();
+            if !evaluating && self.edit_mode != applied_mode { self.set_edit_mode(applied_mode)?; }
+        }
         self.status_msg = "Cell updated (unwritten)".into();
         Ok(())
     }
@@ -3686,6 +3717,7 @@ impl AppState {
         self.edit_revision = self.edit_revision.wrapping_add(1);
         self.edit_view = None;
         self.edit_col_view = None;
+        self.edit_display_baseline = None;
     }
 
     fn show_edit_value(&mut self) {
@@ -3705,18 +3737,30 @@ impl AppState {
             EditCellMode::Image => format!("[{} bytes — read-only image preview]", bytes.len()),
             EditCellMode::Json => db::try_pretty_json(&String::from_utf8_lossy(&bytes))
                 .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned()),
-            EditCellMode::Text => String::from_utf8_lossy(&bytes).into_owned(),
+            EditCellMode::Xml => crate::cell_format::indent_xml(&String::from_utf8_lossy(&bytes))
+                .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
+            EditCellMode::Text | EditCellMode::Evaluation => String::from_utf8_lossy(&bytes).into_owned(),
         };
+        if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation) {
+            self.edit_display_baseline = Some((self.edit_type, self.edit_value.clone()));
+        }
         if self.edit_mode == EditCellMode::Image {
             self.decode_edit_image();
         }
     }
 
-    pub fn edited_cell_value(&self) -> Result<rusqlite::types::Value, String> {
+    fn edit_display_unchanged(&self) -> bool {
+        self.edit_display_baseline.as_ref().is_some_and(|(kind, text)| *kind == self.edit_type && *text == self.edit_value)
+    }
+
+    pub fn edited_cell_value(&self) -> Result<rusqlite::types::Value, String> { self.cell_value(true) }
+
+    fn cell_value(&self, validate_format: bool) -> Result<rusqlite::types::Value, String> {
         use rusqlite::types::Value;
         if self.edit_mode == EditCellMode::Image {
             return Err("Image preview is read-only; use Hex to edit binary data".into());
         }
+        if self.edit_mode == EditCellMode::Evaluation { return Ok(Value::Text(self.edit_value.clone())); }
         if self.edit_type == 0 {
             return Ok(Value::Null);
         }
@@ -3732,10 +3776,14 @@ impl AppState {
         } else {
             &self.edit_value
         };
-        if self.edit_mode == EditCellMode::Json
+        if validate_format && self.edit_mode == EditCellMode::Json
             && serde_json::from_str::<serde_json::Value>(text).is_err()
         {
             return Err("Invalid JSON".into());
+        }
+        if validate_format && self.edit_mode == EditCellMode::Xml { crate::cell_format::xml_document(text)?; }
+        if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml) && self.edit_display_unchanged() {
+            return Ok(self.edit_original.clone());
         }
         match self.edit_type {
             1 => text
@@ -3751,6 +3799,7 @@ impl AppState {
                 Ok(Value::Real(value))
             }
             4 => {
+                if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml) { return Ok(Value::Blob(text.as_bytes().to_vec())); }
                 if let Value::Blob(bytes) = &self.edit_original {
                     if text.as_str() == String::from_utf8_lossy(bytes) {
                         return Ok(self.edit_original.clone());
@@ -3767,8 +3816,10 @@ impl AppState {
         if self.edit_cell_read_only() && self.has_cell_draft() {
             return Err("Return to Browse to apply or discard the cell draft first".into());
         }
-        if !self.edit_cell_read_only() && self.edit_mode != EditCellMode::Image {
-            self.edit_original = self.edited_cell_value()?;
+        if !self.edit_cell_read_only() && self.edit_mode == EditCellMode::Evaluation {
+            if !self.edit_display_unchanged() { self.edit_original = rusqlite::types::Value::Text(self.edit_value.clone()); self.edit_type = 3; }
+        } else if !self.edit_cell_read_only() && self.edit_mode != EditCellMode::Image {
+            self.edit_original = self.cell_value(false)?;
         }
         self.edit_mode = mode;
         self.show_edit_value();
@@ -3822,6 +3873,8 @@ impl AppState {
         if self.edit_col.is_empty() { return Err("Select a cell first".into()); }
         let value = if self.edit_cell_read_only() || self.edit_mode == EditCellMode::Image {
             self.edit_original.clone()
+        } else if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation) {
+            rusqlite::types::Value::Text(self.edit_value.clone())
         } else { self.edited_cell_value()? };
         let bytes = match value {
             rusqlite::types::Value::Null => Vec::new(),
@@ -4103,6 +4156,84 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn cell_xml_and_evaluation_preserve_types_drafts_and_read_only_sources() {
+        use rusqlite::types::Value;
+        let mut state = test_state();
+        state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "t").unwrap();
+        let raw = "<r xmlns='urn:cell'><item a='1'>中文</item><empty/></r>";
+        let dir = tempfile::tempdir().unwrap(); let output = dir.path().join("draft.xml");
+        for value in [Value::Text(raw.into()), Value::Blob(raw.as_bytes().to_vec())] {
+            state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1", [&value]).unwrap();
+            state.refresh_browse().unwrap(); state.goto_browse_record(1).unwrap();
+            state.set_edit_mode(EditCellMode::Xml).unwrap();
+            assert!(state.edit_value.contains('\n')); assert!(!state.has_cell_draft());
+            assert_eq!(state.edited_cell_value().unwrap(), value);
+            state.set_edit_mode(EditCellMode::Hex).unwrap();
+            assert_eq!(state.edit_value, db::to_hex(raw.as_bytes())); assert!(!state.has_cell_draft());
+            state.set_edit_mode(EditCellMode::Xml).unwrap(); state.edit_value = "<r><broken>".into();
+            assert!(state.has_cell_draft()); assert!(state.apply_cell_draft().unwrap_err().contains("Invalid XML"));
+            assert_eq!(state.edit_value, "<r><broken>");
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_,Value>(0)).unwrap(), value);
+            state.export_cell_file(&output).unwrap(); assert_eq!(std::fs::read_to_string(&output).unwrap(), "<r><broken>");
+            state.set_edit_mode(EditCellMode::Text).unwrap(); assert_eq!(state.edit_value, "<r><broken>");
+            assert!(state.has_cell_draft()); state.discard_cell_draft(); assert_eq!(state.edit_saved, value);
+            state.set_edit_mode(EditCellMode::Xml).unwrap(); state.edit_value = "<r><changed/></r>".into();
+            state.apply_cell_draft().unwrap();
+            let expected = if matches!(value, Value::Blob(_)) { Value::Blob(b"<r><changed/></r>".to_vec()) }
+                else { Value::Text("<r><changed/></r>".into()) };
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_,Value>(0)).unwrap(), expected);
+        }
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0)); let count = calls.clone();
+        state.conn.as_ref().unwrap().create_scalar_function("cell_probe", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(42)
+        }).unwrap();
+        state.goto_browse_record(1).unwrap(); state.set_edit_mode(EditCellMode::Evaluation).unwrap();
+        assert!(!state.has_cell_draft()); state.edit_value = "cell_probe()".into();
+        for _ in 0..3 { assert!(state.has_cell_draft()); assert_eq!(state.edited_cell_value().unwrap(), Value::Text("cell_probe()".into())); }
+        state.set_edit_mode(EditCellMode::Text).unwrap(); assert_eq!(state.edit_value, "cell_probe()");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        state.discard_cell_draft();
+        for (expression, expected) in [("cell_probe()",Value::Integer(42)), ("1.25*2",Value::Real(2.5)),
+            ("'新值'",Value::Text("新值".into())), ("x'00ff80'",Value::Blob(vec![0,255,128])), ("NULL",Value::Null)] {
+            state.goto_browse_record(1).unwrap(); state.set_edit_mode(EditCellMode::Evaluation).unwrap(); state.edit_value = expression.into();
+            state.apply_cell_draft().unwrap();
+            assert_eq!(state.edit_mode, if matches!(expected,Value::Blob(_)) {EditCellMode::Hex} else {EditCellMode::Text});
+            assert_eq!(state.edit_saved,expected); assert_eq!(state.edited_cell_value().unwrap(),expected);
+            assert_eq!(state.browse().sel_row,Some(0)); assert_eq!(state.browse().sel_col,Some(0)); assert!(!state.has_cell_draft());
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_,Value>(0)).unwrap(), expected);
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        state.goto_browse_record(1).unwrap(); state.set_edit_mode(EditCellMode::Evaluation).unwrap();
+        for expression in ["1; DELETE FROM t", "?1", "no_such_function()", "1,2"] {
+            state.edit_value = expression.into(); assert!(state.apply_cell_draft().is_err());
+            assert_eq!(state.edit_value, expression); assert!(state.has_cell_draft());
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_,Value>(0)).unwrap(), Value::Null);
+        }
+        state.discard_cell_draft(); state.tab = MainTab::ExecuteSql;
+        state.run_sql_text_sync("SELECT 'cell_probe()' AS expression").unwrap(); state.sql_selection.rows = Some((0,0));
+        state.sync_edit_cell_from_sql_selection().unwrap(); state.set_edit_mode(EditCellMode::Evaluation).unwrap();
+        assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(!state.has_cell_draft());
+    }
+
+    #[test]
+    fn applying_cells_restores_visible_row_identity_after_sort_and_clears_filtered_records() {
+        let mut state = test_state();
+        state.conn.as_ref().unwrap().execute_batch("UPDATE t SET v=2; INSERT INTO t VALUES(1),(3)").unwrap();
+        state.refresh_schema().unwrap(); state.switch_browse_table_in("main","t").unwrap();
+        state.set_browse_ordering(vec![db::OrderBy {column:"v".into(),descending:false}]).unwrap();
+        state.goto_browse_record(2).unwrap(); assert_eq!(state.browse().rowids[1],1);
+        state.edit_value = "5".into(); state.apply_cell_draft().unwrap();
+        assert_eq!(state.browse().sel_row,Some(2)); assert_eq!(state.browse().rowids[2],1);
+        assert_eq!(state.edit_saved,rusqlite::types::Value::Integer(5)); assert_eq!(state.edit_value,"5");
+        state.browse_mut().filter = "v > 0".into(); state.refresh_browse().unwrap(); state.goto_browse_record(3).unwrap();
+        state.edit_value = "-1".into(); state.apply_cell_draft().unwrap();
+        assert_eq!(state.browse().sel_row,None); assert!(state.edit_col.is_empty()); assert!(!state.has_cell_draft());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t WHERE rowid=1",[],|row|row.get::<_,i64>(0)).unwrap(),-1);
     }
 
     #[test]

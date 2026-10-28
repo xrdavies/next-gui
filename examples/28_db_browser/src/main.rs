@@ -12,6 +12,7 @@ mod csv_numbers;
 mod data_export;
 mod export_jobs;
 mod cell_clipboard;
+mod cell_format;
 mod cell_snapshot;
 mod plot;
 mod plot_load;
@@ -465,10 +466,7 @@ struct BuiltUiIds {
     btn_sql_comment: WidgetId,
     btn_sql_view: WidgetId,
     sql_view_name: WidgetId,
-    btn_edit_text: WidgetId,
-    btn_edit_hex: WidgetId,
-    btn_edit_json: WidgetId,
-    btn_edit_image: WidgetId,
+    edit_mode: WidgetId,
     btn_fk_nav: WidgetId,
     btn_freeze: WidgetId,
     btn_cond_fmt: WidgetId,
@@ -713,10 +711,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_sql_comment: b.btn_sql_comment,
             btn_sql_view: b.btn_sql_view,
             sql_view_name: b.sql_view_name,
-            btn_edit_text: b.btn_edit_text,
-            btn_edit_hex: b.btn_edit_hex,
-            btn_edit_json: b.btn_edit_json,
-            btn_edit_image: b.btn_edit_image,
+            edit_mode: b.edit_mode,
             btn_fk_nav: b.btn_fk_nav,
             btn_freeze: b.btn_freeze,
             btn_cond_fmt: b.btn_cond_fmt,
@@ -1318,7 +1313,7 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow" | "cell-structure" | "cell-pragmas" | "cell-structure-narrow" | "cell-pragmas-narrow") || tab.starts_with("toolbar-style-") || tab.starts_with("cell-session") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow" | "cell-structure" | "cell-pragmas" | "cell-structure-narrow" | "cell-pragmas-narrow") || tab.starts_with("toolbar-style-") || tab.starts_with("cell-session") || tab.starts_with("cell-mode-") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
@@ -1356,6 +1351,15 @@ impl Demo {
                     state.refresh_browse().unwrap(); state.goto_browse_record(1).unwrap();
                     state.browse_mut().sel_col = Some(3); state.sync_edit_cell_from_selection();
                     state.dock_ratio = 0.62;
+                }
+                if tab.starts_with("cell-mode-") {
+                    let text = "<report xmlns='urn:quarter'><name>中文</name><items><item value='42'/></items></report>";
+                    state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'", [text]).unwrap();
+                    state.refresh_browse().unwrap(); state.goto_browse_record(1).unwrap();
+                    state.browse_mut().sel_col = Some(3); state.sync_edit_cell_from_selection();
+                    let mode = if tab.contains("evaluation") { crate::state::EditCellMode::Evaluation } else { crate::state::EditCellMode::Xml };
+                    state.set_edit_mode(mode).unwrap(); state.dock_ratio = 0.62;
+                    if mode == crate::state::EditCellMode::Evaluation { state.edit_value = "upper('中文a') || ' • ' || (SELECT count(*) FROM quarterly_revenue)".into(); }
                 }
                 if tab.starts_with("cell-structure") { state.tab = MainTab::Structure; }
                 if tab.starts_with("cell-pragmas") { state.tab = MainTab::Pragmas; }
@@ -1449,6 +1453,12 @@ impl Demo {
             state.edit_view = built.ui.text_area_state(built.edit_value);
         }
 
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
+            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
+                built.ui.set_focus(Some(built.edit_mode)); built.ui.key_input(UiKey::Space);
+            } else { built.ui.set_focus(Some(built.edit_value)); }
+            built.ui.sync(&mut built.scene);
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
             built.ui.key_input(UiKey::End);built.ui.sync(&mut built.scene);
         }
@@ -1616,13 +1626,21 @@ impl Demo {
                     self.state.edit_col = v.to_string();
                 }
             }
-            if let Some(t) = self.ui.select_selected(self.ids.edit_type) {
-                self.state.edit_type = t;
-            }
+            let null_selected = self.ui.select_selected(self.ids.edit_type) == Some(0) && self.state.edit_type != 0;
+            if let Some(t) = self.ui.select_selected(self.ids.edit_type) { self.state.edit_type = t; }
             if self.ids.edit_value.0 != 0 {
-                if let Some(v) = self.ui.text_area_value(self.ids.edit_value) {
-                    self.state.edit_value = v.to_string();
+                if let Some(v) = self.ui.text_area_value(self.ids.edit_value).map(str::to_owned) {
+                    if self.state.edit_type == 0 && !v.is_empty() && v != self.state.edit_value && !null_selected
+                        && self.state.edit_mode != crate::state::EditCellMode::Evaluation {
+                        self.state.edit_type = if self.state.edit_mode == crate::state::EditCellMode::Hex {4} else {3};
+                        self.ui.set_select_selected(self.ids.edit_type, Some(self.state.edit_type));
+                    }
+                    self.state.edit_value = v;
                 }
+            }
+            if null_selected {
+                if let Err(error) = self.state.set_cell_null() { self.set_error(error); }
+                self.rebuild = true;
             }
         }
         self.snapshot_cell_editor();
@@ -2686,6 +2704,10 @@ impl Demo {
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
+        let mode_focused = self.ids.edit_mode.0 != 0 && self.ui.focused() == Some(self.ids.edit_mode)
+            && self.state.overlay.is_none() && !self.state.confirm_open;
+        let mode_session = (mode_focused && self.last_edit_revision == self.state.edit_revision)
+            .then(|| self.ui.select_state(self.ids.edit_mode).map(|session| (self.ui.select_selected(self.ids.edit_mode), session))).flatten();
         let prefs_session = if self.state.overlay == Some(OverlayKind::Preferences) {
             self.snapshot_overlay();
             self.ids.ov_prefs_toolbars.iter().enumerate().find_map(|(index, id)|
@@ -2973,6 +2995,15 @@ impl Demo {
                     self.ui.sync(&mut self.scene);
                 }
             }
+        }
+        if mode_focused && self.ids.edit_mode.0 != 0 {
+            if cell_revision == self.state.edit_revision {
+                if let Some((selected, session)) = mode_session {
+                    self.ui.set_select_selected(self.ids.edit_mode, selected);
+                    self.ui.restore_select_state(self.ids.edit_mode, &session);
+                }
+            }
+            self.ui.set_focus(Some(self.ids.edit_mode)); self.ui.sync(&mut self.scene);
         }
         self.last_edit_revision = self.state.edit_revision;
         if self.state.confirm_open { self.ui.set_focus(Some(self.ids.modal)); self.ui.sync(&mut self.scene); }
@@ -4082,6 +4113,36 @@ impl Demo {
         true
     }
 
+    fn handle_cell_apply_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if key != KeyCode::Enter || !modifiers.commandish() || modifiers.alt || modifiers.shift
+            || self.ids.edit_value.0 == 0 || self.ui.focused() != Some(self.ids.edit_value)
+            || self.ui.has_open_popup() || self.state.overlay.is_some() || self.state.confirm_open
+            || self.state.edit_cell_read_only() { return false; }
+        self.handle_button(self.ids.btn_edit_cell);
+        self.do_rebuild();
+        self.ui.set_focus(Some(self.ids.edit_value)); self.ui.sync(&mut self.scene);
+        true
+    }
+
+    fn indent_cell(&mut self) -> Result<(), String> {
+        use crate::state::EditCellMode;
+        let formatted = match self.state.edit_mode {
+            EditCellMode::Json => dbmod::try_pretty_json(&self.state.edit_value).ok_or("Invalid JSON")?,
+            EditCellMode::Xml => cell_format::indent_xml(&self.state.edit_value)?,
+            _ => return Err("Choose JSON or XML to indent the cell".into()),
+        };
+        if self.state.edit_cell_read_only() { return self.state.set_edit_mode(self.state.edit_mode); }
+        if formatted != self.state.edit_value {
+            let len = self.state.edit_value.chars().count();
+            if !self.ui.replace_text_area_range(self.ids.edit_value, 0..len, &formatted) {
+                return Err("Cell editor is unavailable".into());
+            }
+            self.ui.set_focus(Some(self.ids.edit_value));
+            self.snapshot_inputs();
+        }
+        Ok(())
+    }
+
     fn handle_sql_comment_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
         if key != KeyCode::Char('/') || !modifiers.commandish() || modifiers.alt || modifiers.shift
             || self.ui.focused() != Some(self.ids.sql_area) || self.ui.has_open_popup()
@@ -4191,7 +4252,7 @@ impl Demo {
             } else if id == self.ids.btn_cell_export {
                 if let Some(path) = file_dlg::pick_save_cell() { self.state.export_cell_file(&path) } else { return; }
             } else if id == self.ids.btn_cell_null { self.state.set_cell_null() }
-            else { self.state.set_edit_mode(crate::state::EditCellMode::Json) };
+            else { self.indent_cell() };
             match result { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
             self.rebuild = true; return;
         }
@@ -4242,10 +4303,7 @@ impl Demo {
             self.handle_menu(if id == self.ids.btn_new { mid::FILE_NEW } else { mid::FILE_OPEN });
             return;
         }
-        if self.state.has_cell_draft() && ![
-            self.ids.btn_edit_cell, self.ids.btn_edit_text, self.ids.btn_edit_hex,
-            self.ids.btn_edit_json, self.ids.btn_edit_image,
-        ].contains(&id) {
+        if self.state.has_cell_draft() && id != self.ids.btn_edit_cell {
             self.set_error("Apply or discard the cell draft first");
             self.rebuild = true;
             return;
@@ -4502,26 +4560,6 @@ impl Demo {
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_edit_text {
-            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Text) { self.set_error(e); }
-            self.rebuild = true;
-            return;
-        }
-        if id == self.ids.btn_edit_hex {
-            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Hex) { self.set_error(e); }
-            self.rebuild = true;
-            return;
-        }
-        if id == self.ids.btn_edit_json {
-            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Json) { self.set_error(e); }
-            self.rebuild = true;
-            return;
-        }
-        if id == self.ids.btn_edit_image {
-            if let Err(e) = self.state.set_edit_mode(crate::state::EditCellMode::Image) { self.set_error(e); }
-            self.rebuild = true;
-            return;
-        }
         if id == self.ids.btn_form_view {
             self.state.toggle_browse_view();
             self.rebuild = true;
@@ -4694,6 +4732,15 @@ impl Demo {
     }
 
     fn poll_selection_changes(&mut self) {
+        if self.last_edit_revision == self.state.edit_revision && self.ui.popup_owner() != Some(self.ids.edit_mode) {
+            if let Some(mode) = self.ui.select_selected(self.ids.edit_mode).and_then(crate::state::EditCellMode::from_index) {
+                if mode != self.state.edit_mode {
+                    self.snapshot_inputs();
+                    match self.state.set_edit_mode(mode) { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
+                    self.rebuild = true; return;
+                }
+            }
+        }
         if let Some((_, error)) = self.ui.take_table_data_error() { self.set_error(error); }
         if self.ui.is_dragging() { return; }
         if let Some(mode) = self.ui.select_selected(self.ids.plot.mode) {
@@ -5286,7 +5333,7 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
-                if self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) || self.handle_sql_comment_key(key, modifiers) {
+                if self.handle_cell_apply_key(key, modifiers) || self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) || self.handle_sql_comment_key(key, modifiers) {
                     self.after_ui(ctx);
                     return;
                 }
@@ -5622,7 +5669,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || (tab.starts_with("toolbar-style-") && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

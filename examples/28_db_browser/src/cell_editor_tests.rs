@@ -129,3 +129,96 @@ fn cell_editor_sessions_survive_rebuilds_but_never_follow_another_cell_or_replac
     assert_eq!(demo.ui.text_area_selection(demo.ids.edit_value), Some(end..end));
     assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM cells WHERE id=1", [], |row| row.get::<_,String>(0)).unwrap(), original);
 }
+
+#[test]
+fn cell_modes_keep_keyboard_popups_formatting_undo_null_input_and_explicit_evaluation() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();
+    demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    let xml = "<report xmlns='urn:quarter'><name>中文</name><items><item value='42'/></items></report>";
+    demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'", [xml]).unwrap();
+    demo.state.refresh_schema().unwrap(); demo.state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+    demo.state.tab = MainTab::Browse; demo.state.goto_browse_record(1).unwrap();
+    demo.state.browse_mut().sel_col = Some(3); demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus = DockKind::Plot; demo.state.dock_ratio = 0.62; demo.state.body_ratio = 0.45;
+    demo.state.sync_current_plot().unwrap(); demo.state.plot.check(1,1,true); demo.state.plot.check(2,2,true);
+    let folder = std::env::var("NEXT_GUI_CELL_FORMATS_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder) = &folder { std::fs::create_dir_all(folder).unwrap(); }
+    for (name, theme) in [("dark",Theme::dark()), ("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+            demo.win_w = width; demo.win_h = height; demo.state.prefs.font_size = size;
+            demo.theme = ui_build::browser_theme(theme,size);
+            for index in 0..EditCellMode::LABELS.len() {
+                demo.state.discard_cell_draft(); demo.do_rebuild();
+                let id = demo.ids.edit_mode; demo.ui.set_focus(Some(id));
+                assert_eq!(demo.ui.accessible_name(id).as_deref(), Some("Cell editor mode"));
+                assert!(demo.ui.key_input(UiKey::Space)); demo.ui.sync(&mut demo.scene); demo.snapshot_inputs();
+                demo.do_rebuild(); assert_eq!(demo.ui.popup_owner(),Some(demo.ids.edit_mode));
+                let style = demo.ui.select_style();
+                let popup = demo.scene.iter_paint_order().into_iter().find(|node| node.visible && node.fill == style.popup_bg
+                    && demo.ui.widget_from_node(node.id) == Some(demo.ids.edit_mode) && node.bounds.height >= style.item_height*6.0).unwrap().bounds;
+                assert!(popup.x >= 0.0 && popup.y >= 0.0 && popup.x+popup.width <= width as f32 && popup.y+popup.height <= height as f32);
+                if index == 0 && width == 800 {
+                    if let Some(folder) = &folder { crate::plot_export::capture(&mut demo,folder,&format!("cell-mode-menu-{name}-{width}")); }
+                }
+                assert_eq!(demo.ui.select_selected(demo.ids.edit_mode),Some(0));
+                for _ in 0..index {
+                    assert!(demo.ui.key_input(UiKey::Down));
+                    demo.snapshot_inputs(); demo.poll_selection_changes();
+                    demo.do_rebuild();
+                    assert_eq!(demo.ui.popup_owner(),Some(demo.ids.edit_mode)); assert_eq!(demo.state.edit_mode,EditCellMode::Text);
+                }
+                assert!(demo.ui.key_input(UiKey::Enter)); demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
+                assert_eq!(demo.state.edit_mode,EditCellMode::from_index(index).unwrap());
+                assert_eq!(demo.ui.focused(),Some(demo.ids.edit_mode)); assert!(!demo.ui.has_open_popup());
+                assert!(!demo.state.has_cell_draft());
+                if demo.state.edit_mode == EditCellMode::Image {
+                    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.paste_into_focused_text("unsafe"); demo.snapshot_inputs();
+                    assert!(demo.state.edit_value.contains("read-only")); assert!(!demo.state.has_cell_draft());
+                }
+                if matches!(demo.state.edit_mode,EditCellMode::Xml|EditCellMode::Evaluation) {
+                    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.sync(&mut demo.scene);
+                    if let Some(folder) = &folder { crate::plot_export::capture(&mut demo,folder,&format!("cell-mode-{}-{name}-{width}",EditCellMode::LABELS[index].to_lowercase())); }
+                }
+            }
+        }
+    }
+    demo.state.discard_cell_draft(); demo.state.set_edit_mode(EditCellMode::Xml).unwrap(); demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.key_input(UiKey::SelectAll);
+    demo.ui.paste_into_focused_text("<r><item>值</item></r>"); demo.snapshot_inputs();
+    demo.handle_button(demo.ids.btn_cell_indent); demo.do_rebuild();
+    assert!(demo.state.edit_value.contains('\n')); assert!(demo.state.has_cell_draft());
+    assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs(); demo.do_rebuild();
+    assert_eq!(demo.state.edit_value,"<r><item>值</item></r>");
+    assert!(demo.ui.key_input(UiKey::Redo)); demo.snapshot_inputs(); demo.do_rebuild(); assert!(demo.state.edit_value.contains('\n'));
+    demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text("<r><broken>"); demo.snapshot_inputs();
+    demo.handle_button(demo.ids.btn_cell_indent); demo.do_rebuild();
+    assert!(demo.state.error_msg.as_deref().unwrap().contains("Invalid XML")); assert_eq!(demo.state.edit_value,"<r><broken>");
+    demo.ui.set_select_selected(demo.ids.edit_mode,Some(EditCellMode::Text as usize)); demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
+    assert_eq!(demo.state.edit_value,"<r><broken>"); assert!(demo.state.has_cell_draft());
+    demo.state.discard_cell_draft(); demo.do_rebuild();
+    demo.ui.set_select_selected(demo.ids.edit_type,Some(0)); demo.snapshot_inputs(); demo.do_rebuild();
+    assert_eq!(demo.state.edit_type,0); assert!(demo.state.edit_value.is_empty());
+    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.paste_into_focused_text("new text"); demo.snapshot_inputs(); demo.do_rebuild();
+    assert_eq!(demo.state.edit_type,3); assert_eq!(demo.state.edited_cell_value().unwrap(),Value::Text("new text".into()));
+    demo.state.set_cell_null().unwrap(); demo.state.set_edit_mode(EditCellMode::Hex).unwrap(); demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.paste_into_focused_text("00FF"); demo.snapshot_inputs();
+    assert_eq!(demo.state.edit_type,4); assert_eq!(demo.state.edited_cell_value().unwrap(),Value::Blob(vec![0,255]));
+    demo.state.discard_cell_draft(); demo.state.set_edit_mode(EditCellMode::Evaluation).unwrap(); demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text("upper('中文a')");
+    demo.snapshot_inputs(); demo.do_rebuild(); assert!(demo.state.has_cell_draft());
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|row|row.get::<_,String>(0)).unwrap(),xml);
+    let command = Modifiers { meta:true, ..Modifiers::default() };
+    assert!(!demo.handle_cell_apply_key(KeyCode::Enter,Modifiers::default()));
+    assert!(!demo.handle_cell_apply_key(KeyCode::Enter,Modifiers { alt:true, ..command }));
+    assert!(demo.handle_cell_apply_key(KeyCode::Enter,command)); demo.do_rebuild();
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|row|row.get::<_,String>(0)).unwrap(),"中文A");
+    assert!(!demo.state.has_cell_draft()); assert_eq!(demo.state.edit_mode,EditCellMode::Text);
+    assert_eq!(demo.state.edit_value,"中文A"); assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));
+    if let Some(folder) = &folder { crate::plot_export::capture(&mut demo,folder,"cell-evaluation-applied-light-800"); }
+    demo.ui.key_input(UiKey::SelectAll); assert_eq!(demo.ui.focused_text_for_copy().as_deref(),Some("中文A"));
+    demo.state.tab = MainTab::Pragmas; demo.do_rebuild(); demo.ui.set_focus(Some(demo.ids.edit_value));
+    assert!(!demo.handle_cell_apply_key(KeyCode::Enter,command));
+}
