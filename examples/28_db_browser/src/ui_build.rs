@@ -14,6 +14,7 @@ use crate::db::{self, ObjectKind};
 use crate::state::{AppState, ConfirmKind, DockKind, MainTab, OverlayKind};
 
 const TABLE_PANE_MINIMUMS:(f32,f32)=(76.0,48.0);
+const PLOT_PANE_MINIMUMS:(f32,f32)=(36.0,164.0);
 
 pub mod mid {
     pub const FILE_NEW: u64 = 1;
@@ -529,7 +530,6 @@ pub fn build_ui(
 
     let selected_dock = state.visible_dock_tabs().get(visible_docks_index(state)).copied().unwrap_or(DockKind::Remote);
     let dock_title = selected_dock.title();
-    let dock_page_minimum = if selected_dock == DockKind::Plot { 300.0 } else { 160.0 };
     let dock_label_width = ui.font().measure_line(dock_title, theme.typography.body).0;
     let edit_label_width = ui.font().measure_line("Edit Database Cell", theme.typography.body).0;
     let dock_close_width = (ui.font().measure_line("Close", theme.typography.button_sm).0 + 32.0).max(64.0);
@@ -782,10 +782,25 @@ pub fn build_ui(
     let shell_h = (win_h - STATUS_H - 4.0).max(360.0);
     let toolbar_layouts = state.prefs.toolbar_styles.map(crate::prefs::toolbar_layout);
     let toolbar_heights = toolbar_layouts.map(|layout| toolbar_button_height(ui.font(), state.prefs.font_size, layout));
+    let cell_line_height = ui.font().measure_line("Ag", theme.typography.body).1.ceil();
+    let cell_action_height = toolbar_button_height(ui.font(), state.prefs.font_size, next_gui_ui::ButtonIconLayout::TextOnly)+4.0;
+    let dock_header_height = cell_action_height.max(32.0);
+    let cell_field_height = (cell_line_height+12.0).max(32.0);
+    let cell_storage_width = ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"].iter()
+        .map(|label| ui.font().measure_line(label, theme.typography.input).0+32.0).fold(140.0f32,f32::max);
+    let cell_mode_width = crate::state::EditCellMode::LABELS.iter()
+        .map(|label| ui.font().measure_line(label, theme.typography.input).0+32.0).fold(128.0f32,f32::max);
+    let plot_minimums = (PLOT_PANE_MINIMUMS.0, PLOT_PANE_MINIMUMS.1
+        + 3.0*(cell_line_height-ui.font().measure_line("Ag",13.0).1.ceil()).max(0.0));
+    let cell_tools_height = (toolbar_heights[4]+4.0).max(cell_field_height);
+    let cell_footer_height = cell_action_height + cell_line_height + 16.0;
+    let dock_cell_minimum = dock_header_height + cell_footer_height + cell_field_height + cell_tools_height + 80.0;
+    let dock_page_minimum = 2.0*dock_header_height + if selected_dock == DockKind::Plot {
+        plot_minimums.0 + plot_minimums.1 + 14.0
+    } else { 80.0 };
     let main_toolbar_height = (toolbar_heights[0]+8.0).max(38.0);
     let toolbar_visible = state.toolbar_db || state.toolbar_extra || state.toolbar_project;
     let chrome_h = 50.0 + if toolbar_visible { main_toolbar_height+4.0 } else { 0.0 };
-    let content_h = (shell_h - chrome_h).max(300.0);
     let csv_modal = matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
     let workspace_modal = csv_modal || state.overlay == Some(OverlayKind::ExportSql);
     let mut csv_style = ModalStyle::from_theme(&theme);
@@ -795,6 +810,11 @@ pub fn build_ui(
     csv_style.action_height = 36.0;
     csv_style.close_on_backdrop = false;
     let docks_on = state.any_dock_visible() && (state.overlay.is_none() || workspace_modal);
+    let body_minimum = if docks_on && state.dock_edit {
+        dock_cell_minimum + if state.visible_dock_tabs().is_empty() { 0.0 } else { dock_page_minimum+6.0 }
+    } else { 300.0 };
+    // Large fonts use the existing shell scroll instead of crushing either pane's controls.
+    let content_h = (shell_h - chrome_h).max(300.0).max(body_minimum);
     let pane_width = shell_w - 20.0;
     let dock_min = if state.dock_focus == DockKind::Plot { 400.0f32.min(pane_width - 340.0) } else { 240.0 };
     let main_frac = if docks_on { state.body_ratio.clamp(340.0 / pane_width, 1.0 - dock_min / pane_width) } else { 1.0 };
@@ -1750,8 +1770,8 @@ pub fn build_ui(
             dock_split.axis = Axis::Horizontal;
             dock_split.sash_size = 6.0;
             let span = content_h - dock_split.sash_size;
-            let scale = (span / (100.0 + dock_page_minimum)).min(1.0);
-            let minimum = 100.0 * scale / span;
+            let scale = (span / (dock_cell_minimum + dock_page_minimum)).min(1.0);
+            let minimum = dock_cell_minimum * scale / span;
             let maximum = (1.0 - dock_page_minimum * scale / span).max(minimum);
             dock_split.ratio = state.dock_ratio.clamp(minimum, maximum);
             let edit_h = if has_dock_tabs {
@@ -1773,13 +1793,13 @@ pub fn build_ui(
             dock_pages_style.height = dock_h;
             let mut dock_header = RowStyle::from_theme(&theme);
             dock_header.width = dock_w;
-            dock_header.height = 32.0;
+            dock_header.height = dock_header_height;
             dock_header.padding = 2.0;
             dock_header.gap = 4.0;
             dock_header.cross_align = CrossAlign::Center;
             let mut edit_scroll_style = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
             edit_scroll_style.width = (dock_w - 8.0).max(200.0);
-            edit_scroll_style.height = (edit_h - dock_header.height).max(1.0);
+            edit_scroll_style.height = (edit_h - dock_header.height - cell_footer_height).max(1.0);
             edit_scroll_style.padding = 4.0;
             edit_scroll_style.gap = 4.0;
             let mut dock_tabs_style = TabsStyle::from_theme(&theme);
@@ -1787,6 +1807,7 @@ pub fn build_ui(
             dock_tabs_style.scrollable = true;
             dock_tabs_style.height = (dock_h - dock_header.height).max(1.0);
             dock_tabs_style.strip_at_bottom = true;
+            dock_tabs_style.strip_height = dock_header_height;
             dock_tabs_style.padding = 0.0;
             dock_tabs_style.content_bg = theme.colors.content_bg;
             dock_tabs_style.strip_bg = theme.colors.strip_bg;
@@ -2166,9 +2187,10 @@ pub fn build_ui(
                         btn_dock_edit_close = r.tool_button("Close");
                     });
                     edit_dock_scroll = p.scroll_area(edit_scroll_style, |c| {
-                        c.row(dock_row, |r| {
+                        c.row(RowStyle { height: cell_field_height, ..dock_row }, |r| {
                             let mut column_style = edit_col_style;
-                            column_style.width = (dock_w - 180.0).max(80.0);
+                            column_style.height = cell_field_height;
+                            column_style.width = (dock_w - cell_storage_width - 40.0).max(80.0);
                             edit_col = r.text_input_styled(&state.edit_col, "column", column_style);
                             if generated_cell {
                                 r.text("Generated · read-only");
@@ -2177,7 +2199,8 @@ pub fn build_ui(
                                 r.text(format!("{storage} · read-only"));
                             } else {
                                 let mut storage = sel_style;
-                                storage.width = 140.0;
+                                storage.width = cell_storage_width; storage.height = cell_field_height; storage.item_height = cell_field_height;
+                                storage.size = theme.typography.input;
                                 edit_type = r.select(
                                     ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"],
                                     Some(state.edit_type),
@@ -2186,12 +2209,12 @@ pub fn build_ui(
                                 );
                             }
                         });
-                        c.row(tool_row, |r| {
+                        c.scroll_row(RowStyle { width: dock_w-40.0, height: cell_tools_height, ..tool_row }, |r| {
                             r.text("Mode");
-                            let mut style = sel_style; style.width = (dock_w - 100.0).clamp(140.0, 320.0);
+                            let mut style = sel_style; style.width = cell_mode_width; style.size = theme.typography.input;
+                            style.height = cell_field_height; style.item_height = cell_field_height;
+                            style.popup_max_height = cell_field_height * crate::state::EditCellMode::LABELS.len() as f32;
                             edit_mode = r.select(crate::state::EditCellMode::LABELS, Some(state.edit_mode as usize), "Editor mode", style);
-                        });
-                        c.scroll_row(RowStyle { width: dock_w-40.0, height: toolbar_heights[4]+4.0, ..tool_row }, |r| {
                             btn_cell_import = r.tool_icon_button(IconName::Open, "Import…");
                             btn_cell_export = r.tool_icon_button(IconName::Save, "Export…");
                             btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
@@ -2199,9 +2222,30 @@ pub fn build_ui(
                         });
                         let mut cell_style = TextAreaStyle::from_theme(&theme);
                         cell_style.width = edit_val_style.width;
-                        cell_style.height = (edit_scroll_style.height - 144.0 - toolbar_heights[4]).max(64.0);
+                        cell_style.size = theme.typography.input;
+                        cell_style.height = (edit_scroll_style.height - cell_field_height - cell_tools_height - 16.0).max(64.0);
                         edit_value = c.text_area(&state.edit_value, "value", cell_style);
-                        c.row(tool_row, |r| {
+                        if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
+                            let mut istyle = ImageStyle::from_theme(&theme);
+                            istyle.width = (dock_w - 40.0).max(1.0);
+                            istyle.height = 200.0;
+                            c.row(tool_row, |r| {
+                                image_fit = r.tool_button("Fit");
+                                image_actual = r.tool_button("1:1");
+                                image_in = r.tool_button("+");
+                                image_out = r.tool_button("−");
+                            });
+                            image_export = c.tool_button("Export Image…");
+                            edit_image = c.image_rgba_caption(*w, *h, px, format!("{}×{}", w, h), istyle);
+                        } else if matches!(state.edit_mode, crate::state::EditCellMode::Image) {
+                            let mut istyle = ImageStyle::from_theme(&theme);
+                            istyle.width = 160.0;
+                            istyle.height = 48.0;
+                            edit_image = c.image_placeholder("No preview available", istyle);
+                        }
+                    });
+                    p.column(ColumnStyle { width: dock_w, height: cell_footer_height, padding: 4.0, gap: 2.0, ..edit_pane_style }, |p| {
+                        p.scroll_row(RowStyle { width: dock_w-8.0, height: cell_action_height, ..tool_row }, |r| {
                             btn_edit_cell =
                                 r.tool_button_styled("Apply", theme.colors.accent, theme.colors.on_accent);
                             btn_edit_discard = r.tool_button("Discard Draft");
@@ -2228,7 +2272,7 @@ pub fn build_ui(
                                 )
                             })
                             .unwrap_or_default() };
-                        edit_meta = c.text(format!(
+                        let caption = format!(
                             "{mode} · {} bytes{}{record}",
                             state.edit_binary_len,
                             if state.edit_image_kind.is_empty() {
@@ -2236,25 +2280,8 @@ pub fn build_ui(
                             } else {
                                 format!(" · {}", state.edit_image_kind)
                             }
-                        ));
-                        if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
-                            let mut istyle = ImageStyle::from_theme(&theme);
-                            istyle.width = (dock_w - 40.0).max(1.0);
-                            istyle.height = 200.0;
-                            c.row(tool_row, |r| {
-                                image_fit = r.tool_button("Fit");
-                                image_actual = r.tool_button("1:1");
-                                image_in = r.tool_button("+");
-                                image_out = r.tool_button("−");
-                            });
-                            image_export = c.tool_button("Export Image…");
-                            edit_image = c.image_rgba_caption(*w, *h, px, format!("{}×{}", w, h), istyle);
-                        } else if matches!(state.edit_mode, crate::state::EditCellMode::Image) {
-                            let mut istyle = ImageStyle::from_theme(&theme);
-                            istyle.width = 160.0;
-                            istyle.height = 48.0;
-                            edit_image = c.image_placeholder("No preview available", istyle);
-                        }
+                        );
+                        edit_meta = p.tooltip(caption.clone(), |p| { p.text(caption.clone()); });
                     });
                 });
             };
@@ -2300,9 +2327,9 @@ pub fn build_ui(
                                         split.width = dock_col.width;
                                         split.height = dock_col.height;
                                         let span = (split.height - split.sash_size).max(1.0);
-                                        let scale = (span / 228.0).min(1.0);
-                                        let minimum = 64.0 * scale / span;
-                                        let maximum = (1.0 - 164.0 * scale / span).max(minimum);
+                                        let scale = (span / (plot_minimums.0+plot_minimums.1)).min(1.0);
+                                        let minimum = plot_minimums.0 * scale / span;
+                                        let maximum = (1.0 - plot_minimums.1 * scale / span).max(minimum);
                                         split.ratio = state.plot_ratio.clamp(minimum, maximum);
                                         let mut controls = dock_col;
                                         controls.height = (span * split.ratio).round();
@@ -2770,8 +2797,8 @@ pub fn build_ui(
     for (index,id) in dock_scrolls.iter().enumerate() {
         let offset=state.dock_scroll[index];ui.set_scroll_offset(*id,offset.0,offset.1);
     }
-    ui.set_splitter_min_sizes(dock_splitter,100.0,dock_page_minimum);
-    ui.set_splitter_min_sizes(plot_splitter,64.0,164.0);
+    ui.set_splitter_min_sizes(dock_splitter,dock_cell_minimum,dock_page_minimum);
+    ui.set_splitter_min_sizes(plot_splitter,plot_minimums.0,plot_minimums.1);
     ui.set_accessible_name(plot_splitter,"Plot controls and chart splitter");
     ui.set_accessible_name(dock_splitter,"Resize cell editor and dock pages");
     ui.set_accessible_name(btn_dock_edit_close,"Close cell editor dock");

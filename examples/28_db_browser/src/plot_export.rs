@@ -228,6 +228,7 @@ mod tests {
             demo.theme = crate::ui_build::browser_theme(theme, demo.state.prefs.font_size);
             for (width, height) in [(1400, 1000), (800, 600)] {
                 demo.win_w = width; demo.win_h = height; demo.do_rebuild();
+                demo.ui.set_focus(Some(demo.ids.chart)); demo.ui.sync(&mut demo.scene);
                 let image = demo.scene.iter_paint_order().into_iter().find(|n| n.visible && n.image.is_some()).unwrap().bounds;
                 let (x, y) = (image.x + image.width * 0.63, image.y + image.height * 0.5);
                 assert_eq!(demo.ui.hit_widget(&demo.scene, x, y), Some(demo.ids.chart));

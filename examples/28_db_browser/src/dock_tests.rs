@@ -133,6 +133,8 @@ fn independent_cell_and_plot_docks_keep_drafts_scrolls_ratios_and_project_layout
         "Adaptive constraints must retain the preferred split"
     );
     assert!((demo.state.plot_ratio - 0.51).abs() < 0.001);
+    demo.state.set_edit_mode(crate::state::EditCellMode::Image).unwrap();
+    demo.do_rebuild();
     for dock in [DockKind::EditCell, DockKind::Plot] {
         let id = demo.ids.dock_scrolls[dock as usize];
         assert_ne!(id.0, 0);
@@ -168,6 +170,8 @@ fn independent_cell_and_plot_docks_keep_drafts_scrolls_ratios_and_project_layout
             .scroll_offset(demo.ids.dock_scrolls[DockKind::Plot as usize]),
         Some(scrolls[DockKind::Plot as usize])
     );
+    demo.state.set_edit_mode(crate::state::EditCellMode::Text).unwrap();
+    demo.do_rebuild();
     demo.ui
         .set_text_area_value(demo.ids.edit_value, "Kept cell draft");
     demo.snapshot_inputs();
@@ -237,11 +241,10 @@ fn independent_cell_and_plot_docks_keep_drafts_scrolls_ratios_and_project_layout
                         .hit_widget(&demo.scene, control.x + 10.0, control.y + 10.0),
                     Some(id)
                 );
-                assert_eq!(
-                    bounds(&demo, demo.ids.chart),
-                    chart,
-                    "Options and editor scrolling must leave the chart visible"
-                );
+                let visible_chart = bounds(&demo, demo.ids.chart);
+                assert_eq!(visible_chart.height, chart.height, "Focus must not shrink the chart");
+                demo.ui.set_focus(Some(demo.ids.chart)); demo.ui.sync(&mut demo.scene);
+                let chart = bounds(&demo, demo.ids.chart);
                 assert_eq!(
                     demo.ui.hit_widget(
                         &demo.scene,

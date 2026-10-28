@@ -222,3 +222,75 @@ fn cell_modes_keep_keyboard_popups_formatting_undo_null_input_and_explicit_evalu
     demo.state.tab = MainTab::Pragmas; demo.do_rebuild(); demo.ui.set_focus(Some(demo.ids.edit_value));
     assert!(!demo.handle_cell_apply_key(KeyCode::Enter,command));
 }
+
+#[test]
+fn cell_dock_actions_and_content_fit_font_toolbar_and_window_changes() {
+    let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();
+    demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    demo.state.refresh_schema().unwrap(); demo.state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+    demo.state.tab = MainTab::Browse; demo.state.goto_browse_record(1).unwrap();
+    demo.state.browse_mut().sel_col = Some(3); demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus = DockKind::Plot; demo.state.dock_ratio = 0.46; demo.state.body_ratio = 0.45;
+    demo.state.sync_current_plot().unwrap(); demo.state.plot.check(1,1,true); demo.state.plot.check(2,2,true);
+    demo.do_rebuild(); demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.key_input(UiKey::SelectAll);
+    demo.ui.paste_into_focused_text("<r><item>中文 draft</item></r>"); demo.snapshot_inputs();
+    let draft = demo.state.edit_value.clone();
+    let caret = demo.ui.text_area_caret(demo.ids.edit_value);
+    let folder = std::env::var("NEXT_GUI_CELL_LAYOUT_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder) = &folder { std::fs::create_dir_all(folder).unwrap(); }
+    let bounds = |demo: &Demo, id| demo.scene.iter_paint_order().into_iter()
+        .find(|node| demo.ui.widget_from_node(node.id) == Some(id)).unwrap_or_else(|| panic!("No node for {id:?}")).bounds;
+    for (name, theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for size in [13.0,18.0,28.0] { for style in 0..5 { for (width,height) in [(1400,860),(800,600)] {
+            demo.win_w = width; demo.win_h = height; demo.state.prefs.font_size = size; demo.state.prefs.toolbar_styles = [style;5];
+            demo.theme = ui_build::browser_theme(theme,size); demo.state.shell_scroll = (0.0,0.0);
+            demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_caret(demo.ids.edit_value),caret);
+            assert_eq!(demo.state.edit_value,draft); assert!(demo.state.has_cell_draft());
+            assert!((demo.state.dock_ratio-0.46).abs()<0.001);
+            let line = demo.ui.font().measure_line("Ag",demo.theme.typography.body).1;
+            let value = bounds(&demo,demo.ids.edit_value);
+            let apply = bounds(&demo,demo.ids.btn_edit_cell);
+            let discard = bounds(&demo,demo.ids.btn_edit_discard);
+            let meta = bounds(&demo,demo.ids.edit_meta);
+            let chart = bounds(&demo,demo.ids.chart);
+            assert!(value.height>=64.0 && apply.height>=line+10.0 && discard.height>=line+10.0,
+                "{name}/{width}/{size}/{style}: value={value:?},apply={apply:?},line={line}");
+            assert!(value.y+value.height<=apply.y && apply.y+apply.height<=meta.y && meta.y+meta.height<chart.y,
+                "{name}/{width}/{size}/{style}: value={value:?},apply={apply:?},meta={meta:?},chart={chart:?}");
+            assert!(chart.height>=164.0);
+            let plot_image = demo.scene.iter_paint_order().into_iter().find(|node| node.visible && node.image.is_some()).unwrap().bounds;
+            assert!(plot_image.height>=110.0,"{name}/{width}/{size}/{style}: plot body={plot_image:?}");
+            // Focus reveals controls through the existing shell/row scrolls at large fonts.
+            for id in [demo.ids.btn_edit_cell,demo.ids.btn_edit_discard,demo.ids.edit_mode,demo.ids.btn_cell_export,demo.ids.chart] {
+                demo.ui.set_focus(Some(id)); demo.ui.sync(&mut demo.scene);
+                let b = bounds(&demo,id);
+                let x = b.x+b.width*0.5; let y = b.y+b.height*0.5;
+                assert!(x>=0.0 && x<width as f32 && y>=0.0 && y<height as f32-40.0,
+                    "{name}/{width}/{size}/{style}: control={id:?},bounds={b:?}");
+                assert_eq!(demo.ui.hit_widget(&demo.scene,x,y),Some(id),"{name}/{width}/{size}/{style}: bounds={b:?}");
+            }
+            demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.sync(&mut demo.scene);
+            demo.snapshot_inputs(); demo.do_rebuild();
+            assert_eq!(demo.ui.text_area_caret(demo.ids.edit_value),caret); assert_eq!(demo.state.edit_value,draft);
+            if (size==13.0 && width==1400 && style==0) || (width==800 && ((size==18.0 && matches!(style,2|3)) || (size==28.0 && style==1))) {
+                if let Some(folder) = &folder {
+                    if width==800 { demo.ui.set_focus(Some(demo.ids.chart)); demo.ui.sync(&mut demo.scene); }
+                    crate::plot_export::capture(&mut demo,folder,&format!("cell-layout-{name}-{width}-font{size}-style{style}"));
+                }
+            }
+        }}}
+    }
+    demo.win_w=800; demo.win_h=600; demo.state.prefs.font_size=18.0; demo.state.prefs.toolbar_styles=[3;5];
+    demo.theme=ui_build::browser_theme(Theme::dark(),18.0);
+    demo.state.discard_cell_draft(); demo.state.set_edit_mode(crate::state::EditCellMode::Image).unwrap(); demo.do_rebuild();
+    let footer = bounds(&demo,demo.ids.btn_edit_cell);
+    let scroll = demo.ids.dock_scrolls[DockKind::EditCell as usize];
+    assert!(demo.ui.set_scroll_offset(scroll,0.0,10000.0)); demo.ui.sync(&mut demo.scene);
+    assert!(demo.ui.scroll_offset(scroll).unwrap().1>0.0);
+    assert_eq!(bounds(&demo,demo.ids.btn_edit_cell),footer,"Image/content scrolling must not move the action footer");
+    demo.state.tab=MainTab::Pragmas; demo.do_rebuild();
+    assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));
+    assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_discard),Some(false));
+}

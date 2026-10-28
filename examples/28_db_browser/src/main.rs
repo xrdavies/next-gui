@@ -332,6 +332,7 @@ struct BuiltUiIds {
     dock_tabs: WidgetId,
     edit_col: WidgetId,
     edit_value: WidgetId,
+    edit_meta: WidgetId,
     edit_type: WidgetId,
     btn_edit_discard: WidgetId,
     btn_cell_import: WidgetId,
@@ -577,6 +578,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             dock_tabs: b.dock_tabs,
             edit_col: b.edit_col,
             edit_value: b.edit_value,
+            edit_meta: b.edit_meta,
             edit_type: b.edit_type,
             btn_edit_discard: b.btn_edit_discard,
             btn_cell_import: b.btn_cell_import,
@@ -1359,6 +1361,8 @@ impl Demo {
                     state.browse_mut().sel_col = Some(3); state.sync_edit_cell_from_selection();
                     let mode = if tab.contains("evaluation") { crate::state::EditCellMode::Evaluation } else { crate::state::EditCellMode::Xml };
                     state.set_edit_mode(mode).unwrap(); state.dock_ratio = 0.62;
+                    if tab.contains("under") { state.prefs.font_size = 18.0; state.prefs.toolbar_styles = [3; 5]; }
+                    if tab.contains("large") { state.prefs.font_size = 28.0; state.prefs.toolbar_styles = [1; 5]; }
                     if mode == crate::state::EditCellMode::Evaluation { state.edit_value = "upper('中文a') || ' • ' || (SELECT count(*) FROM quarterly_revenue)".into(); }
                 }
                 if tab.starts_with("cell-structure") { state.tab = MainTab::Structure; }
@@ -1445,6 +1449,7 @@ impl Demo {
         if state.dock_edit {
             if let Err(error) = state.sync_edit_cell_for_page() { state.error_msg = Some(error); }
         }
+        let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-session")) {
             built.ui.set_focus(Some(built.edit_value)); built.ui.select_text_area_range(built.edit_value, 2..6);
@@ -1456,6 +1461,8 @@ impl Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
             if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
                 built.ui.set_focus(Some(built.edit_mode)); built.ui.key_input(UiKey::Space);
+            } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("chart") {
+                built.ui.set_focus(Some(built.chart));
             } else { built.ui.set_focus(Some(built.edit_value)); }
             built.ui.sync(&mut built.scene);
         }
@@ -5542,6 +5549,7 @@ impl AppCallbacks for Demo {
             self.needs_paint = true;
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("plot-hover")) {
+            self.ui.set_focus(Some(self.ids.chart)); self.ui.sync(&mut self.scene);
             if let Some(bounds) = self.scene.iter_paint_order().into_iter()
                 .find(|node| self.ui.widget_from_node(node.id) == Some(self.ids.chart)).map(|node| node.bounds) {
                 self.ui.set_focus(Some(self.ids.chart));
