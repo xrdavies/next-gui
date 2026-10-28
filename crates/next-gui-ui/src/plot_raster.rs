@@ -98,11 +98,13 @@ pub fn render_plot(
         view.x,
         &data.x_format,
         (area.width / 105.0).max(2.0) as usize,
+        data.fixed_number_format,
     );
     let yticks = ticks(
         view.y1,
         &PlotAxisFormat::Numeric,
         (area.height / 52.0).max(3.0) as usize,
+        data.fixed_number_format,
     );
     for &(value, ref label) in &xticks {
         let x = f64::from(area.x) + unit(value, view.x) * f64::from(area.width);
@@ -142,6 +144,7 @@ pub fn render_plot(
             view.y2,
             &PlotAxisFormat::Numeric,
             (area.height / 52.0).max(3.0) as usize,
+            data.fixed_number_format,
         ) {
             let y = f64::from(area.y + area.height) - unit(value, view.y2) * f64::from(area.height);
             canvas.text(
@@ -385,7 +388,7 @@ fn line_samples(points: &[crate::PlotPoint], range: (f64, f64), width: f32) -> V
     output
 }
 
-fn ticks((lo, hi): (f64, f64), format: &PlotAxisFormat, count: usize) -> Vec<(f64, String)> {
+fn ticks((lo, hi): (f64, f64), format: &PlotAxisFormat, count: usize, fixed: bool) -> Vec<(f64, String)> {
     let count = count.clamp(2, 12);
     let raw = (hi / 2.0 - lo / 2.0) / count as f64 * 2.0;
     let power = 10.0f64.powf(raw.log10().floor());
@@ -424,7 +427,7 @@ fn ticks((lo, hi): (f64, f64), format: &PlotAxisFormat, count: usize) -> Vec<(f6
                 continue;
             }
             let label = if matches!(format, PlotAxisFormat::Numeric) {
-                tick_number(value, step)
+                if fixed { fixed_number(value, (lo,hi)) } else { tick_number(value, step) }
             } else {
                 format.label(value)
             };
@@ -437,13 +440,20 @@ fn ticks((lo, hi): (f64, f64), format: &PlotAxisFormat, count: usize) -> Vec<(f6
         for i in 0..=count {
             let t = i as f64 / count as f64;
             let value = lo * (1.0 - t) + hi * t;
-            let label = format!("{value:.15e}");
+            let label = if fixed { fixed_number(value,(lo,hi)) } else { format!("{value:.15e}") };
             if output.last().is_none_or(|(_, old)| old != &label) {
                 output.push((value, label));
             }
         }
     }
     output
+}
+
+fn fixed_number(value:f64,(lo,hi):(f64,f64)) -> String {
+    let integer=lo/2.0+hi/2.0>999.0 && hi-lo>10.0;
+    let precision=if integer {0} else {2};
+    let value=if value.abs()<if integer {0.5} else {0.005} {0.0} else {value};
+    format!("{value:.precision$}")
 }
 
 fn tick_number(value: f64, step: f64) -> String {
@@ -696,6 +706,47 @@ fn clip_line(a: (f64, f64), b: (f64, f64), clip: Rect) -> Option<((f64, f64), (f
 mod tests {
     use super::*;
     #[test]
+    fn fixed_ticks_follow_visible_range_precision_without_changing_dates_or_categories() {
+        assert_eq!(fixed_number(1234.56,(1000.0,2000.0)),"1235");
+        assert_eq!(fixed_number(1234.56,(1234.0,1235.0)),"1234.56");
+        assert_eq!(fixed_number(-1234.56,(-2000.0,-1000.0)),"-1234.56");
+        assert_eq!(fixed_number(-0.001,(-1.0,1.0)),"0.00");
+        assert_eq!(fixed_number(1.0,(0.0,2.0)),"1.00");
+        let large=fixed_number(1e100,(1e99,2e100));assert!(!large.contains('e') && large.len()>90);
+        for range in [(1.0,1.000000000001),(-f64::MAX,f64::MAX),(-1e-310,1e-310)] {
+            let labels=ticks(range,&PlotAxisFormat::Numeric,6,true);
+            assert!(!labels.is_empty() && labels.iter().all(|(v,_)|v.is_finite()));
+            assert!(labels.windows(2).all(|pair|pair[0].1!=pair[1].1));
+        }
+        for format in [PlotAxisFormat::Date,PlotAxisFormat::Time,PlotAxisFormat::Labels(vec!["a".into(),"b".into()].into())] {
+            assert_eq!(ticks((0.0,86400.0),&format,6,true),ticks((0.0,86400.0),&format,6,false));
+        }
+    }
+
+    #[test]
+    fn fixed_format_changes_all_three_axis_labels_and_preserves_the_plot_pixels() {
+        let font=next_gui_text::load_default_cjk_font().unwrap();
+        let mut data=PlotData {show_legend:false,series:[false,true].into_iter().map(|right_axis|crate::PlotSeries {
+            name:"Y".into(),color:Color::rgb(200,40,30),right_axis,
+            points:vec![crate::PlotPoint{x:0.0,y:0.1,row:0},crate::PlotPoint{x:1.0,y:0.9,row:1}].into(),line:PlotLine::Line,marker:PlotMarker::None,
+        }).collect(),..PlotData::default()};
+        data.state.view=Some(PlotView{x:(0.0,2.0),y1:(0.0,2.0),y2:(0.0,2.0)});
+        let normal=render_plot(&font,&data,PlotStyle::default(),600,320).unwrap();
+        data.fixed_number_format=true;
+        let fixed=render_plot(&font,&data,PlotStyle::default(),600,320).unwrap();
+        let area=plot_area(600.0,320.0,&data);
+        let mut changes=[0;3];
+        for y in 0..320 {for x in 0..600 {
+            let i=(y*600+x)*4;
+            if normal.pixels()[i..i+4]!=fixed.pixels()[i..i+4] {
+                assert!(!area.contains(x as f32,y as f32),"Formatting must not change curves or grid");
+                if x<area.x as usize {changes[0]+=1;}else if x>=(area.x+area.width) as usize {changes[1]+=1;}else if y>=(area.y+area.height) as usize {changes[2]+=1;}
+            }
+        }}
+        assert!(changes.iter().all(|count|*count>10),"All numeric axes must use fixed labels: {changes:?}");
+    }
+
+    #[test]
     fn ticks_remain_distinct_after_deep_zoom_and_extreme_ranges() {
         assert_eq!(tick_number(2.5, 2.5), "2.5");
         assert_eq!(tick_number(12.5, 2.5), "12.5");
@@ -707,7 +758,7 @@ mod tests {
             (-1e-310, 1e-310),
             (100.0, 120.0),
         ] {
-            let labels = ticks(range, &PlotAxisFormat::Numeric, 6);
+            let labels = ticks(range, &PlotAxisFormat::Numeric, 6, false);
             assert!(!labels.is_empty(), "{range:?}");
             assert!(labels
                 .iter()
@@ -832,7 +883,7 @@ mod tests {
         let format =
             PlotAxisFormat::Labels(vec!["East".into(), "West".into(), "East".into()].into());
         assert_eq!(
-            ticks((-0.5, 2.5), &format, 6)
+            ticks((-0.5, 2.5), &format, 6, false)
                 .iter()
                 .map(|(_, s)| s.as_str())
                 .collect::<Vec<_>>(),

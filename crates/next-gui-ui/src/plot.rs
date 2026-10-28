@@ -315,12 +315,14 @@ pub struct PlotData {
     pub state: PlotState,
     /// Reserve space for series labels above the axes (enabled by default).
     pub show_legend: bool,
+    /// Use fixed decimal numeric ticks, with precision derived from the visible range.
+    pub fixed_number_format: bool,
 }
 
 impl Default for PlotData {
     fn default() -> Self {
         Self { x_label: String::new(), y1_label: String::new(), y2_label: String::new(),
-            x_format: PlotAxisFormat::default(), series: Vec::new(), state: PlotState::default(), show_legend: true }
+            x_format: PlotAxisFormat::default(), series: Vec::new(), state: PlotState::default(), show_legend: true, fixed_number_format: false }
     }
 }
 
