@@ -152,7 +152,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Edit Database Cell | partial | Shared multiline TextArea, explicit storage type/NULL, validated Hex and PNG/JPEG view; full binary/XML/RTL/evaluation and generic import/export remain. |
 | DB Schema | partial | Flat main/temp/attached object list; no column tree, filter or SQL insertion. |
 | SQL Log | partial | SQLite statement/trigger tracing with expanded ordinary values; User/Application/Error/All, full read-only text, copy, scoped clear/export and visible eviction counts (200/category). Global SQLite diagnostics and native acceptance remain. |
-| Plot | partial | Numeric table/view samples now use a Cartesian Chart with real numeric ticks, retained zoom/pan, point/range highlighting and keyboard fit/axis controls. Shared rendering supports dual Y axes, ISO date/time/category ticks, six line styles, fifteen markers, bars and bounded RGBA export; straight-line sampling preserves per-pixel extrema and gaps. The current example adapter reads the first 500 source rows as f64 with original row ordinals. Namespace/project identity and failed-query clearing remain. Original current Browse/SQL model binding, X/Y1/Y2 column controls, table-selection linkage, Load All and file-export entry points are still pending. |
+| Plot | partial | Current typed Browse/SQL sources, named X/Y1/Y2 matrix, independent series styles/colors, legend, selection, retained navigation and canonical native project settings. Cancellable Load All uses the live Browse connection or immutable SQL snapshot without replay/commit; cached full curves survive matching page changes and out-of-page Browse point reveal. Shared Cartesian rendering supports date/time/category/dual-Y, fifteen markers and bounded raster output. SQL grid linkage beyond the preview, grouped/stacked bars, hover/fixed formats, file export/clipboard/print, exact conversion/custom styles and original interface/native/platform acceptance remain. |
 | Remote | partial | Local path list; cloud protocol/auth/sync not implemented |
 
 ## Dialogs
@@ -281,7 +281,7 @@ with backwards-compatible defaults.
 - `.sqbpro` now uses the DB4S 3.13.1 XML structure. Legacy JSON remains readable.
   Core paths/tabs/file references, access mode, five connection PRAGMAs, attached
   files, main/attached browse identity and per-database widths/multi-column sort are supported. Unknown XML is retained.
-  Qt dock state and advanced browse filters/formats/plots are reported as retained but unapplied. Temporary table contents remain connection-only; missing temp browse targets reopen empty with a notice. Extra local state lives in a
+  Canonical native Browse Plot axes/colors/active/per-series styles are applied and saved. Qt dock state and advanced browse filters/formats are retained but unapplied. Temporary table contents remain connection-only; missing temp browse targets reopen empty with a notice. Extra local state lives in a
   next_gui extension ignored by DB4S. This remains partial interoperability.
 - New XML parsing uses the already installed quick-xml version. XML is UTF-8 with
   16 MiB / 64-level bounds; DTD/external entities and malformed identifiers are
@@ -763,3 +763,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Native Plot settings checkpoint (2026-10-29)
 
 [Review](../../docs/reviews/R-20261029-9ac4fdb9cb96.md): canonical original plot_x_axis/plot_y_axes now read/write named X/Y1/Y2, colors, active states and per-series line/shape settings, including attached and unopened tables, while retaining unknown metadata. Selected-series controls, polling/rebuild safety, source isolation and categorical bars are verified.670 tests/strict checks, eight actual Soft/Metal comparisons and six native static captures pass. Preview500, Load All, out-of-page linkage, exports/clipboard/print, original visual/native/platform/full-product acceptance remain unfinished; stable F02 stays in_progress. Legacy ssDot is approximated, custom styles/noncanonical QColor and translated Row # need further compatibility work.
+
+
+## Complete Plot loading checkpoint (2026-10-29)
+
+[Review](../../docs/reviews/R-20261029-0135ff155bff.md): cancellable connection-owned Browse/full immutable SQL snapshots now load all rows without replaying RETURNING or committing pending edits. Typed page verification/all-schema data versions guard stale data; matching Browse pages retain full curves/navigation and out-of-page point selection reveals a page. Cached style rebuild/cancel rollback, million-row backend diagnostic,677 tests/strict checks, eight Metal comparisons and six native static windows verified. SQL grid/out-of-preview SQL links, range reveal beyond one page, export/clipboard/print, original style/conversion/interface/native/platform/full-product acceptance remain; F02 stays in_progress.
