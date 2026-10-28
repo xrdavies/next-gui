@@ -1,0 +1,13 @@
+# Plot menu and fixed-format evidence
+
+Reviewed target333f5ae66ebbb8eb36fb246fec7bd5bf2e9739fa; shared menu112e1d0ab963e8a02b018228b9dbf12109ff2da8 and axes b6b07c5147eb9e0156e57d6a47117b07ee14badc. macOS27.0.1 arm64/Rust1.86.0/default13px font.
+
+Final workspace driver60346:691 tests/43 groups, zero failed/ignored, workspace build and macOS+Windows feature checks passed. Initial strict Clippy failed on two assignment-spacing warnings; only whitespace changed, then full workspace/all-targets -D warnings rerun70122 exited0. Logs are /tmp/next-gui-plot-menu-v2-{workspace,clippy,build,macos,windows}-final.log and /tmp/next-gui-plot-menu-v2-clippy-fixed-final.log. All reported process exits were awaited.
+
+Render16492 exited0:8 Soft plus8 actual Metal frames, both themes ×1400/800px ×fixed/visible-menu states. P6 payload lengths validated after writer completion before sips conversion. Eight chart-interior and four popup-interior comparisons all max channel delta1. Both renderer contacts inspected; full frames remain in /tmp/next-gui-plot-menu-v2-converted/.
+
+Native dark: observed owned PID81410/CGWindowID5668. Native light narrow: PID81601/window5677. Sequential interactive sessions74239 and82523 completed0 after owned app SIGINT exits -2 were awaited. The existing owned plot-image-clipboard fixtures prepare chart focus and sample data; targeted private-source CGEvents sent only to the observed e28 process. Shift+F10 opens the real menu; Home+four Down+Enter toggles fixed format; reopening displays the house check icon. Home+Enter invokes actual Copy, independently read/decoded by AppKit:601×326 dark and344×123 narrow. Only the existing owned smoke marker was accepted on the pasteboard before the action, and that marker was restored in defer. Helper exits18888/33366/32549 and14338/6724/22612 all0. The previous frontmost PID608 was not changed. These verify process-targeted native keyboard acceptance with prepared chart focus, not normal human frontmost activation, right-pointer, picker, IME or OS drag resizing.
+
+Office53964 exited0:14 sequential owned native windows captured and inspected via two contacts; each owned app SIGINT exit -2 awaited. Native GPU requested; these are static chrome regression captures, not all-backend input acceptance.
+
+Native checked menus and after-Copy status images, both renderer contacts and both Office contacts were visually inspected. An earlier uncommitted menu prototype rendered a literal check glyph as tofu; the shared MenuItem checked API now uses the house Check alpha mask and the existing View menu also uses it. No new dependency or OS/security setting change.
