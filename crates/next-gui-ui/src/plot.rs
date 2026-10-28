@@ -661,6 +661,39 @@ impl Ui {
         crate::render_plot(&self.font, data, *style, width, height)
     }
 
+    pub(super) fn plot_coordinate_text(&self, id: WidgetId, x: f32, y: f32) -> Option<String> {
+        if !x.is_finite() || !y.is_finite() { return None; }
+        let (tile, body) = self.plot_hit(id, x, y)?;
+        let Kind::Chart { plot_images, .. } = &self.widgets.get(&id)?.kind else { return None; };
+        let frame = plot_images.get(tile)?.as_ref()?;
+        let data = self.chart_plot(id, tile)?;
+        let area = crate::plot_raster::plot_area(frame.image.width() as f32, frame.image.height() as f32, data);
+        let px = (x - body.x) * frame.image.width() as f32 / body.width;
+        let py = (y - body.y) * frame.image.height() as f32 / body.height;
+        if !area.contains(px, py) { return None; }
+        let at = |(lo, hi): (f64, f64), t: f64| {
+            let span = hi - lo;
+            let value = if span.is_finite() { lo + span * t } else { lo * (1.0 - t) + hi * t };
+            value.clamp(lo, hi)
+        };
+        let tx = f64::from((px - area.x) / area.width);
+        let ty = 1.0 - f64::from((py - area.y) / area.height);
+        let mut lines = Vec::new();
+        if !matches!(data.x_format, PlotAxisFormat::Labels(_)) {
+            let x = data.x_format.label(at(frame.view.x, tx));
+            if !x.is_empty() {
+                lines.push(format!("{}: {x}", if data.x_label.is_empty() { "X" } else { &data.x_label }));
+            }
+        }
+        let y = PlotAxisFormat::Numeric.label(at(frame.view.y1, ty));
+        lines.push(format!("{}: {y}", if data.y1_label.is_empty() { "Y1" } else { &data.y1_label }));
+        if data.series.iter().any(|series| series.right_axis) {
+            let y = PlotAxisFormat::Numeric.label(at(frame.view.y2, ty));
+            lines.push(format!("{}: {y}", if data.y2_label.is_empty() { "Y2" } else { &data.y2_label }));
+        }
+        Some(lines.join("\n"))
+    }
+
     fn plot_hit(&self, id: WidgetId, x: f32, y: f32) -> Option<(usize, Rect)> {
         let Kind::Chart {
             tiles, plot_bounds, ..
@@ -863,6 +896,132 @@ fn limits(values: impl Iterator<Item = f64>) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn coordinate_position(ui: &Ui, id: WidgetId, tile: usize, tx: f32, ty: f32) -> (f32, f32) {
+        let Kind::Chart { plot_bounds, plot_images, .. } = &ui.widgets[&id].kind else { panic!() };
+        let body = plot_bounds[tile];
+        let image = &plot_images[tile].as_ref().unwrap().image;
+        let area = crate::plot_raster::plot_area(image.width() as f32, image.height() as f32, ui.chart_plot(id, tile).unwrap());
+        (body.x + (area.x + area.width * tx) * body.width / image.width() as f32,
+         body.y + (area.y + area.height * (1.0 - ty)) * body.height / image.height() as f32)
+    }
+
+    #[test]
+    fn coordinate_hover_uses_cached_pixels_survives_navigation_and_does_not_steal_hits() {
+        use crate::{ChartStyle, ChartTile, ColumnStyle, PlotStyle, Theme};
+        use next_gui_scene::Scene;
+        let points: Arc<[PlotPoint]> = vec![PlotPoint { x: 0.0, y: 0.0, row: 3 }].into();
+        for theme in [Theme::dark(), Theme::light()] {
+            let mut data = PlotData { show_legend: false, series: vec![PlotSeries {
+                name: "Right".into(), color: Color::rgb(30, 100, 200), right_axis: true,
+                points: points.clone(), line: PlotLine::Line, marker: PlotMarker::None,
+            }], ..PlotData::default() };
+            data.state.view = Some(PlotView { x: (0.0, 40.0), y1: (-100.0, 100.0), y2: (0.0, 1000.0) });
+            let mut ui = Ui::new(); ui.set_theme(theme); let mut scene = Scene::new();
+            ui.set_viewport(480.0, 320.0);
+            let mut id = WidgetId(0);
+            ui.column(ColumnStyle { width: 480.0, ..ColumnStyle::default() }, |c| {
+                id = c.chart(vec![ChartTile::plot("Hover", data.clone(), PlotStyle::default())],
+                    ChartStyle { width: 479.4, height: 319.7, columns: 1, show_plot_coordinates: true, ..ChartStyle::default() });
+            });
+            ui.sync(&mut scene);
+            let tip = ui.find_tooltip_ancestor(id).unwrap();
+            let caption = scene.get(ui.widgets[&id].aux[0]).unwrap().bounds;
+            ui.pointer_hover(&scene, caption.x + 1.0, caption.y + 1.0); ui.sync(&mut scene);
+            let label = scene.get(ui.widgets[&tip].aux[1]).unwrap();
+            let expected = ui.font.rasterize_text("Hover", ui.tooltip_style().size, None).1;
+            assert_eq!(label.mask.as_ref().unwrap().pixels, expected.pixels);
+            let cached = match &ui.widgets[&id].kind {
+                Kind::Chart { plot_images, .. } => plot_images[0].as_ref().unwrap().image.clone(), _ => panic!(),
+            };
+            let (x, y) = coordinate_position(&ui, id, 0, 0.25, 0.75);
+            let text = ui.plot_coordinate_text(id, x, y).unwrap();
+            for (line, expected) in text.lines().zip([10.0, 50.0, 750.0]) {
+                assert!((line.split_once(": ").unwrap().1.parse::<f64>().unwrap() - expected).abs() < 0.001, "{text}");
+            }
+            assert_eq!(text.lines().count(), 3);
+            for tx in [0.25, 0.5, 0.75, 0.999] {
+                let (x, y) = coordinate_position(&ui, id, 0, tx, 0.01);
+                assert!(ui.pointer_hover(&scene, x, y)); ui.sync(&mut scene);
+                let panel = scene.get(ui.widgets[&tip].aux[0]).unwrap();
+                assert!(panel.visible);
+                assert!(panel.bounds.x >= 0.0 && panel.bounds.y >= 0.0 && panel.bounds.x + panel.bounds.width <= 480.0 && panel.bounds.y + panel.bounds.height <= 320.0);
+                let px = panel.bounds.x + panel.bounds.width * 0.5;
+                let py = panel.bounds.y + panel.bounds.height * 0.5;
+                assert_eq!(ui.hit_widget(&scene, px, py), Some(id), "A passive overlay must not intercept the underlying Chart");
+                assert_eq!(ui.hit_widget(&scene, x, y), Some(id));
+                let Kind::Chart { plot_images, .. } = &ui.widgets[&id].kind else { panic!() };
+                assert!(Arc::ptr_eq(cached.pixels(), plot_images[0].as_ref().unwrap().image.pixels()));
+            }
+            ui.set_focus(Some(id)); ui.key_input(UiKey::Char('+')); ui.sync(&mut scene);
+            let (x, y) = coordinate_position(&ui, id, 0, 0.25, 0.75);
+            assert_ne!(ui.plot_coordinate_text(id, x, y).unwrap(), text);
+            ui.pointer_pressed(&mut scene, x, y); ui.pointer_moved(x + 10.0, y - 5.0); ui.sync(&mut scene);
+            assert_eq!(ui.last_pointer, Some((x + 10.0, y - 5.0)));
+            assert!(scene.get(ui.widgets[&tip].aux[0]).unwrap().visible);
+            ui.pointer_released();
+            assert!(Arc::ptr_eq(&points, &ui.chart_plot(id, 0).unwrap().series[0].points));
+            let menu = ui.context_menu_popup(ui.context_menu_style());
+            ui.open_context_menu(menu, vec![crate::MenuItem::new(1, "Action")], x, y); ui.sync(&mut scene);
+            assert!(!scene.get(ui.widgets[&tip].aux[0]).unwrap().visible);
+            ui.key_input(UiKey::Escape); assert!(ui.pointer_left()); ui.sync(&mut scene);
+            assert_eq!(ui.last_pointer, None);
+            assert!(!scene.get(ui.widgets[&tip].aux[0]).unwrap().visible);
+            assert!(ui.plot_coordinate_text(id, f32::NAN, y).is_none());
+            assert!(ui.plot_coordinate_text(id, 0.0, 0.0).is_none());
+            assert!(ui.plot_coordinate_text(WidgetId(0), x, y).is_none());
+            ui.set_chart_tiles(id, vec![ChartTile::gauge("Gauge", 50.0, 0.0, 100.0, "%", "", crate::GaugeStyle::default())]);
+            ui.pointer_moved(x, y); ui.sync(&mut scene);
+            assert!(ui.plot_coordinate_text(id, x, y).is_none());
+            assert!(!scene.get(ui.widgets[&tip].aux[0]).unwrap().visible);
+        }
+    }
+
+    #[test]
+    fn coordinate_hover_formats_dates_categories_and_extreme_ranges_after_model_changes() {
+        use crate::{ChartStyle, ChartTile, ColumnStyle, PlotStyle};
+        use next_gui_scene::Scene;
+        let mut ui = Ui::new(); let mut scene = Scene::new(); let mut id = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            id = c.chart(vec![ChartTile::plot("Left", PlotData::default(), PlotStyle::default()),
+                ChartTile::plot("Right", PlotData::default(), PlotStyle::default())],
+                ChartStyle { columns: 2, show_plot_coordinates: true, ..ChartStyle::default() });
+        });
+        for (format, range, expected) in [
+            (PlotAxisFormat::Date, (86400.0, 172800.0), Some("X: 1970-01-02")),
+            (PlotAxisFormat::Time, (45266.0, 45326.0), Some("X: 12:34:56")),
+            (PlotAxisFormat::DateTime, (86400.0, 172800.0), Some("X: 1970-01-02 12:00:00")),
+            (PlotAxisFormat::Labels(vec!["A".into(), "B".into()].into()), (0.0, 1.0), None),
+            (PlotAxisFormat::Numeric, (-f64::MAX, f64::MAX), Some("X: 0")),
+        ] {
+            let data = ui.chart_plot_mut(id, 1).unwrap(); data.x_format = format;
+            data.y1_label = "Amount".into();
+            data.state.view = Some(PlotView { x: range, y1: (-f64::MAX, f64::MAX), y2: (0.0, 1.0) });
+            ui.sync(&mut scene);
+            let (x, y) = coordinate_position(&ui, id, 1, 0.5, 0.5);
+            let text = ui.plot_coordinate_text(id, x, y).unwrap();
+            if let Some(expected) = expected { assert!(text.starts_with(expected), "{text}"); }
+            else { assert!(!text.contains("X:")); }
+            assert!(text.ends_with("Amount: 0"), "{text}"); assert!(!text.contains("Y2:"));
+            assert_eq!(ui.plot_hit(id, x, y).unwrap().0, 1);
+        }
+        ui.chart_plot_mut(id, 1).unwrap().y1_label = "Long column 顧客 ".repeat(40);
+        if let Kind::Chart { style, .. } = &mut ui.widgets.get_mut(&id).unwrap().kind {
+            style.width = 319.4; style.height = 159.7;
+        }
+        ui.set_viewport(320.0, 160.0); ui.sync(&mut scene);
+        let (x, y) = coordinate_position(&ui, id, 1, 0.5, 0.5);
+        ui.pointer_moved(x, y); ui.sync(&mut scene);
+        let tip = ui.find_tooltip_ancestor(id).unwrap();
+        let aux = &ui.widgets[&tip].aux;
+        let panel = scene.get(aux[0]).unwrap();
+        assert!(panel.visible);
+        assert!(panel.bounds.x >= 0.0 && panel.bounds.y >= 0.0 && panel.bounds.x + panel.bounds.width <= 320.0 && panel.bounds.y + panel.bounds.height <= 160.0);
+        let label = scene.get(aux[1]).unwrap();
+        assert!(label.bounds.height > panel.bounds.height);
+        let clip = label.clip.unwrap();
+        assert!(clip.x >= 0.0 && clip.y >= 0.0 && clip.x + clip.width <= 320.0 && clip.y + clip.height <= 160.0);
+    }
+
     fn bar_series(points:&[(f64,f64,usize)],right_axis:bool,color:Color) -> PlotSeries {
         PlotSeries {name:"Bars".into(),color,right_axis,points:points.iter().map(|&(x,y,row)|PlotPoint{x,y,row}).collect::<Vec<_>>().into(),line:PlotLine::Bars,marker:PlotMarker::None}
     }
@@ -1013,8 +1172,8 @@ mod tests {
             unreachable!()
         };
         assert!(Arc::ptr_eq(
-            cached.pixels(),
-            plot_images[0].as_ref().unwrap().pixels()
+            cached.image.pixels(),
+            plot_images[0].as_ref().unwrap().image.pixels()
         ));
         assert!(ui.accessible_name(id).unwrap().contains("X: time"));
         let Kind::Chart { plot_bounds, .. } = &ui.widgets[&id].kind else {
@@ -1036,8 +1195,8 @@ mod tests {
             unreachable!()
         };
         assert!(!Arc::ptr_eq(
-            cached.pixels(),
-            plot_images[0].as_ref().unwrap().pixels()
+            cached.image.pixels(),
+            plot_images[0].as_ref().unwrap().image.pixels()
         ));
         assert!(ui.chart_plot(id, 0).unwrap().state.selected_rows.is_empty());
         ui.cancel_pointer_capture();

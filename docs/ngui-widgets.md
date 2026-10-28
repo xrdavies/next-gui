@@ -148,3 +148,15 @@ chosen title. Rust builders use `TabsStyle::scrollable`; rebuilds can retain
 manual strip scrolling with `Ui::tabs_state` / `Ui::restore_tabs_state`.
 `strip_at_bottom: true` (Rust: `TabsStyle::strip_at_bottom`) places the same strip
 below the page, including overflow arrows and keyboard selection; its default is `false`.
+
+
+Rust `ChartStyle::show_plot_coordinates` (DSL `Chart { show_plot_coordinates: true }`)
+opts into a passive pointer-following tooltip for Cartesian plot surfaces. It uses
+the exact cached image viewport, shows named X/Y1 and optional Y2 values, formats
+ISO date/time X values and omits categorical X like DB4S. Hovering a caption shows
+its full title; axis gutters have no coordinates. Hover reuses image/axis caches; model edits and navigation
+refresh them on sync. Tooltips wrap and stay within the viewport, hide for open
+menus and pass hits to underlying widgets. Hosts should forward movement through
+`pointer_hover` / `pointer_moved` and window leave through `Ui::pointer_left`, then
+sync. The option defaults to false in both themes; exhaustive Rust `ChartStyle`
+literals must add the field (or use `..Default::default()`).

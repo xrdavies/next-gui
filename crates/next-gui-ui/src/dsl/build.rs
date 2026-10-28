@@ -1109,7 +1109,10 @@ fn build_widget(
         "Chart" => {
             let tiles = parse_chart_tiles(builder.theme(), take_prop(&w.props, "tiles").or(w.args.first()))
                 .map_err(|m| err_at(w.line, w.column, m))?;
-            let id = builder.chart(tiles, ChartStyle::from_theme(builder.theme()));
+            let mut style = ChartStyle::from_theme(builder.theme());
+            style.show_plot_coordinates = prop_bool(&w.props, "show_plot_coordinates")
+                .map_err(|m| err_at(w.line,w.column,m))?.unwrap_or(false);
+            let id = builder.chart(tiles, style);
             register(names, &w.name, id);
         }
         "TextArea" => {

@@ -1903,6 +1903,7 @@ enum Kind {
     },
     Tooltip {
         text: String,
+        plot_owner: Option<WidgetId>,
         style: TooltipStyle,
         children: Vec<WidgetId>,
     },
@@ -1976,7 +1977,7 @@ enum Kind {
         tiles: Vec<ChartTile>,
         style: ChartStyle,
         plot_bounds: Vec<Rect>,
-        plot_images: Vec<Option<RgbaImage>>,
+        plot_images: Vec<Option<plot_raster::PlotFrame>>,
     },
     Drawer {
         title: String,
@@ -3241,8 +3242,10 @@ impl Ui {
 
     /// Hit-test widgets using the scene graph.
     pub fn hit_widget(&self, scene: &Scene, x: f32, y: f32) -> Option<WidgetId> {
-        let ignored = self.text_area_hint.as_ref().and_then(|h| self.widgets.get(&h.popup)).map_or(&[][..], |w| w.aux.as_slice());
-        let node = scene.hit_test_excluding(x, y, ignored)?;
+        let ignored: Vec<_> = [self.text_area_hint.as_ref().map(|h| h.popup), self.tooltip_hover]
+            .into_iter().flatten().filter_map(|id| self.widgets.get(&id))
+            .flat_map(|widget| widget.aux.iter().copied()).collect();
+        let node = scene.hit_test_excluding(x, y, &ignored)?;
         if let Some(wid) = self.widget_from_node(node) {
             return Some(wid);
         }
@@ -3582,8 +3585,10 @@ impl Ui {
 
     /// Continue an active drag, or update Tooltip hover when idle.
     pub fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
+        self.last_pointer = Some((x, y));
         let Some(drag) = self.drag.clone() else {
-            return self.update_tooltip_hover_xy(x, y);
+            // Redraw when any Tooltip exists so sync can resolve hover with scene.
+            return self.widgets.values().any(|w| matches!(w.kind, Kind::Tooltip { .. }));
         };
         match drag {
             DragState::Plot {..} => self.move_plot(x, y),
@@ -9342,14 +9347,6 @@ impl Ui {
         self.set_slider_value(id, value)
     }
 
-    fn update_tooltip_hover_xy(&mut self, x: f32, y: f32) -> bool {
-        self.last_pointer = Some((x, y));
-        // Redraw when any Tooltip exists so sync can resolve hover with scene.
-        self.widgets
-            .values()
-            .any(|w| matches!(w.kind, Kind::Tooltip { .. }))
-    }
-
     fn find_tooltip_ancestor(&self, id: WidgetId) -> Option<WidgetId> {
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -9386,8 +9383,16 @@ impl Ui {
         None
     }
 
+    /// Clear passive tooltip hover when the pointer leaves the window; sync afterwards.
+    pub fn pointer_left(&mut self) -> bool {
+        self.last_pointer = None;
+        self.tooltip_hover.take().is_some()
+    }
+
     /// Update tooltip and menu hover using scene hit-test.
     pub fn pointer_hover(&mut self, scene: &Scene, x: f32, y: f32) -> bool {
+        let moved = self.last_pointer != Some((x, y));
+        self.last_pointer = Some((x, y));
         let previous_row = self.popup_menu_row;
         let completion_open = self.text_completion_popup().is_some();
         if let Some(Widget { kind, aux, .. }) = self.open_popup.and_then(|id| self.widgets.get(&id))
@@ -9410,7 +9415,9 @@ impl Ui {
         let tip = self
             .hit_widget(scene, x, y)
             .and_then(|id| self.find_tooltip_ancestor(id));
-        let changed = tip != self.tooltip_hover || previous_row != self.popup_menu_row;
+        let coordinates = tip.is_some_and(|id| matches!(self.widgets[&id].kind,
+            Kind::Tooltip { plot_owner: Some(_), .. }));
+        let changed = tip != self.tooltip_hover || previous_row != self.popup_menu_row || (moved && coordinates);
         self.tooltip_hover = tip;
         changed
     }
@@ -16521,9 +16528,22 @@ impl Ui {
         }
         let Some(id) = active else { return; };
         let (text, style, host_bounds) = match self.widgets.get(&id) {
-            Some(Widget { kind: Kind::Tooltip { text, style, .. }, node, .. }) => {
-                let bounds = hint.map(|(_, b)| b).or_else(|| node.and_then(|n| scene.get(n).map(|n| n.bounds))).unwrap_or_else(Rect::empty);
-                (text.clone(), *style, bounds)
+            Some(Widget { kind: Kind::Tooltip { text, style, plot_owner, .. }, node, .. }) => {
+                if let Some(chart) = plot_owner {
+                    let (x,y) = self.last_pointer.unwrap_or((f32::NAN,f32::NAN));
+                    let text = self.plot_coordinate_text(*chart,x,y).or_else(|| {
+                        let Widget { kind: Kind::Chart { tiles, .. }, aux, .. } = self.widgets.get(chart)? else { return None; };
+                        aux.chunks(4).zip(tiles).find_map(|(nodes, tile)| {
+                            scene.get(*nodes.first()?).filter(|node| node.visible && node.bounds.contains(x,y))
+                                .map(|_| tile.title.clone())
+                        })
+                    }).unwrap_or_default();
+                    (text, *style,
+                        Rect::new(x+style.gap*2.0,y+style.gap,1.0,1.0))
+                } else {
+                    let bounds = hint.map(|(_, b)| b).or_else(|| node.and_then(|n| scene.get(n).map(|n| n.bounds))).unwrap_or_else(Rect::empty);
+                    (text.clone(), *style, bounds)
+                }
             }
             _ => return,
         };
@@ -17907,10 +17927,10 @@ impl Ui {
                         scene.set_fill(image_node, Color::rgb(255, 255, 255));
                         scene.set_mask(image_node, None);
                         let (width,height)=(body.width.round().max(1.0) as u32,body.height.round().max(1.0) as u32);
-                        let image=plot_images[i].take().filter(|image|image.width()==width && image.height()==height)
-                            .or_else(||render_plot(&self.font,data,*style,width,height));
-                        scene.set_image(image_node, image.clone());
-                        plot_images[i]=image;
+                        let frame=plot_images[i].take().filter(|frame|frame.image.width()==width && frame.image.height()==height)
+                            .or_else(||plot_raster::render_plot_frame(&self.font,data,*style,width,height));
+                        scene.set_image(image_node, frame.as_ref().map(|frame|frame.image.clone()));
+                        plot_images[i]=frame;
                         scene.set_visible(image_node, true);
                     }
                 }
@@ -18948,6 +18968,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Tooltip {
                     text: text.into(),
+                    plot_owner: None,
                     style,
                     children: Vec::new(),
                 },
@@ -19180,7 +19201,13 @@ impl FlexBuilder<'_> {
                 accessible_name: None,
             },
         );
-        self.push_child(id);
+        let host = if style.show_plot_coordinates {
+            self.ui.alloc_container(Kind::Tooltip {
+                text: String::new(), plot_owner: Some(id),
+                style: self.ui.tooltip_style(), children: vec![id],
+            })
+        } else { id };
+        self.push_child(host);
         id
     }
 

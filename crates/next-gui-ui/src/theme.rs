@@ -1284,6 +1284,7 @@ impl ChartStyle {
             width: 640.0,
             height: 320.0,
             columns: 2,
+            show_plot_coordinates: false,
             gap: scale(10.0, s),
             padding: scale(theme.spacing.padding_md, s),
             bg: c.list_bg,

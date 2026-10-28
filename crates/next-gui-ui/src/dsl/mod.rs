@@ -186,6 +186,18 @@ Column {
     }
 
     #[test]
+    fn chart_coordinate_property_uses_boolean_validation() {
+        for (flag, expected) in [("true", true), ("false", false)] {
+            let loaded = load_ngui(&format!("Column {{ Chart @chart {{ show_plot_coordinates: {flag} }} }}")).unwrap();
+            let id = loaded.widget("chart").unwrap();
+            let crate::Kind::Chart { style, .. } = &loaded.ui.widgets[&id].kind else { panic!() };
+            assert_eq!(style.show_plot_coordinates, expected);
+        }
+        let error = load_ngui("Column { Chart { show_plot_coordinates: \"yes\" } }").unwrap_err();
+        assert!(error.message.contains("show_plot_coordinates: expected bool"));
+    }
+
+    #[test]
     fn load_all_widgets_fixture() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

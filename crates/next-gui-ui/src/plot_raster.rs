@@ -66,6 +66,22 @@ pub fn render_plot(
     width: u32,
     height: u32,
 ) -> Option<RgbaImage> {
+    render_plot_frame(font, data, style, width, height).map(|frame| frame.image)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotFrame {
+    pub image: RgbaImage,
+    pub view: PlotView,
+}
+
+pub(crate) fn render_plot_frame(
+    font: &Font,
+    data: &PlotData,
+    style: PlotStyle,
+    width: u32,
+    height: u32,
+) -> Option<PlotFrame> {
     if width == 0
         || height == 0
         || width > i32::MAX as u32
@@ -323,7 +339,7 @@ pub fn render_plot(
             axis_color(PlotAxis::Y2),
         );
     }
-    RgbaImage::new(width, height, canvas.pixels)
+    RgbaImage::new(width, height, canvas.pixels).map(|image| PlotFrame { image, view })
 }
 
 pub(crate) fn unit(value: f64, (lo, hi): (f64, f64)) -> f64 {

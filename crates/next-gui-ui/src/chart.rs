@@ -101,6 +101,8 @@ pub struct ChartStyle {
     pub height: f32,
     /// Grid column count (≥ 1).
     pub columns: usize,
+    /// Show pointer coordinates over Cartesian plot surfaces.
+    pub show_plot_coordinates: bool,
     /// Gap between tiles.
     pub gap: f32,
     /// Inner padding.
@@ -119,6 +121,7 @@ impl Default for ChartStyle {
             width: 640.0,
             height: 320.0,
             columns: 2,
+            show_plot_coordinates: false,
             gap: 10.0,
             padding: 10.0,
             bg: Color::rgb(0x22, 0x22, 0x28),
