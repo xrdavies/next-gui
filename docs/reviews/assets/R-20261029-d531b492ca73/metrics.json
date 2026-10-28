@@ -1,0 +1,239 @@
+{
+  "workspace": {
+    "passed": 719,
+    "failed": 0,
+    "ignored": 0,
+    "groups": 43
+  },
+  "checks": {
+    "clippy": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-formats-v15-clippy-final.log"
+    },
+    "workspace": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-formats-v15-workspace-final.log"
+    },
+    "build": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-formats-v15-build-final.log"
+    },
+    "macos": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-formats-v15-macos-final.log"
+    },
+    "windows": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-formats-v15-windows-final.log"
+    }
+  },
+  "source_sha256": {
+    "Cargo.lock": "cf9c12f7b437718a6953a5a75e1fbb6d30c92cceed35de86ccdd2a5029bda3db",
+    "examples/28_db_browser/Cargo.toml": "a52a77de0bf780df42d9fd004ccaf729645cfcd74eb845407e134f5dd435b0bc",
+    "examples/28_db_browser/src/cell_format.rs": "3cc29d2b59602c78c50bd551f5c2dcbce54cc73c04b9955eb4f65cf9c11cb5ed",
+    "examples/28_db_browser/src/cell_editor_tests.rs": "993b6b1502769df1d380980f2be93ab3f3a5f43c1126a2f37505fef4833a3b52",
+    "examples/28_db_browser/src/dock_tests.rs": "288bf74a423dd484f889ee77b3385126af5c9614d887f2369ed926c4a633181e",
+    "examples/28_db_browser/src/main.rs": "55bae1d14597787b85717cc3bd6b6ab9a08f20efea12dd50981df9abcc47347d",
+    "examples/28_db_browser/src/sql_result_tests.rs": "af2584b3a60975492e635dfe8ece28c461b7d33fb417253f360c2ccb8987f12b",
+    "examples/28_db_browser/src/state.rs": "ea24381282717ce0e7773447eb5cea8bd5a9fbcd3338fa479b591eef5556adb2",
+    "examples/28_db_browser/src/ui_build.rs": "eee70f356d0f8ce628b65f05c52983c2be2551e9495f365bb08c69f9aa7818e1"
+  },
+  "binary_sha256": "ff2ffda5a06db04ca60db2591b6ecf8555a8fa3b9f835456184b27483cd13ed1",
+  "soft_metal": {
+    "window-cell-evaluation-applied-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-evaluation-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-evaluation-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-evaluation-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-evaluation-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-menu-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-menu-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-xml-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-xml-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-xml-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-mode-xml-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "native": {
+    "dark-cell-mode-xml": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/dark-cell-mode-xml.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 1400x860 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":892,\"Width\":1400,\"X\":260,\"Y\":48},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6348,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "light-cell-mode-xml": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/light-cell-mode-xml.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 1400x860 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":892,\"Width\":1400,\"X\":260,\"Y\":48},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6351,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "dark-cell-mode-xml-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/dark-cell-mode-xml-narrow.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 800x600 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":632,\"Width\":800,\"X\":560,\"Y\":113},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6354,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "light-cell-mode-xml-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/light-cell-mode-xml-narrow.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 800x600 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":632,\"Width\":800,\"X\":560,\"Y\":113},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6357,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "dark-cell-mode-evaluation": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/dark-cell-mode-evaluation.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 1400x860 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":892,\"Width\":1400,\"X\":260,\"Y\":48},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6360,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "light-cell-mode-evaluation": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/light-cell-mode-evaluation.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 1400x860 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":892,\"Width\":1400,\"X\":260,\"Y\":48},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6363,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "dark-cell-mode-evaluation-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/dark-cell-mode-evaluation-narrow.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 800x600 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":632,\"Width\":800,\"X\":560,\"Y\":113},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6364,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "light-cell-mode-evaluation-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/light-cell-mode-evaluation-narrow.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 800x600 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":632,\"Width\":800,\"X\":560,\"Y\":113},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6367,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "dark-cell-mode-menu": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/dark-cell-mode-menu.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 1400x860 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":892,\"Width\":1400,\"X\":260,\"Y\":48},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6368,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "light-cell-mode-menu": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/light-cell-mode-menu.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 1400x860 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":892,\"Width\":1400,\"X\":260,\"Y\":48},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6371,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "dark-cell-mode-menu-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/dark-cell-mode-menu-narrow.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 800x600 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":632,\"Width\":800,\"X\":560,\"Y\":113},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6374,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    },
+    "light-cell-mode-menu-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-formats-v15-native/light-cell-mode-menu-narrow.driver.log",
+      "owned_exit": -2,
+      "ready_log": "e28_db_browser ready 800x600 backend=GPU path=:memory:\n",
+      "window_info": "{\"kCGWindowAlpha\":1,\"kCGWindowBounds\":{\"Height\":632,\"Width\":800,\"X\":560,\"Y\":113},\"kCGWindowIsOnscreen\":true,\"kCGWindowLayer\":0,\"kCGWindowNumber\":6377,\"kCGWindowSharingState\":1}\nownWindowCount=1\nactive=false hidden=false finishedLaunching=true\nscreen=(0.0, 0.0, 1920.0, 1080.0) scale=1.0\n"
+    }
+  },
+  "keyboard": {
+    "dark": {
+      "captured": true,
+      "pid": 34319,
+      "window": 6336,
+      "owned_exit": -2
+    },
+    "light": {
+      "captured": true,
+      "pid": 34349,
+      "window": 6342,
+      "owned_exit": -2
+    }
+  },
+  "keyboard_pixels": {
+    "dark": {
+      "changed_channels_after_apply": 41721,
+      "height": 678,
+      "width": 846
+    },
+    "light": {
+      "changed_channels_after_apply": 41718,
+      "height": 678,
+      "width": 846
+    }
+  },
+  "native_copied_text": "中文A • 18",
+  "clipboard_restored": true,
+  "assets_sha256": {
+    "soft-contact.png": "0dfa9f2256157adc761b1f896218c7e38bf2b865ba1a483e200ef164f5d3689c",
+    "metal-contact.png": "e4afd5b28a9eccb608dd2eaff740510652361638414caf8094caccaac78fe37c",
+    "native-contact.png": "1d7df01194472adc3a04e57ba32f12fb148f4fe8fc7f914e158853636ef77443",
+    "keyboard-contact.png": "20448f78f066b80ad0dc71c92d8d1e69484e5568b51102f03756d44ccc305676",
+    "mode-popup-light-800.png": "78938811c0f0a50e3d45bdd533ed031267b8012f04ca2b1e45734a6238e66ea8",
+    "xml-light-1400.png": "987aa357f024cd0a4842a767aa14b79ac53bffbfda1c6fddeec37cdea6bcbe08",
+    "applied-light-800.png": "680fd7d7ef9f43cf8c86b3bfd33607963ff3b61b7de21c933cf44e3e1e8f9ccc",
+    "keyboard-dark-before.png": "cad7a641c8ad2c781f2c9071ef4b1672d11262ad9024eecfdb8a9fb8e147f9bf",
+    "keyboard-dark-apply.png": "82961267bfbd1adbb7badd32ebda36e5fea4a1c62d85635dab4a8446ff3dcaea",
+    "keyboard-dark-copy-result.png": "160cf4debc2a18ca76c3084fd726ddf1f47eab5bc02baa1a9c3a86c58d2b8fbb",
+    "keyboard-light-before.png": "2008eac80887220063dcc34c28ac3c63c6ccbd5294281e2216d439d8d44a3972",
+    "keyboard-light-apply.png": "341c0b9b18e14fc11673543768570b301ef506f9d5e4d9e19b613f1ecbed22af",
+    "keyboard-light-copy-result.png": "3a857bcaa4c76231445a5fb91d4cdf9a1cd17c7b21fba3ef645768d08864deb8"
+  }
+}
