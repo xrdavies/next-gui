@@ -2562,6 +2562,130 @@ mod tests {
     }
 
     #[test]
+    fn virtual_data_only_appends_visible_fts_and_rtree_rows_without_shadow_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        for module in ["fts3", "fts4", "fts5", "rtree", "rtree_i32"] {
+            for structure in [false, true] {
+                for names in [false, true] {
+                    let source = Connection::open_in_memory().unwrap();
+                    let columns = if module.starts_with("fts") {
+                        "v"
+                    } else {
+                        "id,x0,x1"
+                    };
+                    let create =
+                        format!("CREATE VIRTUAL TABLE records USING \"{module}\"({columns});");
+                    source.execute_batch(&create).unwrap();
+                    source.execute_batch(if module.starts_with("fts") {"BEGIN; INSERT INTO records(rowid,v) VALUES(9007199254740993,'pending alpha');"} else {"BEGIN; INSERT INTO records VALUES(9007199254740993,1,2);"}).unwrap();
+                    let options = ExportSqlOptions {
+                        structure,
+                        insert_column_names: names,
+                        multiple_rows: true,
+                        ..Default::default()
+                    };
+                    let path = directory.path().join("rows.sql");
+                    export_sql_dump_opts(&source, &path, &options).unwrap();
+                    let sql = fs::read_to_string(&path).unwrap();
+                    let dest = Connection::open_in_memory().unwrap();
+                    if !structure {
+                        assert!(
+                            !sql.contains("CREATE ")
+                                && !sql.contains("DELETE FROM")
+                                && !sql.contains("records_data")
+                        );
+                        dest.execute_batch(&create).unwrap();
+                        dest.execute_batch(if module.starts_with("fts") {
+                            "INSERT INTO records(rowid,v) VALUES(4,'existing beta');"
+                        } else {
+                            "INSERT INTO records VALUES(4,8,9);"
+                        })
+                        .unwrap();
+                    }
+                    if !structure {
+                        dest.set_db_config(
+                            rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE,
+                            true,
+                        )
+                        .unwrap();
+                    }
+                    dest.execute_batch(&sql).unwrap();
+                    assert_eq!(
+                        count_rows(&dest, "records").unwrap(),
+                        if structure { 1 } else { 2 }
+                    );
+                    let query = if module.starts_with("fts") {
+                        "SELECT rowid FROM records WHERE records MATCH 'alpha'"
+                    } else {
+                        "SELECT id FROM records WHERE x0>=1 AND x1<=2"
+                    };
+                    assert_eq!(
+                        dest.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap(),
+                        if !structure && !names && module.starts_with("fts") {
+                            5
+                        } else {
+                            9007199254740993
+                        }
+                    );
+                    assert!(!source.is_autocommit());
+                    source.execute_batch("ROLLBACK").unwrap();
+                    assert_eq!(count_rows(&source, "records").unwrap(), 0);
+                }
+            }
+        }
+    }
+    #[test]
+    fn virtual_data_only_handles_readonly_vocab_and_rejects_unstored_fts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rows.sql");
+        let source = Connection::open_in_memory().unwrap();
+        source.execute_batch("CREATE VIRTUAL TABLE docs USING fts5(v); INSERT INTO docs VALUES('alpha alpha beta'); CREATE VIRTUAL TABLE terms USING fts5vocab(docs,'row');").unwrap();
+        let options = ExportSqlOptions {
+            structure: false,
+            selected: Some(vec!["terms".into()]),
+            ..Default::default()
+        };
+        export_sql_dump_opts(&source, &path, &options).unwrap();
+        let dest = Connection::open_in_memory().unwrap();
+        dest.execute_batch("CREATE TABLE terms(term,doc,cnt)")
+            .unwrap();
+        dest.execute_batch(&fs::read_to_string(&path).unwrap())
+            .unwrap();
+        assert_eq!(count_rows(&dest, "terms").unwrap(), 2);
+        assert_eq!(
+            dest.query_row("SELECT cnt FROM terms WHERE term='alpha'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        for module in ["fts4", "fts5"] {
+            let source = Connection::open_in_memory().unwrap();
+            source.execute_batch(&format!("CREATE TABLE backing(v); CREATE VIRTUAL TABLE indexed USING {module}(v,content='backing'); BEGIN; INSERT INTO backing(rowid,v) VALUES(27,'alpha'); INSERT INTO indexed(rowid,v) VALUES(27,'alpha');")).unwrap();
+            fs::write(&path, "previous").unwrap();
+            let options = ExportSqlOptions {
+                structure: false,
+                selected: Some(vec!["indexed".into()]),
+                ..Default::default()
+            };
+            assert!(export_sql_dump_opts(&source, &path, &options)
+                .unwrap_err()
+                .contains("data-only"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), "previous");
+            assert!(!source.is_autocommit());
+            assert_eq!(
+                source
+                    .query_row(
+                        "SELECT rowid FROM indexed WHERE indexed MATCH 'alpha'",
+                        [],
+                        |r| r.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                27
+            );
+            source.execute_batch("ROLLBACK").unwrap();
+            assert_eq!(count_rows(&source, "backing").unwrap(), 0);
+        }
+    }
+    #[test]
     fn virtual_dump_schema_only_and_failure_keep_destination_and_transaction() {
         let source = Connection::open_in_memory().unwrap();
         source.execute_batch("CREATE VIRTUAL TABLE \"quoted '日本語\" USING fts5(v,content=''); BEGIN; INSERT INTO \"quoted '日本語\"(rowid,v) VALUES(27,'alpha');").unwrap();
@@ -2967,7 +3091,7 @@ fn stage_sql_dump(
         .filter(|name| schema.iter().any(|o| &o.name == name))
         .collect();
     let is_shadow = |name: &str| shadows.iter().any(|(shadow, _)| shadow == name);
-    if opts.data {
+    if opts.data && opts.structure {
         if let Some(root) = roots
             .iter()
             .find(|root| !shadows.iter().any(|(_, owner)| owner == *root))
@@ -2975,8 +3099,22 @@ fn stage_sql_dump(
             return Err(format!("Virtual table {root} exposes no persistent shadow tables; use a row export instead"));
         }
     }
-    if !roots.is_empty() && !opts.structure {
-        return Err("Virtual table indexes require Everything or Structure only; data-only export cannot preserve them".into());
+    if !opts.structure {
+        for root in &roots {
+            let sql = schema
+                .iter()
+                .find(|object| &object.name == root)
+                .and_then(|object| object.sql.as_deref())
+                .ok_or("Missing virtual table definition")?;
+            if crate::table_sql::virtual_table_is_fts(sql)?
+                && !shadows.iter().any(|(name, owner)| {
+                    owner == root && name.eq_ignore_ascii_case(&format!("{root}_content"))
+                })
+            {
+                return Err(format!("Use Everything for contentless/external-content FTS {root}; data-only export cannot preserve its index"));
+            }
+        }
+        schema.retain(|object| !is_shadow(&object.name));
     }
     if opts.keep_fk {
         writeln!(f, "PRAGMA foreign_keys=OFF;").map_err(|e| e.to_string())?;
@@ -3021,14 +3159,16 @@ fn stage_sql_dump(
         }
     }
     if opts.data {
-        for obj in schema.iter().filter(|o| is_shadow(&o.name)) {
+        for obj in schema
+            .iter()
+            .filter(|o| opts.structure && is_shadow(&o.name))
+        {
             writeln!(f, "DELETE FROM {};", qualified_name("main", &obj.name))
                 .map_err(|e| e.to_string())?;
         }
-        for obj in schema
-            .iter()
-            .filter(|o| o.kind == ObjectKind::Table && !roots.contains(&o.name))
-        {
+        for obj in schema.iter().filter(|o| {
+            o.kind == ObjectKind::Table && (!opts.structure || !roots.contains(&o.name))
+        }) {
             progress.check()?;
             // Generated columns are recomputed and cannot be inserted into.
             let mut cols: Vec<String> = table_columns(conn, &obj.name)?

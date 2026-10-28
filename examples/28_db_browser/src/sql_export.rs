@@ -190,7 +190,7 @@ pub fn build(
                 error = body.text_area(message, "", text);
             }
             body.text("Tables and views");
-            body.text("Virtual tables include indexes. Restore into new or replaced tables.");
+            body.text("Full virtual export includes indexes; data-only appends stored rows.");
             let mut grid = TableStyle::from_theme(theme);
             grid.width = inner - 12.0;
             grid.height = (style.height * 0.3).clamp(132.0, 216.0);

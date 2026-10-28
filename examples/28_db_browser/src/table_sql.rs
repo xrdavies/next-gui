@@ -740,6 +740,15 @@ fn replace_table_constraints(command: &mut Cmd, replacements: Vec<NamedTableCons
     Ok(())
 }
 
+pub fn virtual_table_is_fts(sql: &str) -> Result<bool, String> {
+    let Cmd::Stmt(Stmt::CreateVirtualTable { module_name, .. }) = parse(sql)? else {
+        return Err("Expected a virtual table definition".into());
+    };
+    Ok(["fts3", "fts4", "fts5"]
+        .iter()
+        .any(|name| module_name.eq(*name)))
+}
+
 pub fn export_create(
     sql: &str,
     keep_original: bool,
