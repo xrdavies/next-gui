@@ -117,6 +117,7 @@ pub struct Settings {
     pub line: usize,
     pub marker: usize,
     pub show_legend: bool,
+    pub fixed_number_format: bool,
     pub configs: Vec<Config>,
 }
 impl Default for Settings {
@@ -126,6 +127,7 @@ impl Default for Settings {
             line: 1,
             marker: 0,
             show_legend: false,
+            fixed_number_format: false,
             configs: Vec::new(),
         }
     }
@@ -403,7 +405,9 @@ impl Model {
     ) -> Result<(), String> {
         if self.full_matches(&source, result) {
             self.data.show_legend = self.settings.show_legend;
+            self.data.fixed_number_format = self.settings.fixed_number_format;
             self.full.as_mut().unwrap().settings.show_legend = self.settings.show_legend;
+            self.full.as_mut().unwrap().settings.fixed_number_format = self.settings.fixed_number_format;
             self.summary = format!("{} rows · all loaded", self.full.as_ref().unwrap().result.values.len());
             return if self.dirty { Err("Full plot changes require a background rebuild".into()) } else { Ok(()) };
         }
@@ -493,6 +497,7 @@ impl Model {
     ) -> Result<(), String> {
         check(0)?;
         self.data.show_legend = self.settings.show_legend;
+        self.data.fixed_number_format = self.settings.fixed_number_format;
         let identity = result.values.identity();
         self.summary = if let Some(total) = total {
             format!(
@@ -556,6 +561,7 @@ impl Model {
             .and_then(|x| columns.iter().position(|(c, _)| c == x));
         let mut data = PlotData {
             show_legend: self.settings.show_legend,
+            fixed_number_format: self.settings.fixed_number_format,
             ..PlotData::default()
         };
         if let Some(x_index) = x_index {

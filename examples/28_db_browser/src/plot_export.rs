@@ -91,9 +91,9 @@ impl Demo {
     pub(crate) fn save_plot(&mut self) {
         let result = (|| {
             self.state.guard_background_idle()?;
+            let conn = self.state.conn.as_ref().ok_or("No idle database connection")?;
             let Some(path) = crate::file_dlg::pick_save_plot() else { return Ok(None); };
             let image = self.visible_plot_image()?;
-            let conn = self.state.conn.as_ref().ok_or("No idle database connection")?;
             save(conn, &path, &image).map(Some)
         })();
         match result {
@@ -173,6 +173,77 @@ mod tests {
         assert_eq!(conn.query_row("SELECT x FROM kept",[],|row|row.get::<_,i64>(0)).unwrap(),19);
         conn.execute_batch("ROLLBACK").unwrap();
         assert_eq!(conn.query_row("SELECT count(*) FROM kept",[],|row|row.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    #[test]
+    fn plot_context_menu_preserves_full_data_view_and_project_format_settings() {
+        use next_gui_ui::UiKey;
+        let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(crate::FULL_PLOT_QA_SQL).unwrap();
+        demo.state.tab=MainTab::ExecuteSql;
+        *demo.state.sql_editor_mut()="SELECT sequence,measured/1000.0 AS measured,reference/1000.0 AS reference FROM telemetry ORDER BY sequence".into();
+        demo.state.run_sql_sync().unwrap();demo.state.sync_current_plot().unwrap();
+        for (row,axis) in [(1,1),(2,2),(3,3)] {demo.state.plot.check(row,axis,true);}
+        demo.state.start_plot_load().unwrap();
+        for _ in 0..10000 {
+            if demo.state.plot_work.is_none() {break;}
+            demo.state.poll_plot_load().unwrap();std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(demo.state.plot_work.is_none() && demo.state.plot.has_full());
+        demo.state.dock_focus=DockKind::Plot;demo.state.dock_plot=true;demo.state.body_ratio=0.52;demo.do_rebuild();
+        let data=demo.ui.chart_plot_mut(demo.ids.chart,0).unwrap();
+        assert!(data.zoom(0.75,0.5,0.5));assert!(data.select_row(101,false));
+        let view=data.view();demo.snapshot_inputs();
+        let points=demo.state.plot.data.series[0].points.clone();
+        let snapshot=demo.state.sql_result.as_ref().unwrap().all_values.clone().unwrap();
+        let folder=std::env::var("NEXT_GUI_PLOT_MENU_QA_OUT").ok().map(std::path::PathBuf::from);
+        if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+        for (name,theme) in [("dark",next_gui_ui::Theme::dark()),("light",next_gui_ui::Theme::light())] {
+            demo.theme=crate::ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            for (width,height) in [(1400,1000),(800,600)] {
+                demo.win_w=width;demo.win_h=height;demo.do_rebuild();
+                demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);
+                assert!(!demo.handle_plot_context_key(crate::KeyCode::Function(10),crate::Modifiers::default()));
+                assert!(demo.handle_plot_context_key(crate::KeyCode::Function(10),crate::Modifiers{shift:true,..crate::Modifiers::default()}));
+                assert_eq!(demo.ui.popup_owner(),Some(demo.ids.context_menu));
+                assert_eq!(demo.ui.accessible_name(demo.ids.context_menu).as_deref(),Some("Plot actions"));
+                assert!(demo.ui.key_input(UiKey::Home));assert!(demo.ui.key_input(UiKey::Enter));
+                assert_eq!(demo.ui.take_menu_action(),Some((demo.ids.context_menu,crate::mid::PLOT_COPY)));
+                assert!(demo.ui.popup_owner().is_none());
+                let normal=demo.visible_plot_image().unwrap();
+                assert!(demo.handle_plot_context_key(crate::KeyCode::Function(10),crate::Modifiers{shift:true,..crate::Modifiers::default()}));
+                assert!(demo.ui.key_input(UiKey::Home));for _ in 0..4 {assert!(demo.ui.key_input(UiKey::Down));}
+                assert!(demo.ui.key_input(UiKey::Enter));
+                let (owner,item)=demo.ui.take_menu_action().unwrap();assert_eq!(owner,demo.ids.context_menu);assert_eq!(item,crate::mid::PLOT_FIXED_FORMAT);
+                assert!(demo.handle_plot_menu_action(item));demo.do_rebuild();
+                assert!(demo.state.plot.settings.fixed_number_format && demo.ui.chart_plot(demo.ids.chart,0).unwrap().fixed_number_format);
+                assert_eq!(demo.ui.chart_plot(demo.ids.chart,0).unwrap().view(),view);
+                assert_ne!(demo.visible_plot_image().unwrap().pixels(),normal.pixels());
+                if let Some(folder)=&folder {
+                    capture(&mut demo,folder,&format!("fixed-{name}-{width}"));
+                    assert!(demo.handle_plot_context_key(crate::KeyCode::Function(10),crate::Modifiers{shift:true,..crate::Modifiers::default()}));
+                    demo.ui.key_input(UiKey::Home);for _ in 0..4 {demo.ui.key_input(UiKey::Down);}
+                    demo.ui.sync(&mut demo.scene);capture(&mut demo,folder,&format!("menu-{name}-{width}"));
+                    assert!(demo.ui.key_input(UiKey::Escape));assert_eq!(demo.ui.focused(),Some(demo.ids.chart));
+                }
+                assert!(demo.handle_plot_menu_action(crate::mid::PLOT_FIXED_FORMAT));demo.do_rebuild();
+                assert!(!demo.state.plot.data.fixed_number_format);
+                assert!(std::sync::Arc::ptr_eq(&points,&demo.state.plot.data.series[0].points));
+                assert!(std::sync::Arc::ptr_eq(&snapshot,demo.state.sql_result.as_ref().unwrap().all_values.as_ref().unwrap()));
+            }
+        }
+        demo.handle_plot_menu_action(crate::mid::PLOT_FIXED_FORMAT);demo.handle_plot_menu_action(crate::mid::PLOT_LEGEND);demo.do_rebuild();
+        assert!(demo.state.plot.data.fixed_number_format && demo.state.plot.data.show_legend);
+        let project=crate::project::ProjectFile::from_state(&demo.state);
+        let json:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();assert!(json.plot_settings.fixed_number_format);
+        let xml=crate::project_xml::encode(&project,Path::new("/tmp/next-gui-plot-menu.sqbpro")).unwrap();
+        let xml=crate::project_xml::decode(&xml).unwrap();assert!(xml.plot_settings.fixed_number_format && xml.plot_settings.show_legend);
+        let old:plot::Settings=serde_json::from_str("{}").unwrap();assert!(!old.fixed_number_format);
+        assert!(demo.handle_plot_menu_action(crate::mid::PLOT_FIT));demo.do_rebuild();assert!(demo.state.plot.data.state.view.is_none());
+        demo.state.overlay=Some(crate::state::OverlayKind::Preferences);demo.do_rebuild();
+        assert!(!demo.open_plot_context_menu(600.0,400.0));
+        demo.state.conn=None;demo.save_plot();assert_eq!(demo.state.error_msg.as_deref(),Some("No idle database connection"));
     }
 
     #[test]
@@ -277,6 +348,16 @@ mod tests {
             }
             assert!(count>1000 && delta<=2,"{name}: delta={delta},pixels={count}");
             eprintln!("Plot export {name}: delta={delta},pixels={count}");
+            if demo.ui.popup_owner()==Some(demo.ids.context_menu) {
+                let style=demo.ui.context_menu_style();
+                let panel=demo.scene.iter_paint_order().into_iter().rev().find(|n|n.visible && n.fill==style.popup_bg && n.bounds.width>=style.popup_width && n.bounds.height>=style.item_height).unwrap().bounds;
+                assert!(panel.x>=0.0 && panel.y>=0.0 && panel.x+panel.width<=demo.win_w as f32 && panel.y+panel.height<=demo.win_h as f32);
+                let mut delta=0;
+                for y in panel.y.ceil() as usize+2..(panel.y+panel.height).floor() as usize-2 {for x in panel.x.ceil() as usize+2..(panel.x+panel.width).floor() as usize-2 {
+                    for shift in [0,8,16] {delta=delta.max((((pixels[y*demo.win_w as usize+x]>>shift)&255) as i32-((rendered[y*demo.win_w as usize+x]>>shift)&255) as i32).abs());}
+                }}
+                assert!(delta<=2,"Context menu {name}: {delta}");eprintln!("Context menu {name}: delta={delta}");
+            }
         }
     }
 }

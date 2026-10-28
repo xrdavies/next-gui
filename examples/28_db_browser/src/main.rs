@@ -291,7 +291,7 @@ struct BuiltUiIds {
     btn_add_row: WidgetId,
     btn_del_row: WidgetId,
     browse_table: WidgetId,
-    browse_header_menu: WidgetId,
+    context_menu: WidgetId,
     browse_col_filters: Vec<WidgetId>,
     browse_tab_btns: Vec<WidgetId>,
     sql_tab_btns: Vec<WidgetId>,
@@ -530,7 +530,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_add_row: b.btn_add_row,
             btn_del_row: b.btn_del_row,
             browse_table: b.browse_table,
-            browse_header_menu: b.browse_header_menu,
+            context_menu: b.context_menu,
             browse_col_filters: b.browse_col_filters.clone(),
             browse_tab_btns: b.browse_tab_btns.clone(),
             sql_tab_btns: b.sql_tab_btns.clone(),
@@ -3210,6 +3210,50 @@ impl Demo {
         self.rebuild = true;
     }
 
+    fn open_plot_context_menu(&mut self,x:f32,y:f32) -> bool {
+        if self.state.overlay.is_some() || self.state.confirm_open || self.ui.active_dialog().is_some()
+            || self.ids.chart.0==0 || self.ui.hit_widget(&self.scene,x,y)!=Some(self.ids.chart) {
+            return false;
+        }
+        self.snapshot_inputs();
+        self.browse_header_column=None;
+        self.ui.set_focus(Some(self.ids.chart));
+        self.ui.set_accessible_name(self.ids.context_menu,"Plot actions");
+        self.ui.open_context_menu(self.ids.context_menu,vec![
+            next_gui_ui::MenuItem::new(mid::PLOT_COPY,"Copy"),
+            next_gui_ui::MenuItem::new(mid::PLOT_SAVE,"Save Image…"),
+            next_gui_ui::MenuItem::new(mid::PLOT_FIT,"Fit to Data"),
+            next_gui_ui::MenuItem::new(mid::PLOT_LEGEND,"Show legend").checked(self.state.plot.settings.show_legend),
+            next_gui_ui::MenuItem::new(mid::PLOT_FIXED_FORMAT,"Fixed number format").checked(self.state.plot.settings.fixed_number_format),
+            next_gui_ui::MenuItem::new(mid::PLOT_HELP,"Help"),
+        ],x,y)
+    }
+
+    fn handle_plot_context_key(&mut self,key:KeyCode,modifiers:Modifiers) -> bool {
+        if key!=KeyCode::Function(10) || !modifiers.shift || modifiers.commandish() || modifiers.alt
+            || self.ui.focused()!=Some(self.ids.chart) {return false;}
+        let bounds=self.scene.iter_paint_order().into_iter().find(|n|self.ui.widget_from_node(n.id)==Some(self.ids.chart)).map(|n|n.bounds);
+        bounds.is_some_and(|b|self.open_plot_context_menu(b.x+16.0,b.y+16.0))
+    }
+
+    fn fit_plot(&mut self) {
+        if let Some(data)=self.ui.chart_plot_mut(self.ids.chart,0) {data.reset_view();}
+        self.snapshot_inputs();
+        self.rebuild=true;
+    }
+
+    fn handle_plot_menu_action(&mut self,item:u64) -> bool {
+        match item {
+            mid::PLOT_SAVE=>self.save_plot(),
+            mid::PLOT_FIT=>self.fit_plot(),
+            mid::PLOT_HELP=>self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/wiki/Plot-Dock"),
+            mid::PLOT_LEGEND=>{self.state.plot.settings.show_legend = !self.state.plot.settings.show_legend;self.rebuild=true;}
+            mid::PLOT_FIXED_FORMAT=>{self.state.plot.settings.fixed_number_format = !self.state.plot.settings.fixed_number_format;self.rebuild=true;}
+            _=>return false,
+        }
+        true
+    }
+
     fn open_browse_header_menu(&mut self, x: f32, y: f32) -> bool {
         if self.state.tab != MainTab::Browse
             || self.state.overlay.is_some()
@@ -3228,6 +3272,7 @@ impl Demo {
         };
         self.snapshot_inputs();
         self.browse_header_column = Some(column);
+        self.ui.set_accessible_name(self.ids.context_menu,"Browse column actions");
         let can_select = !self.state.has_cell_draft()
             && self
                 .state
@@ -3252,7 +3297,7 @@ impl Demo {
             next_gui_ui::MenuItem::new(mid::BROWSE_COPY_COLUMN, "Copy Column Name"),
         ];
         self.ui
-            .open_context_menu(self.ids.browse_header_menu, items, x, y)
+            .open_context_menu(self.ids.context_menu, items, x, y)
     }
 
     fn browse_header_name(&self) -> Option<&str> {
@@ -4398,9 +4443,7 @@ impl Demo {
             return;
         }
         if id == self.ids.plot.fit && id.0 != 0 {
-            self.state.plot.data.reset_view();
-            if let Some(data) = self.ui.chart_plot_mut(self.ids.chart, 0) { data.reset_view(); }
-            self.rebuild = true;
+            self.fit_plot();
             return;
         }
         if id == self.ids.btn_chart && id.0 != 0 {
@@ -4840,12 +4883,14 @@ impl Demo {
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
             self.snapshot_inputs();
-            if item == mid::BROWSE_COPY_COLUMN {
+            if item==mid::PLOT_COPY {
+                self.copy_plot(ctx);
+            } else if item == mid::BROWSE_COPY_COLUMN {
                 if let Some(name) = self.browse_header_name() {
                     if let Err(error) = ctx.clipboard_set_text(name) { self.set_error(error.to_string()); }
                 }
                 self.browse_header_column = None;
-            } else {
+            } else if !self.handle_plot_menu_action(item) {
                 self.handle_menu(item);
             }
         }
@@ -4986,7 +5031,7 @@ impl AppCallbacks for Demo {
                 pressed: true,
                 x, y, ..
             } => {
-                if self.open_browse_header_menu(x as f32, y as f32) {
+                if self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) {
                     self.after_ui(ctx);
                 }
             }
@@ -5069,10 +5114,13 @@ impl AppCallbacks for Demo {
                     if let Some(key)=map_key(key,modifiers) {self.ui.key_input(key);}
                     self.after_ui(ctx);return;
                 }
-                if self.browse_header_column.is_some() && self.ui.has_open_popup() {
+                if self.ui.popup_owner()==Some(self.ids.context_menu) {
                     if let Some(key) = map_key(key, modifiers) { self.ui.key_input(key); }
                     self.after_ui(ctx);
                     return;
+                }
+                if self.handle_plot_context_key(key,modifiers) {
+                    self.after_ui(ctx);return;
                 }
                 if self.handle_sql_completion_key(key, modifiers) {
                     self.after_ui(ctx);

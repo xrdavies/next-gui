@@ -1041,7 +1041,7 @@ fn header_context_uses_the_clicked_column_and_supports_keyboard_selection() {
     demo.ui.key_input(UiKey::Enter);
     assert_eq!(
         demo.ui.take_menu_action(),
-        Some((demo.ids.browse_header_menu, mid::BROWSE_COPY_COLUMN))
+        Some((demo.ids.context_menu, mid::BROWSE_COPY_COLUMN))
     );
 }
 
@@ -1073,7 +1073,7 @@ fn header_context_keeps_drafts_and_refuses_obscured_busy_or_stale_targets() {
     demo.ui.key_input(UiKey::Enter);
     assert_eq!(
         demo.ui.take_menu_action(),
-        Some((demo.ids.browse_header_menu, mid::BROWSE_COPY_COLUMN))
+        Some((demo.ids.context_menu, mid::BROWSE_COPY_COLUMN))
     );
     assert_eq!(demo.state.edit_value, "keep draft");
     assert_eq!(selected(&demo), (0, 0, "1205"));

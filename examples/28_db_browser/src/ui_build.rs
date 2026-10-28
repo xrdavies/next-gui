@@ -69,6 +69,12 @@ pub mod mid {
     pub const BROWSE_FREEZE: u64 = 70;
     pub const BROWSE_SELECT_COLUMN: u64 = 71;
     pub const BROWSE_COPY_COLUMN: u64 = 72;
+    pub const PLOT_COPY: u64 = 80;
+    pub const PLOT_SAVE: u64 = 81;
+    pub const PLOT_FIT: u64 = 82;
+    pub const PLOT_HELP: u64 = 83;
+    pub const PLOT_LEGEND: u64 = 84;
+    pub const PLOT_FIXED_FORMAT: u64 = 85;
 
     pub const HELP_ABOUT: u64 = 60;
     pub const HELP_WIKI: u64 = 61;
@@ -133,7 +139,7 @@ pub struct BuiltUi {
     pub btn_add_row: WidgetId,
     pub btn_del_row: WidgetId,
     pub browse_table: WidgetId,
-    pub browse_header_menu: WidgetId,
+    pub context_menu: WidgetId,
     pub browse_col_filters: Vec<WidgetId>,
     pub browse_tab_btns: Vec<WidgetId>,
     pub sql_tab_btns: Vec<WidgetId>,
@@ -765,7 +771,6 @@ pub fn build_ui(
     let mut menu_style = MenuStyle::from_theme(&theme);
     menu_style.popup_width = menu_style.popup_width.max(280.0);
     menu_style.min_width = menu_style.min_width.max(72.0);
-    let check = |on: bool| if on { "✓ " } else { "  " };
 
     let mut menu_tb = ToolbarStyle::from_theme(&theme);
     menu_tb.width = shell_w - 8.0;
@@ -842,15 +847,15 @@ pub fn build_ui(
             menu_view = tb.menu(
                 "View",
                 vec![
-                    MenuItem::new(mid::VIEW_DOCK_EDIT, format!("{}Edit Database Cell", check(state.dock_edit))),
-                    MenuItem::new(mid::VIEW_DOCK_SCHEMA, format!("{}DB Schema", check(state.dock_schema))),
-                    MenuItem::new(mid::VIEW_DOCK_LOG, format!("{}SQL Log", check(state.dock_log))),
-                    MenuItem::new(mid::VIEW_DOCK_PLOT, format!("{}Plot", check(state.dock_plot))),
-                    MenuItem::new(mid::VIEW_DOCK_REMOTE, format!("{}Remote", check(state.dock_remote))),
-                    MenuItem::new(mid::VIEW_TB_DB, format!("{}DB Toolbar", check(state.toolbar_db))),
-                    MenuItem::new(mid::VIEW_TB_EXTRA, format!("{}Extra DB Toolbar", check(state.toolbar_extra))),
-                    MenuItem::new(mid::VIEW_TB_PROJECT, format!("{}Project Toolbar", check(state.toolbar_project))),
-                    MenuItem::new(mid::VIEW_TB_SQL, format!("{}SQL Toolbar", check(state.toolbar_sql))),
+                    MenuItem::new(mid::VIEW_DOCK_EDIT, "Edit Database Cell").checked(state.dock_edit),
+                    MenuItem::new(mid::VIEW_DOCK_SCHEMA, "DB Schema").checked(state.dock_schema),
+                    MenuItem::new(mid::VIEW_DOCK_LOG, "SQL Log").checked(state.dock_log),
+                    MenuItem::new(mid::VIEW_DOCK_PLOT, "Plot").checked(state.dock_plot),
+                    MenuItem::new(mid::VIEW_DOCK_REMOTE, "Remote").checked(state.dock_remote),
+                    MenuItem::new(mid::VIEW_TB_DB, "DB Toolbar").checked(state.toolbar_db),
+                    MenuItem::new(mid::VIEW_TB_EXTRA, "Extra DB Toolbar").checked(state.toolbar_extra),
+                    MenuItem::new(mid::VIEW_TB_PROJECT, "Project Toolbar").checked(state.toolbar_project),
+                    MenuItem::new(mid::VIEW_TB_SQL, "SQL Toolbar").checked(state.toolbar_sql),
                     MenuItem::new(mid::VIEW_THEME, "Toggle Theme Light/Dark"),
                 ],
                 menu_style,
@@ -1605,6 +1610,8 @@ pub fn build_ui(
             let chart_tiles = vec![ChartTile::plot(
                 chart_title.clone(),
                 if !state.plot.settings.manual { state.plot.data.clone() } else { PlotData {
+                    show_legend: state.plot.settings.show_legend,
+                    fixed_number_format: state.plot.settings.fixed_number_format,
                     x_label: "Source row".into(),
                     y1_label: state.chart_column.clone(),
                     series: vec![PlotSeries {
@@ -2460,8 +2467,8 @@ pub fn build_ui(
         let _ = ui.set_modal_open(modal, true);
     }
 
-    let browse_header_menu = ui.context_menu_popup(ui.context_menu_style());
-    ui.set_accessible_name(browse_header_menu, "Browse column actions");
+    let context_menu = ui.context_menu_popup(ui.context_menu_style());
+    ui.set_accessible_name(context_menu, "Context actions");
     ui.set_accessible_name(ov_col_type, "Column declared type (editable)");
     ui.set_accessible_name(ov_ai, "Column autoincrement");
     ui.set_accessible_name(ov_collation, "Column collation (editable)");
@@ -2712,7 +2719,7 @@ pub fn build_ui(
         btn_add_row,
         btn_del_row,
         browse_table,
-        browse_header_menu,
+        context_menu,
         browse_col_filters,
         browse_tab_btns,
         sql_tab_btns,

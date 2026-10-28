@@ -329,11 +329,17 @@ mod tests {
         settle(&mut state).unwrap();
         assert_eq!(state.plot.data.series[0].points.len(), 1003);
         assert_eq!(state.sql_result.as_ref().unwrap().rows.len(), 500);
+        let points=state.plot.data.series[0].points.clone();
+        state.plot.settings.fixed_number_format=true;
+        state.sync_current_plot().unwrap();
+        assert!(state.plot.data.fixed_number_format && state.plot_work.is_none());
+        assert!(Arc::ptr_eq(&points,&state.plot.data.series[0].points));
         state.plot.set_styles(2, 4);
         state.sync_current_plot().unwrap();
         settle(&mut state).unwrap();
         assert_eq!(state.plot.data.series[0].points.len(), 1003);
         assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT sum(x) FROM counter", [], |r| r.get::<_, i64>(0)).unwrap(), 1003);
+        assert!(state.plot.data.fixed_number_format);
     }
 
     #[test]
