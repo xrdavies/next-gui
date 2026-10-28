@@ -4737,7 +4737,7 @@ mod chart_default_tests {
         let saved = crate::project::ProjectFile::load(&project).unwrap();
         assert_eq!(saved.sql_tabs[0], "SELECT 'saved draft';");
         assert_eq!(saved.ddl_draft, state.ddl_draft);
-        assert_eq!(saved.db_path, database.canonicalize().unwrap().display().to_string());
+        assert_eq!(saved.db_path, "saved.db");
         assert_eq!(saved.browse_tabs[0].table.as_deref(), Some("t"));
     }
 
@@ -5941,8 +5941,9 @@ mod chart_default_tests {
         assert_eq!(state.browse_tab_idx, 1);
         assert_eq!(state.path, database.display().to_string());
         state.save_project(&path).unwrap();
-        assert!(
-            Path::new(&crate::project::ProjectFile::load(&path).unwrap().db_path).is_absolute()
+        assert_eq!(
+            crate::project::ProjectFile::load(&path).unwrap().db_path,
+            "data.db"
         );
     }
 
