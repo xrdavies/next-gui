@@ -42,6 +42,9 @@ mod autocomplete;
 pub use autocomplete::{AutocompleteState, SelectState};
 mod dialog;
 mod table_edit;
+mod table_data;
+pub use table_data::TableDataSource;
+use table_data::TableRows;
 pub use table_edit::TableCellEditEvent;
 use table_edit::TableCellEditor;
 mod text_input;
@@ -1815,7 +1818,7 @@ enum Kind {
     },
     Table {
         columns: Vec<TableColumn>,
-        rows: Vec<Vec<String>>,
+        rows: TableRows,
         selected_row: Option<usize>,
         /// Column index of the last body click (for cell editors).
         selected_col: Option<usize>,
@@ -2394,6 +2397,7 @@ pub struct Ui {
     pending_pagination_change: Option<(WidgetId, usize)>,
     /// Last Table header column click; drained by [`Ui::take_table_header_click`].
     pending_table_header_click: Option<(WidgetId, usize)>,
+    pending_table_data_error: std::cell::RefCell<Option<(WidgetId, String)>>,
     pending_table_check_change: Option<(WidgetId, usize, usize, bool)>,
     pending_table_cell_edit: Option<(WidgetId, TableCellEditEvent)>,
     /// Queued notification toasts (global overlay).
@@ -2545,6 +2549,7 @@ impl Ui {
             pending_breadcrumb_click: None,
             pending_pagination_change: None,
             pending_table_header_click: None,
+            pending_table_data_error: std::cell::RefCell::new(None),
             pending_table_check_change: None,
             pending_table_cell_edit: None,
             notifications: Vec::new(),
@@ -4799,14 +4804,20 @@ impl Ui {
         let (col_start, col_end) = self.table_selected_cols(id)
             .unwrap_or((0, columns.len().saturating_sub(1)));
         if end >= rows.len() || columns.is_empty() || col_end >= columns.len() { return None; }
-        Some((start..=end).map(|row| (col_start..=col_end).map(|col| {
-            let value = rows[row].get(col).map(String::as_str).unwrap_or("");
-            if value.contains(['\t', '\r', '\n', '"']) {
-                format!("\"{}\"", value.replace('"', "\"\""))
-            } else {
-                value.to_string()
-            }
-        }).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"))
+        let mut output = Vec::new();
+        for index in start..=end {
+            let row = match rows.row(index) {
+                Ok(row) => row,
+                Err(error) => { *self.pending_table_data_error.borrow_mut() = Some((id, error)); return None; }
+            };
+            output.push((col_start..=col_end).map(|col| {
+                let value = row.get(col).map(String::as_str).unwrap_or("");
+                if value.contains(['\t', '\r', '\n', '"']) {
+                    format!("\"{}\"", value.replace('"', "\"\""))
+                } else { value.to_string() }
+            }).collect::<Vec<_>>().join("\t"));
+        }
+        Some(output.join("\n"))
     }
 
     /// Drain last Table header click as `(table_id, column_index)`.
@@ -4990,7 +5001,7 @@ impl Ui {
         if let Some(Widget { kind: Kind::Table {
             rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, editor, ..
         }, .. }) = self.widgets.get_mut(&id) {
-            *slot = rows;
+            *slot = rows.into();
             checks.clear();
             if let Some(editor)=editor {if editor.row>=slot.len() && self.focus==Some(editor.widget) {self.focus=None;}}
             if let Some(last) = slot.len().checked_sub(1) {
@@ -12453,7 +12464,13 @@ impl Ui {
         let body_clip = Rect::new(bounds.x, body_top, bounds.width, body_h);
         for slot in 0..count {
             let ri = first + slot;
-            let Some(row) = rows.get(ri) else { break };
+            let row = match rows.row(ri) {
+                Ok(row) => row,
+                Err(error) => {
+                    *self.pending_table_data_error.borrow_mut() = Some((id, error.clone()));
+                    std::borrow::Cow::Owned(vec![format!("Unable to read row {}: {error}", ri + 1)])
+                }
+            };
             let base = ncols + slot * stride;
             let y = body_top + ri as f32 * style.row_height - scroll_y;
             if !virtualized
@@ -18538,7 +18555,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Table {
                     columns,
-                    rows,
+                    rows: rows.into(),
                     selected_row: None,
                     selected_col: None,
                     selected_range: None,
@@ -19190,6 +19207,7 @@ impl FlexBuilder<'_> {
     }
 
     /// Virtualized table: windowed body rows.
+    /// Rows remain in memory; use [`Self::data_table`] for an on-demand source.
     pub fn virtual_table(
         &mut self,
         columns: Vec<TableColumn>,
@@ -19202,7 +19220,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Table {
                     columns,
-                    rows,
+                    rows: rows.into(),
                     selected_row: None,
                     selected_col: None,
                     selected_range: None,

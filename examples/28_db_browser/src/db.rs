@@ -97,6 +97,7 @@ pub struct QueryResult {
     pub rows_affected: Option<u64>,
     pub truncated: bool,
     pub export_rows: Option<std::sync::Arc<tempfile::NamedTempFile>>,
+    pub all_values: Option<std::sync::Arc<CellSnapshot>>,
 }
 
 #[derive(Debug, Clone)]
@@ -428,7 +429,7 @@ pub fn qualified_name(schema: &str, name: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(name))
 }
 
-fn cell_to_string(value: rusqlite::types::ValueRef<'_>) -> String {
+pub(crate) fn cell_to_string(value: rusqlite::types::ValueRef<'_>) -> String {
     use rusqlite::types::ValueRef;
     match value {
         ValueRef::Null => String::new(),
@@ -621,6 +622,7 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
         rows_affected: None,
         truncated,
         export_rows: None,
+        all_values: None,
     })
 }
 
@@ -644,8 +646,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
         let readonly = stmt.readonly();
         let statement = readonly.then(|| stmt.expanded_sql()).flatten();
         let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
-        let mut export_rows = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-        let mut output = std::io::BufWriter::new(&mut export_rows);
+        let mut output = crate::cell_snapshot::SnapshotWriter::new(col_count)?;
         let mut rows = Vec::new();
         let mut cell_values = CellSnapshot::default();
         let mut truncated = false;
@@ -653,8 +654,7 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
             let cells: Vec<CellValue> = (0..col_count)
                 .map(|i| row.get_ref(i).map(CellValue::from))
                 .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
-            serde_json::to_writer(&mut output, &cells).map_err(|e| e.to_string())?;
-            writeln!(output).map_err(|e| e.to_string())?;
+            output.push(&cells)?;
             if rows.len() == DEFAULT_LIMIT {
                 truncated = true;
                 continue;
@@ -663,11 +663,11 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
             rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
             cell_values.push(cells)?;
         }
-        output.flush().map_err(|e| e.to_string())?;
-        drop(output);
+        let all_values = std::sync::Arc::new(output.finish()?);
         result = Some(QueryResult {
             statement,
-            export_rows: Some(std::sync::Arc::new(export_rows)),
+            export_rows: all_values.file(),
+            all_values: Some(all_values),
             columns,
             rows,
             values: cell_values,
@@ -704,6 +704,7 @@ pub fn row_counts_sql(conn: &Connection) -> Result<QueryResult, String> {
     Ok(QueryResult {
         statement: None,
         export_rows: None,
+        all_values: None,
         columns: vec!["table".into(), "rows".into()],
         rows,
         values,

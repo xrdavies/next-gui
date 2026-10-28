@@ -449,11 +449,15 @@ impl Model {
             let file = input.export_rows.as_ref().ok_or("Plot needs a complete typed result snapshot")?.clone();
             let series = self.config().map_or(1, |c| c.series.iter().filter(|s| s.active).count().max(1));
             let max_rows = POINT_BUDGET / std::mem::size_of::<PlotPoint>() / series;
-            let values = CellSnapshot::from_file(file, input.columns.len(), |rows| {
+            let mut check_size = |rows| {
                 check(rows)?;
                 if rows > max_rows { return Err("Plot exceeds the 256 MiB point budget; select fewer series or filter rows".into()); }
                 Ok(())
-            })?;
+            };
+            let values = if let Some(values) = &input.all_values {
+                check_size(values.len())?;
+                values.as_ref().clone()
+            } else { CellSnapshot::from_file(file, input.columns.len(), check_size)? };
             if matches!(source, Source::Table { .. }) {
                 if input.columns != preview.columns { return Err("Browse columns changed; refresh before loading all rows".into()); }
                 if self.offset.checked_add(preview.values.len()).is_none_or(|end| end > values.len()) {

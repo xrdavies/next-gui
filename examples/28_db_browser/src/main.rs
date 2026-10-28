@@ -1312,7 +1312,7 @@ impl Demo {
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
-            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress") {
+            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(FULL_PLOT_QA_SQL).unwrap();
                 let gate = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<plot_load::Progress>>));
@@ -1330,7 +1330,7 @@ impl Demo {
                 } else { "telemetry" };
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", table).unwrap();
-                state.tab = if tab.ends_with("sql") { MainTab::ExecuteSql } else { MainTab::Browse };
+                state.tab = if tab.ends_with("sql") || tab == "sql-results-end" { MainTab::ExecuteSql } else { MainTab::Browse };
                 if state.tab == MainTab::ExecuteSql {
                     *state.sql_editor_mut() = "SELECT sequence,measured,reference,region\nFROM telemetry ORDER BY sequence DESC;".into();
                     state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
@@ -1353,6 +1353,11 @@ impl Demo {
                 state.body_ratio = 0.52;
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
+                if tab == "sql-results-end" {
+                    state.sql_selection = state::SqlSelection { rows: Some((2998, 2999)), columns: Some((0, 3)) };
+                    state.sql_scroll = (0.0, 1_000_000.0);
+                    state.sql_message = "OK — 3000 result rows · final rows selected".into();
+                }
             }
             if matches!(tab.as_str(), "pragmas" | "pragmas-bottom" | "pragmas-confirm" | "pragmas-hold") {
                 state.new_memory_db().unwrap();
@@ -1498,6 +1503,9 @@ impl Demo {
         if let Some(widths) = self.ui.table_column_widths(self.ids.sql_table) {
             self.state.sql_column_widths = widths;
             self.state.sql_scroll = self.ui.table_scroll_offset(self.ids.sql_table).unwrap();
+            let anchor = self.ui.table_selection_anchor(self.ids.sql_table);
+            self.state.sql_selection.rows = anchor.zip(self.ui.table_selected_row(self.ids.sql_table)).map(|((row, _), end)| (row, end));
+            self.state.sql_selection.columns = anchor.and_then(|(_, column)| column).zip(self.ui.table_selected_col(self.ids.sql_table));
         }
         if self.ids.ddl_area.0 != 0 {
             if let Some(v) = self.ui.text_area_value(self.ids.ddl_area) {
@@ -2675,6 +2683,7 @@ impl Demo {
         let tree_focused = self.state.tab == MainTab::Structure && self.ids.tree.0 != 0
             && self.ui.focused() == Some(self.ids.tree) && self.state.overlay.is_none() && !self.state.confirm_open;
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
+        let sql_table_focused = self.ids.sql_table.0 != 0 && self.ui.focused() == Some(self.ids.sql_table) && self.state.tab == MainTab::ExecuteSql;
         if let Err(error) = self.state.sync_current_plot() { self.state.plot.clear(); self.set_error(error); }
         let built = build_ui(
             self.font.clone(),
@@ -2815,6 +2824,7 @@ impl Demo {
             self.ui.set_focus(Some(self.ids.browse_table));
             self.ui.sync(&mut self.scene);
         }
+        if sql_table_focused { self.ui.set_focus(Some(self.ids.sql_table)); self.ui.sync(&mut self.scene); }
         if sql_focused {
             self.ui.set_focus(Some(self.ids.sql_area));
             if let Some(Some(editor)) = self.state.sql_edit_states.get(self.state.sql_tab_idx) {
@@ -4467,19 +4477,25 @@ impl Demo {
         };
         if let Some((table, offset)) = target.filter(|(id, _)| id.0 != 0) {
             let count = if table == self.ids.sql_table {
-                self.state.sql_result.as_ref().map_or(0, |result| result.rows.len())
+                self.state.sql_result.as_ref().map_or(0, |result| result.all_values.as_ref().map_or(result.rows.len(), |values| values.len()))
             } else { self.state.browse().result.as_ref().map_or(0, |result| result.rows.len()) };
             let mut visible = rows.range(offset..offset.saturating_add(count));
             let range = visible.next().copied().map(|first| (first - offset, visible.next_back().copied().unwrap_or(first) - offset));
             if self.ui.set_table_selected_rows(table, range) {
                 if self.ui.table_selected_col(table).is_none() { self.ui.set_table_selected_col(table, Some(0)); }
                 self.ui.reveal_table_selection(table);
+                if table == self.ids.sql_table {
+                    self.state.sql_selection.rows = range;
+                    self.state.sql_selection.columns = self.ui.table_selection_anchor(table).and_then(|(_, column)| column).zip(self.ui.table_selected_col(table));
+                    self.state.sql_scroll = self.ui.table_scroll_offset(table).unwrap();
+                }
             }
         }
         self.state.plot.linked_rows = rows;
     }
 
     fn poll_selection_changes(&mut self) {
+        if let Some((_, error)) = self.ui.take_table_data_error() { self.set_error(error); }
         if self.ui.is_dragging() { return; }
         if let Some(mode) = self.ui.select_selected(self.ids.plot.mode) {
             if (mode == 1) != self.state.plot.settings.manual {
@@ -5132,6 +5148,7 @@ impl AppCallbacks for Demo {
                                     self.after_ui(ctx);
                                 }
                             }
+                            if let Some((_, error)) = self.ui.take_table_data_error() { self.set_error(error); self.after_ui(ctx); }
                             return;
                         }
                         KeyCode::Char('v' | 'V') => {
@@ -10483,3 +10500,6 @@ mod browse_sort_tests;
 
 #[cfg(test)]
 mod browse_navigation_tests;
+
+#[cfg(test)]
+mod sql_result_tests;

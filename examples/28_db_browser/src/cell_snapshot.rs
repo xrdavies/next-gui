@@ -6,6 +6,38 @@ use std::sync::Arc;
 
 const INLINE_BYTES: usize = 8 * 1024 * 1024;
 
+pub struct SnapshotWriter {
+    output: std::io::BufWriter<tempfile::NamedTempFile>,
+    position: u64,
+    offsets: Vec<u64>,
+    width: usize,
+}
+impl SnapshotWriter {
+    pub fn new(width: usize) -> Result<Self, String> {
+        Ok(Self { output: std::io::BufWriter::new(tempfile::NamedTempFile::new().map_err(|e| e.to_string())?), position: 0, offsets: Vec::new(), width })
+    }
+    pub fn push(&mut self, cells: &[CellValue]) -> Result<(), String> {
+        if cells.len() != self.width { return Err("Typed snapshot row width does not match its columns".into()); }
+        self.offsets.try_reserve(1).map_err(|e| e.to_string())?;
+        self.offsets.push(self.position);
+        serde_json::to_writer(&mut *self, cells).map_err(|e| e.to_string())?;
+        self.write_all(b"\n").map_err(|e| e.to_string())
+    }
+    pub fn finish(mut self) -> Result<CellSnapshot, String> {
+        self.flush().map_err(|e| e.to_string())?;
+        let file = self.output.into_inner().map_err(|e| e.to_string())?;
+        Ok(CellSnapshot { file: Some(Arc::new(file)), offsets: Arc::new(self.offsets), columns: (0..self.width).collect(), width: self.width, ..Default::default() })
+    }
+}
+impl Write for SnapshotWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let count = self.output.write(bytes)?;
+        self.position = self.position.checked_add(count as u64).ok_or_else(|| std::io::Error::other("Typed snapshot file offset overflow"))?;
+        Ok(count)
+    }
+    fn flush(&mut self) -> std::io::Result<()> { self.output.flush() }
+}
+
 pub(crate) mod real_bits {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -25,7 +57,7 @@ pub struct CellSnapshot {
     rows: Vec<Vec<CellValue>>,
     bytes: usize,
     file: Option<Arc<tempfile::NamedTempFile>>,
-    offsets: Vec<u64>,
+    offsets: Arc<Vec<u64>>,
     columns: Vec<usize>,
     width: usize,
 }
@@ -79,6 +111,7 @@ fn write_row(file: &mut std::fs::File, cells: &[CellValue]) -> Result<u64, Strin
 }
 
 impl CellSnapshot {
+    pub fn file(&self) -> Option<Arc<tempfile::NamedTempFile>> { self.file.clone() }
     pub fn push(&mut self, cells: Vec<CellValue>) -> Result<(), String> {
         if self.is_empty() {
             self.columns = (0..cells.len()).collect();
@@ -95,7 +128,7 @@ impl CellSnapshot {
         if self.file.is_none() && self.bytes.saturating_add(bytes) > INLINE_BYTES {
             let mut file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
             for row in &self.rows {
-                self.offsets.push(write_row(file.as_file_mut(), row)?);
+                Arc::make_mut(&mut self.offsets).push(write_row(file.as_file_mut(), row)?);
             }
             self.rows.clear();
             self.bytes = 0;
@@ -103,7 +136,7 @@ impl CellSnapshot {
         }
         if let Some(file) = &mut self.file {
             let file = Arc::get_mut(file).ok_or("Cannot append to a shared cell snapshot")?;
-            self.offsets.push(write_row(file.as_file_mut(), &cells)?);
+            Arc::make_mut(&mut self.offsets).push(write_row(file.as_file_mut(), &cells)?);
         } else {
             self.bytes = self.bytes.saturating_add(bytes);
             self.rows.push(cells);
@@ -148,7 +181,7 @@ impl CellSnapshot {
             offsets.push(offset);
             offset = offset.checked_add(bytes as u64).ok_or("Typed snapshot file offset overflow")?;
         }
-        Ok(Self { file: Some(file), offsets, columns: (0..width).collect(), width, ..Default::default() })
+        Ok(Self { file: Some(file), offsets: Arc::new(offsets), columns: (0..width).collect(), width, ..Default::default() })
     }
 
     pub fn rows(&self) -> Result<Rows<'_>, String> {
@@ -228,9 +261,45 @@ impl CellSnapshot {
     }
 }
 
+impl next_gui_ui::TableDataSource for CellSnapshot {
+    fn len(&self) -> usize { self.len() }
+    fn row(&self, index: usize) -> Result<Vec<String>, String> {
+        Ok(self.row(index)?.iter().map(|cell| crate::db::cell_to_string(cell.as_ref())).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executed_rows_are_indexed_once_and_keep_raw_values_and_shared_offsets() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let reads = Arc::new(AtomicUsize::new(0)); let calls = reads.clone();
+        conn.create_scalar_function("observed", 1, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |context| {
+            calls.fetch_add(1, Ordering::Relaxed); context.get::<i64>(0)
+        }).unwrap();
+        let result = crate::db::execute_sql(&conn, "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3000) SELECT observed(x),CASE WHEN x%2=0 THEN NULL ELSE CAST(x'FF00' AS TEXT) END,zeroblob(x%23),9223372036854775807 FROM n").unwrap();
+        assert_eq!(reads.load(Ordering::Relaxed), 3000);
+        assert_eq!(result.values.len(), 500);
+        let values = result.all_values.unwrap();
+        assert_eq!(values.len(), 3000);
+        assert!(Arc::ptr_eq(&values.file().unwrap(), &result.export_rows.unwrap()));
+        let clone = values.as_ref().clone();
+        assert!(Arc::ptr_eq(&values.offsets, &clone.offsets));
+        for row in [0, 499, 500, 1002, 2999] {
+            let x = row as i64 + 1;
+            let expected = vec![CellValue::Integer(x), if x%2==0 { CellValue::Null } else { CellValue::Text(vec![255,0]) }, CellValue::Blob(vec![0; x as usize%23]), CellValue::Integer(i64::MAX)];
+            assert_eq!(clone.row(row).unwrap().as_ref(), expected);
+        }
+        assert_eq!(reads.load(Ordering::Relaxed), 3000);
+        let mut output = SnapshotWriter::new(1).unwrap();
+        assert!(output.push(&[]).is_err());
+        output.push(&[CellValue::Integer(9)]).unwrap();
+        assert_eq!(output.finish().unwrap().cell(0,0).unwrap(), CellValue::Integer(9));
+        assert_eq!(SnapshotWriter::new(0).unwrap().finish().unwrap().len(), 0);
+    }
 
     #[test]
     fn empty_preview_has_no_cells_to_project() {

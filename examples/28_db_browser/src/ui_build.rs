@@ -2079,7 +2079,9 @@ pub fn build_ui(
                                 sql_view_name = row.text_input_styled(&state.sql_view_name, "view name", view_style);
                                 btn_sql_view = row.tool_button("Save as VIEW");
                             });
-                            sql_table = p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style);
+                            sql_table = if let Some(values) = state.sql_result.as_ref().and_then(|result| result.all_values.clone()) {
+                                p.data_table(sql_cols.clone(), values, sql_table_style)
+                            } else { p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style) };
                             });
                         });
                     });
@@ -2386,6 +2388,12 @@ pub fn build_ui(
             ui.set_table_scroll_offset(browse_table, x, y);
         }
         if sql_table.0 != 0 {
+            ui.set_table_selected_rows(sql_table, state.sql_selection.rows);
+            if let Some((row_start, row_end)) = state.sql_selection.rows {
+                if let Some(columns) = state.sql_selection.columns {
+                    ui.set_table_selected_cells(sql_table, Some((row_start, row_end)), Some(columns));
+                }
+            }
             for (column, width) in state.sql_column_widths.iter().enumerate() {
                 ui.set_table_column_width(sql_table, column, *width);
             }

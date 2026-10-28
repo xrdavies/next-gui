@@ -521,6 +521,7 @@ pub struct AppState {
     pub sql_outputs: Vec<SqlOutput>,
     pub sql_column_widths: Vec<f32>,
     pub sql_scroll: (f32, f32),
+    pub sql_selection: SqlSelection,
     pub sql_message: String,
     pub sql_view_name: String,
     pub sql_busy: bool,
@@ -615,7 +616,14 @@ pub struct SqlOutput {
     result: Option<QueryResult>,
     widths: Vec<f32>,
     scroll: (f32, f32),
+    selection: SqlSelection,
     message: String,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct SqlSelection {
+    pub rows: Option<(usize, usize)>,
+    pub columns: Option<(usize, usize)>,
 }
 
 pub struct SqlJob {
@@ -845,6 +853,7 @@ impl AppState {
             sql_outputs: Vec::new(),
             sql_column_widths: Vec::new(),
             sql_scroll: (0.0, 0.0),
+            sql_selection: SqlSelection::default(),
             sql_view_name: "e28_saved_view".into(),
             sql_message: "Ready — Execute SQL to see results.".into(),
             sql_busy: false,
@@ -976,12 +985,14 @@ impl AppState {
             result: self.sql_result.take(),
             widths: std::mem::take(&mut self.sql_column_widths),
             scroll: self.sql_scroll,
+            selection: self.sql_selection,
             message: std::mem::take(&mut self.sql_message),
         };
         let output = std::mem::take(&mut self.sql_outputs[index]);
         self.sql_result = output.result;
         self.sql_column_widths = output.widths;
         self.sql_scroll = output.scroll;
+        self.sql_selection = output.selection;
         self.sql_message = output.message;
         self.error_msg = None;
         self.sql_tab_idx = index;
@@ -2919,19 +2930,12 @@ impl AppState {
     fn finish_sql_result(&mut self, result: Result<QueryResult, String>) -> Result<(), String> {
         self.sql_column_widths.clear();
         self.sql_scroll = (0.0, 0.0);
+        self.sql_selection = SqlSelection::default();
         let _ = self.refresh_schema();
         let _ = self.refresh_browse();
         match result {
             Ok(res) => {
-                self.sql_message = format!(
-                    "OK — {} result row(s){}",
-                    res.rows.len(),
-                    if res.truncated {
-                        " (preview limited to 500)"
-                    } else {
-                        ""
-                    }
-                );
+                self.sql_message = format!("OK — {} result row(s)", res.all_values.as_ref().map_or(res.rows.len(), |values| values.len()));
                 self.sql_result = Some(res);
                 self.status_msg = self.sql_message.clone();
                 self.error_msg = None;
