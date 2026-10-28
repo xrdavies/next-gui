@@ -1,0 +1,131 @@
+{
+  "target": "e7256c7abafb77974ae4488917784279eaf5a692",
+  "source_sha256": {
+    "examples/28_db_browser/src/main.rs": "1ad4d2cefe42cf53862c3641b8b4b7b1791267c521b5abef0d04818b633154de",
+    "examples/28_db_browser/src/state.rs": "6796ef738aa389cba0a042d0310046721a9a10b28b4d0a0a59e90d6fc20acaac",
+    "examples/28_db_browser/src/ui_build.rs": "3bfcc3e56ac16947f56275fca17e1853df0f03caa3ccfaa05025be4ebaea74e2",
+    "examples/28_db_browser/src/cell_editor_tests.rs": "4d696362fe50b7c87ee68a09c08feb71d1ee5175208b055455abc63da0bd8930"
+  },
+  "binary_sha256": {
+    "sha256": "4ebd8eae186247645fd0aa2ca5cc902a9f4cce84330a1caa6b9b056b08230d66"
+  },
+  "checks": {
+    "clippy": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-session-v12-clippy-final.log"
+    },
+    "workspace": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-session-v12-workspace-final.log"
+    },
+    "build": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-session-v12-build-final.log"
+    },
+    "macos": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-session-v12-macos-final.log"
+    },
+    "windows": {
+      "exit": 0,
+      "log": "/tmp/next-gui-cell-session-v12-windows-final.log"
+    }
+  },
+  "frames": {
+    "window-cell-session-dark-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-session-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-session-light-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-session-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "native": {
+    "dark-cell-session": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-session-v12-native/dark-cell-session.driver.log"
+    },
+    "light-cell-session": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-session-v12-native/light-cell-session.driver.log"
+    },
+    "dark-cell-session-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-session-v12-native/dark-cell-session-narrow.driver.log"
+    },
+    "light-cell-session-narrow": {
+      "exit": 0,
+      "driver": "/tmp/next-gui-cell-session-v12-native/light-cell-session-narrow.driver.log"
+    }
+  },
+  "keyboard": {
+    "dark": {
+      "captured": true,
+      "pid": 18281,
+      "window": 6272,
+      "owned_exit": -2
+    },
+    "light": {
+      "captured": true,
+      "pid": 18304,
+      "window": 6278,
+      "owned_exit": -2
+    }
+  },
+  "keyboard_pixels": {
+    "dark": {
+      "height": 678,
+      "redo_changed_channels": 0,
+      "undo_bounds": [
+        415,
+        230,
+        512,
+        243
+      ],
+      "undo_changed_channels": 3036,
+      "width": 846
+    },
+    "light": {
+      "height": 678,
+      "redo_changed_channels": 0,
+      "undo_bounds": [
+        415,
+        230,
+        512,
+        243
+      ],
+      "undo_changed_channels": 3036,
+      "width": 846
+    }
+  },
+  "assets_sha256": {
+    "native-light-before.png": "0b0325b066a425973403101b4d2b568c6468c0f7ece96bb8bc562740183335fa",
+    "native-dark-redo.png": "8fa81cc52fa7c9cc1f3af6fd9f40c896cd441b1197b104af684ceec40eee047d",
+    "native-dark-undo.png": "ab7fa7cf07e6280399b216839c63b43765e8bdd8ae5888faefd6b5fa4faddf6e",
+    "metal-contact.png": "c1d33056b12bc73066134e4738e5fbc64d3d731c3c85eb96cb5021ecdca67500",
+    "native-dark-before.png": "8fa81cc52fa7c9cc1f3af6fd9f40c896cd441b1197b104af684ceec40eee047d",
+    "composition-light-800.png": "79cf59f9537ee586524485760e6e40e74014e44471aafad7929304821d9f18b0",
+    "native-light-redo.png": "0b0325b066a425973403101b4d2b568c6468c0f7ece96bb8bc562740183335fa",
+    "keyboard-contact.png": "6b9c55b0bee3f3fef046e7547786445bb328c533dc78e1bf0e154fa1862843fa",
+    "native-light-undo.png": "687c18ee83d874d07b24a237122fb3e1215b9a7db04568e3a4f6894e518433c4",
+    "soft-contact.png": "2f80f0fde9ec7c0cf308673cbc877fab501f805e1a1e3826dabe5c80e5ee99b2",
+    "native-contact.png": "ef33fd8138a65652625bfbdf06703e0fddd5d66dd3b00a60543fe5d427400f0c"
+  }
+}
