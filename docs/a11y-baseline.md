@@ -237,14 +237,17 @@ across rebuilds. These are synthetic widget contracts, not native input acceptan
 
 List exposes `list_scroll_offset`, finite/clamped `set_list_scroll_offset` and `reveal_list_selection`. Hosts can restore selection plus viewport after rebuild; explicit reveal scrolls only enough to show the selected row and keeps focus. Keyboard list navigation uses the same reveal path.
 
-Custom-content `Ui::dialog` keeps a scrolling body and fixed footer. Only the top
+Custom-content `Ui::dialog` keeps a scrolling body and fixed footer.
+`FlexBuilder::dialog` builds the same modal root during layout composition without
+occupying layout flow; opening, nesting and dismissal use the same Ui APIs. Only the top
 open dialog participates in focus navigation; background pointer/scroll and explicit
 focus are blocked. Child Select/Autocomplete popups keep their normal keyboard
 priority. Escape cancels composition or the child editor/popup before dismissing
 the dialog. Close/backdrop/Escape emit `take_dialog_dismiss`; programmatic closing
 restores prior focus without emitting a dismissal. Nested custom dialogs are
 supported; an existing Modal/Drawer decision must finish before opening one. Hosts
-check `active_dialog` before running application shortcuts.
+check `active_dialog` before running application shortcuts, while routing text
+clipboard actions to the focused modal editor.
 
 Composite table-cell rows share cell clipping and layout with their controls.
 Tab/BackTab visit the row's focusable controls before moving to an adjacent editable

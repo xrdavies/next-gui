@@ -743,7 +743,14 @@ pub fn build_ui(
         + if extra_visible { 40.0 } else { 0.0 }
         + if project_visible { 40.0 } else { 0.0 };
     let content_h = (shell_h - chrome_h).max(300.0);
-    let docks_on = state.any_dock_visible() && state.overlay.is_none();
+    let csv_modal = matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
+    let mut csv_style = ModalStyle::from_theme(&theme);
+    csv_style.width = (win_w - 48.0).min(1240.0);
+    csv_style.height = (win_h - 48.0).min(780.0);
+    csv_style.title_height = 44.0;
+    csv_style.action_height = 36.0;
+    csv_style.close_on_backdrop = false;
+    let docks_on = state.any_dock_visible() && (state.overlay.is_none() || csv_modal);
     let pane_width = shell_w - 20.0;
     let main_frac = if docks_on { state.body_ratio.clamp(340.0 / pane_width, 1.0 - 240.0 / pane_width) } else { 1.0 };
     let main_w = (shell_w - 20.0) * main_frac;
@@ -959,6 +966,11 @@ pub fn build_ui(
             ov_col.padding = 8.0;
             ov_col.gap = 6.0;
             ov_col.cross_align = CrossAlign::Start;
+            if csv_modal {
+                ov_col.width = csv_style.width - 2.0 * csv_style.padding;
+                ov_col.height = csv_style.height - csv_style.title_height - csv_style.action_height - 3.0 * csv_style.padding;
+                ov_col.padding = 0.0;
+            }
 
             let mut row = RowStyle::from_theme(&theme);
             row.width = shell_w - 60.0;
@@ -991,8 +1003,7 @@ pub fn build_ui(
                 OverlayKind::LoadExtension => "Load",
                 _ => "Save",
             };
-            let (_ov_panel, ok_id, cancel_id) =
-                col.dialog_panel(title, panel, primary, "Cancel", |p| {
+            let build_overlay = |p: &mut next_gui_ui::FlexBuilder<'_>| {
                 p.column(ov_col, |c| {
                     match kind {
                         OverlayKind::InsertRow => {
@@ -1307,9 +1318,9 @@ pub fn build_ui(
                             });
                         }
                         OverlayKind::ImportCsv | OverlayKind::PasteCsv => {
-                            let body_w = ov_col.width - 16.0;
-                            let body_h = ov_col.height - 16.0;
-                            let left_w = if shell_w >= 1000.0 { 380.0 } else { 320.0 };
+                            let body_w = ov_col.width;
+                            let body_h = ov_col.height;
+                            let left_w = if body_w >= 1000.0 { 360.0 } else { 288.0 };
                             let preview_w = (body_w - left_w - 12.0).max(200.0);
                             let mut body = row; body.width = body_w; body.height = body_h; body.cross_align = CrossAlign::Start; body.gap = 12.0;
                             c.row(body, |body| {
@@ -1520,10 +1531,24 @@ pub fn build_ui(
                         }
                     }
                 });
-            });
-            ov_btn_ok = ok_id;
-            ov_btn_cancel = cancel_id;
-        } else {
+            };
+            if csv_modal {
+                let mut ok = z;
+                let mut cancel = z;
+                let parent = col.dialog(title, csv_style, build_overlay, |footer| {
+                    cancel = footer.tool_button("Cancel");
+                    ok = footer.tool_button_styled(primary, theme.colors.accent, theme.colors.on_accent);
+                });
+                csv_files.parent = parent;
+                ov_btn_ok = ok;
+                ov_btn_cancel = cancel;
+            } else {
+                let (_, ok, cancel) = col.dialog_panel(title, panel, primary, "Cancel", build_overlay);
+                ov_btn_ok = ok;
+                ov_btn_cancel = cancel;
+            }
+        }
+        if state.overlay.is_none() || csv_modal {
             // —— Main + docks ——
             let browse_tables = state.browse_tables();
             let browse_opts: Vec<String> = if browse_tables.is_empty() {
@@ -2541,6 +2566,7 @@ pub fn build_ui(
     ui.set_text_area_line_numbers(sql_area, true);
     ui.set_text_area_read_only(log_area, true);
     crate::csv_files::configure(&mut ui,csv_files,state);
+    if csv_files.parent.0 != 0 { ui.set_dialog_open(csv_files.parent, true); }
     crate::csv_files::build_confirmation(&mut ui,&mut csv_files,state,&theme,width as f32);
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     ui.sync(&mut scene);

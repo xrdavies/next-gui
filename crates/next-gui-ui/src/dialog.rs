@@ -1,5 +1,23 @@
 use super::*;
 
+impl FlexBuilder<'_> {
+    /// Build a closed modal root while composing a layout, without occupying its flow.
+    /// Open and dismiss it through the same APIs as [`Ui::dialog`].
+    pub fn dialog<B, F>(
+        &mut self,
+        title: impl Into<String>,
+        style: ModalStyle,
+        body: B,
+        footer: F,
+    ) -> WidgetId
+    where
+        B: FnOnce(&mut FlexBuilder<'_>),
+        F: FnOnce(&mut FlexBuilder<'_>),
+    {
+        self.ui.dialog(title, style, body, footer)
+    }
+}
+
 struct DialogGeometry {
     panel: Rect,
     title: Rect,

@@ -671,6 +671,7 @@ pub struct Controls {
     pub separate: next_gui_ui::WidgetId,
     pub toggle: next_gui_ui::WidgetId,
     pub matching: next_gui_ui::WidgetId,
+    pub parent: next_gui_ui::WidgetId,
     pub dialog: next_gui_ui::WidgetId,
     pub answers: [next_gui_ui::WidgetId; 4],
     progress: next_gui_ui::WidgetId,
@@ -686,6 +687,7 @@ impl Default for Controls {
             separate: zero,
             toggle: zero,
             matching: zero,
+            parent: zero,
             dialog: zero,
             answers: [zero; 4],
             progress: zero,
@@ -1049,7 +1051,13 @@ impl crate::Demo {
     }
 
     pub(crate) fn handle_csv_confirmation(&mut self) {
-        if self.ui.take_dialog_dismiss() == Some(self.ids.csv_files.dialog) {
+        let dismissed = self.ui.take_dialog_dismiss();
+        if dismissed == Some(self.ids.csv_files.parent) && self.state.csv_work.is_none() {
+            self.snapshot_inputs();
+            self.handle_button(self.ids.ov_btn_cancel);
+            return;
+        }
+        if dismissed == Some(self.ids.csv_files.dialog) {
             match self.state.continue_csv_import_work(Some(Answer::Cancel)) {
                 Ok(()) => self.clear_error(),
                 Err(error) => self.set_error(error),
@@ -1057,8 +1065,10 @@ impl crate::Demo {
             self.rebuild = true;
             return;
         }
-        while let Some(id) = self.ui.take_button_activate() {
-            self.handle_csv_answer_button(id);
+        if self.state.csv_work.is_some() {
+            while let Some(id) = self.ui.take_button_activate() {
+                self.handle_csv_answer_button(id);
+            }
         }
     }
 }
@@ -1254,6 +1264,74 @@ mod interaction_tests {
                 assert_eq!(crate::db::count_rows(conn, "second").unwrap(), 1);
                 assert_eq!(crate::db::count_rows(conn, "keeper").unwrap(), 1);
                 assert!(crate::db::table_columns(conn, "first").unwrap().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn csv_preview_is_a_modal_dialog_with_fixed_actions_and_parent_recovery() {
+        use crate::state::OverlayKind;
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let directory = tempfile::tempdir().unwrap();
+                let source = directory.path().join("customers.csv");
+                std::fs::write(&source, "name,amount\n日本,12.5\n").unwrap();
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE keeper(v);INSERT INTO keeper VALUES('pending')").unwrap();
+                assert!(demo.state.open_csv_files(vec![source]));
+                demo.state.csv_has_header = true;
+                demo.state.csv_advanced = true;
+                demo.do_rebuild();
+                let dialog = demo.ui.active_dialog().expect("CSV preview must be modal");
+                let body = bounds(&demo, demo.ui.dialog_body(dialog).unwrap());
+                assert!(body.x >= 20.0 && body.y >= 20.0);
+                assert!(body.x + body.width <= width as f32 - 20.0);
+                for id in [demo.ids.ov_btn_ok, demo.ids.ov_btn_cancel] {
+                    let action = bounds(&demo, id);
+                    assert!(action.y >= body.y + body.height);
+                    assert!(action.y + action.height <= height as f32 - 20.0);
+                }
+                assert!(demo.ids.tabs.0 != 0, "keep the database workspace behind the modal");
+                let background = bounds(&demo, demo.ids.btn_new);
+                demo.ui.pointer_pressed(&mut demo.scene, background.x + 2.0, background.y + 2.0);
+                assert!(demo.ui.take_button_activate().is_none());
+                assert_eq!(demo.ui.active_dialog(), Some(dialog));
+                capture(&mut demo, theme_name, width, "modal");
+                demo.ui.set_focus(Some(demo.ids.ov_csv_table));
+                demo.ui.key_input(UiKey::SelectAll);
+                assert!(demo.ui.paste_into_focused_text("新しい表"));
+                finish(&mut demo);
+                demo.win_w = if width == 800 { 1400 } else { 800 };
+                demo.win_h = if height == 600 { 1000 } else { 600 };
+                demo.do_rebuild();
+                assert_eq!(demo.ui.focused(), Some(demo.ids.ov_csv_table));
+                assert_eq!(demo.ui.text_input_value(demo.ids.ov_csv_table), Some("新しい表"));
+                demo.ui.key_input(UiKey::Undo);finish(&mut demo);
+                assert_eq!(demo.state.csv_table, "customers");
+                demo.ui.key_input(UiKey::Escape);demo.handle_csv_confirmation();
+                assert!(demo.state.overlay.is_none());
+                assert!(demo.state.csv_files.is_none());
+                assert!(demo.state.csv_preview.is_none());
+                assert_eq!(crate::db::count_rows(demo.state.conn.as_ref().unwrap(), "keeper").unwrap(), 1);
+                demo.state.overlay = Some(OverlayKind::PasteCsv);
+                demo.state.csv_paste = "v\n日本\n".into();
+                demo.state.csv_preview = None;
+                demo.do_rebuild();
+                assert!(demo.ui.active_dialog().is_some());
+                let panel_width = (demo.win_w as f32 - 48.0).min(1240.0);
+                let panel_height = (demo.win_h as f32 - 48.0).min(780.0);
+                let close_x = (demo.win_w as f32 + panel_width) * 0.5 - 28.0;
+                let close_y = (demo.win_h as f32 - panel_height) * 0.5 + 22.0;
+                demo.ui.pointer_pressed(&mut demo.scene, close_x, close_y);
+                demo.handle_csv_confirmation();
+                assert!(demo.state.overlay.is_none(), "title close cancels clipboard preview");
+                demo.state.overlay = Some(OverlayKind::PasteCsv);
+                demo.state.csv_preview = None;
+                demo.do_rebuild();
+                demo.handle_button(demo.ids.ov_btn_cancel);
+                assert!(demo.state.overlay.is_none());
             }
         }
     }

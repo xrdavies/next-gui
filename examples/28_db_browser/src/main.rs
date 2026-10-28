@@ -4563,7 +4563,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.csv_work.is_some() {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         self.handle_table_cell_edit();
@@ -4782,7 +4782,8 @@ impl AppCallbacks for Demo {
                 modifiers,
                 ..
             } => {
-                if self.ui.active_dialog().is_some() {
+                let text_clipboard = modifiers.commandish() && matches!(key, KeyCode::Char('c' | 'C' | 'x' | 'X' | 'v' | 'V'));
+                if self.ui.active_dialog().is_some() && !text_clipboard {
                     if let Some(key)=map_key(key,modifiers) {self.ui.key_input(key);}
                     self.after_ui(ctx);return;
                 }

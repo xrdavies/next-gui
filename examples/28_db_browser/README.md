@@ -32,6 +32,9 @@ completed files and earlier pending edits remain available for Write Changes or
 Revert. Other database actions wait until import or cancellation finishes.
 The first20 records determine columns; shorter records retain missing cells as
 NULL, while explicit empty cells follow the selected default/missing-value policy.
+File and clipboard previews open in a centered modal with a fixed action row;
+existing-table questions and cancellable progress nest above it. Escape/close
+cancel only the current dialog; background database controls remain inactive.
 Use local number conventions (off by default) applies system decimal/group/digit
 symbols to inference and typed values before SQLite affinity. Each validated
 snapshot keeps its numeric conventions until insertion finishes.
