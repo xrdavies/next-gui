@@ -106,6 +106,40 @@ impl Demo {
 }
 
 #[cfg(test)]
+pub(crate) fn capture(demo:&mut Demo,folder:&Path,name:&str) {
+    use next_gui_render::{encode_scene,Renderer};
+    demo.scene.mark_full_dirty(demo.win_w as f32,demo.win_h as f32); let dirty=demo.scene.take_dirty();
+    let commands=encode_scene(&demo.scene,&dirty); let clear=crate::ui_build::clear_color(&demo.theme);
+    let mut soft=next_gui_render_soft::SoftRenderer::new(demo.win_w,demo.win_h,clear);soft.render(&commands,&dirty);
+    let pixels=soft.frame_pixels().unwrap().0;
+    crate::write_ppm(folder.join(format!("window-{name}.ppm")).to_str().unwrap(),pixels,demo.win_w,demo.win_h).unwrap();
+    if let Ok(mut gpu)=next_gui_render_gpu::GpuRenderer::try_new(demo.win_w,demo.win_h,clear) {
+        gpu.render(&commands,&dirty);let rendered=gpu.frame_pixels().unwrap().0;
+        crate::write_ppm(folder.join(format!("window-{name}-metal.ppm")).to_str().unwrap(),rendered,demo.win_w,demo.win_h).unwrap();
+        let bounds=demo.scene.iter_paint_order().into_iter().find(|n|demo.ui.widget_from_node(n.id)==Some(demo.ids.chart)).unwrap().bounds;
+        let mut delta=0;let mut count=0;
+        for y in (bounds.y.ceil().max(0.0) as usize+2)..((bounds.y+bounds.height).floor().min(demo.win_h as f32) as usize).saturating_sub(2) {
+            for x in (bounds.x.ceil().max(0.0) as usize+2)..((bounds.x+bounds.width).floor().min(demo.win_w as f32) as usize).saturating_sub(2) {
+                for shift in [0,8,16] {delta=delta.max((((pixels[y*demo.win_w as usize+x]>>shift)&255) as i32-((rendered[y*demo.win_w as usize+x]>>shift)&255) as i32).abs());}
+                count+=1;
+            }
+        }
+        assert!(count>1000 && delta<=2,"{name}: delta={delta},pixels={count}");
+        eprintln!("Plot export {name}: delta={delta},pixels={count}");
+        if demo.ui.popup_owner()==Some(demo.ids.context_menu) {
+            let style=demo.ui.context_menu_style();
+            let panel=demo.scene.iter_paint_order().into_iter().rev().find(|n|n.visible && n.fill==style.popup_bg && n.bounds.width>=style.popup_width && n.bounds.height>=style.item_height).unwrap().bounds;
+            assert!(panel.x>=0.0 && panel.y>=0.0 && panel.x+panel.width<=demo.win_w as f32 && panel.y+panel.height<=demo.win_h as f32);
+            let mut delta=0;
+            for y in panel.y.ceil() as usize+2..(panel.y+panel.height).floor() as usize-2 {for x in panel.x.ceil() as usize+2..(panel.x+panel.width).floor() as usize-2 {
+                for shift in [0,8,16] {delta=delta.max((((pixels[y*demo.win_w as usize+x]>>shift)&255) as i32-((rendered[y*demo.win_w as usize+x]>>shift)&255) as i32).abs());}
+            }}
+            assert!(delta<=2,"Context menu {name}: {delta}");eprintln!("Context menu {name}: delta={delta}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{plot, state::{DockKind, MainTab}, PresentBackend};
@@ -312,7 +346,7 @@ mod tests {
                     demo.ui.set_focus(Some(id));demo.ui.sync(&mut demo.scene);
                     let bounds=demo.scene.iter_paint_order().into_iter().find(|n|demo.ui.widget_from_node(n.id)==Some(id)).unwrap().bounds;
                     assert!(bounds.x>=0.0 && bounds.x+bounds.width<=width as f32,"{width}: clipped {id:?} at {bounds:?}");
-                    assert_eq!(demo.ui.scroll_offset(demo.ids.dock_scroll).unwrap().0,0.0,"Focusing plot controls must not scroll away the chart");
+                    assert_eq!(demo.ui.scroll_offset(demo.ids.dock_scrolls[DockKind::Plot as usize]).unwrap().0,0.0,"Focusing plot controls must not scroll away the chart");
                     if id==demo.ids.chart {assert!(demo.ui.chart_plot_size(id,0).unwrap().0>=260);}
                     demo.snapshot_inputs();assert_eq!(demo.state.body_ratio,0.9,"Adaptive sizing must preserve the saved ratio");
                 }
@@ -375,36 +409,5 @@ mod tests {
         assert!(matches!(demo.state.plot.source,Some(plot::Source::Query(0))));
     }
 
-    fn capture(demo:&mut Demo,folder:&Path,name:&str) {
-        use next_gui_render::{encode_scene,Renderer};
-        demo.scene.mark_full_dirty(demo.win_w as f32,demo.win_h as f32); let dirty=demo.scene.take_dirty();
-        let commands=encode_scene(&demo.scene,&dirty); let clear=crate::ui_build::clear_color(&demo.theme);
-        let mut soft=next_gui_render_soft::SoftRenderer::new(demo.win_w,demo.win_h,clear);soft.render(&commands,&dirty);
-        let pixels=soft.frame_pixels().unwrap().0;
-        crate::write_ppm(folder.join(format!("window-{name}.ppm")).to_str().unwrap(),pixels,demo.win_w,demo.win_h).unwrap();
-        if let Ok(mut gpu)=next_gui_render_gpu::GpuRenderer::try_new(demo.win_w,demo.win_h,clear) {
-            gpu.render(&commands,&dirty);let rendered=gpu.frame_pixels().unwrap().0;
-            crate::write_ppm(folder.join(format!("window-{name}-metal.ppm")).to_str().unwrap(),rendered,demo.win_w,demo.win_h).unwrap();
-            let bounds=demo.scene.iter_paint_order().into_iter().find(|n|demo.ui.widget_from_node(n.id)==Some(demo.ids.chart)).unwrap().bounds;
-            let mut delta=0;let mut count=0;
-            for y in (bounds.y.ceil().max(0.0) as usize+2)..((bounds.y+bounds.height).floor().min(demo.win_h as f32) as usize).saturating_sub(2) {
-                for x in (bounds.x.ceil().max(0.0) as usize+2)..((bounds.x+bounds.width).floor().min(demo.win_w as f32) as usize).saturating_sub(2) {
-                    for shift in [0,8,16] {delta=delta.max((((pixels[y*demo.win_w as usize+x]>>shift)&255) as i32-((rendered[y*demo.win_w as usize+x]>>shift)&255) as i32).abs());}
-                    count+=1;
-                }
-            }
-            assert!(count>1000 && delta<=2,"{name}: delta={delta},pixels={count}");
-            eprintln!("Plot export {name}: delta={delta},pixels={count}");
-            if demo.ui.popup_owner()==Some(demo.ids.context_menu) {
-                let style=demo.ui.context_menu_style();
-                let panel=demo.scene.iter_paint_order().into_iter().rev().find(|n|n.visible && n.fill==style.popup_bg && n.bounds.width>=style.popup_width && n.bounds.height>=style.item_height).unwrap().bounds;
-                assert!(panel.x>=0.0 && panel.y>=0.0 && panel.x+panel.width<=demo.win_w as f32 && panel.y+panel.height<=demo.win_h as f32);
-                let mut delta=0;
-                for y in panel.y.ceil() as usize+2..(panel.y+panel.height).floor() as usize-2 {for x in panel.x.ceil() as usize+2..(panel.x+panel.width).floor() as usize-2 {
-                    for shift in [0,8,16] {delta=delta.max((((pixels[y*demo.win_w as usize+x]>>shift)&255) as i32-((rendered[y*demo.win_w as usize+x]>>shift)&255) as i32).abs());}
-                }}
-                assert!(delta<=2,"Context menu {name}: {delta}");eprintln!("Context menu {name}: delta={delta}");
-            }
-        }
-    }
+
 }

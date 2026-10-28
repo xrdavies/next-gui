@@ -13,6 +13,10 @@ pub struct ProjectFile {
     pub db4s_xml: Option<String>,
     pub body_ratio: f32,
     pub structure_ratio: f32,
+    pub dock_ratio: f32,
+    pub plot_ratio: f32,
+    pub dock_focus: crate::state::DockKind,
+    pub dock_remote: bool,
     pub read_only: bool,
     pub cond_rules: Vec<crate::state::CondFormatRule>,
     pub chart_schema: String,
@@ -55,6 +59,10 @@ impl ProjectFile {
             db4s_xml: state.project_xml.clone(),
             body_ratio: state.body_ratio,
             structure_ratio: state.structure_ratio,
+            dock_ratio: state.dock_ratio,
+            plot_ratio: state.plot_ratio,
+            dock_focus: state.dock_focus,
+            dock_remote: state.dock_remote,
             read_only: state.read_only,
             cond_rules: state.cond_rules.clone(),
             chart_schema: state.chart_schema.clone(),
@@ -127,6 +135,10 @@ impl ProjectFile {
         state.project_xml = self.db4s_xml.clone();
         state.body_ratio = self.body_ratio.clamp(0.05, 0.95);
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
+        state.dock_ratio = if self.dock_ratio.is_finite() {self.dock_ratio.clamp(0.05,0.95)}else{0.38};
+        state.plot_ratio = if self.plot_ratio.is_finite() { self.plot_ratio.clamp(0.05,0.95) } else { 0.45 };
+        state.dock_focus = if self.dock_focus==crate::state::DockKind::EditCell {crate::state::DockKind::Remote}else{self.dock_focus};
+        state.dock_remote = self.dock_remote;
         state.cond_rules = self.cond_rules.clone();
         state.chart_schema = self.chart_schema.clone();
         state.plot = crate::plot::Model::default();
@@ -177,8 +189,12 @@ impl Default for ProjectFile {
         Self {
             db_path: String::new(),
             db4s_xml: None,
-            body_ratio: 0.72,
+            body_ratio: 0.45,
             structure_ratio: 0.34,
+            dock_ratio: 0.38,
+            plot_ratio: 0.45,
+            dock_focus: crate::state::DockKind::Remote,
+            dock_remote: true,
             read_only: false,
             cond_rules: Vec::new(),
             chart_schema: "main".into(),

@@ -814,7 +814,8 @@ pub fn build(
     }
     let mut table = TableStyle::from_theme(theme);
     table.width = width;
-    table.height = heights(height, width).0;
+    let extra = if width < 480.0 { 38.0 } else { 0.0 } + if width < 320.0 { 36.0 } else { 0.0 };
+    table.height = (height - 86.0 - extra).clamp(64.0, 154.0);
     table.row_height = 26.0;
     table.header_height = 28.0;
     let name_width = (width - 210.0).max(120.0);
@@ -894,12 +895,6 @@ pub fn build(
         });
     }
     ids
-}
-
-pub fn heights(available: f32, width: f32) -> (f32, f32) {
-    let columns = (available * 0.25 - 12.0).clamp(64.0, 154.0);
-    let extra = if width < 480.0 { 38.0 } else { 0.0 } + if width < 320.0 { 36.0 } else { 0.0 };
-    (columns, (available - columns - 90.0 - extra).max(160.0))
 }
 
 pub fn configure(ui: &mut next_gui_ui::Ui, ids: Controls, model: &Model, bg: Color) {

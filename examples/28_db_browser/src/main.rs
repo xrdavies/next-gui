@@ -16,6 +16,8 @@ mod cell_snapshot;
 mod plot;
 mod plot_load;
 mod plot_export;
+#[cfg(test)]
+mod dock_tests;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
@@ -229,6 +231,8 @@ struct Demo {
     qa_stepper_started: bool,
     last_body_ratio: Option<f32>,
     last_structure_ratio: Option<f32>,
+    last_dock_ratio: Option<f32>,
+    last_plot_ratio: Option<f32>,
     last_tree_sel: Option<u64>,
     last_schema_names: Vec<String>,
     reveal_schema_selection: bool,
@@ -253,10 +257,14 @@ struct BuiltUiIds {
     status: WidgetId,
     body_splitter: WidgetId,
     structure_splitter: WidgetId,
+    dock_splitter: WidgetId,
+    plot_splitter: WidgetId,
+    dock_scrolls: [WidgetId;5],
+    btn_dock_edit_close: WidgetId,
+    btn_dock_close: WidgetId,
     shell_scroll: WidgetId,
     page_scroll: WidgetId,
     pragma_scroll: WidgetId,
-    dock_scroll: WidgetId,
     menu_file: WidgetId,
     menu_edit: WidgetId,
     menu_view: WidgetId,
@@ -492,10 +500,14 @@ impl From<&BuiltUi> for BuiltUiIds {
             status: b.status,
             body_splitter: b.body_splitter,
             structure_splitter: b.structure_splitter,
+            dock_splitter: b.dock_splitter,
+            plot_splitter: b.plot_splitter,
+            dock_scrolls: b.dock_scrolls,
+            btn_dock_edit_close: b.btn_dock_edit_close,
+            btn_dock_close: b.btn_dock_close,
             shell_scroll: b.shell_scroll,
             page_scroll: b.page_scroll,
             pragma_scroll: b.pragma_scroll,
-            dock_scroll: b.dock_scroll,
             menu_file: b.menu_file,
             menu_edit: b.menu_edit,
             menu_view: b.menu_view,
@@ -1291,7 +1303,7 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
@@ -1312,7 +1324,10 @@ impl Demo {
                     state.plot.invalidate();
                 }
                 state.sync_current_plot().unwrap();
-                state.body_ratio = 0.52;
+                if tab.starts_with("docks-") {
+                    state.browse_mut().sel_row=Some(0);state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();
+                }
+                state.body_ratio = if tab.starts_with("docks-") {0.45}else{0.52};
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
@@ -1448,6 +1463,8 @@ impl Demo {
             ids: BuiltUiIds::from(&built),
             last_body_ratio: built.ui.splitter_ratio(built.body_splitter),
             last_structure_ratio: built.ui.splitter_ratio(built.structure_splitter),
+            last_dock_ratio: built.ui.splitter_ratio(built.dock_splitter),
+            last_plot_ratio: built.ui.splitter_ratio(built.plot_splitter),
             scene: built.scene,
             ui: built.ui,
             backend: Backend::Soft(SoftRenderer::new(width, height, clear)),
@@ -1499,7 +1516,17 @@ impl Demo {
         }
         if let Some(value) = self.ui.text_input_value(self.ids.sql_view_name) { self.state.sql_view_name = value.to_string(); }
         if let Some(offset) = self.ui.scroll_offset(self.ids.page_scroll) { self.state.page_scroll[self.last_tab] = offset; }
-        if let Some(offset) = self.ui.scroll_offset(self.ids.dock_scroll) { self.state.dock_scroll[self.state.dock_focus as usize] = offset; }
+        if let Some(ratio)=self.ui.splitter_ratio(self.ids.dock_splitter) {
+            if Some(ratio)!=self.last_dock_ratio {self.state.dock_ratio=ratio;}
+            self.last_dock_ratio=Some(ratio);
+        }
+        if let Some(ratio)=self.ui.splitter_ratio(self.ids.plot_splitter) {
+            if Some(ratio)!=self.last_plot_ratio {self.state.plot_ratio=ratio;}
+            self.last_plot_ratio=Some(ratio);
+        }
+        for (index,id) in self.ids.dock_scrolls.iter().enumerate() {
+            if let Some(offset)=self.ui.scroll_offset(*id) {self.state.dock_scroll[index]=offset;}
+        }
         if let Some(offset) = self.ui.scroll_offset(self.ids.shell_scroll) { self.state.shell_scroll = offset; }
         if let Some(view) = self.ui.image_view(self.ids.edit_image) { self.state.edit_image_view = view; }
         if let Some(widths) = self.ui.table_column_widths(self.ids.browse_table) {
@@ -1584,9 +1611,12 @@ impl Demo {
         }
         if self.ids.dock_tabs.0 != 0 {
             if let Some(i) = self.ui.tabs_selected(self.ids.dock_tabs) {
-                let docks = self.state.visible_docks();
+                let docks = self.state.visible_dock_tabs();
                 if let Some(d) = docks.get(i) {
-                    self.state.dock_focus = *d;
+                    if self.state.dock_focus != *d {
+                        self.state.dock_focus = *d;
+                        self.rebuild = true;
+                    }
                 }
             }
         }
@@ -2680,6 +2710,7 @@ impl Demo {
         let index_focused = (self.state.overlay == Some(OverlayKind::EditIndex)).then(||
             [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available, self.ids.ov_idx_order].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
         ).flatten();
+        let tabs_focus = [self.ids.tabs,self.ids.dock_tabs].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
         let dock_tabs_view = self.ui.tabs_state(self.ids.dock_tabs);
         let log_revision = self.state.sql_log.revision();
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
@@ -2701,6 +2732,8 @@ impl Demo {
         );
         self.last_body_ratio = built.ui.splitter_ratio(built.body_splitter);
         self.last_structure_ratio = built.ui.splitter_ratio(built.structure_splitter);
+        self.last_dock_ratio = built.ui.splitter_ratio(built.dock_splitter);
+        self.last_plot_ratio = built.ui.splitter_ratio(built.plot_splitter);
         self.browse_header_column = None;
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
@@ -2818,6 +2851,10 @@ impl Demo {
             if self.ui.restore_tabs_state(self.ids.dock_tabs, &view) {
                 self.ui.sync(&mut self.scene);
             }
+        }
+        if let Some(index) = tabs_focus {
+            let id = [self.ids.tabs,self.ids.dock_tabs][index];
+            if id.0 != 0 { self.ui.set_focus(Some(id)); self.ui.sync(&mut self.scene); }
         }
         if std::mem::take(&mut self.reveal_browse_selection) && self.ids.browse_table.0 != 0 {
             self.ui.reveal_table_selection(self.ids.browse_table);
@@ -3356,18 +3393,19 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
-        if let Err(error)=self.state.guard_background_idle() {self.set_error(error);return;}
+        let view_action=(mid::VIEW_DOCK_EDIT..=mid::VIEW_DOCK_REMOTE).contains(&item);
+        if !view_action {if let Err(error)=self.state.guard_background_idle() {self.set_error(error);return;}}
         if self.state.wizard_column_picker.is_some() { return; }
         self.snapshot_inputs();
         if self.handle_browse_header_action(item) { return; }
         let document_action = matches!(item, mid::FILE_NEW | mid::FILE_NEW_MEM | mid::FILE_OPEN | mid::FILE_OPEN_RO | mid::FILE_CLOSE | mid::FILE_PROJECT_OPEN | mid::FILE_PROJECT_CLOSE | mid::FILE_EXIT | mid::FILE_SAVE_ALL)
             || (mid::FILE_RECENT_BASE..mid::FILE_RECENT_BASE + 5).contains(&item);
-        if self.state.has_cell_draft() && !document_action {
+        if self.state.has_cell_draft() && !document_action && !view_action {
             self.set_error("Apply or discard the cell draft first");
             self.rebuild = true;
             return;
         }
-        if self.state.sql_busy {
+        if self.state.sql_busy && !view_action {
             self.set_error("Stop or finish SQL first");
             self.rebuild = true;
             return;
@@ -3436,9 +3474,6 @@ impl Demo {
             }
             mid::VIEW_DOCK_EDIT => {
                 self.state.dock_edit = !self.state.dock_edit;
-                if self.state.dock_edit {
-                    self.state.dock_focus = DockKind::EditCell;
-                }
                 self.rebuild = true;
             }
             mid::VIEW_DOCK_SCHEMA => {
@@ -4013,6 +4048,13 @@ impl Demo {
 
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
+        if id==self.ids.btn_dock_edit_close || id==self.ids.btn_dock_close {
+            self.snapshot_inputs();
+            if id==self.ids.btn_dock_edit_close {self.state.dock_edit=false;}else{
+                match self.state.dock_focus {DockKind::EditCell=>self.state.dock_edit=false,DockKind::Schema=>self.state.dock_schema=false,DockKind::Log=>self.state.dock_log=false,DockKind::Plot=>self.state.dock_plot=false,DockKind::Remote=>self.state.dock_remote=false}
+            }
+            self.rebuild=true;return;
+        }
         if self.state.plot_work.is_some() { self.handle_plot_load_button(id); return; }
         if id == self.ids.plot.save { self.save_plot(); return; }
         if id == self.ids.plot.load_all {
@@ -4113,7 +4155,6 @@ impl Demo {
             self.state.browse_mut().sel_col = Some(column);
             self.state.sync_edit_cell_from_selection();
             self.state.dock_edit = true;
-            self.state.dock_focus = DockKind::EditCell;
             self.rebuild = true;
             return;
         }
@@ -4617,7 +4658,7 @@ impl Demo {
         }
         if self.ids.dock_tabs.0 != 0 {
             if let Some(i) = self.ui.tabs_selected(self.ids.dock_tabs) {
-                let docks = self.state.visible_docks();
+                let docks = self.state.visible_dock_tabs();
                 if let Some(d) = docks.get(i) {
                     if self.state.dock_focus != *d {
                         self.state.dock_focus = *d;
@@ -5443,7 +5484,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow")) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow")) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
@@ -6740,7 +6781,7 @@ mod interaction_tests {
             write_ppm(&PathBuf::from(path).with_extension("browse.ppm").to_string_lossy(), renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
         }
         demo.snapshot_inputs();
-        assert_eq!(demo.state.body_ratio, 0.72, "Resizing must not replace the preferred ratio");
+        assert_eq!(demo.state.body_ratio, 0.45, "Resizing must not replace the preferred ratio");
         let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.btn_edit_cell)).unwrap().bounds;
         assert!(bounds.x >= 0.0 && bounds.x + bounds.width < 800.0, "Apply must remain reachable at 800px: {bounds:?}");
         demo.ui.set_splitter_ratio(demo.ids.body_splitter, 0.60);
@@ -7297,14 +7338,15 @@ mod interaction_tests {
     fn dock_tab_overflow_preserves_scroll_across_rebuild_and_reveals_selected_panels() {
         let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
         demo.state.tab = MainTab::Browse;
-        demo.state.dock_focus = DockKind::EditCell;
+        demo.state.dock_focus = DockKind::Log;
+        demo.state.body_ratio = 0.9;
         demo.do_rebuild();
         let header = |demo: &Demo| demo.ui.tabs_state(demo.ids.dock_tabs).unwrap();
         let bounds = demo.scene.iter_paint_order().into_iter()
             .find(|node| demo.ui.widget_from_node(node.id) == Some(demo.ids.dock_tabs) && node.bounds.height > 32.0)
             .unwrap().bounds;
         let initial = header(&demo);
-        assert!(demo.ui.pointer_pressed(&mut demo.scene, bounds.x + bounds.width - 8.0, bounds.y + 16.0));
+        assert!(demo.ui.pointer_pressed(&mut demo.scene, bounds.x + bounds.width - 8.0, bounds.y + bounds.height - 16.0));
         demo.ui.pointer_released();
         demo.ui.sync(&mut demo.scene);
         assert_eq!(demo.ui.tabs_selected(demo.ids.dock_tabs), Some(0));
@@ -7318,6 +7360,12 @@ mod interaction_tests {
         demo.do_rebuild();
         assert_eq!(demo.state.dock_focus, DockKind::Remote);
         assert_eq!(demo.ui.accessible_name(demo.ids.dock_tabs).as_deref(), Some("Remote"));
+        assert_eq!(demo.ui.focused(),Some(demo.ids.dock_tabs));
+        assert!(demo.ui.key_input(UiKey::Home));demo.snapshot_inputs();assert!(demo.rebuild);demo.do_rebuild();
+        assert_eq!(demo.state.dock_focus,DockKind::Log);
+        assert!(demo.ui.key_input(UiKey::End));demo.snapshot_inputs();assert!(demo.rebuild);demo.do_rebuild();
+        assert_eq!(demo.state.dock_focus,DockKind::Remote);
+
         if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
             for (width, height, extension) in [(800, 600, "narrow.ppm"), (1400, 860, "ppm")] {
                 demo.win_w = width; demo.win_h = height;
@@ -7479,7 +7527,7 @@ mod interaction_tests {
     }
 
     #[test]
-    fn compact_find_keeps_editor_visible_and_restores_toolbars() {
+    fn compact_find_keeps_editor_and_single_toolbar_visible() {
         let mut demo = Demo::new(800, 600, PresentBackend::Softbuffer);
         demo.state.tab = MainTab::ExecuteSql;
         demo.state.toolbar_extra = true;
@@ -7497,8 +7545,8 @@ mod interaction_tests {
         };
         assert!(bounds.y >= viewport.y && bounds.y + bounds.height <= viewport.y + viewport.height, "editor={bounds:?} viewport={viewport:?}");
         assert!(bounds.height >= 100.0);
-        assert_eq!(demo.ids.toolbar_extra, WidgetId(0));
-        assert_eq!(demo.ids.toolbar_project, WidgetId(0));
+        assert_ne!(demo.ids.toolbar_extra, WidgetId(0));
+        assert_ne!(demo.ids.toolbar_project, WidgetId(0));
         assert!(demo.state.toolbar_extra && demo.state.toolbar_project);
         demo.handle_button(demo.ids.ov_btn_ok);
         demo.do_rebuild();

@@ -98,10 +98,14 @@ pub struct BuiltUi {
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
     pub structure_splitter: WidgetId,
+    pub dock_splitter: WidgetId,
+    pub plot_splitter: WidgetId,
+    pub dock_scrolls: [WidgetId;5],
+    pub btn_dock_edit_close: WidgetId,
+    pub btn_dock_close: WidgetId,
     pub shell_scroll: WidgetId,
     pub page_scroll: WidgetId,
     pub pragma_scroll: WidgetId,
-    pub dock_scroll: WidgetId,
     pub scene: Scene,
     pub menu_file: WidgetId,
     pub menu_edit: WidgetId,
@@ -507,9 +511,22 @@ pub fn build_ui(
         .map(|(key, label)| (*key, ui.font().measure_line(label, 13.0).0)).collect();
     let pragma_label_width = pragma_label_widths.values().copied().fold(0.0f32, f32::max).ceil() + 12.0;
 
+    let selected_dock = state.visible_dock_tabs().get(visible_docks_index(state)).copied().unwrap_or(DockKind::Remote);
+    let dock_title = selected_dock.title();
+    let dock_page_minimum = if selected_dock == DockKind::Plot { 300.0 } else { 160.0 };
+    let dock_label_width = ui.font().measure_line(dock_title, theme.typography.body).0;
+    let edit_label_width = ui.font().measure_line("Edit Database Cell", theme.typography.body).0;
+    let dock_close_width = (ui.font().measure_line("Close", theme.typography.button_sm).0 + 32.0).max(64.0);
+
     let z = WidgetId(0);
     let mut body_splitter = z;
     let mut structure_splitter = z;
+    let mut dock_splitter = z;
+    let mut plot_splitter = z;
+    let mut dock_scrolls = [z;5];
+    let mut edit_dock_scroll = z;
+    let mut btn_dock_edit_close = z;
+    let mut btn_dock_close = z;
     let mut menu_file = z;
     let mut menu_edit = z;
     let mut menu_view = z;
@@ -735,7 +752,6 @@ pub fn build_ui(
     let mut edit_image = z;
     let mut page_scroll = z;
     let mut pragma_scroll = z;
-    let mut dock_scroll = z;
     let mut remote_list = z;
     let mut remote_draft = z;
     let mut btn_remote_add = z;
@@ -746,12 +762,8 @@ pub fn build_ui(
     const STATUS_H: f32 = 40.0;
     let shell_w = (win_w - 12.0).max(640.0);
     let shell_h = (win_h - STATUS_H - 4.0).max(360.0);
-    let compact_find = state.overlay == Some(OverlayKind::FindReplace) && win_h < 720.0;
-    let extra_visible = state.toolbar_extra && !compact_find;
-    let project_visible = state.toolbar_project && !compact_find;
-    let chrome_h = 50.0 + if state.toolbar_db { 42.0 } else { 0.0 }
-        + if extra_visible { 40.0 } else { 0.0 }
-        + if project_visible { 40.0 } else { 0.0 };
+    let toolbar_visible = state.toolbar_db || state.toolbar_extra || state.toolbar_project;
+    let chrome_h = 50.0 + if toolbar_visible { 42.0 } else { 0.0 };
     let content_h = (shell_h - chrome_h).max(300.0);
     let csv_modal = matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
     let workspace_modal = csv_modal || state.overlay == Some(OverlayKind::ExportSql);
@@ -890,52 +902,25 @@ pub fn build_ui(
             );
         });
 
-        if state.toolbar_db {
+        if toolbar_visible {
             col.scroll_row(main_tb, |tb| {
-                btn_new = tb.tool_button("New");
-                btn_open = tb.tool_button("Open");
-                btn_write = tb.tool_button_styled("Write Changes", theme.colors.accent, theme.colors.on_accent);
-                btn_revert = tb.tool_button("Revert");
-                btn_theme = tb.tool_button("Theme");
-                tb.spacer(12.0, 1.0);
-                let dirty = if state.dirty { "● modified" } else { "○ clean" };
-                let ro = if state.read_only { " · read-only" } else { "" };
-                let busy = if state.sql_busy { " · busy" } else { "" };
-                let enc = if state.cipher_active { " · encrypted" } else { " · not encrypted" };
-                tb.text_styled(
-                    format!(
-                        "{}{ro} · {dirty}{busy}{enc}",
-                        if state.path.is_empty() {
-                            "(no database)"
-                        } else {
-                            &state.path
-                        }
-                    ),
-                    theme.colors.text_secondary,
-                    12.0,
-                );
-            });
-        }
-        if extra_visible {
-            let mut extra_tb = main_tb;
-            extra_tb.height = 36.0;
-            col.scroll_row(extra_tb, |tb| {
-                toolbar_extra = tb.tool_button("Vacuum");
-                btn_integrity = tb.tool_button("Integrity");
-                tb.text_styled("Extra DB", theme.colors.text_secondary, 11.0);
-            });
-        }
-        if project_visible {
-            let mut proj_tb = main_tb;
-            proj_tb.height = 36.0;
-            col.scroll_row(proj_tb, |tb| {
-                toolbar_project = tb.tool_button("Open Project");
-                btn_project_save = tb.tool_button("Save Project");
-                let label = state
-                    .project_path
-                    .as_deref()
-                    .unwrap_or("(no project)");
-                tb.text_styled(label, theme.colors.text_secondary, 11.0);
+                if state.toolbar_db {
+                    btn_new = tb.tool_button("New");
+                    btn_open = tb.tool_button("Open");
+                    btn_write = tb.tool_button_styled("Write Changes", theme.colors.accent, theme.colors.on_accent);
+                    btn_revert = tb.tool_button("Revert");
+                }
+                if state.toolbar_extra {
+                    tb.spacer(8.0, 1.0);
+                    toolbar_extra = tb.tool_button("Vacuum");
+                    btn_integrity = tb.tool_button("Integrity");
+                }
+                if state.toolbar_project {
+                    tb.spacer(8.0, 1.0);
+                    toolbar_project = tb.tool_button("Open Project");
+                    btn_project_save = tb.tool_button("Save Project");
+                }
+                if state.toolbar_db { btn_theme = tb.tool_button("Theme"); }
             });
         }
 
@@ -1642,6 +1627,7 @@ pub fn build_ui(
             page_scroll_style.padding = 0.0;
             let mut tabs_style = TabsStyle::from_theme(&theme);
             tabs_style.width = main_w - 4.0;
+            tabs_style.scrollable = true;
             tabs_style.height = content_h - 4.0;
             tabs_style.content_bg = theme.colors.content_bg;
             tabs_style.strip_bg = theme.colors.strip_bg;
@@ -1715,21 +1701,61 @@ pub fn build_ui(
                 + if state.toolbar_sql { sql_tb.height + page_scroll_style.gap } else { 0.0 };
             sql_table_style.height = (page_scroll_style.height - sql_controls_h).max(120.0);
 
+            let has_dock_tabs = !state.visible_dock_tabs().is_empty();
+            let mut dock_split = SplitterStyle::from_theme(&theme);
+            dock_split.width = dock_w;
+            dock_split.height = content_h;
+            dock_split.axis = Axis::Horizontal;
+            dock_split.sash_size = 6.0;
+            let span = content_h - dock_split.sash_size;
+            let scale = (span / (100.0 + dock_page_minimum)).min(1.0);
+            let minimum = 100.0 * scale / span;
+            let maximum = (1.0 - dock_page_minimum * scale / span).max(minimum);
+            dock_split.ratio = state.dock_ratio.clamp(minimum, maximum);
+            let edit_h = if has_dock_tabs {
+                (span * dock_split.ratio).round()
+            } else {
+                content_h
+            };
+            let dock_h = if state.dock_edit && has_dock_tabs {
+                span - edit_h
+            } else {
+                content_h
+            };
+            let mut edit_pane_style = ColumnStyle::from_theme(&theme);
+            edit_pane_style.width = dock_w;
+            edit_pane_style.height = edit_h;
+            edit_pane_style.padding = 0.0;
+            edit_pane_style.gap = 0.0;
+            let mut dock_pages_style = edit_pane_style;
+            dock_pages_style.height = dock_h;
+            let mut dock_header = RowStyle::from_theme(&theme);
+            dock_header.width = dock_w;
+            dock_header.height = 32.0;
+            dock_header.padding = 2.0;
+            dock_header.gap = 4.0;
+            dock_header.cross_align = CrossAlign::Center;
+            let mut edit_scroll_style = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+            edit_scroll_style.width = (dock_w - 8.0).max(200.0);
+            edit_scroll_style.height = (edit_h - dock_header.height).max(1.0);
+            edit_scroll_style.padding = 4.0;
+            edit_scroll_style.gap = 4.0;
             let mut dock_tabs_style = TabsStyle::from_theme(&theme);
             dock_tabs_style.width = dock_w.max(220.0);
             dock_tabs_style.scrollable = true;
-            dock_tabs_style.height = content_h - 4.0;
+            dock_tabs_style.height = (dock_h - dock_header.height).max(1.0);
+            dock_tabs_style.strip_at_bottom = true;
+            dock_tabs_style.padding = 0.0;
             dock_tabs_style.content_bg = theme.colors.content_bg;
             dock_tabs_style.strip_bg = theme.colors.strip_bg;
             dock_tabs_style.active_fg = theme.colors.text_primary;
 
             let mut dock_col = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
-            dock_col.width = dock_w.max(200.0) - 16.0;
-            dock_col.height = tab_page_h - 20.0;
+            dock_col.width = (dock_w - 8.0).max(200.0);
+            dock_col.height = (dock_tabs_style.height - dock_tabs_style.strip_height - 4.0).max(1.0);
             dock_col.padding = 4.0;
             dock_col.gap = 4.0;
             dock_col.cross_align = CrossAlign::Start;
-
             let mut edit_col_style = TextInputStyle::from_theme(&theme);
             edit_col_style.width = (dock_w - 40.0).max(120.0);
             let mut edit_val_style = TextInputStyle::from_theme(&theme);
@@ -1738,7 +1764,7 @@ pub fn build_ui(
 
             let mut list_style = ListStyle::from_theme(&theme);
             list_style.width = (dock_w - 28.0).max(180.0);
-            list_style.height = (tab_page_h - 48.0).max(180.0);
+            list_style.height = dock_col.height.max(80.0);
 
             let mut chart_col_style = TextInputStyle::from_theme(&theme);
             chart_col_style.width = 100.0;
@@ -1758,7 +1784,7 @@ pub fn build_ui(
             let browse_opts_a = browse_opts.clone();
             let browse_opts_b = browse_opts;
             let roots_for_tree = roots;
-            let visible_docks = state.visible_docks();
+            let visible_docks = state.visible_dock_tabs();
             let sql_editor = state.sql_editor().to_string();
             let bt = state.browse();
             let col_filter_vals = bt.col_filters.clone();
@@ -2096,92 +2122,104 @@ pub fn build_ui(
                         });
                     });
                 };
-            let dock_pane = |right: &mut next_gui_ui::FlexBuilder<'_>| {
+            let mut edit_pane = |p: &mut next_gui_ui::FlexBuilder<'_>| {
+                p.column(edit_pane_style, |p| {
+                    p.row(dock_header, |r| {
+                        r.text("Edit Database Cell");
+                        r.spacer((dock_w - edit_label_width - dock_close_width - 12.0).max(0.0), 1.0);
+                        btn_dock_edit_close = r.tool_button("Close");
+                    });
+                    edit_dock_scroll = p.scroll_area(edit_scroll_style, |c| {
+                        c.row(dock_row, |r| {
+                            let mut column_style = edit_col_style;
+                            column_style.width = (dock_w - 180.0).max(80.0);
+                            edit_col = r.text_input_styled(&state.edit_col, "column", column_style);
+                            if generated_cell {
+                                r.text("Generated · read-only");
+                            } else {
+                                let mut storage = sel_style;
+                                storage.width = 140.0;
+                                edit_type = r.select(
+                                    ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"],
+                                    Some(state.edit_type),
+                                    "Storage type",
+                                    storage,
+                                );
+                            }
+                        });
+                        c.row(tool_row, |r| {
+                            btn_edit_text = r.tool_button("Text");
+                            btn_edit_hex = r.tool_button("Hex");
+                            btn_edit_json = r.tool_button("JSON");
+                            btn_edit_image = r.tool_button("Image");
+                        });
+                        let mut cell_style = TextAreaStyle::from_theme(&theme);
+                        cell_style.width = edit_val_style.width;
+                        cell_style.height = (edit_scroll_style.height - 140.0).max(64.0);
+                        edit_value = c.text_area(&state.edit_value, "value", cell_style);
+                        c.row(tool_row, |r| {
+                            btn_edit_cell =
+                                r.tool_button_styled("Apply", theme.colors.accent, theme.colors.on_accent);
+                            btn_edit_discard = r.tool_button("Discard Draft");
+                        });
+                        let mode = match state.edit_mode {
+                            crate::state::EditCellMode::Text => "Text",
+                            crate::state::EditCellMode::Hex => "Hex",
+                            crate::state::EditCellMode::Json => "JSON",
+                            crate::state::EditCellMode::Image => "Image",
+                        };
+                        let record = state
+                            .browse()
+                            .sel_row
+                            .map(|row| {
+                                format!(
+                                    " · Record {} of {}",
+                                    state.browse().offset + row + 1,
+                                    state.browse().total_rows.unwrap_or(0)
+                                )
+                            })
+                            .unwrap_or_default();
+                        edit_meta = c.text(format!(
+                            "{mode} · {} bytes{}{record}",
+                            state.edit_binary_len,
+                            if state.edit_image_kind.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · {}", state.edit_image_kind)
+                            }
+                        ));
+                        if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
+                            let mut istyle = ImageStyle::from_theme(&theme);
+                            istyle.width = (dock_w - 40.0).max(1.0);
+                            istyle.height = 200.0;
+                            c.row(tool_row, |r| {
+                                image_fit = r.tool_button("Fit");
+                                image_actual = r.tool_button("1:1");
+                                image_in = r.tool_button("+");
+                                image_out = r.tool_button("−");
+                            });
+                            image_export = c.tool_button("Export Image…");
+                            edit_image = c.image_rgba_caption(*w, *h, px, format!("{}×{}", w, h), istyle);
+                        } else if matches!(state.edit_mode, crate::state::EditCellMode::Image) {
+                            let mut istyle = ImageStyle::from_theme(&theme);
+                            istyle.width = 160.0;
+                            istyle.height = 48.0;
+                            edit_image = c.image_placeholder("No preview available", istyle);
+                        }
+                    });
+                });
+            };
+            let mut dock_pages = |right: &mut next_gui_ui::FlexBuilder<'_>| {
+                right.column(dock_pages_style,|right| {
+                    right.row(dock_header,|r| {
+                        r.text(dock_title);
+                        r.spacer((dock_w-dock_label_width-dock_close_width-12.0).max(0.0),1.0);
+                        btn_dock_close=r.tool_button("Close");
+                    });
                     dock_tabs = right.tabs(dock_tabs_style, |tb| {
                         for dock in &visible_docks {
                             match *dock {
-                                DockKind::EditCell => {
-                                    tb.page(DockKind::EditCell.title(), |p| {
-                                        dock_scroll = p.scroll_area(dock_col, |c| {
-                                            c.text("Column");
-                                            edit_col = c.text_input_styled(
-                                                &state.edit_col,
-                                                "column",
-                                                edit_col_style,
-                                            );
-                                            c.row(tool_row, |r| {
-                                                btn_edit_text = r.tool_button("Text");
-                                                btn_edit_hex = r.tool_button("Hex");
-                                                btn_edit_json = r.tool_button("JSON");
-                                                btn_edit_image = r.tool_button("Image");
-                                            });
-                                            if generated_cell { c.text("Generated · read-only"); }
-                                            else { edit_type = c.select(
-                                                ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"].map(String::from).to_vec(),
-                                                Some(state.edit_type), "Storage type", sel_style,
-                                            ); }
-                                            c.text("Value");
-                                            let mut cell_style = TextAreaStyle::from_theme(&theme);
-                                            cell_style.width = edit_val_style.width;
-                                            cell_style.height = 90.0;
-                                            edit_value = c.text_area(&state.edit_value, "value", cell_style);
-                                            c.row(tool_row, |r| {
-                                                btn_edit_cell = r.tool_button_styled("Apply", theme.colors.accent, theme.colors.on_accent);
-                                                btn_edit_discard = r.tool_button("Discard Draft");
-                                            });
-                                            let mode = match state.edit_mode {
-                                                crate::state::EditCellMode::Text => "Text",
-                                                crate::state::EditCellMode::Hex => "Hex",
-                                                crate::state::EditCellMode::Json => "JSON",
-                                                crate::state::EditCellMode::Image => "Image",
-                                            };
-                                            edit_meta = c.text(format!(
-                                                "Mode {mode} · {} bytes{}",
-                                                state.edit_binary_len,
-                                                if state.edit_image_kind.is_empty() {
-                                                    String::new()
-                                                } else {
-                                                    format!(" · {}", state.edit_image_kind)
-                                                }
-                                            ));
-                                            if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
-                                                let mut istyle = ImageStyle::from_theme(&theme);
-                                                istyle.width = (dock_w - 40.0).max(1.0);
-                                                istyle.height = 200.0;
-                                                c.row(tool_row, |r| {
-                                                    image_fit = r.tool_button("Fit");
-                                                    image_actual = r.tool_button("1:1");
-                                                    image_in = r.tool_button("+");
-                                                    image_out = r.tool_button("−");
-                                                });
-                                                image_export = c.tool_button("Export Image…");
-                                                edit_image = c.image_rgba_caption(
-                                                    *w,
-                                                    *h,
-                                                    px,
-                                                    format!("{}×{}", w, h),
-                                                    istyle,
-                                                );
-                                            } else if matches!(
-                                                state.edit_mode,
-                                                crate::state::EditCellMode::Image
-                                            ) {
-                                                let mut istyle = ImageStyle::from_theme(&theme);
-                                                istyle.width = 160.0;
-                                                istyle.height = 48.0;
-                                                edit_image = c.image_placeholder(
-                                                    "No preview available",
-                                                    istyle,
-                                                );
-                                            }
-                                            if let Some(row) = state.browse().sel_row {
-                                                c.text(format!("Record {} of {}", state.browse().offset + row + 1, state.browse().total_rows.unwrap_or(0)));
-                                            } else {
-                                                c.text("Select a browse row");
-                                            }
-                                        });
-                                    });
-                                }
+                                DockKind::EditCell => {}
                                 DockKind::Schema => {
                                     tb.page(DockKind::Schema.title(), |p| {
                                         schema_list = p.list(schema_items.clone(), list_style);
@@ -2189,7 +2227,7 @@ pub fn build_ui(
                                 }
                                 DockKind::Log => {
                                     tb.page(DockKind::Log.title(), |p| {
-                                        dock_scroll = p.scroll_area(dock_col, |c| {
+                                        dock_scrolls[*dock as usize] = p.scroll_area(dock_col, |c| {
                                             c.scroll_row(dock_row, |row| {
                                                 let mut filter_style = sel_style;
                                                 filter_style.width = 118.0;
@@ -2209,8 +2247,21 @@ pub fn build_ui(
                                 }
                                 DockKind::Plot => {
                                     tb.page(DockKind::Plot.title(), |p| {
-                                        dock_scroll = p.scroll_area(dock_col, |c| {
-                                            plot_controls = crate::plot::build(c, &state.plot, (dock_w - 40.0).max(180.0), dock_col.height, &theme);
+                                        let mut split = dock_split;
+                                        split.width = dock_col.width;
+                                        split.height = dock_col.height;
+                                        let span = (split.height - split.sash_size).max(1.0);
+                                        let scale = (span / 228.0).min(1.0);
+                                        let minimum = 64.0 * scale / span;
+                                        let maximum = (1.0 - 164.0 * scale / span).max(minimum);
+                                        split.ratio = state.plot_ratio.clamp(minimum, maximum);
+                                        let mut controls = dock_col;
+                                        controls.height = (span * split.ratio).round();
+                                        let mut style = chart_style;
+                                        style.height = span - controls.height;
+                                        plot_splitter = p.splitter(split, |p| {
+                                        dock_scrolls[*dock as usize] = p.scroll_area(controls, |c| {
+                                            plot_controls = crate::plot::build(c, &state.plot, (dock_w - 40.0).max(180.0), controls.height, &theme);
                                             if state.plot.settings.manual {
                                             c.row(dock_row, |row| {
                                                 let mut table_style = sel_style;
@@ -2231,15 +2282,15 @@ pub fn build_ui(
                                                 btn_chart = row.tool_button("Plot");
                                             });
                                             }
-                                            let mut style = chart_style;
-                                            if !state.plot.settings.manual { style.height = crate::plot::heights(dock_col.height, (dock_w - 40.0).max(180.0)).1; }
+                                        });
+                                        }, |c| {
                                             c.tooltip(format!("{chart_title}\nWheel: zoom · Drag: pan · Home: fit · Ctrl/Cmd+click: select range"), |t| { chart = t.chart(chart_tiles.clone(), style); });
                                         });
                                     });
                                 }
                                 DockKind::Remote => {
                                     tb.page(DockKind::Remote.title(), |p| {
-                                        dock_scroll = p.scroll_area(dock_col, |c| {
+                                        dock_scrolls[*dock as usize] = p.scroll_area(dock_col, |c| {
                                             c.text("Remote / connection list");
                                             c.text_styled(
                                                 "DB4S cloud Remote is not used here — local paths only.",
@@ -2270,7 +2321,17 @@ pub fn build_ui(
                             }
                         }
                     });
-                };
+                });
+            };
+            let dock_pane = |right: &mut next_gui_ui::FlexBuilder<'_>| {
+                if state.dock_edit && has_dock_tabs {
+                    dock_splitter = right.splitter(dock_split, edit_pane, dock_pages);
+                } else if state.dock_edit {
+                    edit_pane(right);
+                } else {
+                    dock_pages(right);
+                }
+            };
             if docks_on {
                 body_splitter = col.splitter(body_split, main_pane, dock_pane);
             } else {
@@ -2628,8 +2689,23 @@ pub fn build_ui(
     ui.set_scroll_offset(shell_scroll, state.shell_scroll.0, state.shell_scroll.1);
     let page_offset = state.page_scroll[state.tab.index()];
     ui.set_scroll_offset(page_scroll, page_offset.0, page_offset.1);
-    let dock_offset = state.dock_scroll[state.dock_focus as usize];
-    ui.set_scroll_offset(dock_scroll, dock_offset.0, dock_offset.1);
+    dock_scrolls[DockKind::EditCell as usize]=edit_dock_scroll;
+    // Hidden pages have no laid-out scroll extent; keep their retained offsets.
+    for (index,id) in dock_scrolls.iter_mut().enumerate() {
+        if index!=DockKind::EditCell as usize && index!=selected_dock as usize { *id=z; }
+    }
+    for (index,id) in dock_scrolls.iter().enumerate() {
+        let offset=state.dock_scroll[index];ui.set_scroll_offset(*id,offset.0,offset.1);
+    }
+    ui.set_splitter_min_sizes(dock_splitter,100.0,dock_page_minimum);
+    ui.set_splitter_min_sizes(plot_splitter,64.0,164.0);
+    ui.set_accessible_name(plot_splitter,"Plot controls and chart splitter");
+    ui.set_accessible_name(dock_splitter,"Resize cell editor and dock pages");
+    ui.set_accessible_name(btn_dock_edit_close,"Close cell editor dock");
+    ui.set_accessible_name(edit_col,"Selected cell column");
+    ui.set_accessible_name(edit_type,"Cell storage type");
+    ui.set_accessible_name(edit_value,"Cell value");
+    ui.set_accessible_name(btn_dock_close,"Close selected dock page");
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
@@ -2679,10 +2755,14 @@ pub fn build_ui(
         reference_editor,
         body_splitter,
         structure_splitter,
+        dock_splitter,
+        plot_splitter,
+        dock_scrolls,
+        btn_dock_edit_close,
+        btn_dock_close,
         shell_scroll,
         page_scroll,
         pragma_scroll,
-        dock_scroll,
         scene,
         menu_file,
         menu_edit,
@@ -2916,7 +2996,7 @@ pub fn build_ui(
 
 fn visible_docks_index(state: &AppState) -> usize {
     state
-        .visible_docks()
+        .visible_dock_tabs()
         .iter()
         .position(|d| *d == state.dock_focus)
         .unwrap_or(0)

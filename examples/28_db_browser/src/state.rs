@@ -77,7 +77,7 @@ impl MainTab {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DockKind {
     EditCell = 0,
     Schema = 1,
@@ -415,6 +415,8 @@ pub struct AppState {
 
     pub body_ratio: f32,
     pub structure_ratio: f32,
+    pub dock_ratio: f32,
+    pub plot_ratio: f32,
     pub shell_scroll: (f32, f32),
     pub page_scroll: [(f32,f32);4],
     pub dock_scroll: [(f32,f32);5],
@@ -744,8 +746,10 @@ impl AppState {
             tab: MainTab::Structure,
             status_msg: "Ready".into(),
             error_msg: None,
-            body_ratio: 0.72,
+            body_ratio: 0.45,
             structure_ratio: 0.34,
+            dock_ratio: 0.38,
+            plot_ratio: 0.45,
             shell_scroll: (0.0,0.0),
             page_scroll: [(0.0,0.0);4],
             dock_scroll: [(0.0,0.0);5],
@@ -753,7 +757,7 @@ impl AppState {
             dock_schema: true,
             dock_log: true,
             dock_plot: true,
-            dock_focus: DockKind::EditCell,
+            dock_focus: DockKind::Remote,
             browse_tabs: vec![BrowseTabState::new(None)],
             browse_tab_idx: 0,
             edit_col: String::new(),
@@ -1155,24 +1159,9 @@ impl AppState {
         self.dock_edit || self.dock_schema || self.dock_log || self.dock_plot || self.dock_remote
     }
 
-    pub fn visible_docks(&self) -> Vec<DockKind> {
-        let mut v = Vec::new();
-        if self.dock_edit {
-            v.push(DockKind::EditCell);
-        }
-        if self.dock_schema {
-            v.push(DockKind::Schema);
-        }
-        if self.dock_log {
-            v.push(DockKind::Log);
-        }
-        if self.dock_plot {
-            v.push(DockKind::Plot);
-        }
-        if self.dock_remote {
-            v.push(DockKind::Remote);
-        }
-        v
+    pub fn visible_dock_tabs(&self) -> Vec<DockKind> {
+        [(self.dock_log,DockKind::Log),(self.dock_plot,DockKind::Plot),(self.dock_schema,DockKind::Schema),(self.dock_remote,DockKind::Remote)]
+            .into_iter().filter_map(|(visible,dock)|visible.then_some(dock)).collect()
     }
 
     pub fn mark_dirty(&mut self) {
