@@ -127,7 +127,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Scroll form of pragmas | partial | All original18 fields plus cache_size/busy_timeout; accessible boolean/enum/numeric controls and retained focus/Undo/scroll. Numeric stepper affordances/layout polish remain. |
+| Scroll form of pragmas | partial | All original18 fields plus cache_size/busy_timeout; accessible boolean/enum/numeric controls and retained focus/Undo/scroll. Exact i64 numeric steppers, shared Undo/resize history and measured label-column alignment verified; pointer press-and-hold/native original acceptance remain. |
 | Save / Apply pragmas | partial | Validated before any COMMIT; dirty edits require default-Cancel confirmation. Writes read actual state; page_size/auto_vacuum run VACUUM and clear cached row identities. File persistence and partial errors verified. VACUUM is synchronous; native input acceptance remains. |
 | Bool / Select editors | done | All original boolean/enum fields, including Page Size, Temp Store and secure_delete Fast retained. |
 
@@ -725,3 +725,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ### Static text word wrapping — 2026-10-28
 
 [Review](../../docs/reviews/R-20261028-f36b581271db.md): shared next-gui modal/tooltip text keeps fitting words intact while preserving paragraphs and long-path/CJK emergency wrapping.626 tests/strict checks, confirmation/calltip Metal comparisons and four native e28/14 rebuilt Office windows inspected. Complete Unicode shaping, long modal scrolling, numeric stepper/alignment and original/native product parity remain.
+
+### Exact integer PRAGMA editors — 2026-10-28
+
+[Review](../../docs/reviews/R-20261028-680be34446cf.md): shared next-gui opt-in i64 TextInput stepping avoids floating conversion, retains clipboard/Undo/sessions and protects composition/disabled/invalid drafts. All numeric PRAGMAs share bounds, text/candidate geometry reserves arrows, and measured labels align controls.629 tests/strict checks,16 render pairs and six browser/14 rebuilt Office native windows verified. Press-and-hold repetition, native OS input and complete original/product parity remain.

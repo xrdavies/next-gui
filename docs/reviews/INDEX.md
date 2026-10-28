@@ -91,6 +91,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-28 | `b8f9318..680be34446cf` | Codex | Exact TextInput i64 steppers, Undo/session/IME/invalid guards and aligned20-field PRAGMA form verified;629 tests/16 render pairs/six native+14 Office windows; full parity pending | [Report](R-20261028-680be34446cf.md) |
 | 2026-10-28 | `e2211fc..f36b581271db` | Codex | Shared modal/tooltip word-wrap regression fixed;626 tests, confirmation/calltip Metal and four native/14 rebuilt Office windows; full parity pending | [Report](R-20261028-f36b581271db.md) |
 | 2026-10-28 | `52c7362..2850bcb3abde` | Codex | Original18 PRAGMAs/20 controls, confirmed apply/readback/VACUUM verified;623 tests/12 render pairs/six native windows; full parity pending | [Report](R-20261028-2850bcb3abde.md) |
 | 2026-10-28 | `4a30e27..db667354719c` | Codex | CSV numeric text reproduced/fixed;617 tests/strict checks; prior worker visual evidence retained,full parity pending | [Report](R-20261028-db667354719c.md) |
