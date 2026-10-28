@@ -20,6 +20,7 @@ mod dsl;
 mod icon;
 mod p1_deferred;
 mod chart;
+mod prose;
 mod p1_raster;
 mod p1_rest;
 mod office_p2;
@@ -16398,7 +16399,7 @@ impl Ui {
         let padding = style.padding.max(0.0).min(vw * 0.25).min(vh * 0.25);
         let width = style.max_width.max(1.0).min(vw);
         let wrap = (width - padding * 2.0).max(1.0);
-        let layout = self.font.layout(&text, style.size, Some(wrap));
+        let layout = prose::layout(&self.font, &text, style.size, wrap);
         let (header, header_width) = self.text_area_hint_header_size(id, style.size);
         let header = header.min((vh - padding * 2.0).max(0.0));
         let tip_w = (layout.width.max(header_width) + padding * 2.0).min(width);
@@ -16418,7 +16419,7 @@ impl Ui {
         self.apply_corner_radius(scene, bg, false);
         let body_height = (tip.height - padding * 2.0 - header).max(0.0);
         let scroll = self.bound_text_area_hint_scroll(id, (layout.height - body_height).max(0.0));
-        let (_, mask) = self.font.rasterize_text(&text, style.size, Some(wrap));
+        let mask = self.font.rasterize_layout(&layout, style.size);
         scene.set_bounds(label, Rect::new(tip.x + padding, tip.y + padding + header - scroll, mask.width as f32, mask.height as f32));
         scene.set_clip(label, Some(Rect::new(tip.x + padding, tip.y + padding + header, (tip.width - padding * 2.0).max(0.0), body_height)));
         scene.set_fill(label, style.fg);
@@ -16461,7 +16462,8 @@ impl Ui {
         } else {
             0.0
         };
-        let (_, body_mask) = self.font.rasterize_text(&body, style.body_size, Some((panel_w - 2.0 * style.padding).max(1.0)));
+        let body_layout = prose::layout(&self.font, &body, style.body_size, (panel_w - 2.0 * style.padding).max(1.0));
+        let body_mask = self.font.rasterize_layout(&body_layout, style.body_size);
         let body_th = body_mask.height as f32;
         let panel_h = (style.title_height
             + style.padding * 2.0
@@ -21476,6 +21478,59 @@ mod tests {
                 ui.key_input(UiKey::Tab);
             }
         }
+    }
+
+    #[test]
+    fn modal_body_keeps_fitting_words_on_one_line() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(640.0, 480.0);
+        let mut style = ModalStyle::default();
+        let prefix = "MMMMMMMMMMMMMMMMMM";
+        let word_width = ui.font.measure_line("database", style.body_size).0;
+        let content_width = ui.font.measure_line(&format!("{prefix} "), style.body_size).0 + word_width * 0.5;
+        style.width = content_width + style.padding * 2.0;
+        assert!(style.width >= 200.0 && style.width < 600.0 && word_width < content_width);
+        let body = format!("{prefix} database");
+        let modal = ui.modal("Save?", body, "Cancel", Some("Save".into()), style);
+        ui.set_modal_open(modal, true);
+        ui.sync(&mut scene);
+        let label = ui.widgets[&modal].aux[5];
+        let actual = scene.get(label).unwrap().mask.as_ref().unwrap();
+        let expected = ui.font.rasterize_text(&format!("{prefix}\ndatabase"), style.body_size, None).1;
+        assert_eq!((actual.width, actual.height), (expected.width, expected.height));
+        assert_eq!(actual.pixels, expected.pixels);
+    }
+
+    #[test]
+    fn tooltip_body_uses_word_boundaries_and_clips_long_help() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(640.0, 160.0);
+        let prefix = "MMMMMMMMMMMMMMMMMM";
+        let mut style = TooltipStyle::from_theme(&Theme::light());
+        let content_width = ui.font.measure_line(&format!("{prefix} "), style.size).0 + ui.font.measure_line("database", style.size).0 * 0.5;
+        style.max_width = content_width + style.padding * 2.0;
+        let mut tip = WidgetId(0);
+        ui.row(RowStyle::default(), |row| {
+            tip = row.tooltip_styled(format!("{prefix} database"), style, |t| { t.button("Help"); });
+        });
+        ui.sync(&mut scene);
+        ui.tooltip_hover = Some(tip);
+        ui.sync(&mut scene);
+        let label = ui.widgets[&tip].aux[1];
+        let actual = scene.get(label).unwrap().mask.as_ref().unwrap();
+        let expected = ui.font.rasterize_text(&format!("{prefix}\ndatabase"), style.size, None).1;
+        assert_eq!((actual.width, actual.height), (expected.width, expected.height));
+        assert_eq!(actual.pixels, expected.pixels);
+        if let Kind::Tooltip { text, .. } = &mut ui.widgets.get_mut(&tip).unwrap().kind {
+            *text = "Long database help ".repeat(100);
+        }
+        ui.sync(&mut scene);
+        let label = scene.get(label).unwrap();
+        assert!(label.bounds.height > 160.0);
+        let clip = label.clip.unwrap();
+        assert!(clip.x >= 0.0 && clip.y >= 0.0 && clip.x + clip.width <= 640.0 && clip.y + clip.height <= 160.0);
     }
 
     #[test]
