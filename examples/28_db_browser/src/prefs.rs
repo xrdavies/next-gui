@@ -17,6 +17,7 @@ pub struct Prefs {
     pub sql_export: crate::db::ExportSqlOptions,
     pub csv_separate_tables: bool,
     pub frozen_cols_default: usize,
+    pub toolbar_styles: [usize; 5],
 }
 
 impl Default for Prefs {
@@ -33,6 +34,7 @@ impl Default for Prefs {
             sql_export: crate::db::ExportSqlOptions::default(),
             csv_separate_tables: false,
             frozen_cols_default: 0,
+            toolbar_styles: [2, 2, 0, 0, 0],
         }
     }
 }
@@ -55,6 +57,7 @@ impl Prefs {
         let mut p: Self = serde_json::from_str(&text).unwrap_or_default();
         p.font_size = p.font_size.clamp(8.0, 32.0);
         p.frozen_cols_default = p.frozen_cols_default.min(20);
+        for style in &mut p.toolbar_styles { *style = (*style).min(4); }
         p
     }
 
@@ -68,6 +71,15 @@ impl Prefs {
     }
 }
 
+pub const TOOLBAR_GROUPS: [&str; 5] = ["Main window", "Database Structure", "Browse Data", "Execute SQL", "Edit Cell"];
+pub const TOOLBAR_STYLES: [&str; 5] = ["Only display the icon", "Only display the text", "Text beside the icon", "Text under the icon", "Follow the style"];
+
+pub fn toolbar_layout(style: usize) -> next_gui_ui::ButtonIconLayout {
+    use next_gui_ui::ButtonIconLayout::*;
+    // shortcut: Follow Style uses the Qt macOS/Windows fallback; add Linux desktop-style integration on that host.
+    match style { 1 => TextOnly, 2 => TextBesideIcon, 3 => TextUnderIcon, _ => IconOnly }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +91,11 @@ mod tests {
         let prefs: Prefs = serde_json::from_str(r#"{"sql_completion":false,"sql_upper_keywords":false}"#).unwrap();
         let restored: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
         assert!(!restored.sql_completion && !restored.sql_upper_keywords);
+        assert_eq!(restored.toolbar_styles, [2, 2, 0, 0, 0]);
+        let prefs: Prefs = serde_json::from_str(r#"{"toolbar_styles":[0,1,2,3,4]}"#).unwrap();
+        let restored: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(restored.toolbar_styles, [0,1,2,3,4]);
+        use next_gui_ui::ButtonIconLayout::*;
+        assert_eq!(restored.toolbar_styles.map(toolbar_layout), [IconOnly,TextOnly,TextBesideIcon,TextUnderIcon,IconOnly]);
     }
 }

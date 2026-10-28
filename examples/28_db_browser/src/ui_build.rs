@@ -173,6 +173,10 @@ pub struct BuiltUi {
     pub edit_value: WidgetId,
     pub edit_type: WidgetId,
     pub btn_edit_discard: WidgetId,
+    pub btn_cell_import: WidgetId,
+    pub btn_cell_export: WidgetId,
+    pub btn_cell_null: WidgetId,
+    pub btn_cell_indent: WidgetId,
     pub btn_edit_cell: WidgetId,
     pub schema_list: WidgetId,
     pub log_area: WidgetId,
@@ -293,6 +297,7 @@ pub struct BuiltUi {
     pub ov_cipher_page: WidgetId,
     pub ov_cipher_kdf: WidgetId,
     pub ov_prefs_font: WidgetId,
+    pub ov_prefs_toolbars: [WidgetId; 5],
     pub ov_prefs_theme: WidgetId,
     pub ov_prefs_confirm: WidgetId,
     pub ov_prefs_completion: WidgetId,
@@ -492,6 +497,18 @@ pub fn browser_theme(mut theme: Theme, font_size: f32) -> Theme {
     theme
 }
 
+fn toolbar_button_height(font: &Font, size: f32, layout: next_gui_ui::ButtonIconLayout) -> f32 {
+    use next_gui_ui::ButtonIconLayout::*;
+    let (_, text) = font.measure_line("Ag", size);
+    let icon = (size*1.4).max(16.0).ceil();
+    match layout {
+        IconOnly => 28.0f32.max(size+12.0),
+        TextOnly => 28.0f32.max(text+10.0),
+        TextBesideIcon => 28.0f32.max(text.max(icon)+10.0),
+        TextUnderIcon => 28.0f32.max(text+icon+16.0),
+    }.ceil()
+}
+
 pub fn build_ui(
     font: Font,
     mut theme: Theme,
@@ -594,6 +611,10 @@ pub fn build_ui(
     let mut edit_value = z;
     let mut edit_type = z;
     let mut btn_edit_discard = z;
+    let mut btn_cell_import = z;
+    let mut btn_cell_export = z;
+    let mut btn_cell_null = z;
+    let mut btn_cell_indent = z;
     let mut btn_edit_cell = z;
     let mut schema_list = z;
     let mut log_area = z;
@@ -714,6 +735,7 @@ pub fn build_ui(
     let mut ov_cipher_page = z;
     let mut ov_cipher_kdf = z;
     let mut ov_prefs_font = z;
+    let mut ov_prefs_toolbars = [z; 5];
     let mut ov_prefs_theme = z;
     let mut ov_prefs_confirm = z;
     let mut ov_prefs_completion = z;
@@ -764,8 +786,11 @@ pub fn build_ui(
     const STATUS_H: f32 = 40.0;
     let shell_w = (win_w - 12.0).max(640.0);
     let shell_h = (win_h - STATUS_H - 4.0).max(360.0);
+    let toolbar_layouts = state.prefs.toolbar_styles.map(crate::prefs::toolbar_layout);
+    let toolbar_heights = toolbar_layouts.map(|layout| toolbar_button_height(ui.font(), state.prefs.font_size, layout));
+    let main_toolbar_height = (toolbar_heights[0]+8.0).max(38.0);
     let toolbar_visible = state.toolbar_db || state.toolbar_extra || state.toolbar_project;
-    let chrome_h = 50.0 + if toolbar_visible { 42.0 } else { 0.0 };
+    let chrome_h = 50.0 + if toolbar_visible { main_toolbar_height+4.0 } else { 0.0 };
     let content_h = (shell_h - chrome_h).max(300.0);
     let csv_modal = matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
     let workspace_modal = csv_modal || state.overlay == Some(OverlayKind::ExportSql);
@@ -796,7 +821,7 @@ pub fn build_ui(
 
     let mut main_tb = RowStyle::from_theme(&theme);
     main_tb.width = shell_w - 8.0;
-    main_tb.height = 38.0;
+    main_tb.height = main_toolbar_height;
     main_tb.padding = 4.0;
     main_tb.gap = 4.0;
     main_tb.cross_align = CrossAlign::Center;
@@ -1461,6 +1486,11 @@ pub fn build_ui(
                             });
                         }
                         OverlayKind::Preferences => {
+                            let scroll = next_gui_ui::ScrollAreaStyle {
+                                width: ov_col.width-16.0, height: ov_col.height-16.0, padding: 0.0,
+                                gap: ov_col.gap, ..next_gui_ui::ScrollAreaStyle::from_theme(&theme)
+                            };
+                            ov_scroll = c.scroll_area(scroll, |c| {
                             c.row(row, |r| {
                                 r.text("Font size");
                                 ov_prefs_font = r.text_input_styled(&state.prefs_font_size, "13", name_s);
@@ -1476,6 +1506,14 @@ pub fn build_ui(
                             c.row(row, |r| {
                                 r.text("Default frozen cols");
                                 ov_frozen = r.text_input_styled(format!("{}", state.prefs_frozen_cols), "0", name_s);
+                            });
+                            for (index, group) in crate::prefs::TOOLBAR_GROUPS.iter().enumerate() {
+                                c.row(RowStyle { height: row.height.max(state.prefs.font_size+20.0), ..row }, |r| {
+                                    r.text(format!("{group} toolbar"));
+                                    let style = SelectStyle { width: (shell_w-280.0).clamp(180.0, 360.0), ..SelectStyle::from_theme(&theme) };
+                                    ov_prefs_toolbars[index] = r.select(crate::prefs::TOOLBAR_STYLES, Some(state.prefs_toolbar_styles[index].min(4)), "Toolbar style", style);
+                                });
+                            }
                             });
                         }
                         OverlayKind::ExportSql => unreachable!("SQL export has its own dialog"),
@@ -1642,13 +1680,13 @@ pub fn build_ui(
 
             let mut struct_tb = RowStyle::from_theme(&theme);
             struct_tb.width = main_w - 24.0;
-            struct_tb.height = 34.0;
+            struct_tb.height = (toolbar_heights[1]+4.0).max(34.0);
             struct_tb.padding = 0.0;
             struct_tb.cross_align = CrossAlign::Center;
 
             let mut struct_split = SplitterStyle::from_theme(&theme);
             struct_split.width = main_w - 24.0;
-            struct_split.height = (tab_page_h - 48.0).max(280.0);
+            struct_split.height = (tab_page_h - struct_tb.height - 14.0).max(280.0);
             struct_split.axis = Axis::Vertical;
             struct_split.ratio = state.structure_ratio.clamp(0.25, 0.65);
 
@@ -1656,11 +1694,11 @@ pub fn build_ui(
             let right_w = (main_w - 24.0) * (1.0 - struct_split.ratio) - 8.0;
             let mut tree_style = TreeStyle::from_theme(&theme);
             tree_style.width = tree_w;
-            tree_style.height = (tab_page_h - 56.0).max(240.0);
+            tree_style.height = (tab_page_h - struct_tb.height - 22.0).max(240.0);
 
             let right_col = ColumnStyle {
                 width: right_w,
-                height: (tab_page_h - 56.0).max(240.0),
+                height: (tab_page_h - struct_tb.height - 22.0).max(240.0),
                 padding: 4.0,
                 gap: 4.0,
                 cross_align: CrossAlign::Start,
@@ -1677,6 +1715,8 @@ pub fn build_ui(
             tool_row.padding = 0.0;
             tool_row.cross_align = CrossAlign::Center;
 
+            let browse_tools = RowStyle { height: (toolbar_heights[2]+4.0).max(32.0), ..tool_row };
+
             let mut filt_row = tool_row;
             filt_row.height = 28.0;
 
@@ -1691,11 +1731,11 @@ pub fn build_ui(
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.drag_select = true;
             browse_table_style.width = main_w - 24.0;
-            browse_table_style.height = (tab_page_h - 268.0).max(160.0);
+            browse_table_style.height = (tab_page_h - 268.0 - 2.0*(browse_tools.height-tool_row.height)).max(160.0);
 
             let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
-            sql_tb.height = 34.0;
+            sql_tb.height = (toolbar_heights[3]+4.0).max(34.0);
             sql_tb.padding = 0.0;
             sql_tb.gap = 4.0;
             sql_tb.cross_align = CrossAlign::Center;
@@ -1826,11 +1866,11 @@ pub fn build_ui(
                             }
                             page_scroll = p.scroll_area(page_scroll_style, |p| {
                             p.scroll_row(struct_tb, |tb| {
-                                btn_struct_new_table = tb.tool_button("New Table");
-                                btn_struct_new_index = tb.tool_button("New Index");
-                                btn_struct_modify = tb.tool_button("Modify");
-                                btn_struct_delete = tb.tool_button("Delete");
-                                btn_struct_refresh = tb.tool_button("Refresh");
+                                btn_struct_new_table = tb.tool_icon_button(IconName::Database, "New Table");
+                                btn_struct_new_index = tb.tool_icon_button(IconName::Code, "New Index");
+                                btn_struct_modify = tb.tool_icon_button(IconName::Settings, "Modify");
+                                btn_struct_delete = tb.tool_icon_button(IconName::Minus, "Delete");
+                                btn_struct_refresh = tb.tool_icon_button(IconName::Refresh, "Refresh");
                             });
                             structure_splitter = p.splitter(
                                 struct_split,
@@ -1880,12 +1920,12 @@ pub fn build_ui(
                                 btn_browse_close_tab = row.tool_button("Close Tab");
                             });
                             browse_tabs = WidgetId(0);
-                            p.scroll_row(tool_row, |row| {
+                            p.scroll_row(browse_tools, |row| {
                                 row.text("Table");
                                 browse_select =
                                     row.select(browse_opts_a.clone(), browse_sel, "table…", sel_style);
-                                btn_add_row = row.tool_button("New Record");
-                                btn_del_row = row.tool_button("Delete Record");
+                                btn_add_row = row.tool_icon_button(IconName::Plus, "New Record");
+                                btn_del_row = row.tool_icon_button(IconName::Minus, "Delete Record");
                             });
                             p.scroll_row(tool_row, |row| {
                                 browse_global_filter = row.text_input_styled(
@@ -1902,16 +1942,16 @@ pub fn build_ui(
                                 btn_browse_clear_filters = row.tool_button("Clear Filters");
                                 btn_browse_clear_sort = row.tool_button("Clear Sort");
                             });
-                            p.scroll_row(tool_row, |row| {
-                                btn_form_view = row.tool_button(match state.browse_view {
+                            p.scroll_row(browse_tools, |row| {
+                                btn_form_view = row.tool_icon_button(IconName::Menu, match state.browse_view {
                                     crate::state::BrowseViewMode::Table => "Form View",
                                     crate::state::BrowseViewMode::Form => "Grid View",
                                 });
-                                btn_freeze = row.tool_button(if state.browse_frozen_cols() == 0 {
+                                btn_freeze = row.tool_icon_button(IconName::Stop, if state.browse_frozen_cols() == 0 {
                                     "Freeze columns".into()
                                 } else { format!("Unfreeze {} columns", state.browse_frozen_cols()) });
-                                btn_cond_fmt = row.tool_button("Cond Format…");
-                                btn_fk_nav = row.tool_button("FK →");
+                                btn_cond_fmt = row.tool_icon_button(IconName::Settings, "Conditional Format…");
+                                btn_fk_nav = row.tool_icon_button(IconName::Step, "Navigate Foreign Key");
                             });
                             // Per-column filters
                             if !col_names.is_empty() && state.browse_view == crate::state::BrowseViewMode::Form {
@@ -2158,9 +2198,15 @@ pub fn build_ui(
                             btn_edit_json = r.tool_button("JSON");
                             btn_edit_image = r.tool_button("Image");
                         });
+                        c.scroll_row(RowStyle { width: dock_w-40.0, height: toolbar_heights[4]+4.0, ..tool_row }, |r| {
+                            btn_cell_import = r.tool_icon_button(IconName::Open, "Import…");
+                            btn_cell_export = r.tool_icon_button(IconName::Save, "Export…");
+                            btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
+                            btn_cell_indent = r.tool_icon_button(IconName::Code, "Indent JSON");
+                        });
                         let mut cell_style = TextAreaStyle::from_theme(&theme);
                         cell_style.width = edit_val_style.width;
-                        cell_style.height = (edit_scroll_style.height - 140.0).max(64.0);
+                        cell_style.height = (edit_scroll_style.height - 144.0 - toolbar_heights[4]).max(64.0);
                         edit_value = c.text_area(&state.edit_value, "value", cell_style);
                         c.row(tool_row, |r| {
                             btn_edit_cell =
@@ -2367,6 +2413,23 @@ pub fn build_ui(
     ui.status_bar(status_style, |bar| {
         status = bar.text_styled(status_text(state), status_fg, 12.0);
     });
+
+    for (index, buttons) in [
+        vec![btn_new, btn_open, btn_write, btn_revert, toolbar_extra, btn_integrity, toolbar_project, btn_project_save, btn_theme],
+        vec![btn_struct_new_table, btn_struct_new_index, btn_struct_modify, btn_struct_delete, btn_struct_refresh],
+        vec![btn_add_row, btn_del_row, btn_form_view, btn_freeze, btn_cond_fmt, btn_fk_nav],
+        vec![btn_sql_new_tab, btn_sql_open, btn_sql_save, btn_sql_save_as, btn_sql_run, btn_sql_line, btn_sql_stop, btn_sql_find, btn_sql_comment],
+        vec![btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent],
+    ].into_iter().enumerate() {
+        for button in buttons { ui.set_button_icon_layout(button, toolbar_layouts[index]); }
+    }
+    for (button, label) in [(btn_sql_new_tab, "New Tab"), (btn_sql_save, "Save"), (btn_sql_save_as, "Save As…"),
+        (btn_sql_run, "Execute SQL"), (btn_sql_find, "Find / Replace"), (btn_sql_comment, "Toggle Comments")] {
+        if let Some(help) = ui.accessible_name(button) { ui.set_accessible_name(button, help); ui.set_button_label(button, label); }
+    }
+    for (index, button) in ov_prefs_toolbars.iter().enumerate() {
+        ui.set_accessible_name(*button, format!("{} toolbar style", crate::prefs::TOOLBAR_GROUPS[index]));
+    }
 
     if ov_csv_preview_error.0 != 0 { ui.set_text_area_read_only(ov_csv_preview_error, true); ui.set_accessible_name(ov_csv_preview_error, "CSV preview error"); }
     if ov_csv_custom_delimiter.0 != 0 { ui.set_accessible_name(ov_csv_custom_delimiter, "Custom CSV separator"); }
@@ -2605,6 +2668,10 @@ pub fn build_ui(
     ui.set_text_area_read_only(edit_value, cell_read_only);
     ui.set_button_enabled(btn_edit_cell, !cell_read_only);
     ui.set_button_enabled(btn_edit_discard, !cell_read_only);
+    ui.set_button_enabled(btn_cell_import, !cell_read_only);
+    ui.set_button_enabled(btn_cell_null, !cell_read_only);
+    ui.set_button_enabled(btn_cell_export, !state.edit_col.is_empty());
+    ui.set_button_enabled(btn_cell_indent, !state.edit_col.is_empty());
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
     ui.set_accessible_name(ov_pk_conflict, "Primary key conflict action");
@@ -2692,7 +2759,8 @@ pub fn build_ui(
     }
     if state.wizard_constraint_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {ui.reveal_table_selection(ov_fks_table);}
     if ov_csv_scroll.0 != 0 { ui.set_scroll_offset(ov_csv_scroll, state.csv_scroll.0, state.csv_scroll.1); }
-    ui.set_scroll_offset(ov_scroll, state.wizard_scroll.0, state.wizard_scroll.1);
+    let overlay_scroll = if state.overlay == Some(OverlayKind::Preferences) { state.prefs_scroll } else { state.wizard_scroll };
+    ui.set_scroll_offset(ov_scroll, overlay_scroll.0, overlay_scroll.1);
     ui.set_scroll_offset(ov_checks_scroll, state.wizard_check_scroll.0, state.wizard_check_scroll.1);
     ui.set_scroll_offset(ov_keys_scroll, state.wizard_key_scroll.0, state.wizard_key_scroll.1);
     ui.set_scroll_offset(ov_fks_scroll, state.wizard_foreign_key_scroll.0, state.wizard_foreign_key_scroll.1);
@@ -2840,6 +2908,10 @@ pub fn build_ui(
         edit_value,
         edit_type,
         btn_edit_discard,
+        btn_cell_import,
+        btn_cell_export,
+        btn_cell_null,
+        btn_cell_indent,
         btn_edit_cell,
         schema_list,
         log_area,
@@ -2959,6 +3031,7 @@ pub fn build_ui(
         ov_cipher_page,
         ov_cipher_kdf,
         ov_prefs_font,
+        ov_prefs_toolbars,
         ov_prefs_theme,
         ov_prefs_confirm,
         ov_prefs_completion,

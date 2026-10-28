@@ -582,6 +582,8 @@ pub struct AppState {
     pub plot_work: Option<crate::plot_load::Work>,
     pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
+    pub prefs_toolbar_styles: [usize; 5],
+    pub prefs_scroll: (f32, f32),
     pub prefs_frozen_cols: usize,
     pub prefs_theme_dark: bool,
     pub prefs_confirm_drops: bool,
@@ -917,6 +919,8 @@ impl AppState {
             sql_export: None,
             prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
+            prefs_toolbar_styles: [2, 2, 0, 0, 0],
+            prefs_scroll: (0.0, 0.0),
             prefs_theme_dark: true,
             prefs_confirm_drops: true,
             prefs_sql_completion: true,
@@ -2972,6 +2976,8 @@ fn open_shared_memory() -> Result<LoggedConnection, String> {
 impl AppState {
     pub fn sync_prefs_drafts(&mut self) {
         self.prefs_font_size = format!("{}", self.prefs.font_size as i32);
+        self.prefs_toolbar_styles = self.prefs.toolbar_styles;
+        self.prefs_scroll = (0.0, 0.0);
         self.prefs_theme_dark = self.prefs.default_theme_dark;
         self.prefs_confirm_drops = self.prefs.confirm_drops;
         self.prefs_sql_completion = self.prefs.sql_completion;
@@ -2990,6 +2996,7 @@ impl AppState {
             return Err("font size must be finite".into());
         }
         self.prefs.font_size = fs.clamp(9.0, 28.0);
+        self.prefs.toolbar_styles = self.prefs_toolbar_styles.map(|style| style.min(4));
         self.prefs.default_theme_dark = self.prefs_theme_dark;
         self.prefs.confirm_drops = self.prefs_confirm_drops;
         self.prefs.sql_completion = self.prefs_sql_completion;
@@ -3751,6 +3758,71 @@ impl AppState {
         Ok(())
     }
 
+    pub fn set_cell_null(&mut self) -> Result<(), String> {
+        if self.edit_cell_read_only() { return Err("This cell is read-only".into()); }
+        self.edit_type = 0;
+        self.edit_original = rusqlite::types::Value::Null;
+        self.edit_mode = EditCellMode::Text;
+        self.show_edit_value();
+        Ok(())
+    }
+
+    pub fn import_cell_file(&mut self, path: &Path) -> Result<(), String> {
+        use std::io::Read;
+        if self.edit_cell_read_only() { return Err("This cell is read-only".into()); }
+        // shortcut: bounded whole-cell editing; use a streaming binary editor for larger imports.
+        const LIMIT: u64 = 16 * 1024 * 1024;
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let metadata = file.metadata().map_err(|e| e.to_string())?;
+        if !metadata.is_file() { return Err("Select a regular cell data file".into()); }
+        if metadata.len() > LIMIT { return Err("Cell import exceeds the 16 MiB editor limit".into()); }
+        let mut bytes = Vec::new();
+        file.take(LIMIT+1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > LIMIT { return Err("Cell import exceeds the 16 MiB editor limit".into()); }
+        let value = if self.edit_type == 4 || bytes.contains(&0) {
+            rusqlite::types::Value::Blob(bytes)
+        } else {
+            match String::from_utf8(bytes) {
+                Ok(text) => rusqlite::types::Value::Text(text),
+                Err(error) => rusqlite::types::Value::Blob(error.into_bytes()),
+            }
+        };
+        self.edit_type = if matches!(value, rusqlite::types::Value::Blob(_)) {4} else {3};
+        self.edit_mode = if self.edit_type == 4 {EditCellMode::Hex} else {EditCellMode::Text};
+        self.edit_original = value;
+        self.edit_image_view = next_gui_ui::ImageView::default();
+        self.edit_image_kind.clear();
+        self.show_edit_value();
+        self.status_msg = "File loaded into cell draft; Apply to update the record".into();
+        Ok(())
+    }
+
+    pub fn export_cell_file(&mut self, path: &Path) -> Result<(), String> {
+        use std::io::Write;
+        self.guard_background_idle()?;
+        let conn = self.conn.as_ref().ok_or("No database open")?;
+        db::guard_output_path(conn, path)?;
+        if self.edit_col.is_empty() { return Err("Select a cell first".into()); }
+        let value = if self.edit_cell_read_only() || self.edit_mode == EditCellMode::Image {
+            self.edit_original.clone()
+        } else { self.edited_cell_value()? };
+        let bytes = match value {
+            rusqlite::types::Value::Null => Vec::new(),
+            rusqlite::types::Value::Integer(value) => value.to_string().into_bytes(),
+            rusqlite::types::Value::Real(value) => value.to_string().into_bytes(),
+            rusqlite::types::Value::Text(value) => value.into_bytes(),
+            rusqlite::types::Value::Blob(value) => value,
+        };
+        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let mut staged = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+        staged.write_all(&bytes).map_err(|e| e.to_string())?;
+        staged.as_file_mut().sync_all().map_err(|e| e.to_string())?;
+        db::guard_output_path(conn, path)?;
+        staged.persist(path).map_err(|e| e.to_string())?;
+        self.status_msg = format!("Cell exported to {}", path.display());
+        Ok(())
+    }
+
     pub fn navigate_fk(&mut self) -> Result<(), String> {
         let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
@@ -4014,6 +4086,43 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn cell_files_preserve_drafts_types_raw_bytes_destinations_and_database_files() {
+        use rusqlite::types::Value;
+        let mut state = test_state();
+        state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "t").unwrap(); state.goto_browse_record(1).unwrap();
+        let saved = state.edit_saved.clone(); let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input"); let output = dir.path().join("output");
+        std::fs::write(&input, "新值\nsecond line").unwrap();
+        state.import_cell_file(&input).unwrap(); assert!(state.has_cell_draft()); assert_eq!(state.edit_saved, saved);
+        assert_eq!(state.edited_cell_value().unwrap(), Value::Text("新值\nsecond line".into()));
+        state.export_cell_file(&output).unwrap(); assert_eq!(std::fs::read(&output).unwrap(), "新值\nsecond line".as_bytes());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_,String>(0)).unwrap(), "saved");
+        let before = state.edit_value.clone();
+        let large = dir.path().join("large"); std::fs::File::create(&large).unwrap().set_len(16*1024*1024+1).unwrap();
+        assert!(state.import_cell_file(&large).unwrap_err().contains("16 MiB"));
+        assert!(state.import_cell_file(&dir.path().join("missing")).is_err()); assert_eq!(state.edit_value, before);
+        std::fs::write(&input, [0, 255, 1, 128]).unwrap(); state.import_cell_file(&input).unwrap();
+        assert_eq!(state.edited_cell_value().unwrap(), Value::Blob(vec![0,255,1,128]));
+        state.export_cell_file(&output).unwrap(); assert_eq!(std::fs::read(&output).unwrap(), [0,255,1,128]);
+        state.edit_value = "GG".into(); assert!(state.export_cell_file(&output).is_err());
+        assert_eq!(std::fs::read(&output).unwrap(), [0,255,1,128]);
+        state.discard_cell_draft(); state.set_cell_null().unwrap(); assert!(state.has_cell_draft());
+        state.export_cell_file(&output).unwrap(); assert!(std::fs::read(&output).unwrap().is_empty());
+        state.apply_cell_draft().unwrap(); assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |row| row.get::<_,Value>(0)).unwrap(), Value::Null);
+        state.goto_browse_record(1).unwrap(); state.import_cell_file(&input).unwrap(); state.discard_cell_draft(); assert!(!state.has_cell_draft());
+        let database = dir.path().join("attached.db");
+        db::attach_database_mode(state.conn.as_ref().unwrap(), database.to_str().unwrap(), "aux", false).unwrap();
+        let original = std::fs::read(&database).unwrap();
+        assert!(state.export_cell_file(&database).is_err()); assert_eq!(std::fs::read(&database).unwrap(), original);
+        state.tab = MainTab::ExecuteSql; state.run_sql_text_sync("SELECT CAST(x'ff00' AS TEXT) AS raw").unwrap();
+        state.sql_selection.rows = Some((0,0)); state.sync_edit_cell_from_sql_selection().unwrap();
+        state.set_edit_mode(EditCellMode::Json).unwrap(); state.export_cell_file(&output).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), [255,0]);
+        assert!(state.import_cell_file(&input).unwrap_err().contains("read-only"));
+        assert!(state.set_cell_null().unwrap_err().contains("read-only")); assert!(!state.has_cell_draft());
     }
 
     #[test]

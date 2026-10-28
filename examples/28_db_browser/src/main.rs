@@ -18,6 +18,8 @@ mod plot_load;
 mod plot_export;
 #[cfg(test)]
 mod dock_tests;
+#[cfg(test)]
+mod toolbar_tests;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
@@ -328,6 +330,10 @@ struct BuiltUiIds {
     edit_value: WidgetId,
     edit_type: WidgetId,
     btn_edit_discard: WidgetId,
+    btn_cell_import: WidgetId,
+    btn_cell_export: WidgetId,
+    btn_cell_null: WidgetId,
+    btn_cell_indent: WidgetId,
     btn_edit_cell: WidgetId,
     chart: WidgetId,
     plot: plot::Controls,
@@ -441,6 +447,7 @@ struct BuiltUiIds {
     ov_cipher_page: WidgetId,
     ov_cipher_kdf: WidgetId,
     ov_prefs_font: WidgetId,
+    ov_prefs_toolbars: [WidgetId; 5],
     ov_prefs_theme: WidgetId,
     ov_prefs_confirm: WidgetId,
     ov_prefs_completion: WidgetId,
@@ -571,6 +578,10 @@ impl From<&BuiltUi> for BuiltUiIds {
             edit_value: b.edit_value,
             edit_type: b.edit_type,
             btn_edit_discard: b.btn_edit_discard,
+            btn_cell_import: b.btn_cell_import,
+            btn_cell_export: b.btn_cell_export,
+            btn_cell_null: b.btn_cell_null,
+            btn_cell_indent: b.btn_cell_indent,
             btn_edit_cell: b.btn_edit_cell,
             chart: b.chart,
             plot: b.plot,
@@ -684,6 +695,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_cipher_page: b.ov_cipher_page,
             ov_cipher_kdf: b.ov_cipher_kdf,
             ov_prefs_font: b.ov_prefs_font,
+            ov_prefs_toolbars: b.ov_prefs_toolbars,
             ov_prefs_theme: b.ov_prefs_theme,
             ov_prefs_confirm: b.ov_prefs_confirm,
             ov_prefs_completion: b.ov_prefs_completion,
@@ -1127,7 +1139,7 @@ impl Demo {
                     state.overlay = Some(OverlayKind::Cipher);
                     MainTab::Structure
                 }
-                "prefs" | "preferences" => {
+                "prefs" | "preferences" | "prefs-narrow" => {
                     state.sync_prefs_drafts();
                     state.overlay = Some(OverlayKind::Preferences);
                     MainTab::Structure
@@ -1303,12 +1315,12 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow" | "cell-structure" | "cell-pragmas" | "cell-structure-narrow" | "cell-pragmas-narrow") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow" | "cell-structure" | "cell-pragmas" | "cell-structure-narrow" | "cell-pragmas-narrow") || tab.starts_with("toolbar-style-") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
-                state.tab = if tab.ends_with("sql") || tab == "toolbar-sql-narrow" { MainTab::ExecuteSql } else { MainTab::Browse };
+                state.tab = if tab.ends_with("sql") || tab == "toolbar-sql-narrow" || (tab.starts_with("toolbar-style-") && tab.contains("-sql")) { MainTab::ExecuteSql } else { MainTab::Browse };
                 if state.tab == MainTab::ExecuteSql {
                     *state.sql_editor_mut() = "SELECT observed, revenue, expenses, region\nFROM quarterly_revenue\nORDER BY observed DESC;".into();
                     state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
@@ -1330,6 +1342,11 @@ impl Demo {
                 state.body_ratio = if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") || tab.starts_with("cell-") {0.45}else{0.52};
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
+                if tab.starts_with("toolbar-style-") {
+                    let style = tab.trim_start_matches("toolbar-style-").split('-').next().unwrap().parse::<usize>().unwrap();
+                    assert!(style <= 4); state.prefs.toolbar_styles = [style; 5];
+                    if tab.contains("-structure") { state.tab = MainTab::Structure; }
+                }
                 if tab.starts_with("cell-structure") { state.tab = MainTab::Structure; }
                 if tab.starts_with("cell-pragmas") { state.tab = MainTab::Pragmas; }
             }
@@ -1673,7 +1690,10 @@ impl Demo {
             return;
         };
         if self.ids.ov_scroll.0 != 0 {
-            if let Some(offset) = self.ui.scroll_offset(self.ids.ov_scroll) { self.state.wizard_scroll = offset; }
+            if let Some(offset) = self.ui.scroll_offset(self.ids.ov_scroll) {
+                if kind == OverlayKind::Preferences { self.state.prefs_scroll = offset; }
+                else { self.state.wizard_scroll = offset; }
+            }
         }
         if self.ids.ov_name.0 != 0 {
             if let Some(v) = self.ui.text_input_value(self.ids.ov_name) {
@@ -1921,6 +1941,9 @@ impl Demo {
                 }
             }
             OverlayKind::Preferences => {
+                for (index, id) in self.ids.ov_prefs_toolbars.iter().enumerate() {
+                    if let Some(style) = self.ui.select_selected(*id) { self.state.prefs_toolbar_styles[index] = style; }
+                }
                 if self.ids.ov_prefs_font.0 != 0 {
                     if let Some(v) = self.ui.text_input_value(self.ids.ov_prefs_font) {
                         self.state.prefs_font_size = v.to_string();
@@ -2627,6 +2650,11 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let prefs_session = if self.state.overlay == Some(OverlayKind::Preferences) {
+            self.snapshot_overlay();
+            self.ids.ov_prefs_toolbars.iter().enumerate().find_map(|(index, id)|
+                (self.ui.focused() == Some(*id)).then(|| self.ui.select_state(*id).map(|state| (index, state))).flatten())
+        } else { None };
         let modal_session=self.ui.modal_state(self.ids.modal);
         let plot_session=self.ui.plot_session(self.ids.chart,0);
         let plot_focused=self.ui.focused()==Some(self.ids.chart);
@@ -2756,6 +2784,10 @@ impl Demo {
             }
         }
         if let Some((x, y)) = pragma_scroll { self.ui.set_scroll_offset(self.ids.pragma_scroll, x, y); }
+        if let Some((index, state)) = prefs_session {
+            let id = self.ids.ov_prefs_toolbars[index]; self.ui.restore_select_state(id, &state); self.ui.set_focus(Some(id));
+            self.ui.sync(&mut self.scene);
+        }
         if let Some((kind, index, text, select)) = pragma_session {
             if let Some(id) = [&self.ids.pragma_inputs, &self.ids.pragma_selects, &self.ids.pragma_switches][kind].get(index).copied().filter(|id| id.0 != 0) {
                 if let Some(text) = text { self.ui.restore_text_input_state(id, &text); }
@@ -4098,6 +4130,18 @@ impl Demo {
             }
             return;
         }
+        if id.0 != 0 && [self.ids.btn_cell_import, self.ids.btn_cell_export, self.ids.btn_cell_null, self.ids.btn_cell_indent].contains(&id) {
+            self.snapshot_inputs();
+            let result = if id == self.ids.btn_cell_import {
+                if self.state.edit_cell_read_only() { Err("This cell is read-only".into()) }
+                else if let Some(path) = file_dlg::pick_open_cell() { self.state.import_cell_file(&path) } else { return; }
+            } else if id == self.ids.btn_cell_export {
+                if let Some(path) = file_dlg::pick_save_cell() { self.state.export_cell_file(&path) } else { return; }
+            } else if id == self.ids.btn_cell_null { self.state.set_cell_null() }
+            else { self.state.set_edit_mode(crate::state::EditCellMode::Json) };
+            match result { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
+            self.rebuild = true; return;
+        }
         if id == self.ids.btn_edit_discard && id.0 != 0 {
             self.state.discard_cell_draft();
             self.clear_error();
@@ -5383,7 +5427,7 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("toolbar-")) && !self.qa_stepper_started {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("toolbar-") && !tab.starts_with("toolbar-style-")) && !self.qa_stepper_started {
             self.qa_stepper_started = true;
             self.ui.set_focus(Some(if self.state.tab == MainTab::ExecuteSql { self.ids.btn_sql_comment } else { self.ids.btn_theme }));
             self.ui.sync(&mut self.scene);
@@ -5523,7 +5567,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow")) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow") || (tab.starts_with("toolbar-style-") && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
@@ -6736,15 +6780,19 @@ mod interaction_tests {
             write_ppm(&format!("{prefix}-preferences.ppm"), soft.frame_pixels().unwrap().0, 1400, 860).unwrap();
         }
         demo.ui.set_text_input(demo.ids.ov_frozen, "8");
+        let toolbar_styles = demo.state.prefs.toolbar_styles;
+        for id in demo.ids.ov_prefs_toolbars { demo.ui.set_select_selected(id, Some(3)); }
         let completion = demo.state.prefs.sql_completion;
         let upper_keywords = demo.state.prefs.sql_upper_keywords;
         demo.ui.set_checked(demo.ids.ov_prefs_completion, !completion);
         demo.ui.set_checked(demo.ids.ov_prefs_upper_keywords, !upper_keywords);
         demo.snapshot_inputs();
+        assert_eq!(demo.state.prefs_toolbar_styles, [3;5]);
         assert_eq!(demo.state.prefs_sql_completion, !completion);
         assert_eq!(demo.state.prefs_sql_upper_keywords, !upper_keywords);
         demo.handle_button(demo.ids.ov_btn_cancel);
         assert_eq!(demo.state.frozen_cols, 2);
+        assert_eq!(demo.state.prefs.toolbar_styles, toolbar_styles);
         assert_eq!(demo.state.prefs.sql_completion, completion);
         assert_eq!(demo.state.prefs.sql_upper_keywords, upper_keywords);
         demo.state.tab = MainTab::Pragmas;
@@ -6856,6 +6904,7 @@ mod interaction_tests {
             demo.handle_button(id); demo.do_rebuild();
         }
         let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.prefs.toolbar_styles = [0; 5];
         demo.state.new_memory_db().unwrap();
         demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
         demo.state.refresh_schema().unwrap();
