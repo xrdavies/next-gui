@@ -1,4 +1,9 @@
-use crate::{Kind, Ui, UiKey, WidgetId};
+use crate::{DragState, Kind, Ui, UiKey, WidgetId};
+use std::time::{Duration, Instant};
+
+// Match Qt common spinbox mouse-repeat timing.
+const INTEGER_REPEAT_DELAY: Duration = Duration::from_millis(500);
+const INTEGER_REPEAT_INTERVAL: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone)]
 pub(super) struct InputSnapshot {
@@ -40,6 +45,7 @@ impl Ui {
     /// Invalid ranges, secret inputs and other widget kinds are rejected.
     pub fn set_text_input_integer_range(&mut self, id: WidgetId, range: Option<(i64, i64)>) -> bool {
         if range.is_some_and(|(min, max)| min > max) { return false; }
+        if range.is_none() && self.focus == Some(id) { self.cancel_pointer_repeat(); }
         let Some(widget) = self.widgets.get_mut(&id) else { return false; };
         let Kind::TextInput { integer_range, secret, .. } = &mut widget.kind else { return false; };
         if *secret && range.is_some() { return false; }
@@ -70,12 +76,134 @@ impl Ui {
         true
     }
 
-    pub(super) fn pointer_integer_input(&mut self, scene: &crate::Scene, id: WidgetId, x: f32, y: f32) -> bool {
-        let Some(bounds) = self.widgets[&id].node.and_then(|n| scene.get(n).map(|n| n.bounds)) else { return false; };
+    pub(super) fn pointer_integer_input(
+        &mut self,
+        scene: &crate::Scene,
+        id: WidgetId,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        let Some(bounds) = self.widgets[&id]
+            .node
+            .and_then(|n| scene.get(n).map(|n| n.bounds))
+        else {
+            return false;
+        };
         let width = self.integer_input_step_width(id, bounds.width);
-        if width == 0.0 || x < bounds.x + bounds.width - width { return false; }
-        self.step_integer_input(id, if y < bounds.y + bounds.height * 0.5 { 1 } else { -1 });
+        if width == 0.0 || x < bounds.x + bounds.width - width {
+            return false;
+        }
+        let delta = if y < bounds.y + bounds.height * 0.5 {
+            1
+        } else {
+            -1
+        };
+        let before = self.text_input_value(id).unwrap().to_owned();
+        self.step_integer_input(id, delta);
+        if self.text_input_value(id) != Some(before.as_str()) {
+            self.drag = Some(DragState::IntegerInput {
+                input: id,
+                delta,
+                bounds: crate::Rect::new(
+                    bounds.x + bounds.width - width,
+                    bounds.y + if delta > 0 { 0.0 } else { bounds.height * 0.5 },
+                    width,
+                    bounds.height * 0.5,
+                ),
+                next_repeat: Some(Instant::now() + INTEGER_REPEAT_DELAY),
+            });
+        }
         true
+    }
+
+    /// Cancel held integer tracking, including a pointer paused outside its arrow.
+    /// Hosts should call this when the pointer leaves the native window.
+    pub fn cancel_pointer_repeat(&mut self) -> bool {
+        if matches!(self.drag, Some(DragState::IntegerInput { .. })) {
+            self.drag = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn move_integer_repeat(&mut self, x: f32, y: f32) -> bool {
+        let Some(DragState::IntegerInput {
+            bounds,
+            next_repeat,
+            ..
+        }) = &mut self.drag
+        else {
+            return false;
+        };
+        let inside = x.is_finite() && y.is_finite() && bounds.contains(x, y);
+        if inside == next_repeat.is_some() {
+            return false;
+        }
+        *next_repeat = inside.then(|| Instant::now() + INTEGER_REPEAT_DELAY);
+        true
+    }
+
+    fn integer_repeat_allowed(&self, id: WidgetId) -> bool {
+        self.focus == Some(id)
+            && self.open_popup.is_none()
+            && self
+                .dialog_focus_scope()
+                .is_none_or(|dialog| self.widget_contains(dialog, id))
+            && matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput {enabled:true,preedit,integer_range:Some(_),..}) if preedit.is_empty())
+    }
+
+    /// Delay until a held integer arrow repeats. Schedule a host redraw after this delay.
+    /// None means the pointer is released/paused or its editor is no longer active.
+    pub fn pointer_repeat_delay(&self) -> Option<Duration> {
+        let DragState::IntegerInput {
+            input,
+            next_repeat: Some(next),
+            ..
+        } = self.drag.as_ref()?
+        else {
+            return None;
+        };
+        self.integer_repeat_allowed(*input)
+            .then(|| next.saturating_duration_since(Instant::now()))
+    }
+
+    /// Advance a held integer arrow; true means its value or tracking appearance changed.
+    /// Call sync/repaint after true, including when stepping stops at a bound.
+    /// Late redraws produce one step rather than a burst. Release via pointer_released.
+    pub fn repeat_pointer(&mut self) -> bool {
+        self.repeat_pointer_at(Instant::now())
+    }
+
+    fn repeat_pointer_at(&mut self, now: Instant) -> bool {
+        let Some(DragState::IntegerInput {
+            input,
+            delta,
+            next_repeat,
+            ..
+        }) = self.drag.clone()
+        else {
+            return false;
+        };
+        if !self.integer_repeat_allowed(input) {
+            return self.cancel_pointer_repeat();
+        }
+        let Some(next) = next_repeat else {
+            return false;
+        };
+        if now < next {
+            return false;
+        }
+        let before = self.text_input_value(input).unwrap().to_owned();
+        self.step_integer_input(input, delta);
+        let changed = self.text_input_value(input) != Some(before.as_str());
+        if !changed {
+            return self.cancel_pointer_repeat();
+        }
+        if let Some(DragState::IntegerInput { next_repeat, .. }) = &mut self.drag {
+            *next_repeat = Some(now + INTEGER_REPEAT_INTERVAL);
+        }
+        changed
     }
 
     pub(super) fn paint_integer_input_steps(&mut self, scene: &mut crate::Scene, id: WidgetId, bounds: crate::Rect) {
@@ -94,7 +222,8 @@ impl Ui {
             let background = aux[1 + slot * 2];
             let text = aux[2 + slot * 2];
             scene.set_bounds(background, area);
-            scene.set_fill(background, if enabled { self.theme.colors.strip_bg } else { self.theme.colors.muted });
+            let pressed = matches!(&self.drag, Some(DragState::IntegerInput {input,delta,next_repeat:Some(_),..}) if *input == id && (*delta > 0) == (slot == 0));
+            scene.set_fill(background, if !enabled { self.theme.colors.muted } else if pressed { self.theme.colors.hover_bg } else { self.theme.colors.strip_bg });
             scene.set_mask(background, None);
             scene.set_visible(background, true);
             let mask = self.font.rasterize_text(label, style.size.min(area.height), None).1;
@@ -271,6 +400,146 @@ impl Ui {
 mod tests {
     use super::*;
     use crate::{AutocompleteStyle, ColumnStyle, Scene, TextInputStyle};
+
+    #[test]
+    fn integer_input_pointer_press_arms_repeat_until_release() {
+        let (mut ui, id) = field(false, "40");
+        ui.set_text_input_integer_range(id, Some((0, 100)));
+        ui.set_viewport(640.0, 480.0);
+        let mut scene = Scene::new();
+        ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+        assert!(ui.pointer_pressed(
+            &mut scene,
+            bounds.x + bounds.width - 12.0,
+            bounds.y + bounds.height * 0.25
+        ));
+        assert_eq!(ui.text_input_value(id), Some("41"));
+        assert!(
+            ui.is_dragging(),
+            "A pressed integer arrow must retain pointer capture for repeat"
+        );
+        ui.pointer_released();
+        assert!(!ui.is_dragging());
+    }
+
+    #[test]
+    fn integer_repeat_waits_pauses_stops_and_preserves_exact_values_and_undo() {
+        let (mut ui, id) = field(false, "9007199254740993");
+        ui.set_text_input_integer_range(id, Some((0, i64::MAX)));
+        ui.set_viewport(640.0, 480.0);
+        let mut scene = Scene::new();
+        ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+        let (x, y) = (
+            bounds.x + bounds.width - 12.0,
+            bounds.y + bounds.height * 0.25,
+        );
+        let due = |ui: &Ui| match &ui.drag {
+            Some(DragState::IntegerInput {
+                next_repeat: Some(at),
+                ..
+            }) => *at,
+            _ => panic!("expected armed integer arrow"),
+        };
+        ui.pointer_pressed(&mut scene, x, y);
+        let first = due(&ui);
+        assert!(ui.pointer_repeat_delay().unwrap() > Duration::from_millis(300));
+        assert!(!ui.repeat_pointer_at(first - Duration::from_millis(1)));
+        assert_eq!(ui.text_input_value(id), Some("9007199254740994"));
+        assert!(ui.repeat_pointer_at(first));
+        assert_eq!(ui.text_input_value(id), Some("9007199254740995"));
+        assert!(ui.repeat_pointer_at(first + Duration::from_secs(5)));
+        assert_eq!(ui.text_input_value(id), Some("9007199254740996"));
+        assert!(ui.pointer_moved(bounds.x - 10.0, y));
+        assert!(ui.is_dragging());
+        assert_eq!(ui.pointer_repeat_delay(), None);
+        assert!(!ui.repeat_pointer_at(first + Duration::from_secs(10)));
+        assert!(ui.pointer_moved(x, y));
+        assert!(due(&ui) >= Instant::now() + Duration::from_millis(300));
+        assert!(ui.repeat_pointer_at(due(&ui)));
+        ui.sync(&mut scene);
+        assert_eq!(
+            scene.get(ui.widgets[&id].aux[1]).unwrap().fill,
+            ui.theme.colors.hover_bg
+        );
+        ui.key_input(UiKey::Undo);
+        assert!(!ui.is_dragging());
+        assert_eq!(ui.text_input_value(id), Some("9007199254740996"));
+        assert!(!ui.repeat_pointer_at(first + Duration::from_secs(60)));
+        for stop in 0..10 {
+            ui.set_viewport(640.0, 480.0);
+            ui.set_text_input(id, "40");
+            ui.set_text_input_integer_range(id, Some((0, i64::MAX)));
+            ui.set_text_input_enabled(id, true);
+            ui.pointer_pressed(&mut scene, x, y);
+            let next = due(&ui);
+            match stop {
+                0 => ui.pointer_released(),
+                1 => {
+                    ui.set_focus(None);
+                }
+                2 => {
+                    ui.ime_preedit("composing", None);
+                }
+                3 => {
+                    ui.set_text_input_enabled(id, false);
+                }
+                4 => {
+                    ui.set_text_input_integer_range(id, None);
+                }
+                5 => {
+                    assert!(ui.cancel_pointer_repeat());
+                }
+                6 => {
+                    ui.paste_into_focused_text("7");
+                }
+                7 => { ui.set_text_input(id, "70"); }
+                8 => { assert!(ui.pointer_scroll(&scene, x, y, 0.0, 40.0)); }
+                _ => { ui.set_viewport(800.0, 600.0); }
+            }
+            assert_eq!(ui.pointer_repeat_delay(), None, "stop {stop}");
+            let value = ui.text_input_value(id).unwrap().to_owned();
+            assert!(
+                !ui.repeat_pointer_at(next + Duration::from_secs(5)),
+                "stop {stop}"
+            );
+            assert_eq!(ui.text_input_value(id), Some(value.as_str()));
+            assert!(!ui.is_dragging());
+            ui.ime_clear_preedit();
+        }
+        ui.set_text_input(id, (i64::MAX - 2).to_string());
+        ui.set_text_input_integer_range(id, Some((0, i64::MAX)));
+        ui.pointer_pressed(&mut scene, x, y);
+        let next = due(&ui);
+        assert!(ui.repeat_pointer_at(next));
+        assert_eq!(ui.text_input_value(id), Some("9223372036854775807"));
+        assert!(ui.repeat_pointer_at(next + Duration::from_secs(30)));
+        assert_eq!(ui.text_input_value(id), Some("9223372036854775807"));
+        ui.sync(&mut scene);
+        assert_eq!(scene.get(ui.widgets[&id].aux[1]).unwrap().fill, ui.theme.colors.strip_bg);
+        assert_eq!(ui.pointer_repeat_delay(), None);
+        for invalid in ["-", "9223372036854775808", "-1"] {
+            ui.set_text_input(id, invalid);
+            ui.pointer_pressed(&mut scene, x, y);
+            assert!(!ui.is_dragging());
+            assert_eq!(ui.text_input_value(id), Some(invalid));
+        }
+        ui.set_text_input(id, "40");
+        ui.pointer_pressed(&mut scene, x, y);
+        let next = due(&ui);
+        let modal = ui.modal(
+            "Question",
+            "Explanation",
+            "Cancel",
+            None,
+            crate::ModalStyle::default(),
+        );
+        ui.set_modal_open(modal, true);
+        assert_eq!(ui.pointer_repeat_delay(), None);
+        assert!(!ui.repeat_pointer_at(next));
+        assert!(!ui.is_dragging());
+    }
 
     #[test]
     fn integer_input_steps_exact_bounds_history_clipboard_and_composition() {

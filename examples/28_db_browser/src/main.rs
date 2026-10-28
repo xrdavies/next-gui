@@ -207,6 +207,7 @@ struct Demo {
     rebuild: bool,
     qa_exit: bool,
     qa_done: bool,
+    qa_stepper_started: bool,
     last_body_ratio: Option<f32>,
     last_structure_ratio: Option<f32>,
     last_tree_sel: Option<u64>,
@@ -711,7 +712,7 @@ impl Demo {
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             state.tab = match tab.to_ascii_lowercase().as_str() {
                 "browse" | "header-menu" => MainTab::Browse,
-                "pragmas" | "pragmas-bottom" | "pragmas-confirm" => MainTab::Pragmas,
+                "pragmas" | "pragmas-bottom" | "pragmas-confirm" | "pragmas-hold" => MainTab::Pragmas,
                 "sql" | "execute" | "sql-long" | "sql-calltip" | "sql-word" => MainTab::ExecuteSql,
                 "wizard" | "table" | "table-types" => {
                     state.open_create_table_wizard();
@@ -1259,7 +1260,7 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "pragmas" | "pragmas-bottom" | "pragmas-confirm") {
+            if matches!(tab.as_str(), "pragmas" | "pragmas-bottom" | "pragmas-confirm" | "pragmas-hold") {
                 state.new_memory_db().unwrap();
                 state.dock_edit = false;
                 if tab == "pragmas-confirm" {
@@ -1297,6 +1298,7 @@ impl Demo {
             built.ui.set_scroll_offset(built.pragma_scroll, 0.0, 10000.0);
             built.ui.sync(&mut built.scene);
         }
+
 
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
         if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);if matches!(edit.column,1|8) {if built.ui.is_select(built.ov_field_editor) {built.ui.key_input(UiKey::Space);} else {built.ui.open_autocomplete_options(built.ov_field_editor);}}}built.ui.sync(&mut built.scene);}
@@ -1353,6 +1355,7 @@ impl Demo {
             rebuild: false,
             qa_exit,
             qa_done: false,
+            qa_stepper_started: false,
             last_tree_sel: None,
             last_schema_names,
             reveal_schema_selection: false,
@@ -4594,6 +4597,14 @@ impl Demo {
         }
     }
 
+    fn advance_pointer_repeat(&mut self) -> bool {
+        if !self.ui.repeat_pointer() { return false; }
+        self.snapshot_inputs();
+        self.ui.sync(&mut self.scene);
+        self.needs_paint = true;
+        true
+    }
+
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
         if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
@@ -4705,6 +4716,15 @@ impl AppCallbacks for Demo {
 
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event) {
         match event {
+            Event::PointerLeft {..} => {
+                if self.ui.cancel_pointer_repeat() { self.after_ui(ctx); }
+            }
+            Event::FocusChanged {focused: false, ..} => {
+                if self.ui.is_dragging() {
+                    self.ui.pointer_released();
+                    self.after_ui(ctx);
+                }
+            }
             Event::CloseRequested { .. } => {
                 if self.state.export_work.is_some() {
                     self.cancel_data_export();
@@ -4719,6 +4739,7 @@ impl AppCallbacks for Demo {
                 self.after_ui(ctx);
             }
             Event::Resized { width, height, .. } => {
+                self.qa_stepper_started = false;
                 self.snapshot_inputs();
                 self.win_w = width;
                 self.win_h = height;
@@ -5016,6 +5037,26 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
+        let hold_qa = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("pragmas-hold");
+        if hold_qa && !self.qa_stepper_started {
+            self.qa_stepper_started = true;
+            let index = self.state.pragmas.iter().position(|(key, _)| key == "journal_size_limit").unwrap();
+            let input = self.ids.pragma_inputs[index];
+            self.ui.set_text_input(input, "9007199254740993");
+            let bounds = self.scene.iter_paint_order().into_iter().find(|n| self.ui.widget_from_node(n.id) == Some(input)).unwrap().bounds;
+            self.ui.pointer_pressed(&mut self.scene, bounds.x + bounds.width - 10.0, bounds.y + bounds.height * 0.25);
+            self.snapshot_inputs();
+            self.ui.sync(&mut self.scene);
+            self.needs_paint = true;
+            eprintln!("native held stepper armed input={input:?} focus={:?} delay={:?}", self.ui.focused(), self.ui.pointer_repeat_delay());
+        }
+        if self.advance_pointer_repeat() && hold_qa {
+            let index = self.state.pragmas.iter().position(|(key, _)| key == "journal_size_limit").unwrap();
+            eprintln!("native held stepper draft={}", self.state.pragma_drafts[index]);
+        }
+        if let Some(delay) = self.ui.pointer_repeat_delay() {
+            ctx.request_redraw_after(delay);
+        }
         let csv_progress_qa = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| matches!(tab.as_str(), "csv-progress" | "csv-canceling"));
         if csv_progress_qa {
             let answer = if self.state.csv_work.as_ref().is_some_and(|work| work.pending.is_some()) {

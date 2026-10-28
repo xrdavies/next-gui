@@ -281,3 +281,18 @@ Use the wheel, scrollbar, Up/Down, PageUp/PageDown or Home/End to read the full
 message. Rebuilding or resizing retains the reading position and active action
 for the same question; a new question starts at its defaults. Long table names
 also use bounded GPU texture tiles instead of exceeding the adapter limit.
+
+Holding a numeric arrow steps once immediately, waits500ms, then repeats every
+150ms, matching Qt's common spinbox mouse timing. Moving outside its arrow
+pauses; returning starts the delay again. Release, native window leave/focus loss,
+resizing, scrolling, typing/paste, IME composition or a new modal stops tracking.
+Reaching a bound clears the pressed appearance; delayed frames never burst.
+Repeated steps keep exact i64 values and Undo/Redo. PRAGMA edits remain drafts
+until Save Pragmas is chosen.
+
+Hosts using the shared input steppers should call `Ui::repeat_pointer()` during
+redraw, sync/repaint when it returns true, and schedule the next
+`Ui::pointer_repeat_delay()` through `WindowCtx::request_redraw_after`.
+Deliver release events and call `Ui::cancel_pointer_repeat()` on native pointer
+leave, including when tracking is paused outside an arrow. A fresh declarative
+UI deliberately cancels capture; editor values/history use their existing sessions.

@@ -374,6 +374,58 @@ mod tests {
         }
     }
     #[test]
+    fn held_numeric_arrow_updates_only_the_draft_and_stops_across_release_and_rebuild() {
+        use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
+        use next_gui_ui::{Theme, UiKey};
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                demo.state.tab = crate::state::MainTab::Pragmas;
+                demo.state.dock_edit = false;
+                demo.do_rebuild();
+                let index = demo.state.pragmas.iter().position(|(key, _)| key == "journal_size_limit").unwrap();
+                let original = crate::db::read_pragma(demo.state.conn.as_ref().unwrap(), "journal_size_limit").unwrap();
+                let input = demo.ids.pragma_inputs[index];
+                demo.ui.set_text_input(input, "9007199254740993");
+                let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(input)).unwrap().bounds;
+                let view = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.pragma_scroll)).unwrap().bounds;
+                demo.ui.set_scroll_offset(demo.ids.pragma_scroll, 0.0, (bounds.y - view.y - 40.0).max(0.0));
+                demo.ui.sync(&mut demo.scene);
+                let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(input)).unwrap().bounds;
+                let (x, y) = (bounds.x + bounds.width - 10.0, bounds.y + bounds.height * 0.25);
+                assert_eq!(demo.ui.hit_widget(&demo.scene, x, y), Some(input));
+                assert!(demo.ui.pointer_pressed(&mut demo.scene, x, y));
+                demo.snapshot_inputs();
+                assert_eq!(demo.state.pragma_drafts[index], "9007199254740994");
+                assert!(!demo.advance_pointer_repeat());
+                std::thread::sleep(demo.ui.pointer_repeat_delay().unwrap() + std::time::Duration::from_millis(2));
+                assert!(demo.advance_pointer_repeat());
+                assert_eq!(demo.state.pragma_drafts[index], "9007199254740995");
+                assert_eq!(crate::db::read_pragma(demo.state.conn.as_ref().unwrap(), "journal_size_limit").unwrap(), original);
+                assert!(!demo.state.dirty);
+                capture(&mut demo, theme_name, width, "pragmas-held-step");
+                assert!(demo.ui.is_dragging());
+                demo.ui.pointer_released();
+                demo.ui.sync(&mut demo.scene);
+                assert_eq!(demo.ui.pointer_repeat_delay(), None);
+                assert!(!demo.advance_pointer_repeat());
+                demo.ui.key_input(UiKey::Undo);
+                demo.snapshot_inputs();
+                assert_eq!(demo.state.pragma_drafts[index], "9007199254740994");
+                demo.do_rebuild();
+                assert_eq!(demo.ui.pointer_repeat_delay(), None);
+                assert_eq!(demo.ui.focused(), Some(demo.ids.pragma_inputs[index]));
+                capture(&mut demo, theme_name, width, "pragmas-released-step");
+                demo.handle_button(demo.ids.btn_pragma_apply);
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert_eq!(crate::db::read_pragma(demo.state.conn.as_ref().unwrap(), "journal_size_limit").unwrap(), "9007199254740994");
+            }
+        }
+    }
+
+    #[test]
     fn numeric_controls_step_save_exact_integers_and_align_in_the_original_form() {
         use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
         use next_gui_ui::{Theme, UiKey};

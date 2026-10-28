@@ -2192,6 +2192,12 @@ impl Widget {
 
 #[derive(Debug, Clone)]
 enum DragState {
+    IntegerInput {
+        input: WidgetId,
+        delta: i64,
+        bounds: Rect,
+        next_repeat: Option<std::time::Instant>,
+    },
     TableSelection { table: WidgetId, bounds: Rect },
     TextArea { area: WidgetId, bounds: Rect },
     TableColumn {
@@ -2540,7 +2546,9 @@ impl Ui {
 
     /// Set window size used for Modal scrim centering (call on resize).
     pub fn set_viewport(&mut self, width: f32, height: f32) {
-        self.viewport = (width.max(1.0), height.max(1.0));
+        let viewport = (width.max(1.0), height.max(1.0));
+        if self.viewport != viewport { self.cancel_pointer_repeat(); }
+        self.viewport = viewport;
     }
 
     /// Office P2e `config_provider`: replace the Ui-level defaults bag.
@@ -3226,6 +3234,7 @@ impl Ui {
     /// Begin a pointer press with primary (`secondary = false`) or secondary
     /// / right button (`secondary = true`, opens [`Kind::ContextMenu`]).
     pub fn pointer_press(&mut self, scene: &mut Scene, x: f32, y: f32, secondary: bool) -> bool {
+        self.cancel_pointer_repeat();
         self.enforce_dialog_scope();
         if self.pointer_text_area_hint(scene, x, y, secondary) { return true; }
         // Open popup hit first (overlay sits above everything).
@@ -3531,6 +3540,7 @@ impl Ui {
             return self.update_tooltip_hover_xy(x, y);
         };
         match drag {
+            DragState::IntegerInput { .. } => self.move_integer_repeat(x, y),
             DragState::TableSelection { table, bounds } => self.drag_table_selection(table, bounds, x, y),
             DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
             DragState::TableColumn {
@@ -3608,6 +3618,7 @@ impl Ui {
         if !dx.is_finite() || !dy.is_finite() {
             return false;
         }
+        let repeat_cancelled = self.cancel_pointer_repeat();
         if let Some(id) = self.text_completion_popup() {
             if self.popup_contains(scene, id, x, y) {
                 if dy != 0.0 { self.move_text_completion(if dy > 0.0 { 1 } else { -1 }); }
@@ -3635,7 +3646,7 @@ impl Ui {
             if !self.hit_widget(scene,x,y).is_some_and(|id|id!=dialog && self.widget_contains(dialog,id)) {return true;}
         }
         let Some(id) = self.hit_widget(scene, x, y) else {
-            return false;
+            return repeat_cancelled;
         };
         let mut node = self.widgets.get(&id).and_then(|w| w.node);
         // Start at the hit control, then bubble at its limits to enclosing viewports.
@@ -3653,7 +3664,7 @@ impl Ui {
             }
             node = n.parent;
         }
-        false
+        repeat_cancelled
     }
 
     /// Restore a ScrollArea position, clamped to its laid-out content. Rejects non-finite offsets.
@@ -3695,6 +3706,7 @@ impl Ui {
     /// Set focus explicitly.
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
         if id.is_some_and(|id|self.dialog_focus_scope().is_some_and(|dialog|!self.widget_contains(dialog,id))) {return;}
+        if self.focus != id { self.cancel_pointer_repeat(); }
         self.focus = id.filter(|id| self.button_enabled(*id) != Some(false) && self.text_input_enabled(*id)!=Some(false));
     }
 
@@ -4087,6 +4099,7 @@ impl Ui {
 
     /// Disable user editing/focus without changing the value or Undo history; sync to repaint.
     pub fn set_text_input_enabled(&mut self,id:WidgetId,value:bool)->bool {
+        if !value && self.focus == Some(id) { self.cancel_pointer_repeat(); }
         let Some(Widget {kind:Kind::TextInput {enabled,preedit,preedit_cursor,select_all,..},..})=self.widgets.get_mut(&id) else {return false;};
         let changed=*enabled!=value;*enabled=value;
         if !value {
@@ -4112,6 +4125,7 @@ impl Ui {
 
     /// Set TextInput value; resets caret to end and clears editing history.
     pub fn set_text_input(&mut self, id: WidgetId, value: impl Into<String>) {
+        if self.focus == Some(id) { self.cancel_pointer_repeat(); }
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::TextInput {
                 value: v,
@@ -4174,6 +4188,7 @@ impl Ui {
     /// Replaces the TextArea selection or the whole single-line value when `select_all` is set.
     /// Clears IME preedit.
     pub fn paste_into_focused_text(&mut self, text: &str) -> bool {
+        self.cancel_pointer_repeat();
         let Some(id) = self.focus else {
             return false;
         };
@@ -4243,6 +4258,7 @@ impl Ui {
 
     /// Update IME preedit on the focused editor. Empty `text` clears composition.
     pub fn ime_preedit(&mut self, text: impl Into<String>, cursor: Option<(usize, usize)>) -> bool {
+        self.cancel_pointer_repeat();
         let Some(id) = self.focus else {
             return false;
         };
@@ -4267,6 +4283,7 @@ impl Ui {
 
     /// Commit IME text into the focused editor at the caret (clears preedit).
     pub fn ime_commit(&mut self, text: impl AsRef<str>) -> bool {
+        self.cancel_pointer_repeat();
         let Some(id) = self.focus else {
             return false;
         };
@@ -5035,6 +5052,7 @@ impl Ui {
 
     /// Deliver a key to the focused widget. Returns true if handled.
     pub fn key_input(&mut self, key: UiKey) -> bool {
+        self.cancel_pointer_repeat();
         for last in self.list_activation.values_mut() { *last = None; }
         self.enforce_dialog_scope();
         if let Some(handled) = self.key_text_completion(key) { return handled; }
@@ -6909,6 +6927,7 @@ impl Ui {
 
     /// Open or close a Modal (also sets / clears [`Ui`] popup ownership).
     pub fn set_modal_open(&mut self, id: WidgetId, open: bool) -> bool {
+        if open { self.cancel_pointer_repeat(); }
         let is_modal = matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::Modal { .. })
