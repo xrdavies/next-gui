@@ -141,7 +141,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Multi SQL tabs | partial | Independent drafts/sessions/results, file names and dirty markers; Close Tab, move arrows and Cmd/Ctrl+T/W/S/Shift+S. Pointer tab dragging, close affordances and rename remain. |
 | Find / Replace | partial | Shared editor in Find panel highlights/reveals matches; Replace acts on the selected match and Replace All is undoable (F04 addressed). Match case/whole words/wrap/backwards/selection-only/PCRE2, Find All highlights and capture replacement are implemented; upstream regex dialect, large-document worker and native acceptance remain. |
 | Async query + cancel | done | Live connection moves to worker; Write/Revert/keys/ATTACH shared; completion polled on redraw; Stop interrupts |
-| Results → CSV / JSON / Save as view | done | Full snapshot export without re-execution; editable view name and source tied to the executed result statement. |
+| Results → CSV / JSON / Save as view | done | Full immutable typed snapshot export without re-execution, shared CSV/JSON format options in compact modal, exact integers/null/base64 and atomic output; editable view name/source tied to executed statement. Background progress/native input acceptance pending. |
 | Toggle comment | partial | Current/selected physical lines, first-line mode, exact two-hyphen removal, LF/CRLF preservation and one undo/redo edit. Ctrl/Cmd+/ and toolbar retain tab/file sessions. CR-only editor lines and native acceptance remain. |
 | Execute current line | done | Uses Unicode caret position; never replaces editor contents; one physical line |
 
