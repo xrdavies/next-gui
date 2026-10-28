@@ -499,7 +499,10 @@ pub fn build_ui(
     height: u32,
     state: &AppState,
 ) -> BuiltUi {
-    let generated_cell = state.edit_cell_generated();
+    let sql_cell = state.sql_cell_position().is_some();
+    let sql_cell_read_only = state.sql_cell_read_only() || state.tab == MainTab::ExecuteSql;
+    let generated_cell = !sql_cell && state.edit_cell_generated();
+    let cell_read_only = generated_cell || sql_cell_read_only;
     theme = browser_theme(theme, state.prefs.font_size);
     let mut scene = Scene::new();
     let mut ui = Ui::with_font(font);
@@ -2136,6 +2139,9 @@ pub fn build_ui(
                             edit_col = r.text_input_styled(&state.edit_col, "column", column_style);
                             if generated_cell {
                                 r.text("Generated · read-only");
+                            } else if sql_cell_read_only {
+                                let storage = ["NULL", "INTEGER", "REAL", "TEXT", "BLOB"].get(state.edit_type).copied().unwrap_or("Value");
+                                r.text(format!("{storage} · read-only"));
                             } else {
                                 let mut storage = sel_style;
                                 storage.width = 140.0;
@@ -2168,7 +2174,10 @@ pub fn build_ui(
                             crate::state::EditCellMode::Json => "JSON",
                             crate::state::EditCellMode::Image => "Image",
                         };
-                        let record = state
+                        let record = if let Some((row, _)) = state.sql_cell_position() {
+                            let total = state.sql_result.as_ref().map_or(0, |result| result.all_values.as_ref().map_or(result.rows.len(), |values| values.len()));
+                            format!(" · SQL result {} of {total}", row.saturating_add(1))
+                        } else { state
                             .browse()
                             .sel_row
                             .map(|row| {
@@ -2178,7 +2187,7 @@ pub fn build_ui(
                                     state.browse().total_rows.unwrap_or(0)
                                 )
                             })
-                            .unwrap_or_default();
+                            .unwrap_or_default() };
                         edit_meta = c.text(format!(
                             "{mode} · {} bytes{}{record}",
                             state.edit_binary_len,
@@ -2593,8 +2602,10 @@ pub fn build_ui(
     ui.set_button_enabled(ov_fk_up, state.wizard_foreign_key_sel>0 && fk_can_swap(state.wizard_foreign_key_sel.saturating_sub(1)));
     ui.set_button_enabled(ov_fk_down, fk_can_swap(state.wizard_foreign_key_sel+1));
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
-    ui.set_text_area_read_only(edit_value, generated_cell);
-    ui.set_button_enabled(btn_edit_cell, !generated_cell);
+    ui.set_text_input_enabled(edit_col, !sql_cell_read_only);
+    ui.set_text_area_read_only(edit_value, cell_read_only);
+    ui.set_button_enabled(btn_edit_cell, !cell_read_only);
+    ui.set_button_enabled(btn_edit_discard, !sql_cell_read_only);
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
     ui.set_accessible_name(ov_pk_conflict, "Primary key conflict action");

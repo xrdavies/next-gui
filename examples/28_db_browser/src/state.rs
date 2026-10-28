@@ -564,6 +564,7 @@ pub struct AppState {
     pub cond_rules: Vec<CondFormatRule>,
     pub edit_mode: EditCellMode,
     pub edit_original: rusqlite::types::Value,
+    edit_source: EditCellSource,
     pub edit_type: usize,
     pub edit_binary_len: usize,
     pub edit_image_kind: String,
@@ -626,6 +627,12 @@ pub struct SqlOutput {
 pub struct SqlSelection {
     pub rows: Option<(usize, usize)>,
     pub columns: Option<(usize, usize)>,
+}
+
+enum EditCellSource {
+    Browse,
+    SqlEmpty,
+    Sql { identity: Arc<()>, row: usize, column: usize },
 }
 
 pub struct SqlJob {
@@ -890,6 +897,7 @@ impl AppState {
             cond_rules: Vec::new(),
             edit_mode: EditCellMode::Text,
             edit_original: rusqlite::types::Value::Null,
+            edit_source: EditCellSource::Browse,
             edit_type: 0,
             edit_binary_len: 0,
             edit_image_kind: String::new(),
@@ -1139,7 +1147,7 @@ impl AppState {
     }
 
     pub fn has_cell_draft(&self) -> bool {
-        if self.edit_col.is_empty() {
+        if self.edit_col.is_empty() || self.sql_cell_read_only() {
             return false;
         }
         if self.edit_mode == EditCellMode::Image {
@@ -1440,12 +1448,15 @@ impl AppState {
     }
 
     fn clear_browse_editor(&mut self) {
+        self.edit_source = EditCellSource::Browse;
         self.edit_col.clear();
         self.edit_value.clear();
         self.edit_type = 0;
         self.edit_original = rusqlite::types::Value::Null;
         self.edit_saved = rusqlite::types::Value::Null;
         self.edit_image_rgba = None;
+        self.edit_binary_len = 0;
+        self.edit_image_kind.clear();
     }
 
     pub fn sort_browse_column(&mut self, column: String, append: bool) -> Result<(), String> {
@@ -2593,6 +2604,7 @@ impl AppState {
         self.schema_tree_scroll = 0.0;
         self.browse_tabs = vec![BrowseTabState::new(None)];
         self.browse_tab_idx = 0;
+        self.clear_browse_editor();
         self.sql_result = None;
         self.sql_outputs.clear();
         self.pragmas.clear();
@@ -3215,6 +3227,7 @@ impl AppState {
     }
 
     pub fn apply_cell_draft(&mut self) -> Result<(), String> {
+        if self.sql_cell_read_only() { return Err("SQL result cells are read-only".into()); }
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
         let tab = self.browse();
@@ -3426,6 +3439,9 @@ impl AppState {
     }
 
     pub fn discard_cell_draft(&mut self) {
+        if self.sql_cell_read_only() {
+            self.edit_original = self.edit_saved.clone(); self.show_edit_value(); return;
+        }
         self.edit_col.clear();
         self.edit_value.clear();
         self.edit_image_rgba = None;
@@ -3527,22 +3543,69 @@ impl AppState {
         if self.has_cell_draft() { self.error_msg = Some("Apply or discard the cell draft first".into()); return; }
         let b = self.browse();
         let (Some(ri), Some(res)) = (b.sel_row, b.result.as_ref()) else {
+            if self.sql_cell_read_only() { self.clear_browse_editor(); }
             return;
         };
         let ci = b.sel_col.unwrap_or(0);
         let Some(col) = res.columns.get(ci).cloned() else {
+            if self.sql_cell_read_only() { self.clear_browse_editor(); }
             return;
         };
         let cell = match res.values.cell(ri, ci) {
             Ok(cell) => cell,
             Err(e) => { self.clear_browse_editor(); self.error_msg = Some(e); return; }
         };
+        if let Err(error) = self.load_edit_cell(col, cell) { self.clear_browse_editor(); self.error_msg = Some(error); }
+    }
+
+    pub fn sql_cell_position(&self) -> Option<(usize, usize)> {
+        match self.edit_source { EditCellSource::Sql { row, column, .. } => Some((row, column)), _ => None }
+    }
+
+    pub fn sql_cell_read_only(&self) -> bool {
+        !matches!(self.edit_source, EditCellSource::Browse)
+    }
+
+    pub fn sync_edit_cell_from_sql_selection(&mut self) -> Result<bool, String> {
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        let selection = self.sql_selection.rows.map(|(_, row)| row).zip(self.sql_result.as_ref());
+        let Some((row, result)) = selection else {
+            let changed = !matches!(self.edit_source, EditCellSource::SqlEmpty);
+            if changed { self.clear_browse_editor(); }
+            self.edit_source = EditCellSource::SqlEmpty;
+            return Ok(changed);
+        };
+        let column = self.sql_selection.columns.map_or(0, |(_, column)| column);
+        let values = result.all_values.as_deref().unwrap_or(&result.values);
+        let identity = values.identity();
+        if matches!(&self.edit_source, EditCellSource::Sql { identity: source, row: old_row, column: old_column }
+            if Arc::ptr_eq(source, &identity) && *old_row == row && *old_column == column) { return Ok(false); }
+        let loaded = result.columns.get(column).cloned().ok_or_else(|| "No SQL result column".to_string())
+            .and_then(|name| values.cell(row, column).map(|value| (name, value)))
+            .and_then(|(name, value)| {
+                // Keep invalid UTF-8 TEXT bytes available in the read-only Hex preview.
+                let (value, invalid_text) = match value {
+                    db::CellValue::Text(bytes) if std::str::from_utf8(&bytes).is_err() => (db::CellValue::Blob(bytes), true),
+                    value => (value, false),
+                };
+                self.load_edit_cell(name, value)?;
+                if invalid_text { self.edit_type = 3; }
+                Ok(())
+            });
+        if let Err(error) = loaded {
+            self.clear_browse_editor();
+            self.edit_source = EditCellSource::Sql { identity, row, column };
+            return Err(error);
+        }
+        self.edit_source = EditCellSource::Sql { identity, row, column };
+        Ok(true)
+    }
+
+    fn load_edit_cell(&mut self, col: String, cell: db::CellValue) -> Result<(), String> {
         let raw = cell.as_ref();
         if let rusqlite::types::ValueRef::Text(bytes) = raw {
             if std::str::from_utf8(bytes).is_err() {
-                self.clear_browse_editor();
-                self.error_msg = Some("TEXT contains invalid UTF-8; typed copy and SQL export preserve its bytes".into());
-                return;
+                return Err("TEXT contains invalid UTF-8; typed copy and SQL export preserve its bytes".into());
             }
         }
         let value = rusqlite::types::Value::from(raw);
@@ -3551,6 +3614,7 @@ impl AppState {
         } else {
             EditCellMode::Text
         };
+        self.edit_source = EditCellSource::Browse;
         self.edit_col = col;
         self.edit_type = match &value {
             rusqlite::types::Value::Null => 0,
@@ -3560,10 +3624,12 @@ impl AppState {
             rusqlite::types::Value::Blob(_) => 4,
         };
         self.edit_image_view = next_gui_ui::ImageView::default();
+        self.edit_image_kind.clear();
         self.edit_saved = value.clone();
         self.edit_original = value;
         self.edit_mode = mode;
         self.show_edit_value();
+        Ok(())
     }
 
     fn show_edit_value(&mut self) {
@@ -3641,7 +3707,7 @@ impl AppState {
     }
 
     pub fn set_edit_mode(&mut self, mode: EditCellMode) -> Result<(), String> {
-        if self.edit_mode != EditCellMode::Image {
+        if !self.sql_cell_read_only() && self.edit_mode != EditCellMode::Image {
             self.edit_original = self.edited_cell_value()?;
         }
         self.edit_mode = mode;
@@ -3911,6 +3977,54 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn sql_cell_snapshots_keep_storage_bytes_and_cannot_write_browse_records() {
+        let mut state = test_state();
+        state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "t").unwrap();
+        state.goto_browse_record(1).unwrap();
+        state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(),
+            "SELECT 9223372036854775807 AS exact,1.25 AS decimal,NULL AS missing,CAST(X'80FF00' AS TEXT) AS bytes,X'00FF' AS payload,'{\"a\":1}' AS json").unwrap());
+        for (column, storage, text) in [(0, 1, "9223372036854775807"), (1, 2, "1.25"), (2, 0, ""), (3, 3, "80FF00"), (4, 4, "00FF"), (5, 3, "{\"a\":1}")] {
+            state.sql_selection = SqlSelection { rows: Some((0, 0)), columns: Some((column, column)) };
+            assert!(state.sync_edit_cell_from_sql_selection().unwrap());
+            assert_eq!(state.sql_cell_position(), Some((0, column)));
+            assert_eq!(state.edit_type, storage); assert_eq!(state.edit_value, text);
+            let expected_mode = if matches!(column, 3 | 4) { EditCellMode::Hex } else { EditCellMode::Text };
+            assert_eq!(state.edit_mode, expected_mode);
+            assert!(!state.has_cell_draft());
+            assert!(!state.sync_edit_cell_from_sql_selection().unwrap());
+            state.edit_col = "v".into(); state.edit_value = "wrong target".into();
+            assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));
+            state.discard_cell_draft(); assert_eq!(state.edit_value, text);
+        }
+        state.set_edit_mode(EditCellMode::Json).unwrap();
+        assert!(state.edit_value.contains("\n")); assert!(!state.has_cell_draft());
+        assert!(!state.sync_edit_cell_from_sql_selection().unwrap());
+        assert_eq!(state.edit_mode, EditCellMode::Json);
+        state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT 'fresh' AS v").unwrap());
+        state.sql_selection.columns = Some((0, 0));
+        assert!(state.sync_edit_cell_from_sql_selection().unwrap()); assert_eq!(state.edit_value, "fresh");
+        state.sql_selection.rows = Some((usize::MAX, usize::MAX));
+        assert!(state.sync_edit_cell_from_sql_selection().is_err());
+        assert!(!state.sync_edit_cell_from_sql_selection().unwrap(), "A failed source read must not trigger endless rebuilds");
+        assert!(state.edit_value.is_empty()); assert_eq!(state.edit_binary_len, 0);
+        assert!(state.apply_cell_draft().is_err());
+        state.sql_selection = SqlSelection::default();
+        assert!(state.sync_edit_cell_from_sql_selection().unwrap());
+        assert_eq!(state.sql_cell_position(), None);
+        state.sync_edit_cell_from_selection(); assert_eq!(state.edit_value, "saved");
+        state.edit_value = "pending browse".into();
+        state.sql_selection.rows = Some((0, 0));
+        assert!(state.sync_edit_cell_from_sql_selection().unwrap_err().contains("draft"));
+        assert_eq!(state.edit_value, "pending browse");
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t", [], |r| r.get::<_,String>(0)).unwrap(), "saved");
+        state.discard_cell_draft(); state.sync_edit_cell_from_sql_selection().unwrap();
+        state.browse_mut().sel_col = Some(usize::MAX); state.sync_edit_cell_from_selection();
+        assert!(!state.sql_cell_read_only()); assert!(state.edit_value.is_empty());
+        state.sync_edit_cell_from_sql_selection().unwrap();
+        state.close_db(); assert_eq!(state.sql_cell_position(), None); assert!(state.edit_value.is_empty());
     }
 
     #[test]

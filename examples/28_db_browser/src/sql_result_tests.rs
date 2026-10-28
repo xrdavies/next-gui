@@ -60,7 +60,7 @@ fn complete_sql_grid_navigates_copies_links_plots_and_retains_tab_selections() {
     assert_eq!(demo.ui.table_selected_text(demo.ids.sql_table).as_deref(), Some("2502\t1\n2503\t1\n2504\t1\n2505\t1"));
     let sum: i64 = demo.state.conn.as_ref().unwrap().query_row("SELECT sum(y) FROM t", [], |row| row.get(0)).unwrap();
     assert_eq!(sum, 3000, "Table and Plot reads must never repeat UPDATE RETURNING");
-    capture(&mut demo);
+    capture(&mut demo, "NEXT_GUI_SQL_GRID_QA_OUT");
     assert!(demo.state.run_sql_text_sync("SELECT missing_column FROM t").is_err()); demo.do_rebuild();
     assert!(demo.state.sql_result.is_none());
     demo.state.run_sql_text_sync("SELECT 7 AS value").unwrap(); demo.do_rebuild();
@@ -68,8 +68,67 @@ fn complete_sql_grid_navigates_copies_links_plots_and_retains_tab_selections() {
     assert_eq!(demo.state.sql_scroll, (0.0, 0.0));
 }
 
-fn capture(demo: &mut Demo) {
-    let Ok(prefix) = std::env::var("NEXT_GUI_SQL_GRID_QA_OUT") else { return; };
+#[test]
+fn sql_cell_dock_follows_complete_selection_and_keeps_read_only_modes_and_browse_identity() {
+    let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();
+    demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE t(id INTEGER,n INTEGER,raw BLOB); WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3000) INSERT INTO t SELECT x,0,X'00FF' FROM n").unwrap();
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(2, 2, image::Rgba([20, 40, 60, 255])))
+        .write_to(&mut png, image::ImageFormat::Png).unwrap();
+    demo.state.conn.as_ref().unwrap().execute("UPDATE t SET raw=?1 WHERE id=3000", [png.into_inner()]).unwrap();
+    demo.state.refresh_schema().unwrap(); demo.state.switch_browse_table_in("main", "t").unwrap();
+    demo.state.goto_browse_record(1).unwrap(); demo.state.browse_mut().sel_col = Some(1); demo.state.sync_edit_cell_from_selection();
+    demo.state.tab = MainTab::ExecuteSql;
+    *demo.state.sql_editor_mut() = "UPDATE t SET n=n+1\nRETURNING id,n,raw,'{\"ready\":true}' AS json;".into();
+    demo.state.run_sql_sync().unwrap();
+    let snapshot = demo.state.sql_result.as_ref().unwrap().all_values.clone().unwrap();
+    demo.state.dock_focus = DockKind::Plot; demo.do_rebuild();
+    demo.ui.set_table_selected_cells(demo.ids.sql_table, Some((2999, 2999)), Some((1, 1)));
+    demo.ui.set_focus(Some(demo.ids.sql_table)); demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
+    assert_eq!(demo.state.sql_cell_position(), Some((2999, 1))); assert_eq!(demo.state.edit_value, "1");
+    assert_eq!(demo.ui.focused(), Some(demo.ids.sql_table));
+    assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell), Some(false));
+    assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_discard), Some(false));
+    assert_eq!(demo.ui.text_input_enabled(demo.ids.edit_col), Some(false)); assert_eq!(demo.ids.edit_type, WidgetId(0));
+    demo.ui.set_focus(Some(demo.ids.edit_value)); demo.ui.key_input(UiKey::SelectAll);
+    assert_eq!(demo.ui.focused_text_for_copy().as_deref(), Some("1"));
+    for key in [UiKey::Char('9'), UiKey::Backspace, UiKey::Delete] { demo.ui.key_input(key); }
+    demo.ui.paste_into_focused_text("unsafe"); demo.ui.ime_commit("替换");
+    assert_eq!(demo.ui.text_area_value(demo.ids.edit_value), Some("1")); demo.snapshot_inputs();
+    assert!(!demo.state.has_cell_draft()); assert!(demo.state.apply_cell_draft().is_err());
+    capture(&mut demo, "NEXT_GUI_SQL_CELL_QA_OUT");
+    for (column, mode) in [(3, crate::state::EditCellMode::Json), (2, crate::state::EditCellMode::Image)] {
+        demo.ui.set_table_selected_cells(demo.ids.sql_table, Some((2999, 2999)), Some((column, column)));
+        demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
+        let button = if column == 3 { demo.ids.btn_edit_json } else { demo.ids.btn_edit_image };
+        demo.handle_button(button); demo.do_rebuild();
+        assert_eq!(demo.state.edit_mode, mode); assert!(!demo.state.has_cell_draft());
+        if column == 3 { assert!(demo.state.edit_value.contains("\n")); }
+        else { assert_eq!(demo.state.edit_image_rgba.as_ref().map(|(w,h,_)| (*w,*h)), Some((2,2))); }
+        demo.do_rebuild(); assert_eq!(demo.state.edit_mode, mode);
+    }
+    assert!(Arc::ptr_eq(&snapshot, demo.state.sql_result.as_ref().unwrap().all_values.as_ref().unwrap()));
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT sum(n) FROM t", [], |r| r.get::<_,i64>(0)).unwrap(), 3000);
+    demo.state.dock_edit = false; demo.do_rebuild();
+    demo.ui.set_table_selected_cells(demo.ids.sql_table, Some((2500, 2500)), Some((0, 0)));
+    demo.snapshot_inputs(); demo.poll_selection_changes();
+    assert_eq!(demo.state.sql_cell_position(), Some((2999, 2)));
+    demo.state.dock_edit = true; demo.do_rebuild();
+    assert_eq!(demo.state.sql_cell_position(), Some((2500, 0))); assert_eq!(demo.state.edit_value, "2501");
+    demo.state.tab = MainTab::Browse; demo.state.goto_browse_record(1).unwrap();
+    demo.state.browse_mut().sel_col = Some(1); demo.do_rebuild();
+    assert_eq!(demo.state.sql_cell_position(), None); assert_eq!(demo.state.edit_value, "1");
+    demo.state.sql_tabs.push("SELECT 42".into()); demo.state.switch_sql_tab(1);
+    demo.state.tab = MainTab::ExecuteSql; demo.do_rebuild();
+    demo.state.switch_sql_tab(0); demo.do_rebuild();
+    assert_eq!(demo.state.sql_cell_position(), Some((2500, 0)));
+    demo.state.run_sql_text_sync("SELECT 99 AS fresh").unwrap(); demo.do_rebuild();
+    assert_eq!(demo.state.sql_cell_position(), None); assert!(demo.state.edit_value.is_empty());
+}
+
+fn capture(demo: &mut Demo, variable: &str) {
+    let Ok(prefix) = std::env::var(variable) else { return; };
     for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
         demo.theme = crate::ui_build::browser_theme(theme, demo.state.prefs.font_size);
         for (width, height) in [(1400, 1000), (800, 600)] {

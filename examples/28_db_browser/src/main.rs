@@ -1331,7 +1331,7 @@ impl Demo {
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
-            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end" | "plot-image-clipboard" | "plot-image-clipboard-narrow") {
+            if matches!(tab.as_str(), "plot-all-browse" | "plot-all-sql" | "plot-all-progress" | "sql-results-end" | "sql-results-end-narrow" | "plot-image-clipboard" | "plot-image-clipboard-narrow") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(FULL_PLOT_QA_SQL).unwrap();
                 let gate = std::sync::Arc::new(std::sync::Mutex::new(None::<std::sync::Arc<plot_load::Progress>>));
@@ -1349,7 +1349,7 @@ impl Demo {
                 } else { "telemetry" };
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", table).unwrap();
-                state.tab = if tab.ends_with("sql") || matches!(tab.as_str(), "sql-results-end" | "plot-image-clipboard" | "plot-image-clipboard-narrow") { MainTab::ExecuteSql } else { MainTab::Browse };
+                state.tab = if tab.ends_with("sql") || matches!(tab.as_str(), "sql-results-end" | "sql-results-end-narrow" | "plot-image-clipboard" | "plot-image-clipboard-narrow") { MainTab::ExecuteSql } else { MainTab::Browse };
                 if state.tab == MainTab::ExecuteSql {
                     *state.sql_editor_mut() = "SELECT sequence,measured,reference,region\nFROM telemetry ORDER BY sequence DESC;".into();
                     state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
@@ -1372,7 +1372,7 @@ impl Demo {
                 state.body_ratio = 0.52;
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
-                if tab == "sql-results-end" {
+                if tab.starts_with("sql-results-end") {
                     state.sql_selection = state::SqlSelection { rows: Some((2998, 2999)), columns: Some((0, 3)) };
                     state.sql_scroll = (0.0, 1_000_000.0);
                     state.sql_message = "OK — 3000 result rows · final rows selected".into();
@@ -1409,6 +1409,9 @@ impl Demo {
             }
         }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
+        if state.tab == MainTab::ExecuteSql && state.dock_edit {
+            if let Err(error) = state.sync_edit_cell_from_sql_selection() { state.error_msg = Some(error); }
+        }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
             built.ui.key_input(UiKey::End);built.ui.sync(&mut built.scene);
@@ -2723,6 +2726,7 @@ impl Demo {
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
         let sql_table_focused = self.ids.sql_table.0 != 0 && self.ui.focused() == Some(self.ids.sql_table) && self.state.tab == MainTab::ExecuteSql;
         if let Err(error) = self.state.sync_current_plot() { self.state.plot.clear(); self.set_error(error); }
+        self.sync_cell_selection();
         let built = build_ui(
             self.font.clone(),
             self.theme,
@@ -4698,9 +4702,22 @@ impl Demo {
                 dirty = true;
             }
         }
+        dirty |= self.sync_cell_selection();
         if dirty {
             self.rebuild = true;
         }
+    }
+
+    fn sync_cell_selection(&mut self) -> bool {
+        if !self.state.dock_edit || self.state.has_cell_draft() { return false; }
+        if self.state.tab == MainTab::ExecuteSql {
+            match self.state.sync_edit_cell_from_sql_selection() {
+                Ok(changed) => changed,
+                Err(error) => { self.set_error(error); true }
+            }
+        } else if self.state.tab == MainTab::Browse && self.state.sql_cell_read_only() {
+            self.state.sync_edit_cell_from_selection(); true
+        } else { false }
     }
 
     fn poll_header_sort(&mut self, append: bool) {
@@ -5372,6 +5389,12 @@ impl AppCallbacks for Demo {
             self.ui.sync(&mut self.scene);
             self.needs_paint = true;
         }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("sql-results-end")) && !self.qa_stepper_started {
+            self.qa_stepper_started = true;
+            self.ui.set_focus(Some(self.ids.sql_table));
+            self.ui.sync(&mut self.scene);
+            self.needs_paint = true;
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("plot-hover")) {
             if let Some(bounds) = self.scene.iter_paint_order().into_iter()
                 .find(|node| self.ui.widget_from_node(node.id) == Some(self.ids.chart)).map(|node| node.bounds) {
@@ -5500,7 +5523,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow")) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow")) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
@@ -6884,7 +6907,7 @@ mod interaction_tests {
         let old_surface = demo.theme.colors.surface; let button = demo.ids.btn_theme;
         activate(&mut demo, button);
         assert_ne!(demo.theme.colors.surface, old_surface);
-        assert_eq!(demo.state.sql_tabs[0], draft); assert_eq!(demo.state.edit_value, cell);
+        assert_eq!(demo.state.sql_tabs[0], draft); assert!(demo.state.edit_value.is_empty());
         demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
         let button = demo.ids.btn_sql_comment; activate(&mut demo, button);
         assert_eq!(demo.state.sql_editor(), format!("-- {draft}"));
@@ -6893,6 +6916,8 @@ mod interaction_tests {
         assert_eq!(demo.state.sql_editor(), draft);
         let button = demo.ids.btn_sql_new_tab; activate(&mut demo, button);
         assert_eq!(demo.state.sql_tabs.len(), 2); assert_eq!(demo.state.sql_tabs[0], draft);
+        assert!(demo.state.edit_value.is_empty());
+        demo.state.tab = MainTab::Browse; demo.do_rebuild();
         assert_eq!(demo.state.edit_value, cell);
         assert!(!demo.state.dirty);
     }
