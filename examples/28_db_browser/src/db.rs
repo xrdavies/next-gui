@@ -2,7 +2,7 @@
 //! SQLite helpers for the DB Browser example (rusqlite, bundled).
 
 use std::fs::{self, File};
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params_from_iter, Connection, OpenFlags};
@@ -631,18 +631,16 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
         let mut cell_values = CellSnapshot::default();
         let mut truncated = false;
         while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
-            let values = (0..col_count)
-                .map(|i| json_value(row.get_ref(i).map_err(|e| e.to_string())?))
-                .collect::<Result<Vec<_>, String>>()?;
-            serde_json::to_writer(&mut output, &values).map_err(|e| e.to_string())?;
+            let cells: Vec<CellValue> = (0..col_count)
+                .map(|i| row.get_ref(i).map(CellValue::from))
+                .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
+            serde_json::to_writer(&mut output, &cells).map_err(|e| e.to_string())?;
             writeln!(output).map_err(|e| e.to_string())?;
             if rows.len() == DEFAULT_LIMIT {
                 truncated = true;
                 continue;
             }
-            let cells: Vec<CellValue> = (0..col_count)
-                .map(|i| row.get_ref(i).map(CellValue::from))
-                .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
+
             rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
             cell_values.push(cells)?;
         }
@@ -1169,74 +1167,10 @@ pub fn export_query_result(
     path: &Path,
     json: bool,
 ) -> Result<(), String> {
-    guard_output_path(conn, path)?;
-    let source = result
-        .export_rows
-        .as_ref()
-        .ok_or("Execute SQL before exporting results")?;
-    if result.columns.is_empty() {
-        return Err("The statement returned no columns".into());
-    }
-    if json
-        && result
-            .columns
-            .iter()
-            .enumerate()
-            .any(|(i, c)| result.columns[..i].contains(c))
-    {
-        return Err("JSON needs unique column names; use SQL aliases or export CSV".into());
-    }
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut out = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    if json {
-        write!(out, "[").map_err(|e| e.to_string())?;
-    } else {
-        writeln!(
-            out,
-            "{}",
-            result
-                .columns
-                .iter()
-                .map(|c| csv_escape(c))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    for (i, line) in std::io::BufReader::new(source.reopen().map_err(|e| e.to_string())?)
-        .lines()
-        .enumerate()
-    {
-        let values: Vec<serde_json::Value> =
-            serde_json::from_str(&line.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        if json {
-            if i > 0 {
-                write!(out, ",").map_err(|e| e.to_string())?;
-            }
-            let object: serde_json::Map<_, _> =
-                result.columns.iter().cloned().zip(values).collect();
-            serde_json::to_writer(&mut out, &object).map_err(|e| e.to_string())?;
-        } else {
-            let values = values
-                .into_iter()
-                .map(|v| match v {
-                    serde_json::Value::Null => String::new(),
-                    serde_json::Value::String(s) => s,
-                    v => v.to_string(),
-                })
-                .map(|s| csv_escape(&s))
-                .collect::<Vec<_>>();
-            writeln!(out, "{}", values.join(",")).map_err(|e| e.to_string())?;
-        }
-    }
-    if json {
-        writeln!(out, "]").map_err(|e| e.to_string())?;
-    }
-    out.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
+    crate::data_export::export_query(
+        conn, &crate::data_export::QuerySource::new(result)?, path, json,
+        &crate::data_export::Options::default(), true,
+    )
 }
 
 /// ATTACH DATABASE.
@@ -2399,7 +2333,7 @@ mod tests {
         assert_eq!(rows[600]["v"], 602);
         assert!(rows[0]["n"].is_null());
         assert_eq!(rows[0]["empty"], "");
-        assert_eq!(rows[0]["bytes"], "X'00FF'");
+        assert_eq!(rows[0]["bytes"], "AP8=");
         export_query_result(&conn, &result, &path, false).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 602);
         assert_eq!(count_rows(&conn, "t").unwrap(), 0);

@@ -1213,9 +1213,15 @@ impl Demo {
         }
         if matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) { state.refresh_csv_preview(); }
         if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
-            if matches!(tab.as_str(),"export-csv"|"export-json") {
+            if matches!(tab.as_str(),"export-csv"|"export-json"|"query-export-csv"|"query-export-json") {
                 state.new_memory_db().unwrap();db::seed_demo(state.conn.as_ref().unwrap()).unwrap();state.refresh_schema().unwrap();
-                state.export_dialog=Some(data_export::Draft::new(&state,tab=="export-json"));
+                let mut draft=data_export::Draft::new(&state,tab.ends_with("json"));
+                if tab.starts_with("query-") {
+                    state.tab=MainTab::ExecuteSql;
+                    state.sql_result=Some(db::execute_sql(state.conn.as_ref().unwrap(), "SELECT id, name FROM customers").unwrap());
+                    draft.set_query(state.sql_result.as_ref().unwrap()).unwrap();
+                }
+                state.export_dialog=Some(draft);
             }
         }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
@@ -4039,32 +4045,7 @@ impl Demo {
             }
         }
         if id == self.ids.btn_sql_csv || id == self.ids.btn_sql_json {
-            let json = id == self.ids.btn_sql_json;
-            let path = if json {
-                file_dlg::pick_save_json()
-            } else {
-                file_dlg::pick_save_csv()
-            };
-            if let Some(path) = path {
-                let result = self
-                    .state
-                    .conn
-                    .as_ref()
-                    .ok_or("No database open".to_string())
-                    .and_then(|conn| {
-                        let result = self.state.sql_result.as_ref().ok_or("Execute SQL first")?;
-                        dbmod::export_query_result(conn, result, &path, json)
-                    });
-                match result {
-                    Ok(()) => {
-                        self.clear_error();
-                        self.state.status_msg =
-                            format!("SQL results exported to {}", path.display());
-                    }
-                    Err(e) => self.set_error(e),
-                }
-                self.rebuild = true;
-            }
+            self.open_query_export(id == self.ids.btn_sql_json);
             return;
         }
         if id == self.ids.btn_sql_stop {

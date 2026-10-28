@@ -47,10 +47,14 @@ require confirmation; all queries stage before any replacement, and each file
 replaces atomically. A filesystem failure during final publication may leave
 some files completed, with the completed count reported. Staging currently runs
 synchronously; large exports can block the window until it finishes.
+SQL result CSV/JSON buttons share the format options in a compact dialog. They
+export the complete captured result without executing SQL again; raw typed
+snapshots retain BLOB/text distinctions, invalid UTF-8 and non-finite numbers
+until conversion to the chosen output format.
 
 Native file pickers use `rfd`. Cancel means no operation.
 
-Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
+Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. File CSV/JSON commands export all selected tables/views; SQL result exports include every captured row beyond the 500-row display preview. Use SQL dumps for a type-preserving round trip.
 
 Execute SQL shares the current connection and pending transaction. Stop remains available while it runs. Explicit COMMIT/ROLLBACK in user SQL has its usual SQLite meaning. New/Open/Close/Exit use Save/Discard/Cancel for pending database and document edits.
 

@@ -169,6 +169,71 @@ pub fn filename(schema: &str, table: &str, json: bool) -> String {
     format!("{name}.{}", if json { "json" } else { "csv" })
 }
 
+fn write_rows(
+    output: &mut impl Write,
+    columns: &[String],
+    rows: impl IntoIterator<Item = Result<Vec<crate::db::CellValue>, String>>,
+    json: bool,
+    options: &Options,
+) -> Result<(), String> {
+    if json
+        && columns
+            .iter()
+            .enumerate()
+            .any(|(i, name)| columns[..i].contains(name))
+    {
+        return Err("JSON needs unique column names; use SQL aliases or export CSV".into());
+    }
+    if !json {
+        options.validate()?;
+    }
+    let mut out = std::io::BufWriter::new(output);
+    if json {
+        write!(out, "[").map_err(|e| e.to_string())?;
+    } else if options.header {
+        options.record(&mut out, columns.iter().cloned())?;
+    }
+    let mut count = 0u64;
+    for cells in rows {
+        let cells = cells?;
+        if cells.len() != columns.len() {
+            return Err("Stored result has an incomplete row".into());
+        }
+        if json {
+            if count > 0 {
+                write!(out, ",").map_err(|e| e.to_string())?;
+            }
+            let object: serde_json::Map<_, _> = columns
+                .iter()
+                .cloned()
+                .zip(cells.iter().map(|cell| json_value(cell.as_ref())))
+                .collect();
+            if options.pretty {
+                writeln!(out).map_err(|e| e.to_string())?;
+                let text = serde_json::to_string_pretty(&object).map_err(|e| e.to_string())?;
+                for (index, line) in text.lines().enumerate() {
+                    if index > 0 {
+                        writeln!(out).map_err(|e| e.to_string())?;
+                    }
+                    write!(out, "    {line}").map_err(|e| e.to_string())?;
+                }
+            } else {
+                serde_json::to_writer(&mut out, &object).map_err(|e| e.to_string())?;
+            }
+        } else {
+            options.record(&mut out, cells.iter().map(|cell| csv_value(cell.as_ref())))?;
+        }
+        count += 1;
+    }
+    if json {
+        if count > 0 && options.pretty {
+            writeln!(out).map_err(|e| e.to_string())?;
+        }
+        write!(out, "]").map_err(|e| e.to_string())?;
+    }
+    out.flush().map_err(|e| e.to_string())
+}
+
 fn stage(
     conn: &Connection,
     output: &Output,
@@ -186,67 +251,81 @@ fn stage(
         .iter()
         .map(|s| (*s).into())
         .collect();
-    if json
-        && columns
-            .iter()
-            .enumerate()
-            .any(|(i, name)| columns[..i].contains(name))
-    {
-        return Err("JSON needs unique column names".into());
-    }
     let parent = output
         .path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let mut out = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    if json {
-        write!(out, "[").map_err(|e| e.to_string())?;
-    } else if options.header {
-        options.record(&mut out, columns.clone())?;
-    }
-    let mut rows = statement.query([]).map_err(|e| e.to_string())?;
-    let mut count = 0u64;
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        if json {
-            if count > 0 {
-                write!(out, ",").map_err(|e| e.to_string())?;
-            }
-            let mut object = serde_json::Map::new();
-            for (index, name) in columns.iter().enumerate() {
-                object.insert(
-                    name.clone(),
-                    json_value(row.get_ref(index).map_err(|e| e.to_string())?),
-                );
-            }
-            if options.pretty {
-                writeln!(out).map_err(|e| e.to_string())?;
-                let text = serde_json::to_string_pretty(&object).map_err(|e| e.to_string())?;
-                for (index, line) in text.lines().enumerate() {
-                    if index > 0 {
-                        writeln!(out).map_err(|e| e.to_string())?;
-                    }
-                    write!(out, "    {line}").map_err(|e| e.to_string())?;
-                }
-            } else {
-                serde_json::to_writer(&mut out, &object).map_err(|e| e.to_string())?;
-            }
-        } else {
-            let values = (0..columns.len())
-                .map(|index| row.get_ref(index).map(csv_value).map_err(|e| e.to_string()))
-                .collect::<Result<Vec<_>, _>>()?;
-            options.record(&mut out, values)?;
-        }
-        count += 1;
-    }
-    if json {
-        if count > 0 && options.pretty {
-            writeln!(out).map_err(|e| e.to_string())?;
-        }
-        write!(out, "]").map_err(|e| e.to_string())?;
-    }
+    let rows = statement
+        .query_map([], |row| {
+            (0..columns.len())
+                .map(|index| row.get_ref(index).map(crate::db::CellValue::from))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|e| e.to_string())?;
+    write_rows(
+        &mut out,
+        &columns,
+        rows.map(|row| row.map_err(|e| e.to_string())),
+        json,
+        options,
+    )?;
     out.as_file_mut().sync_all().map_err(|e| e.to_string())?;
     Ok(out)
+}
+
+pub struct QuerySource {
+    columns: Vec<String>,
+    rows: std::sync::Arc<tempfile::NamedTempFile>,
+}
+impl QuerySource {
+    pub fn new(result: &crate::db::QueryResult) -> Result<Self, String> {
+        if result.columns.is_empty() {
+            return Err("The statement returned no columns".into());
+        }
+        Ok(Self {
+            columns: result.columns.clone(),
+            rows: result
+                .export_rows
+                .clone()
+                .ok_or("Execute SQL before exporting results")?,
+        })
+    }
+}
+
+pub fn export_query(
+    conn: &Connection,
+    source: &QuerySource,
+    path: &Path,
+    json: bool,
+    options: &Options,
+    replace: bool,
+) -> Result<(), String> {
+    use std::io::BufRead;
+    crate::db::guard_output_path(conn, path)?;
+    if !replace && path.exists() {
+        return Err(format!("Output already exists: {}", path.display()));
+    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut out = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let rows = std::io::BufReader::new(source.rows.reopen().map_err(|e| e.to_string())?)
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Vec<crate::db::CellValue>>(&line.map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())
+        });
+    write_rows(&mut out, &source.columns, rows, json, options)?;
+    out.as_file_mut().sync_all().map_err(|e| e.to_string())?;
+    let result = if replace {
+        out.persist(path)
+    } else {
+        out.persist_noclobber(path)
+    };
+    result.map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Stage every selected result before replacing any destination. Each final file is atomic.
@@ -313,6 +392,168 @@ pub fn export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn query_formats_use_raw_snapshot_types_and_original_csv_json_options() {
+        let conn = Connection::open_in_memory().unwrap();
+        let result = crate::db::execute_sql(&conn, "SELECT 9223372036854775807 AS integer_value, X'4142' AS printable_blob, X'00FF' AS binary_blob, 'AP8=' AS literal_text, CAST(X'80' AS TEXT) AS invalid_text, 9e999 AS infinite, NULL AS missing, 'a§b' AS quoted").unwrap();
+        let source = QuerySource::new(&result).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("result");
+        let options = Options {
+            header: false,
+            separator: Some('§'),
+            quote: Some('«'),
+            newline: "\r\n".into(),
+            pretty: false,
+        };
+        export_query(&conn, &source, &path, false, &options, false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "9223372036854775807§AB§AP8=§AP8=§gA==§inf§§«a§b«\r\n"
+        );
+        export_query(&conn, &source, &path, true, &options, true).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains('\n'));
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+        assert_eq!(rows[0]["integer_value"].as_i64(), Some(i64::MAX));
+        assert_eq!(rows[0]["printable_blob"], "QUI=");
+        assert_eq!(rows[0]["binary_blob"], "AP8=");
+        assert_eq!(rows[0]["literal_text"], "AP8=");
+        assert_eq!(rows[0]["invalid_text"], "�");
+        assert!(rows[0]["infinite"].is_null() && rows[0]["missing"].is_null());
+        assert!(export_query(&conn, &source, &path, true, &options, false).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn query_export_errors_preserve_existing_files_and_live_databases() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("live.db");
+        let conn = Connection::open(&database).unwrap();
+        conn.execute_batch("CREATE TABLE t(v);INSERT INTO t VALUES(7)")
+            .unwrap();
+        let result = crate::db::execute_sql(&conn, "SELECT v FROM t").unwrap();
+        let source = QuerySource::new(&result).unwrap();
+        assert!(export_query(&conn, &source, &database, true, &Options::default(), true).is_err());
+        assert_eq!(crate::db::count_rows(&conn, "t").unwrap(), 1);
+        let path = directory.path().join("keep.json");
+        std::fs::write(&path, "previous").unwrap();
+        let duplicate = crate::db::execute_sql(&conn, "SELECT 1 AS v, 2 AS v").unwrap();
+        assert!(export_query(
+            &conn,
+            &QuerySource::new(&duplicate).unwrap(),
+            &path,
+            true,
+            &Options::default(),
+            true
+        )
+        .is_err());
+        let invalid = Options {
+            newline: String::new(),
+            ..Options::default()
+        };
+        assert!(export_query(&conn, &source, &path, false, &invalid, true).is_err());
+        let malformed = serde_json::to_string(&vec![
+            crate::db::CellValue::Integer(1),
+            crate::db::CellValue::Null,
+        ])
+        .unwrap();
+        std::fs::write(source.rows.path(), format!("{malformed}\n")).unwrap();
+        assert!(
+            export_query(&conn, &source, &path, true, &Options::default(), true)
+                .unwrap_err()
+                .contains("incomplete row")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+        std::fs::write(source.rows.path(), "corrupt\n").unwrap();
+        assert!(export_query(&conn, &source, &path, true, &Options::default(), true).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+    }
+
+    #[test]
+    fn sql_result_buttons_share_compact_options_and_capture_the_executed_snapshot() {
+        use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
+        use next_gui_ui::{Theme, UiKey};
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                let directory = tempfile::tempdir().unwrap();
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.theme = ui_build::browser_theme(theme, demo.state.prefs.font_size);
+                demo.state.new_memory_db().unwrap();
+                demo.state.tab = crate::state::MainTab::ExecuteSql;
+                demo.state.sql_result = Some(
+                    crate::db::execute_sql(
+                        demo.state.conn.as_ref().unwrap(),
+                        "SELECT 1234.5 AS number, X'00FF' AS binary",
+                    )
+                    .unwrap(),
+                );
+                demo.do_rebuild();
+                demo.handle_button(demo.ids.btn_sql_csv);
+                demo.do_rebuild();
+                assert_eq!(demo.ui.active_dialog(), Some(demo.ids.data_export.dialog));
+                assert_eq!(demo.ids.data_export.table.0, 0);
+                assert!(demo.ui.button_enabled(demo.ids.data_export.export).unwrap());
+                demo.ui.set_focus(Some(demo.ids.data_export.header));
+                demo.ui.key_input(UiKey::Space);
+                demo.snapshot_inputs();
+                demo.do_rebuild();
+                assert!(!demo.state.export_dialog.as_ref().unwrap().options.header);
+                capture(&mut demo, theme_name, width, "query-export-csv");
+                demo.state.sql_result = Some(
+                    crate::db::execute_sql(
+                        demo.state.conn.as_ref().unwrap(),
+                        "SELECT 'later result' AS changed",
+                    )
+                    .unwrap(),
+                );
+                let path = directory.path().join("query.csv");
+                std::fs::write(&path, "previous").unwrap();
+                demo.state.export_dialog.as_mut().unwrap().pending = Some(vec![Output {
+                    schema: "main".into(),
+                    table: "query".into(),
+                    path: path.clone(),
+                }]);
+                demo.do_rebuild();
+                assert_eq!(demo.ui.focused(), Some(demo.ids.data_export.keep));
+                demo.ui.key_input(UiKey::Escape);
+                demo.handle_data_export_dismiss();
+                demo.do_rebuild();
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+                demo.state.export_dialog.as_mut().unwrap().pending = Some(vec![Output {
+                    schema: "main".into(),
+                    table: "query".into(),
+                    path: path.clone(),
+                }]);
+                demo.do_rebuild();
+                demo.handle_button(demo.ids.data_export.replace);
+                assert!(demo.state.export_dialog.is_none());
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    format!("1234.5,AP8={}", Options::default().newline)
+                );
+                demo.do_rebuild();
+                demo.handle_button(demo.ids.btn_sql_json);
+                demo.do_rebuild();
+                demo.ui.set_checked(demo.ids.data_export.pretty, false);
+                demo.snapshot_inputs();
+                demo.do_rebuild();
+                capture(&mut demo, theme_name, width, "query-export-json");
+                demo.state.export_dialog.as_mut().unwrap().pending = Some(vec![Output {
+                    schema: "main".into(),
+                    table: "query".into(),
+                    path: path.clone(),
+                }]);
+                demo.do_rebuild();
+                demo.handle_button(demo.ids.data_export.replace);
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    "[{\"changed\":\"later result\"}]"
+                );
+                assert!(!demo.state.prefs.data_export.pretty);
+            }
+        }
+    }
     #[test]
     fn export_dialog_keeps_multi_selection_options_focus_and_safe_replace_decision() {
         use crate::{csv_files::interaction_tests::capture, ui_build, Demo, PresentBackend};
@@ -587,6 +828,7 @@ mod tests {
 
 pub struct Draft {
     pub json: bool,
+    query: Option<QuerySource>,
     pub tables: Vec<(String, String, bool)>,
     pub options: Options,
     separator: usize,
@@ -647,6 +889,7 @@ impl Draft {
             .unwrap_or(3);
         Self {
             json,
+            query: None,
             tables,
             separator,
             quote,
@@ -659,6 +902,11 @@ impl Draft {
             scroll: (0.0, 0.0),
             selected,
         }
+    }
+    pub fn set_query(&mut self, result: &crate::db::QueryResult) -> Result<(), String> {
+        self.query = Some(QuerySource::new(result)?);
+        self.tables.clear();
+        Ok(())
     }
     fn options(&self) -> Result<Options, String> {
         let mut options = self.options.clone();
@@ -810,7 +1058,15 @@ pub fn build(
     };
     let mut style = ModalStyle::from_theme(theme);
     style.width = (width - 48.0).min(740.0);
-    style.height = (height - 48.0).min(690.0);
+    style.height = (height - 48.0).min(if draft.query.is_some() {
+        if draft.json {
+            250.0
+        } else {
+            440.0
+        }
+    } else {
+        690.0
+    });
     style.close_on_backdrop = false;
     let inner = style.width - 2.0 * style.padding;
     ids.dialog = ui.dialog(
@@ -827,40 +1083,44 @@ pub fn build(
                 message.height = 64.0;
                 error_text = body.text_area(error, "", message);
             }
-            body.text("Tables and views");
-            let mut grid = TableStyle::from_theme(theme);
-            grid.width = inner;
-            grid.height = (style.height * 0.33).clamp(132.0, 230.0);
-            let rows = draft
-                .tables
-                .iter()
-                .map(|(schema, name, _)| {
+            if draft.query.is_some() {
+                body.text("SQL query result");
+            } else {
+                body.text("Tables and views");
+                let mut grid = TableStyle::from_theme(theme);
+                grid.width = inner;
+                grid.height = (style.height * 0.33).clamp(132.0, 230.0);
+                let rows = draft
+                    .tables
+                    .iter()
+                    .map(|(schema, name, _)| {
+                        vec![
+                            String::new(),
+                            if schema == "main" {
+                                name.clone()
+                            } else {
+                                crate::db::qualified_name(schema, name)
+                            },
+                            filename(schema, name, draft.json),
+                        ]
+                    })
+                    .collect();
+                ids.table = body.table(
                     vec![
-                        String::new(),
-                        if schema == "main" {
-                            name.clone()
-                        } else {
-                            crate::db::qualified_name(schema, name)
-                        },
-                        filename(schema, name, draft.json),
-                    ]
-                })
-                .collect();
-            ids.table = body.table(
-                vec![
-                    TableColumn::new("Use", 44.0),
-                    TableColumn::new("Table / view", (inner - 44.0) * 0.5),
-                    TableColumn::new("Filename", (inner - 44.0) * 0.5),
-                ],
-                rows,
-                grid,
-            );
-            ids.toggle =
-                body.tool_button(if draft.tables.iter().all(|(_, _, selected)| *selected) {
-                    "Deselect All"
-                } else {
-                    "Select All"
-                });
+                        TableColumn::new("Use", 44.0),
+                        TableColumn::new("Table / view", (inner - 44.0) * 0.5),
+                        TableColumn::new("Filename", (inner - 44.0) * 0.5),
+                    ],
+                    rows,
+                    grid,
+                );
+                ids.toggle =
+                    body.tool_button(if draft.tables.iter().all(|(_, _, selected)| *selected) {
+                        "Deselect All"
+                    } else {
+                        "Select All"
+                    });
+            }
             let sw = SwitchStyle::from_theme(theme);
             if draft.json {
                 ids.pretty = body.switch_styled("Pretty print", draft.options.pretty, sw);
@@ -946,7 +1206,7 @@ pub fn build(
     );
     ui.set_button_enabled(
         ids.export,
-        draft.tables.iter().any(|(_, _, selected)| *selected),
+        draft.query.is_some() || draft.tables.iter().any(|(_, _, selected)| *selected),
     );
     ui.set_dialog_open(ids.dialog, true);
     if let Some(outputs) = &draft.pending {
@@ -999,6 +1259,24 @@ impl crate::Demo {
         self.clear_error();
         self.state.export_dialog = Some(Draft::new(&self.state, json));
         self.rebuild = true;
+    }
+    pub(crate) fn open_query_export(&mut self, json: bool) {
+        let query = self
+            .state
+            .sql_result
+            .as_ref()
+            .ok_or("Execute SQL before exporting results".into())
+            .and_then(QuerySource::new);
+        match query {
+            Ok(query) => {
+                self.open_data_export(json);
+                if let Some(draft) = &mut self.state.export_dialog {
+                    draft.query = Some(query);
+                    draft.tables.clear();
+                }
+            }
+            Err(error) => self.set_error(error),
+        }
     }
     pub(crate) fn snapshot_data_export(&mut self) {
         let ids = self.ids.data_export;
@@ -1069,13 +1347,12 @@ impl crate::Demo {
                 return;
             }
         };
-        let result = export(
-            self.state.conn.as_ref().unwrap(),
-            &outputs,
-            draft.json,
-            &options,
-            replace,
-        );
+        let conn = self.state.conn.as_ref().unwrap();
+        let result = if let Some(query) = &draft.query {
+            export_query(conn, query, &outputs[0].path, draft.json, &options, replace)
+        } else {
+            export(conn, &outputs, draft.json, &options, replace)
+        };
         match result {
             Ok(()) => {
                 self.state.prefs.data_export = options;
@@ -1142,12 +1419,16 @@ impl crate::Demo {
             self.rebuild = true;
             return;
         }
-        let selected: Vec<_> = draft
-            .tables
-            .iter()
-            .filter(|(_, _, selected)| *selected)
-            .map(|(schema, table, _)| (schema.clone(), table.clone()))
-            .collect();
+        let selected: Vec<_> = if draft.query.is_some() {
+            vec![("main".into(), "query".into())]
+        } else {
+            draft
+                .tables
+                .iter()
+                .filter(|(_, _, selected)| *selected)
+                .map(|(schema, table, _)| (schema.clone(), table.clone()))
+                .collect()
+        };
         if selected.is_empty() {
             self.set_error("Select at least one table or view");
             return;

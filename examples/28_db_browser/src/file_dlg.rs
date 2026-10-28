@@ -24,12 +24,6 @@ pub fn pick_open_csv() -> Option<Vec<PathBuf>> {
         .pick_files()
 }
 
-pub fn pick_save_csv() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("CSV", &["csv"])
-        .set_title("Export CSV")
-        .save_file()
-}
 
 pub fn pick_open_sql() -> Option<PathBuf> {
     rfd::FileDialog::new()
@@ -49,12 +43,6 @@ pub fn pick_save_log() -> Option<PathBuf> {
     rfd::FileDialog::new().add_filter("SQL log", &["log", "txt"]).set_title("Export SQL Log").save_file()
 }
 
-pub fn pick_save_json() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("JSON", &["json"])
-        .set_title("Export JSON")
-        .save_file()
-}
 
 pub fn pick_open_project() -> Option<PathBuf> {
     rfd::FileDialog::new()
