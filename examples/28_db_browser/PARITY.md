@@ -20,9 +20,9 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | Menubar File / Edit / View / Tools / Help | partial | Flat in-window menus; no native menu, nested submenus or application shortcut system. |
 | Main toolbar: New, Open, Write Changes, Revert | done | + Theme (exceeds DB4S); View-toggleable |
-| Extra DB / Project toolbars | partial | Local subset; no upstream movable toolbar/overflow behavior. |
+| Extra DB / Project toolbars | partial | Independently toggleable action groups share a compact scrollable row; original movable/icon toolbar and overflow behavior remain. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
-| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | One tabbed right pane; content-width titles, overflow arrows and keyboard reveal remain usable at narrow widths, with rebuild viewport retention. Body/structure ratios persist in projects. Independent floating/docking panes remain absent. |
+| Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | Independent upper cell editor and lower bottom-tabbed Log/Plot/Schema/Remote; close/reopen retains drafts, preferred splitter ratios and per-page scrolls. Plot options scroll independently above a retained chart. Floating/rearranging and Qt dock-state compatibility remain. |
 | Status bar: path, encoding, read-only, encryption, busy | done | Reads actual main.encoding on schema refresh; cached while SQL runs; clears on Close. UTF-8 and both UTF-16 byte orders tested. |
 | Soft↔GPU toggle | done | Space; exceeds DB4S |
 | Theme light/dark | done | exceeds DB4S; Preferences default theme |
@@ -798,3 +798,7 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## Grouped and stacked Plot checkpoint (2026-10-29)
 
 [Review](../../docs/reviews/R-20261029-67a732194708.md): grouped/stacked signed bars now share limits, rendering, interior row hits and endpoint markers across screen/save/Copy. Duplicate/near-key extrema, unsorted source order, independent axes, finite overflow,100k dense-key lookup, retained view/full buffers/no SQL replay and JSON/XML settings verified. Category ticks show all fitting visible labels.695 tests/strict checks, eight actual Metal comparisons, eight native theme/size/mode captures and two native process keyboard/clipboard workflows pass. Ordinary native input, dense native throughput/peak memory, Print/hover/vector output, exact Qt controls/rotation/spacing, independent docks and full parity remain; F02 stays in_progress. Publication remains local after approval timeout denial.
+
+## 2026-10-29 independent dock layout
+
+[Review](../../docs/reviews/R-20261029-b7120e3c67dd.md): the cell editor now stays independently visible above bottom-tabbed Log/Plot/Schema/Remote. Close/reopen retains drafts; editor/lower and Plot controls/chart split preferences persist through adaptive sizing and project JSON/XML extensions. Only laid-out per-page scrolls are captured, including hidden-page return; tab focus/header updates survive rebuilds. Compact grouped toolbars and scrolling main titles reclaim narrow space.697 tests/strict/build/host feature checks,4 Soft/Metal pairs (whole-frame max2),4 native windows, final process-keyboard navigation/close and14 Office static captures pass. Ordinary pointer/drag/picker/IME, other-host runtime, floating/rearranging/Qt dock-state, large fonts and complete original/product parity remain; F02 stays in_progress. Publication remains local after approval timeout denial.

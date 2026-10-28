@@ -1,0 +1,30 @@
+[
+  {
+    "case": "window-docks-dark-1400",
+    "width": 1400,
+    "height": 1000,
+    "full_frame_max_channel_delta": 2,
+    "channels_over_2": 0
+  },
+  {
+    "case": "window-docks-dark-800",
+    "width": 800,
+    "height": 600,
+    "full_frame_max_channel_delta": 1,
+    "channels_over_2": 0
+  },
+  {
+    "case": "window-docks-light-1400",
+    "width": 1400,
+    "height": 1000,
+    "full_frame_max_channel_delta": 1,
+    "channels_over_2": 0
+  },
+  {
+    "case": "window-docks-light-800",
+    "width": 800,
+    "height": 600,
+    "full_frame_max_channel_delta": 1,
+    "channels_over_2": 0
+  }
+]
