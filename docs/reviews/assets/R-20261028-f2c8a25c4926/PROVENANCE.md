@@ -1,0 +1,1 @@
+Existing SQL search regression rendered1400×860 and800×600 Soft frames after incoming14px layout fix; both inspected, compact editor/actions fit. One focused test exit0 awaited. No native input or Metal rerun for this backend path fix. SHA256 compact-find.png: 5feb3c2fcac99d19b2c409fca59d0c736691cb9c12d75087d92ec91c9e21fddf

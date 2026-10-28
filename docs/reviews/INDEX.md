@@ -14,6 +14,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261028-f2c8a25c4926-F01 | verified | P2 | codex | e28 / macOS+Unix | existing project path | project_xml::relative_path | Same-directory project DB stays relative across symlink/canonical parent aliases | [F01](R-20261028-f2c8a25c4926.md#r-20261028-f2c8a25c4926-f01) | f2c8a25c4926 | f2c8a25c4926 |
 | R-20261028-db71e556cb1f-F01 | verified | P1 | codex | e28 / all | db71e556cb1f | CSV Abort conflict strategy | Explicit OR ABORT preserves earlier pending changes when table constraints specify ROLLBACK; reproduced failure and regression pass | [F01](R-20261028-db71e556cb1f.md#r-20261028-db71e556cb1f-f01) | bece52e36f84 | 83bec7daaef8 |
 | R-20261028-cdf760f3ad1d-F01 | verified | P2 | codex | shared / all | existing single-line input | key_text_input / paste / IME | Shared history/session logic plus native rename/Undo/Redo/Save/Browse verified at0da0f3c | [F01](R-20261028-cdf760f3ad1d.md#r-20261028-cdf760f3ad1d-f01) | 56b5b3eebc46 | 0da0f3c214c0 |
 | R-20261027-977efec45f5f-F01 | verified | P1 | grok | e28 / all | existing generated DDL | structured schema SQL fields | Reproduced DELETE tail; generated CREATE/ALTER/replacement and PRAGMA boundaries now reject before mutation | [F01](R-20261027-977efec45f5f.md#r-20261027-977efec45f5f-f01) | b9a0f821765e | b9a0f821765e |
@@ -89,6 +90,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-28 | `24affff..f2c8a25c4926` | Codex | Incoming CI fixes merged; same-directory alias regression fixed;610 tests/strict checks,compact Find Soft inspection; native/full parity pending | [Report](R-20261028-f2c8a25c4926.md) |
 | 2026-10-28 | `d08eba6..e3b14b537059` | Codex | issues — multi-table/view CSV/JSON options, complete staged output and path safety verified;609 tests/strict checks,12 render pairs/four native static windows; worker/result options/native input/full parity pending | [Report](R-20261028-e3b14b537059.md) |
 | 2026-10-28 | `e489e4b..16d823ae8faf` | Codex | issues — anonymous validated CSV snapshots and streamed atomic insertion verified;589 tests/strict checks,50k-row data and late-error rollback, two current native static confirmations; worker progress/cancellation/full parity pending | [Report](R-20261028-16d823ae8faf.md) |
 | 2026-10-28 | `0b50a1e..83bec7daaef8` | Codex | issues — multi-file CSV selection/shared or separate targets/four-choice confirmation/partial retry and abort safety verified;587 tests/strict checks,16 Soft/Metal pairs/six native static windows; full import/product/native parity pending | [Report](R-20261028-83bec7daaef8.md) |
