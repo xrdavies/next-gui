@@ -8856,11 +8856,9 @@ impl Ui {
             Some(Kind::ColorPicker { presets, .. }) => presets.len(),
             _ => return false,
         };
-        if n == 0 {
-            return false;
-        }
         match key {
             UiKey::Left | UiKey::Right | UiKey::Up | UiKey::Down => {
+                if n == 0 { return false; }
                 let cur = match self.widgets.get(&id).map(|w| &w.kind) {
                     Some(Kind::ColorPicker { selected_swatch, .. }) => {
                         selected_swatch.unwrap_or(0)
@@ -14989,6 +14987,7 @@ impl Ui {
             scene.set_fill(lid, style.fg);
             scene.set_mask(lid, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
             scene.set_visible(lid, true);
+            scene.raise(lid);
         }
     }
 
@@ -23494,6 +23493,43 @@ mod tests {
         ui.set_focus(Some(up));
         assert!(ui.key_input(UiKey::Enter));
         assert_eq!(ui.take_upload_browse(), Some(up));
+    }
+
+    #[test]
+    fn color_picker_hex_ink_is_visible_and_pointer_editable_with_or_without_swatches() {
+        use next_gui_render::{encode_scene, Renderer};
+        use next_gui_render_soft::SoftRenderer;
+        for presets in [Vec::new(), default_color_presets()] {
+            let mut ui = Ui::new();
+            let mut scene = Scene::new();
+            let mut id = WidgetId(0);
+            let style = ColorPickerStyle { width: if presets.is_empty() { 84.0 } else { 360.0 },
+                fg: Color::rgb(255, 0, 255), hex_bg: Color::rgb(0, 0, 0), ..ColorPickerStyle::default() };
+            ui.column(ColumnStyle { width: 450.0, height: 80.0, ..ColumnStyle::default() }, |c| {
+                id = c.color_picker_with_presets(Color::rgb(18, 52, 86), presets, style);
+            });
+            ui.set_viewport(500.0, 120.0);
+            ui.sync(&mut scene);
+            let hex = scene.get(*ui.widgets[&id].aux.last().unwrap()).unwrap().bounds;
+            scene.mark_full_dirty(500.0, 120.0);
+            let dirty = scene.take_dirty();
+            let mut renderer = SoftRenderer::new(500, 120, Color::rgb(0, 0, 0));
+            renderer.render(&encode_scene(&scene, &dirty), &dirty);
+            let pixels = renderer.frame_pixels().unwrap().0;
+            let ink = (hex.y.ceil() as usize..(hex.y + hex.height).floor() as usize).find_map(|y|
+                (hex.x.ceil() as usize..(hex.x + hex.width).floor() as usize).find_map(|x| {
+                    let p = pixels[y * 500 + x];
+                    (((p >> 16) & 255) > 180 && ((p >> 8) & 255) < 40 && (p & 255) > 180).then_some((x, y))
+                }));
+            let (x, y) = ink.expect("The current hex value must be visible above its background");
+            assert!(ui.pointer_pressed(&mut scene, x as f32 + 0.5, y as f32 + 0.5));
+            ui.pointer_released();
+            assert_eq!(ui.focused(), Some(id));
+            if style.width == 84.0 { assert!(!ui.key_input(UiKey::Right)); }
+            for c in "AABBCC".chars() { assert!(ui.key_input(UiKey::Char(c))); }
+            assert!(ui.key_input(UiKey::Enter));
+            assert_eq!(ui.take_color_change(), Some((id, Color::rgb(170, 187, 204))));
+        }
     }
 
     #[test]
