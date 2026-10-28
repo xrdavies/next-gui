@@ -223,13 +223,13 @@ impl Ui {
             let text = aux[2 + slot * 2];
             scene.set_bounds(background, area);
             let pressed = matches!(&self.drag, Some(DragState::IntegerInput {input,delta,next_repeat:Some(_),..}) if *input == id && (*delta > 0) == (slot == 0));
-            scene.set_fill(background, if !enabled { self.theme.colors.muted } else if pressed { self.theme.colors.hover_bg } else { self.theme.colors.strip_bg });
+            scene.set_fill(background, if !enabled { self.theme.colors.muted } else if pressed { self.theme.colors.accent } else { self.theme.colors.strip_bg });
             scene.set_mask(background, None);
             scene.set_visible(background, true);
             let mask = self.font.rasterize_text(label, style.size.min(area.height), None).1;
             scene.set_bounds(text, crate::Rect::new(area.x + (area.width-mask.width as f32)*0.5, area.y + (area.height-mask.height as f32)*0.5, mask.width as f32, mask.height as f32));
             let can_step = enabled && current.is_some_and(|n| (min..=max).contains(&n) && if slot == 0 { n < max } else { n > min });
-            scene.set_fill(text, if can_step { style.fg } else { self.theme.colors.disabled });
+            scene.set_fill(text, if !can_step { self.theme.colors.disabled } else if pressed { self.theme.colors.on_accent } else { style.fg });
             scene.set_mask(text, Some(crate::AlphaMask::new(mask.width, mask.height, mask.pixels)));
             scene.set_visible(text, true);
         }
@@ -461,7 +461,7 @@ mod tests {
         ui.sync(&mut scene);
         assert_eq!(
             scene.get(ui.widgets[&id].aux[1]).unwrap().fill,
-            ui.theme.colors.hover_bg
+            ui.theme.colors.accent
         );
         ui.key_input(UiKey::Undo);
         assert!(!ui.is_dragging());
@@ -610,6 +610,8 @@ mod tests {
             assert!(ui.pointer_press(&mut scene, x, bounds.y + bounds.height * 0.75, false));
             assert_eq!(ui.text_input_value(id), Some("9007199254740993"));
             ui.sync(&mut scene);
+            assert_eq!(scene.get(ui.widgets[&id].aux[3]).unwrap().fill, theme.colors.accent);
+            assert_eq!(scene.get(ui.widgets[&id].aux[4]).unwrap().fill, theme.colors.on_accent);
             let label = scene.get(ui.widgets[&id].label_node.unwrap()).unwrap();
             assert!(label.clip.unwrap().x + label.clip.unwrap().width <= bounds.x + bounds.width - 24.0);
             let candidate = ui.ime_cursor_area(&scene).unwrap();
