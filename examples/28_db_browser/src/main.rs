@@ -9,6 +9,7 @@ mod csv_import;
 mod csv_files;
 mod csv_jobs;
 mod csv_numbers;
+mod data_export;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
@@ -221,6 +222,7 @@ struct Demo {
 #[allow(dead_code)]
 struct BuiltUiIds {
     csv_files: csv_files::Controls,
+    data_export: data_export::Controls,
     column_picker: column_picker::Controls,
     reference_editor: reference_editor::Controls,
     status: WidgetId,
@@ -458,6 +460,7 @@ impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
             csv_files: b.csv_files,
+            data_export: b.data_export,
             column_picker: b.column_picker,
             reference_editor: b.reference_editor,
             status: b.status,
@@ -1209,6 +1212,12 @@ impl Demo {
             state.csv_preview = None;
         }
         if matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) { state.refresh_csv_preview(); }
+        if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if matches!(tab.as_str(),"export-csv"|"export-json") {
+                state.new_memory_db().unwrap();db::seed_demo(state.conn.as_ref().unwrap()).unwrap();state.refresh_schema().unwrap();
+                state.export_dialog=Some(data_export::Draft::new(&state,tab=="export-json"));
+            }
+        }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
         if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);if matches!(edit.column,1|8) {if built.ui.is_select(built.ov_field_editor) {built.ui.key_input(UiKey::Space);} else {built.ui.open_autocomplete_options(built.ov_field_editor);}}}built.ui.sync(&mut built.scene);}
@@ -1280,6 +1289,7 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        if self.state.export_dialog.is_some() {self.snapshot_data_export();return;}
         self.snapshot_column_picker();
         if self.ids.tree.0 != 0 {
             for (database, name) in self.last_schema_names.iter().enumerate() {
@@ -2045,6 +2055,10 @@ impl Demo {
 
     fn handle_field_check_change(&mut self) {
         let Some((table,row,column,checked)) = self.ui.take_table_check_change() else { return; };
+        if table==self.ids.data_export.table && self.state.export_dialog.is_some() {
+            if column==0 {if let Some(entry)=self.state.export_dialog.as_mut().and_then(|draft|draft.tables.get_mut(row)) {entry.2=checked;self.rebuild=true;}}
+            return;
+        }
         if table==self.ids.csv_files.table && self.state.overlay==Some(OverlayKind::ImportCsv) {
             if column==0 {if let Some(batch)=&mut self.state.csv_files {if let Some(index)=batch.visible().get(row).copied() {batch.files[index].selected=checked;self.rebuild=true;}}}
             return;
@@ -2399,6 +2413,8 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let export_session=self.ids.data_export.session(&self.ui);
+        if self.state.export_dialog.is_some() {self.snapshot_data_export();}
         self.snapshot_column_picker();
         self.snapshot_csv_view();
         let csv_waiting=self.state.csv_work.is_some();
@@ -2495,6 +2511,7 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(session)=export_session {self.ids.data_export.restore(&mut self.ui,&session);}
         if let Some((index, session)) = csv_input_session { let id = [self.ids.ov_csv_table,self.ids.ov_csv_custom_delimiter,self.ids.ov_csv_custom_quote][index]; if self.ui.restore_text_input_state(id, &session) { self.ui.set_focus(Some(id)); } }
         if let Some(session) = csv_paste_session { if self.ui.restore_text_area_state(self.ids.ov_csv_paste, &session) { self.ui.set_focus(Some(self.ids.ov_csv_paste)); } }
         if let Some(index) = csv_control_focus { let id = [self.ids.ov_csv_header,self.ids.ov_csv_trim,self.ids.ov_csv_local,self.ids.ov_csv_types,self.ids.ov_csv_defaults,self.ids.ov_csv_missing,self.ids.ov_csv_advanced,self.ids.ov_csv_refresh][index]; if id.0 != 0 { self.ui.set_focus(Some(id)); } }
@@ -2878,32 +2895,11 @@ impl Demo {
     }
 
     fn action_export_json(&mut self) {
-        self.snapshot_inputs();
-        if let Some(path) = file_dlg::pick_save_json() {
-            match self.state.export_browse(&path, true) {
-                Ok(()) => {
-                    self.state.status_msg = format!("Exported JSON {}", path.display());
-                    self.clear_error();
-                }
-                Err(e) => self.set_error(e),
-            }
-        }
-        self.rebuild = true;
+        self.snapshot_inputs();self.open_data_export(true);
     }
 
     fn action_export_csv(&mut self) {
-        self.snapshot_inputs();
-        let Some(path) = file_dlg::pick_save_csv() else {
-            return;
-        };
-        match self.state.export_browse(&path, false) {
-            Ok(()) => {
-                self.state.status_msg = format!("Exported CSV {}", path.display());
-                self.clear_error();
-            }
-            Err(e) => self.set_error(e),
-        }
-        self.rebuild = true;
+        self.snapshot_inputs();self.open_data_export(false);
     }
 
     fn action_import_sql(&mut self) {
@@ -3781,6 +3777,7 @@ impl Demo {
 
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
+        if self.state.export_dialog.is_some() {self.handle_data_export_button(id);return;}
         if self.state.csv_work.is_some() {self.handle_csv_answer_button(id);return;}
         if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
         if id==self.ids.reference_editor.reset {
@@ -4563,7 +4560,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         self.handle_table_cell_edit();

@@ -84,6 +84,7 @@ pub mod mid {
 pub struct BuiltUi {
     pub ui: Ui,
     pub csv_files: crate::csv_files::Controls,
+    pub data_export: crate::data_export::Controls,
     pub column_picker: crate::column_picker::Controls,
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
@@ -2628,12 +2629,14 @@ pub fn build_ui(
         ui.select_text_area_range(log_area, len..len);
     }
     crate::sql_syntax::apply(&mut ui, sql_area, &theme);
+    let data_export = crate::data_export::build(&mut ui,state,&theme,win_w,win_h);
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
 
     BuiltUi {
         ui,
         csv_files,
+        data_export,
         column_picker,
         reference_editor,
         body_splitter,

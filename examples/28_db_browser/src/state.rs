@@ -571,6 +571,7 @@ pub struct AppState {
     pub cipher_kdf_iter: String,
     pub cipher_active: bool,
     pub cipher_open_path: Option<(String, bool)>,
+    pub export_dialog: Option<crate::data_export::Draft>,
     pub export_structure: bool,
     pub export_data: bool,
     pub export_drop: bool,
@@ -884,6 +885,7 @@ impl AppState {
             cipher_kdf_iter: "256000".into(),
             cipher_active: false,
             cipher_open_path: None,
+            export_dialog: None,
             export_structure: true,
             export_data: true,
             export_drop: false,
@@ -1277,6 +1279,7 @@ impl AppState {
         })
     }
 
+    #[cfg(test)]
     pub fn export_browse(&self, path: &Path, json: bool) -> Result<(), String> {
         let schema = self.browse().schema.clone();
         let conn = self.conn.as_ref().ok_or("No database open")?;

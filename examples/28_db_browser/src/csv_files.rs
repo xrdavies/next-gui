@@ -1074,7 +1074,7 @@ impl crate::Demo {
 }
 
 #[cfg(test)]
-mod interaction_tests {
+pub(crate) mod interaction_tests {
     use crate::{
         clear_color, encode_scene, ui_build, write_ppm, Demo, GpuRenderer, PresentBackend,
         SoftRenderer,
@@ -1100,7 +1100,7 @@ mod interaction_tests {
             .bounds
     }
 
-    fn capture(demo: &mut Demo, theme: &str, width: u32, phase: &str) {
+    pub(crate) fn capture(demo: &mut Demo, theme: &str, width: u32, phase: &str) {
         let Ok(prefix) = std::env::var("NEXT_GUI_DB_BROWSER_CSV_BATCH_QA_OUT") else {
             return;
         };

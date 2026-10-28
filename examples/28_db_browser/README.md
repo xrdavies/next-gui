@@ -39,6 +39,15 @@ Use local number conventions (off by default) applies system decimal/group/digit
 symbols to inference and typed values before SQLite affinity. Each validated
 snapshot keeps its numeric conventions until insertion finishes.
 
+The File CSV/JSON export commands open a table/view chooser across schemas.
+CSV supports headers, custom separator/quote and line endings; JSON supports
+pretty output and preserves integers/NULL, with BLOBs encoded as base64. Multiple
+objects export to a chosen directory using safe filenames. Existing destinations
+require confirmation; all queries stage before any replacement, and each file
+replaces atomically. A filesystem failure during final publication may leave
+some files completed, with the completed count reported. Staging currently runs
+synchronously; large exports can block the window until it finishes.
+
 Native file pickers use `rfd`. Cancel means no operation.
 
 Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. CSV/JSON export the complete filtered table; the grid displays 500-row pages. Use SQL dumps for a type-preserving round trip.
