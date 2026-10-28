@@ -57,6 +57,12 @@ const CURRENT_PLOT_QA_SQL: &str = "CREATE TABLE quarterly_revenue(observed TEXT,
 WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<18)
 INSERT INTO quarterly_revenue SELECT printf('2026-10-%02d',x), CASE WHEN x=9 THEN NULL ELSE 1200+x*150+(x%3)*80 END, 520+x*64, CASE WHEN x%2=0 THEN 'APAC' ELSE 'EMEA' END FROM n;";
 
+const NATIVE_PLOT_QA_XML: &str = r##"<sqlb_project><db path=':memory:'/><tab_browse><browse_table_settings>
+    <table schema='main' name='quarterly_revenue' plot_x_axis='observed'><plot_y_axes>
+    <y_axis name='revenue' line_style='2' point_shape='5' colour='#3385eb' active='1'/>
+    <y2_axis name='expenses' line_style='5' point_shape='0' colour='#d7a132' active='1'/>
+    </plot_y_axes></table></browse_table_settings></tab_browse></sqlb_project>"##;
+
 const SCHEMA_NAMESPACE_QA_SQL: &str = "CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
     INSERT INTO main.customers VALUES(1, 'Main customer');
     CREATE TEMP TABLE customers(temp_value TEXT);
@@ -1275,7 +1281,7 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
                 state.refresh_schema().unwrap();
@@ -1288,7 +1294,12 @@ impl Demo {
                 state.plot.settings.manual = false;
                 state.sync_current_plot().unwrap();
                 for (row, axis) in [(1, 1), (2, 2), (3, 3)] { assert!(state.plot.check(row, axis, true)); }
-                state.plot.settings.marker = 4;
+                state.plot.set_styles(1, 4);
+                if tab == "plot-native-settings" {
+                    let native = project_xml::decode(NATIVE_PLOT_QA_XML).unwrap();
+                    state.plot.settings = native.plot_settings;
+                    state.plot.invalidate();
+                }
                 state.sync_current_plot().unwrap();
                 state.body_ratio = 0.52;
                 state.dock_focus = DockKind::Plot;
@@ -4412,13 +4423,10 @@ impl Demo {
                     self.rebuild = true;
                 }
             }
-            let mut style_changed = false;
-            for (id, slot) in [(self.ids.plot.line, &mut self.state.plot.settings.line), (self.ids.plot.marker, &mut self.state.plot.settings.marker)] {
-                if let Some(index) = self.ui.select_selected(id) {
-                    if *slot != index { *slot = index; style_changed = true; }
-                }
-            }
-            if style_changed { self.state.plot.invalidate(); self.rebuild = true; }
+            let (line, marker) = self.state.plot.styles();
+            let line = self.ui.select_selected(self.ids.plot.line).unwrap_or(line);
+            let marker = self.ui.select_selected(self.ids.plot.marker).unwrap_or(marker);
+            if self.state.plot.set_styles(line, marker) { self.rebuild = true; }
             let selected = self.ui.table_selected_row(self.ids.plot.columns).zip(self.ui.table_selected_col(self.ids.plot.columns));
             if selected != self.state.plot.selected { self.state.plot.selected = selected; self.rebuild = true; }
         }
@@ -5966,6 +5974,44 @@ mod interaction_tests {
         let new_root = demo.state.schema_names.iter().position(|name| name == "kept").unwrap() as u64 * 5 + 1;
         assert_ne!(old_root, new_root);
         assert_eq!(demo.ui.tree_expanded(demo.ids.tree, new_root), Some(false));
+    }
+
+    #[test]
+    fn imported_plot_styles_survive_selection_polling_and_rebuild() {
+        use next_gui_ui::{PlotLine, PlotMarker};
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+        demo.state.plot.settings = project_xml::decode(NATIVE_PLOT_QA_XML).unwrap().plot_settings;
+        demo.state.tab = MainTab::Browse;
+        demo.state.dock_focus = DockKind::Plot;
+        demo.state.dock_plot = true;
+        demo.do_rebuild();
+        assert_eq!(demo.ui.select_selected(demo.ids.plot.line), Some(2));
+        assert_eq!(demo.ui.select_selected(demo.ids.plot.marker), Some(4));
+        let settings = demo.state.plot.settings.clone();
+        let points = demo.state.plot.data.series[0].points.clone();
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        demo.ui.set_table_selected_row(demo.ids.plot.columns, Some(3));
+        demo.ui.set_table_selected_col(demo.ids.plot.columns, Some(3));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        demo.poll_selection_changes();
+        assert_eq!(demo.state.plot.settings, settings);
+        assert!(std::sync::Arc::ptr_eq(&points, &demo.state.plot.data.series[0].points));
+        assert_eq!(demo.ui.select_selected(demo.ids.plot.line), Some(5));
+        assert_eq!(demo.ui.select_selected(demo.ids.plot.marker), Some(0));
+        assert!(demo.state.plot.check(0, 2, true));
+        demo.do_rebuild();
+        assert_eq!(demo.state.plot.data.series[2].line, PlotLine::Impulse);
+        demo.ui.set_select_selected(demo.ids.plot.line, Some(3));
+        demo.ui.set_select_selected(demo.ids.plot.marker, Some(1));
+        demo.poll_selection_changes();
+        demo.do_rebuild();
+        assert!(demo.state.plot.data.series.iter().all(|s| s.line == PlotLine::StepRight && s.marker == PlotMarker::Cross));
     }
 
     #[test]

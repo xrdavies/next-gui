@@ -7,7 +7,7 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 use rusqlite::Connection;
 
-use crate::{db, project::ProjectFile, state::BrowseTabState};
+use crate::{db, plot, project::ProjectFile, state::BrowseTabState};
 
 #[derive(Clone, Debug)]
 enum Content {
@@ -351,9 +351,85 @@ pub fn decode(text: &str) -> Result<ProjectFile, String> {
             project.browse_tabs = tabs;
         }
     }
+    restore_plots(&root, &mut project.plot_settings)?;
     if root.child("next_gui").is_some() { project.restore_legacy_frozen_cols(); }
     project.db4s_xml = Some(text.into());
     Ok(project)
+}
+
+fn plot_column(name: &str) -> plot::Column {
+    if name == "Row #" { plot::Column::Row } else {
+        plot::Column::Field { name: name.into(), occurrence: 0 }
+    }
+}
+
+fn restore_plots(root: &Element, plots: &mut plot::Settings) -> Result<(), String> {
+    let Some(tables) = root.child("tab_browse").and_then(|e| e.child("browse_table_settings")) else { return Ok(()); };
+    for table in tables.children().filter(|e| e.name == "table") {
+        let Some(name) = table.attr("name") else { continue; };
+        let source = plot::Source::Table { schema: table.attr("schema").unwrap_or("main").into(), table: name.into() };
+        // The extension also represents real columns named Row # and numeric bar plots.
+        if plots.configs.iter().any(|config| config.source == source) { continue; }
+        if table.attr("plot_x_axis").is_none() && table.child("plot_y_axes").is_none() { continue; }
+        let mut config = plot::Config {
+            source,
+            x: table.attr("plot_x_axis").filter(|s| !s.is_empty()).map(plot_column),
+            series: Vec::new(),
+        };
+        if let Some(axes) = table.child("plot_y_axes") {
+            for axis in axes.children().filter(|e| matches!(e.name.as_str(), "y_axis" | "y2_axis")) {
+                let name = axis.attr("name").unwrap_or("");
+                if name.is_empty() { continue; }
+                let number = |key: &str| axis.attr(key).unwrap_or("0").parse::<usize>()
+                    .map_err(|_| format!("Invalid plot {key} for {name}"));
+                let color = axis.attr("colour").unwrap_or("#3385eb");
+                let hex = color.strip_prefix('#').filter(|s| s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .ok_or_else(|| format!("Invalid plot colour for {name}: {color}"))?;
+                let rgb = u32::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+                config.series.push(plot::Series {
+                    column: plot_column(name),
+                    right: axis.name == "y2_axis",
+                    color: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
+                    active: number("active")? != 0,
+                    line: Some(number("line_style")?),
+                    point_shape: Some(number("point_shape")?),
+                });
+            }
+        }
+        plots.configs.push(config);
+    }
+    Ok(())
+}
+
+fn write_plots(root: &mut Element, plots: &plot::Settings) {
+    for config in &plots.configs {
+        let plot::Source::Table { schema, table: name } = &config.source else { continue; };
+        let tables = root.ensure("tab_browse").ensure("browse_table_settings");
+        let index = tables.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == schema && e.attr("name") == Some(name.as_str()))).unwrap_or_else(|| {
+            let mut table = Element::new("table");
+            table.set("schema", schema); table.set("name", name);
+            tables.push(table);
+            tables.content.len() - 1
+        });
+        let Content::Element(table) = &mut tables.content[index] else { unreachable!(); };
+        table.set("plot_x_axis", config.x.as_ref().map_or("", plot::Column::name));
+        let axes = table.ensure("plot_y_axes");
+        let old: Vec<_> = axes.children().cloned().collect();
+        axes.retain_elements(|e| !matches!(e.name.as_str(), "y_axis" | "y2_axis"));
+        for series in &config.series {
+            let kind = if series.right { "y2_axis" } else { "y_axis" };
+            let mut axis = old.iter().find(|e| e.name == kind && e.attr("name") == Some(series.column.name()))
+                .cloned().unwrap_or_else(|| Element::new(kind));
+            axis.set("name", series.column.name());
+            let line = series.line.unwrap_or(plots.line);
+            // Numeric bars are a next-gui option; DB4S only stores six graph line styles.
+            axis.set("line_style", if line == 6 { 1 } else { line });
+            axis.set("point_shape", series.point_shape.unwrap_or_else(|| plot::point_shape(plots.marker)));
+            axis.set("colour", format!("#{:02x}{:02x}{:02x}", series.color[0], series.color[1], series.color[2]));
+            axis.set("active", u8::from(series.active));
+            axes.push(axis);
+        }
+    }
 }
 
 pub fn encode(project: &ProjectFile, path: &Path) -> Result<String, String> {
@@ -433,6 +509,7 @@ pub fn encode(project: &ProjectFile, path: &Path) -> Result<String, String> {
         }
         browse.push(tab);
     }
+    write_plots(&mut root, &project.plot_settings);
     let mut extension = project.clone();
     extension.db4s_xml = None;
     for (index, file) in extension.sql_files.iter().enumerate() {
@@ -686,6 +763,7 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
         return Ok(());
     };
     let root = parse(source)?;
+    restore_plots(&root, &mut project.plot_settings)?;
     let Some(settings) = root
         .child("tab_browse")
         .and_then(|e| e.child("browse_table_settings"))
@@ -761,7 +839,6 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
                     "conditional_formats",
                     "row_id_formats",
                     "display_formats",
-                    "plot_y_axes",
                 ]
                 .iter()
                 .any(|key| {
@@ -770,11 +847,18 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
                         .is_some_and(|e| e.children().next().is_some())
                 })
                 {
-                    notes.push("advanced browse filters/formatting/plots");
+                    notes.push("advanced browse filters/formatting");
                     break;
                 }
             }
         }
+    }
+    if project.plot_settings.configs.iter().flat_map(|c| &c.series)
+        .any(|s| s.line.is_some_and(|line| line > 6) || s.point_shape.is_some_and(|shape| shape > 15)) {
+        notes.push("unsupported plot line/marker styles");
+    }
+    if project.plot_settings.configs.iter().flat_map(|c| &c.series).any(|s| s.point_shape == Some(1)) {
+        notes.push("legacy plot dot markers (rendered as discs)");
     }
     Ok(notes)
 }
@@ -1158,6 +1242,82 @@ SELECT ']]&gt;';]]></sql><current_tab id="0"/></tab_sql>
             .unwrap()
             .child("hidden_columns")
             .is_some());
+    }
+
+    #[test]
+    fn native_plot_settings_roundtrip_without_extension_and_keep_unknown_metadata() {
+        let xml = r##"<sqlb_project><db path=':memory:'/><tab_browse>
+            <table table='4,1:maint'/><table table='4,1:maint'/><browse_table_settings>
+            <table schema='main' name='t' plot_x_axis='x' future='table'>
+            <plot_y_axes future='axes'><y_axis name='y' line_style='2' point_shape='5' colour='#123456' active='1' future='series'><unknown/></y_axis>
+            <y2_axis name='y' line_style='5' point_shape='0' colour='#fedcba' active='0'/><future/></plot_y_axes></table>
+            <table schema='aux.数据库' name='表' plot_x_axis='Row #'><plot_y_axes><y2_axis name='Row #' line_style='0' point_shape='15' colour='#abcdef' active='1'/></plot_y_axes></table>
+            </browse_table_settings></tab_browse></sqlb_project>"##;
+        let mut project = decode(xml).unwrap();
+        assert_eq!(project.plot_settings.configs.len(), 2);
+        let config = &project.plot_settings.configs[0];
+        assert_eq!(config.x, Some(plot_column("x")));
+        assert_eq!(config.series.len(), 2);
+        assert_eq!((config.series[0].line, config.series[0].point_shape), (Some(2), Some(5)));
+        assert_eq!(config.series[0].color, [18, 52, 86]);
+        assert!(!config.series[0].right);
+        assert!(!config.series[1].active);
+        assert!(config.series[1].right);
+        assert_eq!(project.plot_settings.configs[1].x, Some(plot::Column::Row));
+        assert_eq!(project.plot_settings.configs[1].series[0].column, plot::Column::Row);
+        assert!(unapplied_settings(&project).unwrap().is_empty());
+        // Loading Browse twice must not duplicate per-table plot settings.
+        let conn = Connection::open_in_memory().unwrap();
+        let attached = tempfile::NamedTempFile::new().unwrap();
+        conn.execute("ATTACH ?1 AS \"aux.数据库\"", [attached.path().to_str().unwrap()]).unwrap();
+        conn.execute_batch("CREATE TABLE t(x,y); CREATE TABLE \"aux.数据库\".\"表\"(n)").unwrap();
+        restore_browse(&mut project, &conn).unwrap();
+        restore_browse(&mut project, &conn).unwrap();
+        assert_eq!(project.plot_settings.configs.len(), 2);
+        project.plot_settings.configs[0].series[1].active = true;
+        project.plot_settings.configs[0].series[0].color = [1, 2, 3];
+        capture_connection(&mut project, &conn).unwrap();
+        let mut root = parse(&encode(&project, Path::new("native.sqbpro")).unwrap()).unwrap();
+        root.retain_elements(|e| e.name != "next_gui");
+        let native = decode(&render(&root).unwrap()).unwrap();
+        assert_eq!(native.plot_settings, project.plot_settings);
+        let table = root.child("tab_browse").unwrap().child("browse_table_settings").unwrap().child("table").unwrap();
+        assert_eq!(table.attr("future"), Some("table"));
+        let axes = table.child("plot_y_axes").unwrap();
+        assert_eq!(axes.attr("future"), Some("axes"));
+        assert!(axes.child("future").is_some());
+        let axis = axes.child("y_axis").unwrap();
+        assert_eq!(axis.attr("colour"), Some("#010203"));
+        assert_eq!(axis.attr("future"), Some("series"));
+        assert!(axis.child("unknown").is_some());
+    }
+
+    #[test]
+    fn native_plots_include_unopened_tables_and_validate_known_attributes() {
+        let mut project = ProjectFile { db_path: ":memory:".into(), ..Default::default() };
+        let source = plot::Source::Table { schema: "attached".into(), table: "unopened".into() };
+        project.plot_settings.configs.push(plot::Config {
+            source: source.clone(), x: Some(plot::Column::Row),
+            series: vec![plot::Series { column: plot_column("value"), right: false, color: [1, 35, 69], active: true, line: Some(4), point_shape: Some(2) }],
+        });
+        project.plot_settings.configs.push(plot::Config { source: plot::Source::Query(2), x: Some(plot::Column::Row), series: Vec::new() });
+        let encoded = encode(&project, Path::new("new.sqbpro")).unwrap();
+        let mut root = parse(&encoded).unwrap();
+        root.retain_elements(|e| e.name != "next_gui");
+        let restored = decode(&render(&root).unwrap()).unwrap();
+        assert_eq!(restored.plot_settings.configs.len(), 1);
+        assert_eq!(restored.plot_settings.configs[0], project.plot_settings.configs[0]);
+        for (from, to) in [("#012345", "#zz2345"), ("line_style=\"4\"", "line_style=\"-1\""), ("point_shape=\"2\"", "point_shape=\"bad\""), ("active=\"1\"", "active=\"bad\"")] {
+            let native = render(&root).unwrap();
+            assert!(native.contains(from));
+            assert!(decode(&native.replace(from, to)).is_err());
+        }
+        let native = render(&root).unwrap().replace("point_shape=\"2\"", "point_shape=\"1\"");
+        let legacy = decode(&native).unwrap();
+        assert!(unapplied_settings(&legacy).unwrap().contains(&"legacy plot dot markers (rendered as discs)"));
+        let future = decode(&native.replace("point_shape=\"1\"", "point_shape=\"99\"")).unwrap();
+        assert!(unapplied_settings(&future).unwrap().contains(&"unsupported plot line/marker styles"));
+        assert!(encode(&future, Path::new("future.sqbpro")).unwrap().contains("point_shape=\"99\""));
     }
 
     #[test]

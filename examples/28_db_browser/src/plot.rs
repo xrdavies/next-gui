@@ -82,7 +82,7 @@ pub enum Column {
     Field { name: String, occurrence: usize },
 }
 impl Column {
-    fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         match self {
             Self::Row => "Row #",
             Self::Field { name, .. } => name,
@@ -96,6 +96,11 @@ pub struct Series {
     pub right: bool,
     pub color: [u8; 3],
     pub active: bool,
+    #[serde(default)]
+    pub line: Option<usize>,
+    /// QCustomPlot shape number; its hidden ssDot occupies index 1.
+    #[serde(default)]
+    pub point_shape: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -257,6 +262,7 @@ impl Model {
         let Some(source) = self.source.clone() else {
             return false;
         };
+        let (line, marker) = self.styles();
         let column = self.columns[row].0.clone();
         if self.config().is_none() {
             self.settings.configs.push(Config {
@@ -285,6 +291,8 @@ impl Model {
                 right: axis == 3,
                 color: PALETTE[(row + axis - 2) % PALETTE.len()],
                 active: checked,
+                line: Some(line),
+                point_shape: Some(point_shape(marker)),
             });
         }
         self.selected = Some((row, axis));
@@ -302,6 +310,40 @@ impl Model {
             .iter()
             .find(|s| &s.column == column && s.right == (axis == 3))
             .map(|s| Color::rgb(s.color[0], s.color[1], s.color[2]))
+    }
+
+    pub fn styles(&self) -> (usize, usize) {
+        let series = self.config().and_then(|config| {
+            self.selected.and_then(|(row, axis)| self.columns.get(row).and_then(|(column, _)| {
+                config.series.iter().find(|s| matches!(axis, 2 | 3) && &s.column == column && s.right == (axis == 3))
+            })).or_else(|| config.series.iter().find(|s| s.active))
+        });
+        let line = series.and_then(|s| s.line).unwrap_or(self.settings.line);
+        let shape = series.and_then(|s| s.point_shape).unwrap_or_else(|| point_shape(self.settings.marker));
+        (if line < LINES.len() { line } else { 1 }, if shape < 16 { shape.saturating_sub(1) } else { 0 })
+    }
+
+    pub fn set_styles(&mut self, line: usize, marker: usize) -> bool {
+        let previous = self.styles();
+        let line_changed = previous.0 != line;
+        let marker_changed = previous.1 != marker;
+        if !line_changed && !marker_changed { return false; }
+        for config in &mut self.settings.configs {
+            for series in &mut config.series {
+                series.line.get_or_insert(self.settings.line);
+                series.point_shape.get_or_insert(point_shape(self.settings.marker));
+            }
+        }
+        self.settings.line = line;
+        self.settings.marker = marker;
+        if let Some(config) = self.settings.configs.iter_mut().find(|c| Some(&c.source) == self.source.as_ref()) {
+            for series in &mut config.series {
+                if line_changed { series.line = Some(line); }
+                if marker_changed { series.point_shape = Some(point_shape(marker)); }
+            }
+        }
+        self.invalidate();
+        true
     }
 
     pub fn set_color(&mut self, color: Color) -> bool {
@@ -471,10 +513,16 @@ impl Model {
                     color: Color::rgb(series.color[0], series.color[1], series.color[2]),
                     right_axis: series.right,
                     points: points.into(),
-                    line: *LINES.get(self.settings.line).unwrap_or(&PlotLine::Line),
-                    marker: *MARKERS
-                        .get(self.settings.marker)
-                        .unwrap_or(&PlotMarker::None),
+                    line: if x_type == DataType::Label { PlotLine::Bars } else {
+                        *LINES.get(series.line.unwrap_or(self.settings.line)).unwrap_or(&PlotLine::Line)
+                    },
+                    marker: if x_type == DataType::Label { PlotMarker::None } else {
+                        let shape = series.point_shape.unwrap_or_else(|| point_shape(self.settings.marker));
+                        // shortcut: legacy ssDot uses Disc; add a distinct glyph if dot projects require it.
+                        if shape == 1 { PlotMarker::Disc } else {
+                            *MARKERS.get(shape.saturating_sub(1)).unwrap_or(&PlotMarker::None)
+                        }
+                    },
                 });
             }
         }
@@ -491,6 +539,10 @@ impl Model {
         self.dirty = false;
         Ok(())
     }
+}
+
+pub fn point_shape(marker: usize) -> usize {
+    if marker == 0 { 0 } else { marker.saturating_add(1) }
 }
 
 fn number(value: &CellValue) -> Option<f64> {
@@ -660,23 +712,16 @@ pub fn build(
     builder.row(row, |r| {
         let mut style = select;
         style.width = ((width - 164.0) / 2.0).max(64.0);
+        let (line, marker) = model.styles();
         ids.line = r.select(
             LINE_NAMES,
-            Some(if model.settings.line < LINES.len() {
-                model.settings.line
-            } else {
-                1
-            }),
+            Some(line),
             "Line",
             style,
         );
         ids.marker = r.select(
             MARKER_NAMES,
-            Some(if model.settings.marker < MARKERS.len() {
-                model.settings.marker
-            } else {
-                0
-            }),
+            Some(marker),
             "Marker",
             style,
         );
@@ -897,10 +942,49 @@ mod tests {
         );
         assert_eq!(model.data.series[0].color, Color::rgb(18, 52, 86));
         assert_eq!(model.data.series[0].line, PlotLine::Bars);
-        assert_eq!(model.data.series[0].marker, PlotMarker::Disc);
+        assert_eq!(model.data.series[0].marker, PlotMarker::None);
         let settings: Settings =
             serde_json::from_str(&serde_json::to_string(&model.settings).unwrap()).unwrap();
         assert_eq!(settings, model.settings);
+    }
+
+    #[test]
+    fn native_series_styles_and_current_source_style_changes_remain_independent() {
+        let rows = result("SELECT 1 AS x, 3 AS y UNION ALL SELECT 2, 4");
+        let mut model = Model::default();
+        model.sync(table(), &rows, 0, None).unwrap();
+        model.check(1, 1, true);
+        model.check(2, 2, true);
+        model.check(2, 3, true);
+        model.settings.configs[0].series[0].line = Some(2);
+        model.settings.configs[0].series[0].point_shape = Some(5);
+        model.settings.configs[0].series[1].line = Some(5);
+        model.settings.configs[0].series[1].point_shape = Some(0);
+        model.sync(table(), &rows, 0, None).unwrap();
+        assert_eq!((model.data.series[0].line, model.data.series[0].marker), (PlotLine::StepLeft, PlotMarker::Disc));
+        assert_eq!((model.data.series[1].line, model.data.series[1].marker), (PlotLine::Impulse, PlotMarker::None));
+        assert_eq!(model.styles(), (5, 0));
+        assert!(!model.set_styles(5, 0));
+        let mut legacy = model.settings.configs[0].clone();
+        legacy.source = Source::Query(9);
+        for series in &mut legacy.series { series.line = None; series.point_shape = None; }
+        model.settings.configs.push(legacy);
+        model.sync(Source::Query(0), &rows, 0, None).unwrap();
+        model.check(0, 1, true);
+        model.check(2, 2, true);
+        assert!(model.set_styles(4, 14));
+        let legacy = model.settings.configs.iter().find(|c| c.source == Source::Query(9)).unwrap();
+        assert!(legacy.series.iter().all(|s| s.line == Some(1) && s.point_shape == Some(0)));
+        model.sync(Source::Query(0), &rows, 0, None).unwrap();
+        assert_eq!((model.data.series[0].line, model.data.series[0].marker), (PlotLine::StepCenter, PlotMarker::Peace));
+        model.sync(table(), &rows, 0, None).unwrap();
+        assert_eq!((model.data.series[0].line, model.data.series[0].marker), (PlotLine::StepLeft, PlotMarker::Disc));
+        assert!(model.set_styles(3, 1));
+        model.sync(table(), &rows, 0, None).unwrap();
+        assert!(model.data.series.iter().all(|s| s.line == PlotLine::StepRight && s.marker == PlotMarker::Cross));
+        let categories = result("SELECT 'same' AS x, 3 AS y UNION ALL SELECT 'same', 4");
+        model.sync(table(), &categories, 0, None).unwrap();
+        assert!(model.data.series.iter().all(|s| s.line == PlotLine::Bars && s.marker == PlotMarker::None));
     }
 
     #[test]
