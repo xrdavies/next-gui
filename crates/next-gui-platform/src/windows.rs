@@ -35,6 +35,7 @@ struct Host {
     clipboard: Option<Clipboard>,
     /// Set by [`WindowCtx::request_exit`]; checked after every `window_event` callback path.
     exit_requested: bool,
+    redraw_deadline: crate::redraw::RedrawDeadline,
 }
 
 impl WindowHost for Host {
@@ -60,6 +61,10 @@ impl WindowHost for Host {
 
     fn request_redraw(&mut self) {
         self.window.request_redraw();
+    }
+
+    fn request_redraw_after(&mut self, delay: std::time::Duration) {
+        self.redraw_deadline.request(delay);
     }
 
     fn request_exit(&mut self) {
@@ -218,14 +223,18 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
             ime_composing: false,
             clipboard: None,
             exit_requested: false,
+            redraw_deadline: crate::redraw::RedrawDeadline::default(),
         });
     }
 
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // P6e: when NEXT_GUI_SOAK is set, WaitUntil + request_redraw so Soft probes tick idle.
-        if self.soak.about_to_wait(event_loop) {
-            if let Some(host) = self.host.as_mut() {
+        if !self.soak.is_enabled() {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+        let soak_due = self.soak.about_to_wait(event_loop);
+        if let Some(host) = self.host.as_mut() {
+            if host.redraw_deadline.about_to_wait(event_loop) || soak_due {
                 host.window.request_redraw();
             }
         }
@@ -296,6 +305,14 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     },
                 );
                 self.app.on_redraw(&mut ctx);
+            }
+            WindowEvent::Focused(focused) => {
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(&mut ctx, Event::FocusChanged {window: WindowId(1), focused: *focused});
+            }
+            WindowEvent::CursorLeft { .. } => {
+                let mut ctx = WindowCtx { inner: host };
+                self.app.on_event(&mut ctx, Event::PointerLeft {window: WindowId(1)});
             }
             WindowEvent::CursorMoved { position, .. } => {
                 host.cursor = (position.x, position.y);

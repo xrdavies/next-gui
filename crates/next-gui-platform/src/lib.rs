@@ -26,6 +26,9 @@
 
 use std::fmt;
 
+#[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
+mod redraw;
+
 /// Opaque window handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowId(pub u64);
@@ -256,6 +259,18 @@ pub enum Event {
         /// Window.
         window: WindowId,
     },
+    /// Native window keyboard focus changed. Cancel captured interactions on loss.
+    FocusChanged {
+        /// Window.
+        window: WindowId,
+        /// Whether the window now has keyboard focus.
+        focused: bool,
+    },
+    /// The pointer left the native window; captured controls may cancel tracking.
+    PointerLeft {
+        /// Window.
+        window: WindowId,
+    },
     /// Pointer moved.
     PointerMoved {
         /// Window.
@@ -408,6 +423,13 @@ impl WindowCtx<'_> {
         self.inner.request_redraw();
     }
 
+    /// Request a redraw after a delay without keeping the event loop busy.
+    /// Multiple requests retain the earliest deadline; ordinary redraws do not cancel it.
+    /// Delays outside the system clock's representable range are ignored.
+    pub fn request_redraw_after(&mut self, delay: std::time::Duration) {
+        self.inner.request_redraw_after(delay);
+    }
+
     /// Ask the platform to leave the event loop after this callback returns.
     ///
     /// Honored after any app callback (`on_start`, `on_event`, `on_redraw`), not only
@@ -483,6 +505,7 @@ pub(crate) trait WindowHost {
     fn present_backend(&self) -> PresentBackend;
     fn set_title(&mut self, title: &str);
     fn request_redraw(&mut self);
+    fn request_redraw_after(&mut self, delay: std::time::Duration);
     fn request_exit(&mut self);
     fn present(&mut self, width: u32, height: u32, pixels: &[u32]) -> Result<(), PlatformError>;
     fn set_ime_allowed(&mut self, allowed: bool);

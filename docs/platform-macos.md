@@ -171,3 +171,20 @@ and native hardware/IME acceptance remain separate work.
 `number_conventions::NumberConventions::system()` returns an owned, thread-safe snapshot without changing the process locale. CSV import freezes this snapshot for preview and insertion.
 
 The macOS provider uses owned Core Foundation locale/formatter objects, copies decimal/group/digit/sign/exponent properties, then releases all native objects. Native named-locale checks cover German, Indian grouping and Arabic digits.
+
+## Delayed redraw and tracking cancellation (2026-10-28)
+
+`WindowCtx::request_redraw_after(Duration)` schedules a one-shot native redraw.
+Repeated requests keep the earliest deadline, ordinary redraws leave it pending,
+and consumed requests return to the normal idle wait. A later deadline does not
+postpone an earlier one; deadlines beyond the clock range are ignored. The same
+scheduler composes with `NEXT_GUI_SOAK` by retaining the earlier wake time.
+
+All three backends forward `Event::FocusChanged` and `Event::PointerLeft`.
+Hosts can release captured controls on focus loss and cancel held-button repeats
+when the pointer leaves the window. The DB Browser uses this for integer arrows;
+UI repeat timers stop on release and do not run continuously while idle.
+
+A real macOS event-loop probe verified three delayed redraws, earlier/later
+coalescing, no idle spin, callback exit and coexistence with20ms soak wakes.
+Actual Windows/Linux runtime acceptance remains unavailable on this Mac.
