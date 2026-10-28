@@ -1038,7 +1038,6 @@ pub fn build_ui(
                                 let columns = [("Name",180.0),("Type",160.0),("NN",44.0),("PK",44.0),("AI",44.0),("U",44.0),
                                     ("Default",140.0),("Check",240.0),("Collation",140.0),("Foreign Key",280.0)].into_iter()
                                     .map(|(title,width)|TableColumn::new(title,width)).collect();
-                                // shortcut: CHECK cells use the selected-column control; add direct CHECK editing for DB4S parity.
                                 ov_fields_table = c.table(columns,table_field_rows(state),fields_style);
                                 let sel = state.wizard_col_sel.min(state.wizard_cols.len().saturating_sub(1));
                                 let coldef = state.wizard_cols.get(sel);
@@ -1048,7 +1047,7 @@ pub fn build_ui(
                                         reference_editor=crate::reference_editor::build(c,ov_fields_table,(sel,9),width,reference_reset_width.max(64.0),draft,&theme);
                                         ov_field_editor=reference_editor.root;
                                     } else if let Some(column)=coldef {
-                                        let value=match edit.column {0=>column.name.as_str(),1=>column.type_name.as_str(),6=>column.default_value.as_str(),8=>column.collation.as_str(),9=>column.foreign_key_clause.as_str(),_=>""};
+                                        let value=match edit.column {0=>column.name.as_str(),1=>column.type_name.as_str(),6=>column.default_value.as_str(),7=>column.check_expression.as_str(),8=>column.collation.as_str(),9=>column.foreign_key_clause.as_str(),_=>""};
                                         ov_field_editor=c.table_cell_editor(ov_fields_table,sel,edit.column,|cell| {
                                             if edit.column==1 || edit.column==8 {
                                                 let items=if edit.column==1 {state.column_type_names()} else {state.column_collation_names()};
@@ -2200,12 +2199,12 @@ pub fn build_ui(
         ui.set_table_selected_col(ov_fields_table,state.wizard_field_column);
         ui.set_table_frozen_cols(ov_fields_table,1);
         ui.set_table_check_cells(ov_fields_table,table_field_checks(state));
-        ui.set_table_editable_columns(ov_fields_table,if state.table_wizard_names_valid() {vec![0,1,6,8,9]} else {vec![0,1,6,8]});
+        ui.set_table_editable_columns(ov_fields_table,if state.table_wizard_names_valid() {vec![0,1,6,7,8,9]} else {vec![0,1,6,8]});
         for (column,width) in state.wizard_field_widths.iter().enumerate() { ui.set_table_column_width(ov_fields_table,column,*width); }
         if let Some(edit)=&state.wizard_field_edit {
             if let Some(session)=&edit.input {ui.restore_text_input_state(ov_field_editor,session);}
             if let Some(session)=&edit.autocomplete {ui.set_autocomplete_state(ov_field_editor,session);}
-            ui.set_accessible_name(ov_field_editor,match edit.column {0=>"Column name cell",1=>"Column type cell",6=>"Column default cell",8=>"Column collation cell",9=>"Column foreign key cell",_=>"Column cell"});
+            ui.set_accessible_name(ov_field_editor,match edit.column {0=>"Column name cell",1=>"Column type cell",6=>"Column default cell",7=>"Column CHECK expression cell",8=>"Column collation cell",9=>"Column foreign key cell",_=>"Column cell"});
         }
         ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key. Click a checkbox or press Space to toggle.");
         ui.set_accessible_name(ov_field_top,"Move selected column to top"); ui.set_accessible_name(ov_field_bottom,"Move selected column to bottom");
@@ -2467,7 +2466,7 @@ pub fn build_ui(
         }
     }
     ui.set_table_scroll_offset(ov_fields_table,state.wizard_field_scroll.0,state.wizard_field_scroll.1);
-    if state.wizard_field_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {ui.reveal_table_selection(ov_fields_table);}
+    if state.wizard_field_edit.is_some() {ui.reveal_table_selection(ov_fields_table);}
     for (index,table) in [ov_keys_table,ov_fks_table,ov_checks_table].into_iter().enumerate() {
         let (x,y)=state.wizard_constraint_views[index].scroll;ui.set_table_scroll_offset(table,x,y);
     }
