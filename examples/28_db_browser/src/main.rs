@@ -1303,12 +1303,12 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow" | "toolbar-browse" | "toolbar-browse-narrow" | "toolbar-sql" | "toolbar-sql-narrow") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
                 state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
-                state.tab = if tab.ends_with("sql") { MainTab::ExecuteSql } else { MainTab::Browse };
+                state.tab = if tab.ends_with("sql") || tab == "toolbar-sql-narrow" { MainTab::ExecuteSql } else { MainTab::Browse };
                 if state.tab == MainTab::ExecuteSql {
                     *state.sql_editor_mut() = "SELECT observed, revenue, expenses, region\nFROM quarterly_revenue\nORDER BY observed DESC;".into();
                     state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(), state.sql_editor()).unwrap());
@@ -1324,10 +1324,10 @@ impl Demo {
                     state.plot.invalidate();
                 }
                 state.sync_current_plot().unwrap();
-                if tab.starts_with("docks-") || tab.starts_with("plot-hover") {
+                if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") {
                     state.browse_mut().sel_row=Some(0);state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();
                 }
-                state.body_ratio = if tab.starts_with("docks-") || tab.starts_with("plot-hover") {0.45}else{0.52};
+                state.body_ratio = if tab.starts_with("docks-") || tab.starts_with("plot-hover") || tab.starts_with("toolbar-") {0.45}else{0.52};
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
@@ -5366,6 +5366,12 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("toolbar-")) && !self.qa_stepper_started {
+            self.qa_stepper_started = true;
+            self.ui.set_focus(Some(if self.state.tab == MainTab::ExecuteSql { self.ids.btn_sql_comment } else { self.ids.btn_theme }));
+            self.ui.sync(&mut self.scene);
+            self.needs_paint = true;
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("plot-hover")) {
             if let Some(bounds) = self.scene.iter_paint_order().into_iter()
                 .find(|node| self.ui.widget_from_node(node.id) == Some(self.ids.chart)).map(|node| node.bounds) {
@@ -5494,7 +5500,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow")) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow")) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
@@ -6813,6 +6819,82 @@ mod interaction_tests {
             renderer.render(&encode_scene(&demo.scene, &dirty), &dirty);
             write_ppm(&path, renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
         }
+    }
+
+    #[test]
+    fn icon_toolbars_fit_narrow_pages_keep_help_and_retain_actions_and_drafts() {
+        fn bounds(demo: &Demo, id: WidgetId) -> next_gui_scene::Rect {
+            demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(id)).unwrap().bounds
+        }
+        fn activate(demo: &mut Demo, id: WidgetId) {
+            demo.ui.set_focus(Some(id));
+            assert!(demo.ui.key_input(UiKey::Enter));
+            assert_eq!(demo.ui.take_button_activate(), Some(id));
+            demo.handle_button(id); demo.do_rebuild();
+        }
+        let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+        demo.state.browse_mut().sel_row = Some(0); demo.state.browse_mut().sel_col = Some(1);
+        demo.state.sync_edit_cell_from_selection();
+        demo.state.dock_focus = DockKind::Plot; demo.state.body_ratio = 0.45;
+        demo.state.sql_tabs[0] = "SELECT revenue FROM quarterly_revenue;".into();
+        let draft = demo.state.sql_tabs[0].clone(); let cell = demo.state.edit_value.clone();
+        let folder = std::env::var("NEXT_GUI_ICON_TOOLBAR_QA_OUT").ok().map(PathBuf::from);
+        if let Some(folder) = &folder { std::fs::create_dir_all(folder).unwrap(); }
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            demo.theme = crate::ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            for (width, height) in [(1400, 860), (800, 600)] {
+                demo.win_w = width; demo.win_h = height;
+                for (page, tab) in [("browse", MainTab::Browse), ("sql", MainTab::ExecuteSql)] {
+                    demo.state.tab = tab; demo.do_rebuild();
+                    let mut buttons = vec![demo.ids.btn_new, demo.ids.btn_open, demo.ids.btn_write, demo.ids.btn_revert,
+                        demo.ids.toolbar_extra, demo.ids.btn_integrity, demo.ids.toolbar_project, demo.ids.btn_project_save, demo.ids.btn_theme];
+                    if tab == MainTab::ExecuteSql {
+                        buttons.extend([demo.ids.btn_sql_new_tab, demo.ids.btn_sql_open, demo.ids.btn_sql_save, demo.ids.btn_sql_save_as,
+                            demo.ids.btn_sql_run, demo.ids.btn_sql_line, demo.ids.btn_sql_stop, demo.ids.btn_sql_find, demo.ids.btn_sql_comment]);
+                    }
+                    for id in buttons {
+                        let rect = bounds(&demo, id);
+                        assert_eq!(rect.width, rect.height); assert!(rect.width >= 24.0 && rect.width < 40.0);
+                        assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= width as f32 && rect.y + rect.height <= height as f32, "{page}-{width}: {rect:?}");
+                        assert!(demo.ui.accessible_name(id).unwrap().chars().count() > 8);
+                        assert_eq!(demo.ui.hit_widget(&demo.scene, rect.x + rect.width * 0.5, rect.y + rect.height * 0.5), Some(id), "Icon cannot be clipped or covered");
+                    }
+                    assert_eq!(demo.ui.button_enabled(demo.ids.btn_write), Some(false));
+                    let help = bounds(&demo, if tab == MainTab::ExecuteSql {demo.ids.btn_sql_comment} else {demo.ids.btn_theme});
+                    demo.ui.pointer_moved(help.x + help.width * 0.5, help.y + help.height * 0.5);
+                    demo.ui.pointer_hover(&demo.scene, help.x + help.width * 0.5, help.y + help.height * 0.5); demo.ui.sync(&mut demo.scene);
+                    let style = demo.ui.tooltip_style();
+                    let tip = demo.scene.iter_paint_order().into_iter().rev().find(|n| n.visible && n.fill == style.bg && n.mask.is_none()).unwrap().bounds;
+                    assert!(tip.width > help.width && tip.x >= 0.0 && tip.y >= 0.0 && tip.x + tip.width <= width as f32 && tip.y + tip.height <= height as f32);
+                    if let Some(folder) = &folder { crate::plot_export::capture(&mut demo, folder, &format!("toolbar-{name}-{page}-{width}")); }
+                }
+            }
+        }
+        demo.ui.pointer_left();
+        for (menu, absent) in [(mid::VIEW_TB_DB, 0), (mid::VIEW_TB_EXTRA, 1), (mid::VIEW_TB_PROJECT, 2), (mid::VIEW_TB_SQL, 3)] {
+            demo.handle_menu(menu); demo.do_rebuild();
+            let ids = [demo.ids.btn_new, demo.ids.toolbar_extra, demo.ids.toolbar_project, demo.ids.btn_sql_comment];
+            for (index, id) in ids.into_iter().enumerate() { assert_eq!(id == WidgetId(0), index == absent); }
+            demo.handle_menu(menu); demo.do_rebuild();
+        }
+        let old_surface = demo.theme.colors.surface; let button = demo.ids.btn_theme;
+        activate(&mut demo, button);
+        assert_ne!(demo.theme.colors.surface, old_surface);
+        assert_eq!(demo.state.sql_tabs[0], draft); assert_eq!(demo.state.edit_value, cell);
+        demo.ui.select_text_area_range(demo.ids.sql_area, 0..0);
+        let button = demo.ids.btn_sql_comment; activate(&mut demo, button);
+        assert_eq!(demo.state.sql_editor(), format!("-- {draft}"));
+        assert_eq!(demo.ui.focused(), Some(demo.ids.sql_area));
+        assert!(demo.ui.key_input(UiKey::Undo)); demo.snapshot_inputs();
+        assert_eq!(demo.state.sql_editor(), draft);
+        let button = demo.ids.btn_sql_new_tab; activate(&mut demo, button);
+        assert_eq!(demo.state.sql_tabs.len(), 2); assert_eq!(demo.state.sql_tabs[0], draft);
+        assert_eq!(demo.state.edit_value, cell);
+        assert!(!demo.state.dirty);
     }
 
     #[test]

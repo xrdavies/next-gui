@@ -4,7 +4,7 @@ use next_gui_layout::{Axis, CrossAlign};
 use next_gui_scene::{Color, Scene};
 use next_gui_text::Font;
 use next_gui_ui::{
-    AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, ImageStyle, ListStyle, MenuItem,
+    AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, IconName, ImageStyle, ListStyle, MenuItem,
     MenuStyle, ModalStyle, PanelStyle, RowStyle, SelectStyle, SplitterStyle, StatusBarStyle,
     SwitchStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme,
     ToolbarStyle, TreeNode, TreeStyle, PlotData, PlotSeries, PlotLine, PlotMarker, PlotStyle, Ui, WidgetId,
@@ -796,6 +796,8 @@ pub fn build_ui(
     main_tb.width = shell_w - 8.0;
     main_tb.height = 38.0;
     main_tb.padding = 4.0;
+    main_tb.gap = 4.0;
+    main_tb.cross_align = CrossAlign::Center;
     main_tb.background = Some(theme.colors.surface_elevated);
 
     // Recent menu items
@@ -905,22 +907,25 @@ pub fn build_ui(
         if toolbar_visible {
             col.scroll_row(main_tb, |tb| {
                 if state.toolbar_db {
-                    btn_new = tb.tool_button("New");
-                    btn_open = tb.tool_button("Open");
-                    btn_write = tb.tool_button_styled("Write Changes", theme.colors.accent, theme.colors.on_accent);
-                    btn_revert = tb.tool_button("Revert");
+                    btn_new = tb.tool_icon_button(IconName::Database, "New Database");
+                    btn_open = tb.tool_icon_button(IconName::Open, "Open Database");
+                    btn_write = tb.tool_icon_button_styled(IconName::Save, "Write Changes", theme.colors.accent, theme.colors.on_accent);
+                    btn_revert = tb.tool_icon_button(IconName::Undo, "Revert Changes");
                 }
                 if state.toolbar_extra {
-                    tb.spacer(8.0, 1.0);
-                    toolbar_extra = tb.tool_button("Vacuum");
-                    btn_integrity = tb.tool_button("Integrity");
+                    if state.toolbar_db { tb.separator_styled(1.0, 20.0, false, theme.colors.border); }
+                    toolbar_extra = tb.tool_icon_button(IconName::Refresh, "Vacuum Database");
+                    btn_integrity = tb.tool_icon_button(IconName::Check, "Integrity Check");
                 }
                 if state.toolbar_project {
-                    tb.spacer(8.0, 1.0);
-                    toolbar_project = tb.tool_button("Open Project");
-                    btn_project_save = tb.tool_button("Save Project");
+                    if state.toolbar_db || state.toolbar_extra { tb.separator_styled(1.0, 20.0, false, theme.colors.border); }
+                    toolbar_project = tb.tool_icon_button(IconName::Folder, "Open Project");
+                    btn_project_save = tb.tool_icon_button(IconName::Save, "Save Project");
                 }
-                if state.toolbar_db { btn_theme = tb.tool_button("Theme"); }
+                if state.toolbar_db {
+                    if state.toolbar_extra || state.toolbar_project { tb.separator_styled(1.0, 20.0, false, theme.colors.border); }
+                    btn_theme = tb.tool_icon_button(IconName::Settings, "Switch Theme");
+                }
             });
         }
 
@@ -1690,6 +1695,7 @@ pub fn build_ui(
             sql_tb.width = main_w - 24.0;
             sql_tb.height = 34.0;
             sql_tb.padding = 0.0;
+            sql_tb.gap = 4.0;
             sql_tb.cross_align = CrossAlign::Center;
             let mut sql_area_style = TextAreaStyle::from_theme(&theme);
             sql_area_style.width = main_w - 24.0;
@@ -2062,24 +2068,17 @@ pub fn build_ui(
                             page_scroll = p.scroll_area(page_scroll_style, |p| {
                             if state.toolbar_sql {
                                 p.scroll_row(sql_tb, |tb| {
-                                    btn_sql_new_tab = tb.tool_button("New Tab");
-                                    btn_sql_open = tb.tool_button("Open SQL");
-                                    btn_sql_save = tb.tool_button("Save SQL");
-                                    btn_sql_save_as = tb.tool_button("Save As…");
-                                    btn_sql_run = tb.tool_button_styled("Execute", theme.colors.accent, theme.colors.on_accent);
-                                    btn_sql_line = tb.tool_button("Execute Line");
-                                    btn_sql_stop = tb.tool_button("Stop");
-                                    btn_sql_find = tb.tool_button("Find");
-                                    tb.tooltip("Toggle line comments (Ctrl/Cmd+/)", |tb| {
-                                        btn_sql_comment = tb.tool_button("Comment");
-                                    });
-
-                                    tb.spacer(8.0, 1.0);
-                                    tb.text_styled(
-                                        format!("SQL {}", state.sql_tab_idx + 1),
-                                        theme.colors.text_secondary,
-                                        12.0,
-                                    );
+                                    btn_sql_new_tab = tb.tool_icon_button(IconName::Plus, "New SQL Tab (Ctrl/Cmd+T)");
+                                    btn_sql_open = tb.tool_icon_button(IconName::Open, "Open SQL File");
+                                    btn_sql_save = tb.tool_icon_button(IconName::Save, "Save SQL File (Ctrl/Cmd+S)");
+                                    btn_sql_save_as = tb.tool_icon_button(IconName::File, "Save SQL File As… (Ctrl/Cmd+Shift+S)");
+                                    tb.separator_styled(1.0, 20.0, false, theme.colors.border);
+                                    btn_sql_run = tb.tool_icon_button_styled(IconName::Play, "Execute SQL (Ctrl/Cmd+Enter)", theme.colors.accent, theme.colors.on_accent);
+                                    btn_sql_line = tb.tool_icon_button(IconName::Step, "Execute Current Line");
+                                    btn_sql_stop = tb.tool_icon_button(IconName::Stop, "Stop Execution");
+                                    tb.separator_styled(1.0, 20.0, false, theme.colors.border);
+                                    btn_sql_find = tb.tool_icon_button(IconName::Search, "Find / Replace (Ctrl/Cmd+F)");
+                                    btn_sql_comment = tb.tool_icon_button(IconName::Code, "Toggle SQL Line Comments (Ctrl/Cmd+/)");
                                 });
                             }
                             // SQL editor tabs as buttons
