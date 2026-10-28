@@ -1,0 +1,241 @@
+{
+  "workspace": {
+    "passed": 721,
+    "failed": 0,
+    "ignored": 0,
+    "groups": 43
+  },
+  "checks": {
+    "clippy": 0,
+    "workspace": 0,
+    "build": 0,
+    "macos": 0,
+    "windows": 0
+  },
+  "render": {
+    "window-cell-layout-dark-1400-font13-style0": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-dark-800-font18-style2": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-dark-800-font18-style3": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-dark-800-font28-style1": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-light-1400-font13-style0": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-light-800-font18-style2": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-light-800-font18-style3": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-layout-light-800-font28-style1": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    }
+  },
+  "browser_sha256": "795cc8c87814d5aeb271e4ed7a5945593364a9e3822d568a1085018a2de95651",
+  "source_sha256": {
+    "crates/next-gui-ui/src/lib.rs": "2eb1e67597562f2949e8296f1d3e4550b6d1fc20987407fd9d93f10eea096cb3",
+    "examples/28_db_browser/src/plot_export.rs": "82efb693e956e4ac80bfbff17dc3b46080588f657e2627cd698bf80eee47b9dc",
+    "examples/28_db_browser/src/export_jobs.rs": "f891895712533d0b0f05e596d14e3ab752da6b49e132160f0ddcc898ac162f2d",
+    "examples/28_db_browser/src/sql_log.rs": "d444beb9cddf1b4a53d7e0a95435ad20a9d9aacee5bda12283cf536ec322b8e3",
+    "examples/28_db_browser/src/cell_editor_tests.rs": "03f864088d579c6cdd48e3c5a70d3091107d4b4888667501167d234176c2fa9e",
+    "examples/28_db_browser/src/reference_editor.rs": "b6eada847536d987f8eb62bb6fc4519a8a090cdc05df26b75493fd50bd9af1c6",
+    "examples/28_db_browser/src/sql_result_tests.rs": "af2584b3a60975492e635dfe8ece28c461b7d33fb417253f360c2ccb8987f12b",
+    "examples/28_db_browser/src/csv_numbers.rs": "5b01da7c5a90fb9831bfdbe8e7a4c2c20f161246df2d62f2d5beebc67d9c88e7",
+    "examples/28_db_browser/src/file_dlg.rs": "c67e7c031e9c0a1ad0241ae222213e5b70767cc1c69673bf858d38f8a2353a6d",
+    "examples/28_db_browser/src/project_xml.rs": "c88b9f2bde33468ea6c5087682c29b25598873985c04005b9043487b38c78510",
+    "examples/28_db_browser/src/column_picker.rs": "6a3af59c4ee03db6d500d99efe43de7cb9076bc61a2839973fe7b6bc56ff5839",
+    "examples/28_db_browser/src/plot_load.rs": "ea0de6cf2de2e92f16e09fee2ed9e05d1ceb0cbd43138328b8e1e5b762d93d88",
+    "examples/28_db_browser/src/csv_jobs.rs": "a4be0b73c5f448718d8cbcedc7963bde4b121a9a0c34c733bb3c031173a0960a",
+    "examples/28_db_browser/src/table_migration.rs": "e3cd5fc12d8e3c825da5b395ff295b7f87548ca1da1d46b7edf4fc7e05db3055",
+    "examples/28_db_browser/src/toolbar_tests.rs": "d1a29bea085c778ef3b00ef0052ef380bb3cc6c5e35496b6dda486d87f637816",
+    "examples/28_db_browser/src/sql_export.rs": "f3d5aaec21088353b2b596457b5e0553e51aff6df8ddcd52e6ba23d0a8067ac5",
+    "examples/28_db_browser/src/sql_calltip.rs": "a1f4f322b3ddab44b49be8156e35d6daa5f3dc8d49a040bd3ba4f73c11cb1501",
+    "examples/28_db_browser/src/browse_sort_tests.rs": "eca9906ee5bd1d5b6736d0ed501265aa5e50ccd6b4ef5f2ecee4d51796493eae",
+    "examples/28_db_browser/src/plot.rs": "a2b0489ff3e246e261f71115b09dcf05334d1b4d93cd688af06932ad4e3d83ed",
+    "examples/28_db_browser/src/sql_function_help.rs": "5d9581a5705c322dab8c23f63a414f65255abeee54eaf653d5c5d99f5c72c643",
+    "examples/28_db_browser/src/pragmas.rs": "ff4f737e05ff9d1d6d542f9b72159b4e0163b58b0e3d0588676d1906d1a40635",
+    "examples/28_db_browser/src/index_sql.rs": "7db1be99fd7e9a3f5bc2a26344b41150572a42176b181d1437ac069936c0352c",
+    "examples/28_db_browser/src/db.rs": "8445efa2b2f30f45e3b6c45cbb7a70d9cd02806679f1375351ca3cec7b50d5b3",
+    "examples/28_db_browser/src/cell_snapshot.rs": "39d860e50fc6cbf3ebfa80e7b5e0ba453494a91c90b400a172e737365767d75e",
+    "examples/28_db_browser/src/sql_syntax.rs": "c874a614014e16a2cacdf3f09c9a25c3401abc31236c683bc5cf35e66fc34cca",
+    "examples/28_db_browser/src/sql_search.rs": "1fb4207ab0ea4e50b18c37f90954bbfda8f85370be3934156d2fbcdc7262e66a",
+    "examples/28_db_browser/src/table_sql.rs": "1bfd7b3f47996af1170efbeaaffcaf0f9baf037d0e09fc8da63555c41b30d7d0",
+    "examples/28_db_browser/src/ui_build.rs": "9f2e962f18570dcc26766960708fc2b864cc2a3cb00088c38f162e3e6227884c",
+    "examples/28_db_browser/src/project.rs": "42a7589b075bf3ec92bc93245fa71cad2262d176c741d48edce90b97d3505695",
+    "examples/28_db_browser/src/state.rs": "ea24381282717ce0e7773447eb5cea8bd5a9fbcd3338fa479b591eef5556adb2",
+    "examples/28_db_browser/src/filters.rs": "92f095360e12392003dcb4dd4c30aad17376531f9b4d994ad61109b98767119b",
+    "examples/28_db_browser/src/csv_import.rs": "83862c6132c41504a53a9a329b0f95d91479d7885b97ec8ddd0ca8c834112215",
+    "examples/28_db_browser/src/csv_encoding.rs": "a93cc828f83f4aeb6302ff3639afb59877487ff011ea95da4b6b0e0926c3ba42",
+    "examples/28_db_browser/src/main.rs": "607119750494f930e3f8fa34a759fcf2f2eb1ae458b37255cc76fd3819014843",
+    "examples/28_db_browser/src/cell_format.rs": "3cc29d2b59602c78c50bd551f5c2dcbce54cc73c04b9955eb4f65cf9c11cb5ed",
+    "examples/28_db_browser/src/csv_files.rs": "f0069aa64832cc04e66f07a5969b4f306ea0182d7de7384e7b76c83158c4d37d",
+    "examples/28_db_browser/src/cell_clipboard.rs": "7a9de2736821987e3348ec8a8f6e53eab0a7c86ef4e6447f53fecc3e3bf7ea1a",
+    "examples/28_db_browser/src/dock_tests.rs": "0d98807a77acec743fe1cb3aca32b0953be8eceb1f746c0e0228720b1eb1cd36",
+    "examples/28_db_browser/src/sql_completion.rs": "7dc8e5347cd782cc705bd53df2f7c30f57997e45f09cc718f0a2c2df02a51d93",
+    "examples/28_db_browser/src/prefs.rs": "e3a548bac45dc094dd547e680d34597706e30a1ec2c8c8a6dc63e30a6c2b0ddd",
+    "examples/28_db_browser/src/data_export.rs": "a34e3938aae360d3ee9faa28585aa215161e26c307abc62766e22d7dc4f1a78b",
+    "examples/28_db_browser/src/sql_editor.rs": "2a0b41026d27fe5af6ec203774cc0121e16a8486e596d9ae77d265e2f2de2c48",
+    "examples/28_db_browser/src/browse_navigation_tests.rs": "9aa342d206f946c1f28689550e38911345e320335bc6c34fe1188a19faa8ec66"
+  },
+  "native": {
+    "dark-cell-mode-xml": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-xml": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-xml-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-xml-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-xml-under-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-xml-under-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-xml-large-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-xml-large-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-menu-large-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-menu-large-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-xml-under-chart-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-xml-under-chart-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-xml-large-chart-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-xml-large-chart-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    }
+  },
+  "native_keys": {
+    "dark": {
+      "captured": true,
+      "pid": 38082,
+      "window": 6414,
+      "owned_exit": -2
+    },
+    "light": {
+      "captured": true,
+      "pid": 38099,
+      "window": 6420,
+      "owned_exit": -2
+    }
+  },
+  "office": {
+    "e10_office_panel": {
+      "owned_exit": -2,
+      "sha256": "4f0b7a151a1519ace4a097d54c1740f34aaa5a6658e60c1535f6dadb4f6f70a7"
+    },
+    "e11_office_shell": {
+      "owned_exit": -2,
+      "sha256": "3df312aefcfb159eeaebf6c0eaf8b2f3206aa5b7cb7f2894b12fdcf465985c58"
+    },
+    "e12_office_inputs": {
+      "owned_exit": -2,
+      "sha256": "b7eeb9075ab8b5926c06da5620b8cfde33bca6f6ac6bbd6a80583bbec586c10a"
+    },
+    "e13_office_data": {
+      "owned_exit": -2,
+      "sha256": "84f30cedd9bbdc2469203668881203cb9d8408b23ec04ada9d26c2f4480df5ca"
+    },
+    "e14_office_nav": {
+      "owned_exit": -2,
+      "sha256": "d1cd305dfe21ec46a62fd623c511286cbc20d7ce3ac9a2166a4eb8f05461befe"
+    },
+    "e15_office_feedback": {
+      "owned_exit": -2,
+      "sha256": "13a90eca15d17392be08105201ece18536ebae5a5d9c63db336a9886a0e03a6b"
+    },
+    "e20_office_industrial": {
+      "owned_exit": -2,
+      "sha256": "970f46031bc4006e29169002e99f27966300ddea37d3865279f305f585503f87"
+    },
+    "e21_office_p1_rest": {
+      "owned_exit": -2,
+      "sha256": "e71c1150c42362524fc2147375e957b1675f66b49fb7147d13e9df37e788bd09"
+    },
+    "e22_office_p1_deferred": {
+      "owned_exit": -2,
+      "sha256": "50bb61ff28c05612cc42918e099a05f43761c4cd282449d904661f4d7f8a26e4"
+    },
+    "e23_office_charts": {
+      "owned_exit": -2,
+      "sha256": "cc30bbefada9eac1a4e8474e6939fe85b56bca5a92266d6b5571780b9149d74b"
+    },
+    "e24_profile_dual": {
+      "owned_exit": -2,
+      "sha256": "12fded8d8db255a305b351f9de36cd412ab1ebc9e4754e7c721ef9a3e25f1bbc"
+    },
+    "e25_immediate_viewport": {
+      "owned_exit": -2,
+      "sha256": "403db9a60ecde831e5d9bb3495e9eaf81151b9cd388c75001926cc9b0ff4bb27"
+    },
+    "e26_office_p2": {
+      "owned_exit": -2,
+      "sha256": "0d6aef5fa3240ab20711f324bcd04f13cff5c526f95bebfbe9c1e50ce4c892a5"
+    },
+    "e27_theme_tokens": {
+      "owned_exit": -2,
+      "sha256": "c7404c9fea2b6fe369e62922735d7f5807d2e9fe179e22350f9b6274b14d249c"
+    }
+  }
+}

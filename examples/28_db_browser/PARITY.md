@@ -19,8 +19,8 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Surface | Status | Notes |
 |---------|--------|-------|
 | Menubar File / Edit / View / Tools / Help | partial | Flat in-window menus; no native menu, nested submenus or application shortcut system. |
-| Main toolbar: New, Open, Write Changes, Revert | partial | Compact house icons/full live help and Theme; View-toggleable. Original TextBesideIcon/configurable modes, full actions/order and movement/overflow remain. |
-| Extra DB / Project toolbars | partial | Independently toggleable icon groups share a compact scrollable row with live accessible help; original display modes/actions/order, movement and overflow remain. |
+| Main toolbar: New, Open, Write Changes, Revert | partial | Five original display styles with house icons/full live help, measured row heights and retained preferences; View-toggleable. Full original actions/order, movement and overflow behavior remain. |
+| Extra DB / Project toolbars | partial | Independently toggleable groups share a scrollable row and the original Main display-style preference; full accessible help. Original actions/order, movement and overflow remain. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
 | Right docks: Edit Cell / DB Schema / SQL Log / Plot / Remote | partial | Independent upper cell editor and lower bottom-tabbed Log/Plot/Schema/Remote; close/reopen retains drafts, preferred splitter ratios and per-page scrolls. Plot options scroll independently above a retained chart. Floating/rearranging and Qt dock-state compatibility remain. |
 | Status bar: path, encoding, read-only, encryption, busy | done | Reads actual main.encoding on schema refresh; cached while SQL runs; clears on Close. UTF-8 and both UTF-16 byte orders tested. |
@@ -63,7 +63,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Create Index… | partial | Qualified table selection and atomic original-identity replacement; live expression/collation/order and partial WHERE editing, available/ordered key lists, add/remove/move/edit actions and a read-only generated SQL preview, declaration types and an ASC/DESC selector that preserves key expressions. |
 | Modify Object… | partial | Native column/table rename (including column swaps/case-only changes) preserves identities and qualified browse/format/plot settings; Declared type, NN, single-column UNIQUE, default and column order now rebuild safely with existing constraints/dependencies, rowids/sequence and pending edits preserved. Primary-key membership can also be added/changed/removed; AI can be enabled/disabled with type/key synchronization and sequence-safe rebuild; main/temp/attached moves also retain qualified browse/format/plot/project settings, sparse rowids, composite keys, generated data, indexes/triggers, sequence and pending deferred foreign keys. Target conflicts/read-only/new violations/broken dependencies roll back atomically; dependent views/chains and view triggers now move with qualified SELECT/WHEN/DML/UPSERT references and view settings; explicit aliases remain stable. Original dialog polish and full constraint workflows remain. Temp trigger/view rename has a locked-engine limitation with atomic rollback. Expression/partial index definitions edit in the qualified wizard. |
 | Delete Object… | done | confirm + DROP |
-| Preferences… | partial | Seven options including SQL auto completion and keyword output case; preference edits stay in drafts until Apply; full upstream preferences remain absent. |
+| Preferences… | partial | Font/theme/SQL/general options and five-group toolbar display styles; bounded scrolling with fixed Save/Cancel and retained draft controls. Full upstream preferences remain. |
 
 ## View menu
 
@@ -836,3 +836,8 @@ F03 was subsequently verified in `caca01e`: widths/frozen prefixes translate the
 ## XML and evaluated cells checkpoint (2026-10-29)
 
 [Review](../../docs/reviews/R-20261029-d531b492ca73.md): six-mode house selector, checked XML/raw-token indentation and baselines, invalid draft switch/export, NULL input and explicit typed scalar evaluation verified. Apply restores the visible record by identity and shortcut focus.719 tests/strict checks,11 Metal pairs,12 native static windows and2 native exact-result apply/copy workflows pass. The earlier cleared editor observed in native review was fixed and final evidence rerun. Full XML/JSON/RTL/binary/word-wrap/auto-switch/error/action/history workflows, narrow/large-font polish and complete original/product/native/platform parity remain; F02 stays in_progress. Publication remains local after approval timeout denial.
+
+
+### Cell dock layout update (2026-10-29)
+
+F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-fe5fcce7aa05.md) verifies fixed cell actions/metadata, combined scrollable mode/tools, actual cell fonts and adaptive readable editor/Plot minima with retained preferred splits/drafts/carets. The60-case matrix exposed and fixed shared exact-fit floating ratio panic.721 tests/strict checks,8 final Metal pairs,14 prepared native browser windows,2 exact-result native apply/copy flows and14 fresh Office captures pass. Earlier collapsed graph frames were rejected and final evidence rerun. Shell scrolling is necessary in constrained large-font windows; other fixed Browse/Plot metrics, full editor/toolbar/docking/product features and ordinary native/other-host acceptance remain. No completion or publication claim.
