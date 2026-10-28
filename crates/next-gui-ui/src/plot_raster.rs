@@ -58,6 +58,7 @@ pub(crate) fn plot_area(width: f32, height: f32, data: &PlotData) -> Rect {
 /// Render the same axis, series, legend and selection pixels used by a Chart tile.
 /// Invalid dimensions, allocation failures, buffers over 128 MiB and invalid font
 /// sizes return `None`, matching the database example's image memory budget.
+/// Unsorted or dense stacked bars may also allocate shared-source lookup indexes.
 pub fn render_plot(
     font: &Font,
     data: &PlotData,
@@ -93,7 +94,8 @@ pub fn render_plot(
         clip: Rect::new(0.0, 0.0, width as f32, height as f32),
     };
     let area = plot_area(width as f32, height as f32, data);
-    let view = data.view();
+    let bars=crate::plot::PlotBars::new(data)?;
+    let view = data.view_with_bars(&bars);
     let xticks = ticks(
         view.x,
         &data.x_format,
@@ -216,7 +218,7 @@ pub fn render_plot(
         );
     }
     canvas.clip = area;
-    for series in &data.series {
+    for (series_index,series) in data.series.iter().enumerate() {
         let yrange = if series.right_axis { view.y2 } else { view.y1 };
         let map = |x, y| {
             (
@@ -238,9 +240,16 @@ pub fn render_plot(
             match series.line {
                 PlotLine::Impulse => canvas.line(map(point.x, 0.0), current, series.color),
                 PlotLine::Bars => {
-                    let left = map(point.x - 0.36, point.y);
-                    let right = map(point.x + 0.36, 0.0);
+                    let bar=bars.bar(series_index,point);
+                    let left = map(bar.left, bar.top);
+                    let right = map(bar.right, bar.base);
                     canvas.fill_rect(left, right, series.color);
+                    let current=map(bar.left/2.0+bar.right/2.0,bar.top);
+                    canvas.marker(current,series.marker,series.color,3.5);
+                    if data.state.selected_rows.contains(&point.row) {
+                        canvas.marker(current,PlotMarker::Circle,style.selection,6.0);
+                        canvas.marker(current,PlotMarker::Disc,style.selection,2.0);
+                    }
                 }
                 PlotLine::None => {}
                 line => {
@@ -268,7 +277,7 @@ pub fn render_plot(
             }
             previous = Some(current);
         }
-        if series.marker != PlotMarker::None || !data.state.selected_rows.is_empty() {
+        if series.line!=PlotLine::Bars && (series.marker != PlotMarker::None || !data.state.selected_rows.is_empty()) {
             for point in series
                 .points
                 .iter()
@@ -390,6 +399,14 @@ fn line_samples(points: &[crate::PlotPoint], range: (f64, f64), width: f32) -> V
 
 fn ticks((lo, hi): (f64, f64), format: &PlotAxisFormat, count: usize, fixed: bool) -> Vec<(f64, String)> {
     let count = count.clamp(2, 12);
+    if let PlotAxisFormat::Labels(labels)=format {
+        if labels.is_empty() || hi<0.0 {return Vec::new();}
+        let first=lo.ceil().max(0.0) as usize;
+        let last=(hi.floor() as usize).min(labels.len()-1);
+        if first>last {return Vec::new();}
+        let stride=(last-first+1).div_ceil(count);
+        return (first..=last).step_by(stride).map(|i|(i as f64,labels[i].clone())).collect();
+    }
     let raw = (hi / 2.0 - lo / 2.0) / count as f64 * 2.0;
     let power = 10.0f64.powf(raw.log10().floor());
     let mut step = [1.0, 2.0, 2.5, 5.0, 10.0]
@@ -397,9 +414,6 @@ fn ticks((lo, hi): (f64, f64), format: &PlotAxisFormat, count: usize, fixed: boo
         .map(|n| n * power)
         .find(|&n| n >= raw)
         .unwrap_or(raw);
-    if matches!(format, PlotAxisFormat::Labels(_)) {
-        step = step.ceil().max(1.0);
-    }
     if matches!(
         format,
         PlotAxisFormat::Date | PlotAxisFormat::Time | PlotAxisFormat::DateTime
@@ -721,6 +735,10 @@ mod tests {
         for format in [PlotAxisFormat::Date,PlotAxisFormat::Time,PlotAxisFormat::Labels(vec!["a".into(),"b".into()].into())] {
             assert_eq!(ticks((0.0,86400.0),&format,6,true),ticks((0.0,86400.0),&format,6,false));
         }
+        let labels=PlotAxisFormat::Labels(vec!["Q1".into(),"Q2".into(),"Q3".into(),"Q4".into()].into());
+        assert_eq!(ticks((-0.7,3.7),&labels,4,false).iter().map(|(x,_)|*x).collect::<Vec<_>>(),[0.0,1.0,2.0,3.0]);
+        assert_eq!(ticks((-0.7,3.7),&labels,2,false).iter().map(|(x,_)|*x).collect::<Vec<_>>(),[0.0,2.0]);
+        for range in [(-5.0,-1.0),(5.0,10.0),(1.1,1.9)] {assert!(ticks(range,&labels,4,false).is_empty());}
     }
 
     #[test]

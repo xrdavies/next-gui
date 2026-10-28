@@ -31,7 +31,7 @@ pub enum PlotLine {
     StepCenter,
     /// Draw a vertical stroke from zero for each sample.
     Impulse,
-    /// Draw categorical bars from zero.
+    /// Draw grouped or stacked bars.
     Bars,
 }
 
@@ -317,20 +317,27 @@ pub struct PlotData {
     pub show_legend: bool,
     /// Use fixed decimal numeric ticks, with precision derived from the visible range.
     pub fixed_number_format: bool,
+    /// Stack bars at matching X coordinates separately on each vertical axis.
+    pub stacked_bars: bool,
 }
 
 impl Default for PlotData {
     fn default() -> Self {
         Self { x_label: String::new(), y1_label: String::new(), y2_label: String::new(),
-            x_format: PlotAxisFormat::default(), series: Vec::new(), state: PlotState::default(), show_legend: true, fixed_number_format: false }
+            x_format: PlotAxisFormat::default(), series: Vec::new(), state: PlotState::default(), show_legend: true, fixed_number_format: false, stacked_bars: false }
     }
 }
 
 impl PlotData {
-    /// Automatic finite limits, including zero for bars and impulses.
+    /// Automatic finite limits, including grouped edges and stacked totals.
+    /// Returns a unit viewport if an unsorted bar index cannot be allocated.
     pub fn auto_view(&self) -> PlotView {
+        PlotBars::new(self).map(|bars| self.auto_view_with_bars(&bars)).unwrap_or(PlotView {x:(0.0,1.0),y1:(0.0,1.0),y2:(0.0,1.0)})
+    }
+
+    fn auto_view_with_bars(&self, bars: &PlotBars<'_>) -> PlotView {
         let mut ranges = [(f64::INFINITY, f64::NEG_INFINITY); 3];
-        for series in &self.series {
+        for (index,series) in self.series.iter().enumerate() {
             let axis = 1 + usize::from(series.right_axis);
             if matches!(series.line, PlotLine::Bars | PlotLine::Impulse) {
                 ranges[axis].0 = ranges[axis].0.min(0.0);
@@ -341,10 +348,13 @@ impl PlotData {
                 .iter()
                 .filter(|p| p.x.is_finite() && p.y.is_finite())
             {
-                ranges[0].0 = ranges[0].0.min(point.x);
-                ranges[0].1 = ranges[0].1.max(point.x);
-                ranges[axis].0 = ranges[axis].0.min(point.y);
-                ranges[axis].1 = ranges[axis].1.max(point.y);
+                let (left,right,base,top)=if series.line==PlotLine::Bars {
+                    let bar=bars.bar(index,point);(bar.left,bar.right,bar.base,bar.top)
+                }else{(point.x,point.x,point.y,point.y)};
+                ranges[0].0 = ranges[0].0.min(left);
+                ranges[0].1 = ranges[0].1.max(right);
+                ranges[axis].0 = ranges[axis].0.min(base.min(top));
+                ranges[axis].1 = ranges[axis].1.max(base.max(top));
             }
         }
         PlotView {
@@ -453,6 +463,101 @@ impl PlotData {
             .view
             .filter(PlotView::is_valid)
             .unwrap_or_else(|| self.auto_view())
+    }
+
+    pub(crate) fn view_with_bars(&self,bars:&PlotBars<'_>) -> PlotView {
+        self.state.view.filter(PlotView::is_valid).unwrap_or_else(||self.auto_view_with_bars(bars))
+    }
+}
+
+pub(crate) struct PlotBar {pub left:f64,pub right:f64,pub base:f64,pub top:f64}
+
+// Sorted sources need no index; arbitrary numeric X keeps source order via an index.
+pub(crate) struct PlotBars<'a> {
+    data:&'a PlotData,
+    orders:Vec<BarOrder>,
+    count:usize,
+}
+
+struct BarOrder {rank:usize,indices:Option<Vec<usize>>,extrema:Vec<(f64,f64)>}
+
+impl BarOrder {
+    fn point<'a>(&self,series:&'a PlotSeries,index:usize) -> &'a PlotPoint {
+        &series.points[self.indices.as_ref().map_or(index,|order|order[index])]
+    }
+
+    fn extreme(&self,series:&PlotSeries,lo:usize,hi:usize,positive:bool) -> f64 {
+        let pick=|pair:(f64,f64)|if positive {pair.0}else{pair.1};
+        let combine=|a:f64,b:f64|if positive {a.max(b)}else{a.min(b)};
+        let scan=|range:std::ops::Range<usize>|range.map(|i|self.point(series,i).y).filter(|y|y.is_finite()).fold(0.0,combine);
+        if self.extrema.is_empty() {return scan(lo..hi);}
+        let start=lo.div_ceil(32)*32;let end=hi/32*32;
+        if start>=end {return scan(lo..hi);}
+        let mut value=combine(scan(lo..start),scan(end..hi));
+        let leaves=self.extrema.len()/2;let mut a=leaves+start/32;let mut b=leaves+end/32;
+        while a<b {
+            if a%2==1 {value=combine(value,pick(self.extrema[a]));a+=1;}
+            if b%2==1 {b-=1;value=combine(value,pick(self.extrema[b]));}
+            a/=2;b/=2;
+        }
+        value
+    }
+}
+
+impl<'a> PlotBars<'a> {
+    pub(crate) fn new(data:&'a PlotData) -> Option<Self> {
+        let count=data.series.iter().filter(|s|s.line==PlotLine::Bars).count();
+        let mut orders=Vec::new();
+        if count>0 {
+            orders.try_reserve_exact(data.series.len()).ok()?;
+            let mut rank=0;
+            for series in &data.series {
+                let order=if data.stacked_bars && series.line==PlotLine::Bars
+                    && (!series.points.iter().all(|p|p.x.is_finite()) || !series.points.windows(2).all(|p|p[0].x<=p[1].x)) {
+                    let mut order=Vec::new();order.try_reserve_exact(series.points.len()).ok()?;
+                    order.extend((0..series.points.len()).filter(|&i|series.points[i].x.is_finite()));
+                    order.sort_unstable_by(|&a,&b|series.points[a].x.total_cmp(&series.points[b].x));Some(order)
+                }else{None};
+                let mut order=BarOrder {rank,indices:order,extrema:Vec::new()};
+                let len=order.indices.as_ref().map_or(series.points.len(),Vec::len);
+                if data.stacked_bars && series.line==PlotLine::Bars && len>128
+                    && (1..len).any(|i| {let a=order.point(series,i-1).x;let b=order.point(series,i).x;(b-a).abs()<=a.abs().max(b.abs()).max(1.0)*2e-14}) {
+                    let leaves=len.div_ceil(32).checked_next_power_of_two()?;
+                    let nodes=leaves.checked_mul(2)?;order.extrema.try_reserve_exact(nodes).ok()?;
+                    order.extrema.resize(nodes,(0.0,0.0));
+                    for i in 0..len {let y=order.point(series,i).y;if y.is_finite() {let node=&mut order.extrema[leaves+i/32];node.0=node.0.max(y);node.1=node.1.min(y);}}
+                    for i in (1..leaves).rev() {order.extrema[i]=(order.extrema[i*2].0.max(order.extrema[i*2+1].0),order.extrema[i*2].1.min(order.extrema[i*2+1].1));}
+                }
+                orders.push(order);
+                if series.line==PlotLine::Bars {rank+=1;}
+            }
+        }
+        Some(Self {data,orders,count})
+    }
+
+    pub(crate) fn bar(&self,index:usize,point:&PlotPoint) -> PlotBar {
+        let n=self.count.max(1) as f64;
+        let (offset,half)=if self.data.stacked_bars {(0.0,0.425)}else{
+            // Keep the original spacing, with a positive width even for seven or more series.
+            ((self.orders[index].rank as f64+0.5)/n-0.5,0.5*(1.0/n-0.15).max(0.1/n))
+        };
+        let mut base=0.0;
+        if self.data.stacked_bars {
+            let epsilon=if point.x==0.0 {1e-14}else{(point.x.abs()*1e-14).max(f64::from_bits(1))};
+            for (prior,series) in self.data.series[..index].iter().enumerate().filter(|(_,s)|s.line==PlotLine::Bars && s.right_axis==self.data.series[index].right_axis) {
+                let order=&self.orders[prior];
+                let len=order.indices.as_ref().map_or(series.points.len(),Vec::len);
+                let sample=|i|order.point(series,i);
+                let mut lo=0;let mut hi=len;
+                while lo<hi {let mid=lo+(hi-lo)/2;if sample(mid).x<=point.x-epsilon {lo=mid+1;}else{hi=mid;}}
+                let start=lo;hi=len;
+                while lo<hi {let mid=lo+(hi-lo)/2;if sample(mid).x<point.x+epsilon {lo=mid+1;}else{hi=mid;}}
+                let extreme=order.extreme(series,start,lo,point.y>=0.0);
+                base=(base+extreme).clamp(-f64::MAX,f64::MAX);
+            }
+        }
+        let center=point.x+offset;
+        PlotBar {left:(center-half).max(-f64::MAX),right:(center+half).min(f64::MAX),base,top:(base+point.y).clamp(-f64::MAX,f64::MAX)}
     }
 }
 
@@ -596,20 +701,28 @@ impl Ui {
                 PlotAxis::All
             };
         }
-        let view = data.view();
+        let Some(bars)=PlotBars::new(data) else {return true;};
+        let view = data.view_with_bars(&bars);
         let mut nearest = (64.0, None);
         if inside {
-            for series in &data.series {
+            for (index,series) in data.series.iter().enumerate() {
                 for point in series
                     .points
                     .iter()
                     .filter(|p| p.x.is_finite() && p.y.is_finite())
                 {
-                    let pixel =
-                        crate::plot_raster::sample_pixel(point, series.right_axis, view, area);
-                    let distance =
-                        (pixel.0 - f64::from(x)).powi(2) + (pixel.1 - f64::from(y)).powi(2);
-                    if distance < nearest.0 {
+                    let distance=if series.line==PlotLine::Bars {
+                        let bar=bars.bar(index,point);
+                        let pixel=|x,y|crate::plot_raster::sample_pixel(&PlotPoint{x,y,row:point.row},series.right_axis,view,area);
+                        let a=pixel(bar.left,bar.base);let b=pixel(bar.right,bar.top);
+                        let dx=f64::from(x)-f64::from(x).clamp(a.0.min(b.0),a.0.max(b.0));
+                        let dy=f64::from(y)-f64::from(y).clamp(a.1.min(b.1),a.1.max(b.1));
+                        dx*dx+dy*dy
+                    }else{
+                        let pixel=crate::plot_raster::sample_pixel(point,series.right_axis,view,area);
+                        (pixel.0-f64::from(x)).powi(2)+(pixel.1-f64::from(y)).powi(2)
+                    };
+                    if distance < nearest.0 || (series.line==PlotLine::Bars && distance==nearest.0 && distance<64.0) {
                         nearest = (distance, Some(point.row));
                     }
                 }
@@ -750,6 +863,90 @@ fn limits(values: impl Iterator<Item = f64>) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn bar_series(points:&[(f64,f64,usize)],right_axis:bool,color:Color) -> PlotSeries {
+        PlotSeries {name:"Bars".into(),color,right_axis,points:points.iter().map(|&(x,y,row)|PlotPoint{x,y,row}).collect::<Vec<_>>().into(),line:PlotLine::Bars,marker:PlotMarker::None}
+    }
+
+    #[test]
+    fn grouped_and_stacked_bars_keep_signed_duplicate_keys_axes_and_source_order() {
+        let mut data=PlotData {show_legend:false,series:vec![
+            bar_series(&[(2.0,4.0,0),(0.0,2.0,1),(0.0,3.0,2),(0.0,-5.0,3),(f64::NAN,1.0,4),(0.0,f64::NAN,5)],false,Color::rgb(200,40,20)),
+            bar_series(&[(0.0,7.0,6),(0.0,-2.0,7),(2.0,6.0,8)],false,Color::rgb(20,140,40)),
+            bar_series(&[(0.0,50.0,9)],true,Color::rgb(40,20,200)),
+            bar_series(&[(0.0,1.0,10),(0.0,-1.0,11),(2.0+1e-15,1.0,12)],false,Color::rgb(140,20,140)),
+        ],..PlotData::default()};
+        let source=data.series[0].points.clone();
+        let bars=PlotBars::new(&data).unwrap();
+        assert!(bars.orders.iter().all(|order|order.indices.is_none()),"Grouping needs no sorted index");
+        let a=bars.bar(0,&data.series[0].points[1]);let b=bars.bar(1,&data.series[1].points[0]);
+        assert!(a.left<a.right && a.right<b.left && b.left<b.right);
+        let grouped=data.auto_view();assert!(grouped.x.0<a.left && grouped.y1.1>7.0);
+        data.stacked_bars=true;
+        let bars=PlotBars::new(&data).unwrap();assert!(bars.orders[0].indices.is_some());
+        let positive=bars.bar(1,&data.series[1].points[0]);assert_eq!((positive.base,positive.top),(3.0,10.0));
+        let negative=bars.bar(1,&data.series[1].points[1]);assert_eq!((negative.base,negative.top),(-5.0,-7.0));
+        let right=bars.bar(2,&data.series[2].points[0]);assert_eq!((right.base,right.top),(0.0,50.0));
+        let last=bars.bar(3,&data.series[3].points[0]);assert_eq!((last.base,last.top),(10.0,11.0));
+        let nearby=bars.bar(3,&data.series[3].points[1]);assert_eq!((nearby.base,nearby.top),(-7.0,-8.0));
+        assert_eq!(bars.bar(3,&data.series[3].points[2]).top,11.0);
+        assert_eq!(positive.left,-0.425);assert_eq!(positive.right,0.425);
+        let stacked=data.auto_view();assert!(stacked.y1.0< -8.0 && stacked.y1.1>11.0 && stacked.y2.1>50.0);
+        assert!(Arc::ptr_eq(&source,&data.series[0].points));assert_eq!(source[0].x,2.0);
+        data.series=vec![bar_series(&[(1.0,f64::MAX,0)],false,Color::rgb(1,2,3));8];
+        assert!(data.auto_view().is_valid());let bars=PlotBars::new(&data).unwrap();assert_eq!(bars.bar(7,&data.series[7].points[0]).top,f64::MAX);
+        data.stacked_bars=false;let bars=PlotBars::new(&data).unwrap();
+        for i in 0..8 {let b=bars.bar(i,&data.series[i].points[0]);assert!(b.left<b.right);}
+    }
+
+    #[test]
+    fn bar_interiors_select_the_rendered_source_row_in_grouped_and_stacked_modes() {
+        use crate::{ChartStyle,ChartTile,ColumnStyle,PlotStyle};
+        use next_gui_scene::Scene;
+        for stacked_bars in [false,true] {
+            let data=PlotData {show_legend:false,stacked_bars,series:vec![
+                bar_series(&[(0.0,2.0,10)],false,Color::rgb(200,40,20)),
+                bar_series(&[(0.0,4.0,20)],false,Color::rgb(20,140,40)),
+            ],..PlotData::default()};
+            let mut ui=Ui::new();let mut scene=Scene::new();let mut id=WidgetId(0);
+            ui.column(ColumnStyle {width:600.0,..ColumnStyle::default()},|c|{id=c.chart(vec![ChartTile::plot("Bars",data.clone(),PlotStyle::default())],ChartStyle {width:580.0,height:360.0,columns:1,..ChartStyle::default()});});
+            ui.sync(&mut scene);
+            let Kind::Chart{plot_bounds,..}=&ui.widgets[&id].kind else {unreachable!()};let body=plot_bounds[0];
+            let mut area=crate::plot_raster::plot_area(body.width,body.height,&data);area.x+=body.x;area.y+=body.y;
+            let bars=PlotBars::new(&data).unwrap();let bar=bars.bar(1,&data.series[1].points[0]);
+            let probe=PlotPoint{x:bar.left/2.0+bar.right/2.0,y:bar.base/2.0+bar.top/2.0,row:20};
+            let (x,y)=crate::plot_raster::sample_pixel(&probe,false,data.view(),area);
+            assert!(ui.pointer_pressed(&mut scene,x as f32,y as f32));ui.pointer_released();
+            assert_eq!(ui.chart_plot(id,0).unwrap().state.selected_rows.as_ref(),&BTreeSet::from([20]));
+            let (width,height)=ui.chart_plot_size(id,0).unwrap();let image=ui.chart_plot_image(id,0,width,height).unwrap();
+            let area=crate::plot_raster::plot_area(width as f32,height as f32,&data);
+            let (x,y)=crate::plot_raster::sample_pixel(&probe,false,data.view(),area);let pixel=((y as usize*width as usize)+x as usize)*4;
+            let rgb=&image.pixels()[pixel..pixel+3];assert!(rgb[1]>rgb[0] && rgb[1]>rgb[2],"The selected bar interior must retain its green series color");
+            let endpoint=PlotPoint{y:bar.top,..probe};let (x,y)=crate::plot_raster::sample_pixel(&endpoint,false,data.view(),area);
+            let pixel=((y as usize*width as usize)+x as usize)*4;let selected=PlotStyle::default().selection;
+            assert_eq!(&image.pixels()[pixel..pixel+3],&[selected.r,selected.g,selected.b]);
+        }
+    }
+
+    #[test]
+    fn dense_duplicate_bar_keys_use_range_extrema_without_changing_stack_heights() {
+        let points=(0..100_000).map(|row|PlotPoint{x:0.0,y:if row%113==0 {f64::NAN}else{(row%31) as f64-15.0},row}).collect::<Vec<_>>();
+        let data=PlotData {stacked_bars:true,series:vec![
+            PlotSeries {points:points.into(),..bar_series(&[],false,Color::rgb(1,2,3))},
+            bar_series(&[(0.0,2.0,100001),(0.0,-2.0,100002)],false,Color::rgb(3,2,1)),
+        ],..PlotData::default()};
+        let bars=PlotBars::new(&data).unwrap();let order=&bars.orders[0];
+        assert!(order.indices.is_none() && !order.extrema.is_empty());
+        assert!(order.extrema.len()*std::mem::size_of::<(f64,f64)>()<data.series[0].points.len()*2);
+        for (lo,hi) in [(0,100000),(1,99999),(32,64),(33,63),(1000,1001),(99999,100000),(5,5)] {
+            for positive in [false,true] {
+                let expected=data.series[0].points[lo..hi].iter().map(|p|p.y).filter(|y|y.is_finite()).fold(0.0f64,|a,b|if positive {a.max(b)}else{a.min(b)});
+                assert_eq!(order.extreme(&data.series[0],lo,hi,positive),expected);
+            }
+        }
+        assert_eq!(bars.bar(1,&data.series[1].points[0]).top,17.0);
+        assert_eq!(bars.bar(1,&data.series[1].points[1]).top,-17.0);
+    }
+
     #[test]
     fn retained_plot_selects_on_release_cancels_drags_and_keeps_only_matching_sessions() {
         use crate::{ChartStyle, ChartTile, ColumnStyle, PlotStyle};
