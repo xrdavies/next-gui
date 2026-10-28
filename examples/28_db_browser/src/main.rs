@@ -1303,7 +1303,7 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
-            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow") {
+            if matches!(tab.as_str(), "plot-current-browse" | "plot-current-sql" | "plot-native-settings" | "plot-bars-grouped" | "plot-bars-stacked" | "plot-bars-grouped-narrow" | "plot-bars-stacked-narrow" | "docks-browse" | "docks-sql" | "docks-narrow" | "plot-hover" | "plot-hover-narrow") {
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch(if tab.starts_with("plot-bars-") {BAR_PLOT_QA_SQL}else{CURRENT_PLOT_QA_SQL}).unwrap();
                 state.refresh_schema().unwrap();
@@ -1324,10 +1324,10 @@ impl Demo {
                     state.plot.invalidate();
                 }
                 state.sync_current_plot().unwrap();
-                if tab.starts_with("docks-") {
+                if tab.starts_with("docks-") || tab.starts_with("plot-hover") {
                     state.browse_mut().sel_row=Some(0);state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();
                 }
-                state.body_ratio = if tab.starts_with("docks-") {0.45}else{0.52};
+                state.body_ratio = if tab.starts_with("docks-") || tab.starts_with("plot-hover") {0.45}else{0.52};
                 state.dock_focus = DockKind::Plot;
                 state.dock_plot = true;
             }
@@ -5033,7 +5033,8 @@ impl AppCallbacks for Demo {
     fn on_event(&mut self, ctx: &mut WindowCtx<'_>, event: Event) {
         match event {
             Event::PointerLeft {..} => {
-                if self.ui.cancel_pointer_repeat() { self.after_ui(ctx); }
+                let repeat = self.ui.cancel_pointer_repeat();
+                if self.ui.pointer_left() || repeat { self.after_ui(ctx); }
             }
             Event::FocusChanged {focused: false, ..} => {
                 if self.ui.is_dragging() {
@@ -5365,6 +5366,15 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("plot-hover")) {
+            if let Some(bounds) = self.scene.iter_paint_order().into_iter()
+                .find(|node| self.ui.widget_from_node(node.id) == Some(self.ids.chart)).map(|node| node.bounds) {
+                self.ui.set_focus(Some(self.ids.chart));
+                self.ui.pointer_moved(bounds.x + bounds.width * 0.63, bounds.y + bounds.height * 0.5);
+                self.ui.sync(&mut self.scene);
+                self.needs_paint = true;
+            }
+        }
         let hold_qa = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("pragmas-hold");
         if hold_qa && !self.qa_stepper_started {
             self.qa_stepper_started = true;
@@ -5484,7 +5494,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow")) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow")) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

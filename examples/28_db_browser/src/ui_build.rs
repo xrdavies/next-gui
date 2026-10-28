@@ -1772,6 +1772,7 @@ pub fn build_ui(
             chart_style.width = (dock_w - 28.0).max(180.0);
             chart_style.height = (tab_page_h - 100.0).max(160.0);
             chart_style.columns = 1;
+            chart_style.show_plot_coordinates = true;
             chart_style.padding = 10.0;
             chart_style.gap = 8.0;
 
@@ -2284,7 +2285,7 @@ pub fn build_ui(
                                             }
                                         });
                                         }, |c| {
-                                            c.tooltip(format!("{chart_title}\nWheel: zoom · Drag: pan · Home: fit · Ctrl/Cmd+click: select range"), |t| { chart = t.chart(chart_tiles.clone(), style); });
+                                            chart = c.chart(chart_tiles.clone(), style);
                                         });
                                     });
                                 }

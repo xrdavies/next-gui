@@ -210,6 +210,53 @@ mod tests {
     }
 
     #[test]
+    fn plot_hover_keeps_source_and_selection_with_bounded_dual_axis_tooltips() {
+        use next_gui_ui::UiKey;
+        let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(crate::CURRENT_PLOT_QA_SQL).unwrap();
+        demo.state.refresh_schema().unwrap();
+        demo.state.switch_browse_table_in("main", "quarterly_revenue").unwrap();
+        demo.state.tab = MainTab::Browse; demo.state.dock_focus = DockKind::Plot;
+        demo.state.sync_current_plot().unwrap();
+        for (row, axis) in [(1, 1), (2, 2), (3, 3)] { assert!(demo.state.plot.check(row, axis, true)); }
+        demo.state.sync_current_plot().unwrap();
+        let source = demo.state.plot.data.series[0].points.clone();
+        let folder = std::env::var("NEXT_GUI_PLOT_HOVER_QA_OUT").ok().map(PathBuf::from);
+        if let Some(folder) = &folder { std::fs::create_dir_all(folder).unwrap(); }
+        for (name, theme) in [("dark", next_gui_ui::Theme::dark()), ("light", next_gui_ui::Theme::light())] {
+            demo.theme = crate::ui_build::browser_theme(theme, demo.state.prefs.font_size);
+            for (width, height) in [(1400, 1000), (800, 600)] {
+                demo.win_w = width; demo.win_h = height; demo.do_rebuild();
+                let image = demo.scene.iter_paint_order().into_iter().find(|n| n.visible && n.image.is_some()).unwrap().bounds;
+                let (x, y) = (image.x + image.width * 0.63, image.y + image.height * 0.5);
+                assert_eq!(demo.ui.hit_widget(&demo.scene, x, y), Some(demo.ids.chart));
+                demo.ui.pointer_hover(&demo.scene, x, y); demo.ui.pointer_moved(x, y); demo.ui.sync(&mut demo.scene);
+                let style = demo.ui.tooltip_style();
+                let panel = demo.scene.iter_paint_order().into_iter().rev().find(|n| n.visible && n.fill == style.bg && n.mask.is_none()).unwrap();
+                let bounds = panel.bounds; let panel_id = panel.id;
+                assert!(bounds.width > 50.0 && bounds.height > style.size * 3.0);
+                assert!(bounds.x >= 0.0 && bounds.y >= 0.0 && bounds.x + bounds.width <= width as f32 && bounds.y + bounds.height <= height as f32);
+                let labels = demo.scene.iter_paint_order().into_iter().rev().find(|n| n.visible && n.mask.is_some() && n.fill == style.fg).unwrap().mask.as_ref().unwrap().clone();
+                if let Some(folder) = &folder { capture(&mut demo, folder, &format!("hover-{name}-{width}")); }
+                demo.ui.set_focus(Some(demo.ids.chart)); assert!(demo.ui.key_input(UiKey::Right)); demo.ui.sync(&mut demo.scene);
+                let changed = demo.scene.iter_paint_order().into_iter().rev().find(|n| n.visible && n.mask.is_some() && n.fill == style.fg).unwrap().mask.as_ref().unwrap().clone();
+                assert_ne!(labels.pixels, changed.pixels, "Navigation must refresh the stationary pointer's coordinates");
+                assert!(std::sync::Arc::ptr_eq(&source, &demo.ui.chart_plot(demo.ids.chart, 0).unwrap().series[0].points));
+                assert!(demo.ui.chart_plot(demo.ids.chart, 0).unwrap().state.selected_rows.is_empty());
+                assert!(demo.ui.pointer_left()); demo.ui.sync(&mut demo.scene);
+                assert!(!demo.scene.get(panel_id).unwrap().visible);
+                demo.ui.pointer_moved(x, y); demo.ui.sync(&mut demo.scene);
+                assert!(demo.handle_plot_context_key(crate::KeyCode::Function(10), crate::Modifiers { shift: true, ..crate::Modifiers::default() }));
+                demo.ui.sync(&mut demo.scene);
+                assert!(!demo.scene.get(panel_id).unwrap().visible, "Context actions hide the hover overlay");
+                demo.ui.key_input(UiKey::Escape); demo.ui.pointer_left(); demo.ui.sync(&mut demo.scene);
+            }
+        }
+        assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM quarterly_revenue", [], |row| row.get::<_, i64>(0)).unwrap(), 18);
+    }
+
+    #[test]
     fn grouped_and_stacked_plot_menu_keeps_view_source_and_project_settings() {
         use next_gui_ui::UiKey;
         let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);
