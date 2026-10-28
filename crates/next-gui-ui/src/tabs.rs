@@ -94,6 +94,12 @@ impl Ui {
                 }
             })
             .collect();
+        let strip_y = bounds.y
+            + if style.strip_at_bottom {
+                (bounds.height - style.strip_height).max(0.0)
+            } else {
+                0.0
+            };
         let overflow = style.scrollable && widths.iter().sum::<f32>() > bounds.width;
         let button = if overflow {
             style.strip_height.min(bounds.width * 0.25).max(0.0)
@@ -102,7 +108,7 @@ impl Ui {
         };
         let viewport = Rect::new(
             bounds.x,
-            bounds.y,
+            strip_y,
             (bounds.width - 2.0 * button).max(0.0),
             style.strip_height,
         );
@@ -116,7 +122,7 @@ impl Ui {
         let tabs = widths
             .into_iter()
             .map(|width| {
-                let rect = Rect::new(x, bounds.y, width, style.strip_height);
+                let rect = Rect::new(x, strip_y, width, style.strip_height);
                 x += width;
                 rect
             })
@@ -125,13 +131,13 @@ impl Ui {
             [
                 Rect::new(
                     bounds.x + viewport.width,
-                    bounds.y,
+                    strip_y,
                     button,
                     style.strip_height,
                 ),
                 Rect::new(
                     bounds.x + viewport.width + button,
-                    bounds.y,
+                    strip_y,
                     button,
                     style.strip_height,
                 ),
@@ -147,7 +153,7 @@ impl Ui {
 
     pub(super) fn pointer_tabs(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
         let Some(Widget {
-            kind: Kind::Tabs { style, strip, .. },
+            kind: Kind::Tabs { strip, .. },
             node,
             ..
         }) = self.widgets.get(&id)
@@ -160,13 +166,13 @@ impl Ui {
         if !x.is_finite() || !y.is_finite() || !bounds.contains(x, y) {
             return false;
         }
-        if y >= bounds.y + style.strip_height {
-            return true;
-        }
         let offset = strip.offset;
         let Some(geometry) = self.tab_strip_geometry(id, bounds) else {
             return false;
         };
+        if y < geometry.viewport.y || y >= geometry.viewport.y + geometry.viewport.height {
+            return true;
+        }
         if let Some(arrows) = geometry.arrows {
             for (direction, arrow) in arrows.iter().enumerate() {
                 if arrow.contains(x, y) {
@@ -284,7 +290,7 @@ impl Ui {
                 lab,
                 Rect::new(
                     tab.x + 10.0,
-                    bounds.y + ((style.strip_height - mask.height as f32) * 0.5).max(0.0),
+                    tab.y + ((style.strip_height - mask.height as f32) * 0.5).max(0.0),
                     mask.width as f32,
                     mask.height as f32,
                 ),
@@ -347,6 +353,84 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottom_strips_place_pages_above_labels_and_route_only_strip_pointer_input() {
+        for bottom in [false, true] {
+            let (mut ui, mut scene, tabs) = example(
+                220.0,
+                true,
+                &[
+                    "Edit Database Cell",
+                    "SQL Log",
+                    "Plot",
+                    "DB Schema",
+                    "Remote",
+                ],
+            );
+            let Kind::Tabs { style, .. } = &mut ui.widgets.get_mut(&tabs).unwrap().kind else {
+                unreachable!()
+            };
+            style.strip_at_bottom = bottom;
+            ui.sync(&mut scene);
+            let bounds = scene.get(ui.widgets[&tabs].node.unwrap()).unwrap().bounds;
+            let strip = geometry(&ui, &scene, tabs);
+            assert_eq!(
+                strip.viewport.y,
+                if bottom {
+                    bounds.y + bounds.height - 32.0
+                } else {
+                    bounds.y
+                }
+            );
+            let Kind::Tabs { children, .. } = &ui.widgets[&tabs].kind else {
+                unreachable!()
+            };
+            let page = scene
+                .get(ui.widgets[&children[0]].node.unwrap())
+                .unwrap()
+                .bounds;
+            assert_eq!(page.y, if bottom { bounds.y } else { bounds.y + 32.0 });
+            assert!(
+                page.y + page.height
+                    <= if bottom {
+                        strip.viewport.y
+                    } else {
+                        bounds.y + bounds.height
+                    }
+            );
+            let content_y = if bottom {
+                bounds.y + 4.0
+            } else {
+                bounds.y + 36.0
+            };
+            assert!(ui.pointer_tabs(&scene, tabs, bounds.x + 170.0, content_y));
+            assert_eq!(ui.tabs_selected(tabs), Some(0));
+            click_arrow(&mut ui, &mut scene, tabs, 1);
+            assert!(ui.key_input(UiKey::End));
+            ui.sync(&mut scene);
+            assert_eq!(ui.tabs_selected(tabs), Some(4));
+            let geometry = geometry(&ui, &scene, tabs);
+            let tab = geometry.tabs[4].intersect(&geometry.viewport);
+            assert!(!tab.is_empty());
+            assert!(ui.pointer_pressed(
+                &mut scene,
+                tab.x + tab.width * 0.5,
+                tab.y + tab.height * 0.5
+            ));
+            ui.pointer_released();
+            assert_eq!(ui.tabs_selected(tabs), Some(4));
+            let aux = &ui.widgets[&tabs].aux;
+            let label = scene.get(aux[9]).unwrap();
+            assert!(
+                label.visible
+                    && label.bounds.y >= geometry.viewport.y
+                    && label.bounds.y + label.bounds.height <= geometry.viewport.y + 32.0
+            );
+            let session = ui.tabs_state(tabs).unwrap();
+            assert!(ui.restore_tabs_state(tabs, &session));
+        }
+    }
 
     fn example(width: f32, scrollable: bool, titles: &[&str]) -> (Ui, Scene, WidgetId) {
         let mut ui = Ui::new();

@@ -146,3 +146,5 @@ buttons when needed. The default is `false` and retains equal-width tabs.
 Arrow buttons scroll without switching pages; keyboard selection reveals the
 chosen title. Rust builders use `TabsStyle::scrollable`; rebuilds can retain
 manual strip scrolling with `Ui::tabs_state` / `Ui::restore_tabs_state`.
+`strip_at_bottom: true` (Rust: `TabsStyle::strip_at_bottom`) places the same strip
+below the page, including overflow arrows and keyboard selection; its default is `false`.

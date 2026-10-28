@@ -944,6 +944,8 @@ pub struct TabsStyle {
     pub strip_height: f32,
     /// Use content-width tabs and scroll arrows when the strip overflows.
     pub scrollable: bool,
+    /// Place the strip below its content, as in a dock tab group.
+    pub strip_at_bottom: bool,
     /// Content padding.
     pub padding: f32,
     /// Gap between content children.
@@ -971,6 +973,7 @@ impl Default for TabsStyle {
             height: 240.0,
             strip_height: 32.0,
             scrollable: false,
+            strip_at_bottom: false,
             padding: 10.0,
             gap: 8.0,
             cross_align: CrossAlign::Start,
@@ -10857,13 +10860,14 @@ impl Ui {
             scene.set_visible(node, true);
         }
         if let Some(chrome) = chrome {
-            scene.set_bounds(chrome, Rect::new(ox, oy, w, style.strip_height));
+            let strip_y=oy+if style.strip_at_bottom {(h-style.strip_height).max(0.0)}else{0.0};
+            scene.set_bounds(chrome, Rect::new(ox, strip_y, w, style.strip_height));
             scene.set_fill(chrome, style.strip_bg);
             scene.set_mask(chrome, None);
             scene.set_visible(chrome, true);
         }
 
-        let content_y = oy + style.strip_height;
+        let content_y = oy + if style.strip_at_bottom {0.0}else{style.strip_height};
         let content_h = (h - style.strip_height).max(0.0);
         for (i, child_id) in children.iter().copied().enumerate() {
             if i == selected {

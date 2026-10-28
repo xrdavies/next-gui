@@ -170,16 +170,19 @@ Column {
     }
 
     #[test]
-    fn tabs_scrollable_property_uses_boolean_validation() {
+    fn tabs_strip_properties_use_boolean_validation() {
         for (flag, expected) in [("true", true), ("false", false)] {
-            let src = format!("Column {{ Tabs @tabs {{ scrollable: {flag} Tab(\"One\") {{ Text(\"p1\") }} }} }}");
+            let src = format!("Column {{ Tabs @tabs {{ scrollable: {flag} strip_at_bottom: {flag} Tab(\"One\") {{ Text(\"p1\") }} }} }}");
             let loaded = load_ngui(&src).unwrap();
             let id = loaded.widget("tabs").unwrap();
             let crate::Kind::Tabs { style, .. } = &loaded.ui.widgets[&id].kind else { panic!("expected Tabs"); };
             assert_eq!(style.scrollable, expected);
+            assert_eq!(style.strip_at_bottom, expected);
         }
         let error = load_ngui("Column { Tabs { scrollable: \"yes\" } }").unwrap_err();
         assert!(error.message.contains("scrollable: expected bool"));
+        let error = load_ngui("Column { Tabs { strip_at_bottom: \"yes\" } }").unwrap_err();
+        assert!(error.message.contains("strip_at_bottom: expected bool"));
     }
 
     #[test]

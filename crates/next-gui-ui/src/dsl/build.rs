@@ -823,6 +823,9 @@ fn build_widget(
             if let Some(v) = take_prop(&w.props, "scrollable") {
                 style.scrollable = as_bool(v, "scrollable").map_err(|m| err_at(w.line, w.column, m))?;
             }
+            if let Some(v) = take_prop(&w.props, "strip_at_bottom") {
+                style.strip_at_bottom = as_bool(v, "strip_at_bottom").map_err(|m| err_at(w.line, w.column, m))?;
+            }
             if let Some(v) = take_prop(&w.props, "width") {
                 style.width = as_f32(v, "width").map_err(|m| err_at(w.line, w.column, m))?;
             }

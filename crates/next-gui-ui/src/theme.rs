@@ -903,6 +903,7 @@ impl TabsStyle {
             height: 240.0,
             strip_height: scale(32.0, s),
             scrollable: false,
+            strip_at_bottom: false,
             padding: scale(theme.spacing.padding_md, s),
             gap: scale(theme.spacing.gap_md, s),
             cross_align: CrossAlign::Start,
