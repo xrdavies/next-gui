@@ -1,0 +1,89 @@
+{
+  "reviewed_commit": "532eb13e354050a219b2155934280e6d72ef8c99",
+  "tests": 707,
+  "test_groups": 43,
+  "checks": {
+    "clippy": {
+      "exit": 0,
+      "log": "/tmp/next-gui-sql-cell-v4-clippy-final.log"
+    },
+    "workspace": {
+      "exit": 0,
+      "log": "/tmp/next-gui-sql-cell-v4-workspace-final.log"
+    },
+    "build": {
+      "exit": 0,
+      "log": "/tmp/next-gui-sql-cell-v4-build-final.log"
+    },
+    "macos": {
+      "exit": 0,
+      "log": "/tmp/next-gui-sql-cell-v4-macos-final.log"
+    },
+    "windows": {
+      "exit": 0,
+      "log": "/tmp/next-gui-sql-cell-v4-windows-final.log"
+    }
+  },
+  "final_fixture_focused_exit": 0,
+  "final_fixture_strict_clippy_exit": 0,
+  "whole_frame_comparisons": {
+    "sql-cell-dark-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "sql-cell-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "sql-cell-light-1400": {
+      "width": 1400,
+      "height": 1000,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "sql-cell-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "native_windows": {
+    "dark-sql-results-end": 0,
+    "dark-sql-results-end-narrow": 0,
+    "light-sql-results-end": 0,
+    "light-sql-results-end-narrow": 0
+  },
+  "native_keyboard": {
+    "backspace_cell_region_changed_channels": 0,
+    "end_cell_changed_channels": 0,
+    "height": 678,
+    "home_cell_changed_channels": 952,
+    "plot_region_changed_channels": 0,
+    "width": 846
+  },
+  "native_keyboard_owner": {
+    "pid": 98860,
+    "window": 6123,
+    "previous": 608
+  },
+  "source_sha256": {
+    "examples/28_db_browser/src/main.rs": "8251cc5e0153be83d0ae1ade1bc9629069ccc2d8c979d5faa506b625ee799b18",
+    "examples/28_db_browser/src/sql_result_tests.rs": "990707d047c46eb51d71311c713249c2f8282585dd44364d3b772c8a6e949c1d",
+    "examples/28_db_browser/src/state.rs": "2b2063dc26f5de3de1313966ff0f143ea8df6fd0eba4bbaba2fad2541911a6ae",
+    "examples/28_db_browser/src/ui_build.rs": "e2cc703a176e50df68dc552c8163f0e2c0483ed3e62d57b34b7f278c916e8630"
+  },
+  "binary_sha256": "31a014a24634dd96e5346bd3f23c179e7c5e55548c54b8d5a0bc1bfb13616e74",
+  "original_MainWindow_cpp_git_blob": "bedda4e10128149d4fba9b2104efcc23795b9cec",
+  "asset_sha256": {
+    "soft-contact.png": "2e95b0ea3d5f07dc4d3691521f1edbf74ab2ae269bface3280895b09a57f0935",
+    "metal-contact.png": "f9875242a69f9e434e20393f286dd42ca6618f0415c0e0e2bb8d7f35da0b9716",
+    "native-contact.png": "e762d194212c379ccbb2d38510e458cb9bbc0727d37c83d5dc5c91e679cdb0ea",
+    "native-light-narrow.png": "1876f42d0cb4d820383abd40a107d75874ba90da1da7aba13e3b98f64b081ea5",
+    "native-keyboard-contact.png": "b3ca2808672e46f4e7c4ec03020604a27ff122a70b16250788246d77739793f5"
+  }
+}
