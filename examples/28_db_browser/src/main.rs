@@ -4,6 +4,7 @@
 //! `NEXT_GUI_DB_BROWSER_QA=1` dumps a PPM after first paint then exits.
 
 mod db;
+mod csv_encoding;
 mod cell_clipboard;
 mod cell_snapshot;
 mod file_dlg;
@@ -368,6 +369,8 @@ struct BuiltUiIds {
     ov_csv_header: WidgetId,
     ov_csv_delim: WidgetId,
     ov_csv_quote: WidgetId,
+    ov_csv_encoding: WidgetId,
+    ov_csv_custom_encoding: WidgetId,
     ov_csv_paste: WidgetId,
     ov_attach_path: WidgetId,
     ov_attach_schema: WidgetId,
@@ -589,6 +592,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_csv_header: b.ov_csv_header,
             ov_csv_delim: b.ov_csv_delim,
             ov_csv_quote: b.ov_csv_quote,
+            ov_csv_encoding: b.ov_csv_encoding,
+            ov_csv_custom_encoding: b.ov_csv_custom_encoding,
             ov_csv_paste: b.ov_csv_paste,
             ov_attach_path: b.ov_attach_path,
             ov_attach_schema: b.ov_attach_schema,
@@ -804,6 +809,9 @@ impl Demo {
                     if tab.contains("-views") {state.wizard_cols[1].name="label".into();state.sync_table_constraint_names().unwrap();}
                     if tab.ends_with("-saved") {state.apply_table_wizard().unwrap();}
                     if tab=="table-move-views-saved" {state.switch_browse_table_in("analytics","visible").unwrap();MainTab::Browse}else{MainTab::Structure}
+                }
+                "csv-encoding" | "csv-encoding-other" => {
+                    state.new_memory_db().unwrap();state.csv_path="customers.csv".into();state.csv_table="customers".into();state.csv_encoding_idx=if tab.ends_with("-other") {3} else {2};state.csv_custom_encoding="Shift_JIS".into();state.overlay=Some(OverlayKind::ImportCsv);MainTab::Structure
                 }
                 "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-type-dropdown" | "table-field-collation-dropdown" | "table-field-strict-dropdown" | "table-field-reference-editor" | "table-field-reference-empty" | "table-field-check-editor" | "table-field-remove-confirm" | "table-advanced" => {
                     state.new_memory_db().unwrap();
@@ -1542,6 +1550,10 @@ impl Demo {
                         self.state.csv_quote_idx = i;
                     }
                 }
+                if let Some(index)=self.ui.select_selected(self.ids.ov_csv_encoding) {
+                    if index!=self.state.csv_encoding_idx {self.state.csv_encoding_idx=index;self.rebuild=true;}
+                }
+                if let Some(value)=self.ui.autocomplete_value(self.ids.ov_csv_custom_encoding) {self.state.csv_custom_encoding=value.into();}
                 if kind == OverlayKind::PasteCsv && self.ids.ov_csv_paste.0 != 0 {
                     if let Some(v) = self.ui.text_area_value(self.ids.ov_csv_paste) {
                         self.state.csv_paste = v.to_string();
@@ -2319,7 +2331,7 @@ impl Demo {
             && self.ui.text_input_value(self.ids.ov_name)==Some(self.state.wizard_table_name.as_str());
         let constraint_editor_focused=self.state.wizard_constraint_edit.is_some() && self.ids.ov_constraint_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_constraint_editor);
         let field_editor_focused=self.state.wizard_field_edit.is_some() && self.ids.ov_field_editor.0!=0 && self.ui.focused()==Some(self.ids.ov_field_editor);
-        let cell_select_session=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent].into_iter().enumerate().find_map(|(index,id)|
+        let cell_select_session=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent,self.ids.ov_csv_encoding].into_iter().enumerate().find_map(|(index,id)|
             (id.0!=0 && self.ui.focused()==Some(id)).then(||self.ui.select_state(id).map(|session|(index,session))).flatten());
         let fields_focused = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.focused()==Some(self.ids.ov_fields_table);
         let reveal_field = self.state.overlay==Some(OverlayKind::EditTable) && self.ui.table_selected_row(self.ids.ov_fields_table)!=Some(self.state.wizard_col_sel);
@@ -2357,6 +2369,9 @@ impl Demo {
             let area = [self.ids.ov_check, self.ids.ov_foreign_key, self.ids.ov_generated][index];
             self.state.wizard_column_edit_states[self.state.wizard_col_sel][index] = self.ui.text_area_state(area);
         }
+        let csv_encoding_session=(self.state.overlay==Some(OverlayKind::ImportCsv) && self.ids.ov_csv_custom_encoding.0!=0
+            && self.ui.focused()==Some(self.ids.ov_csv_custom_encoding) && self.ui.autocomplete_value(self.ids.ov_csv_custom_encoding)==Some(self.state.csv_custom_encoding.as_str()))
+            .then(||self.ui.autocomplete_state(self.ids.ov_csv_custom_encoding)).flatten();
         let collation_session = (self.state.overlay == Some(OverlayKind::EditTable)
             && self.ui.focused() == Some(self.ids.ov_collation)
             && self.ui.text_input_value(self.ids.ov_col_name) == self.state.wizard_cols.get(self.state.wizard_col_sel).map(|col| col.name.as_str())
@@ -2407,7 +2422,7 @@ impl Demo {
         if constraint_editor_focused && self.ids.ov_constraint_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_constraint_editor));self.ui.sync(&mut self.scene);}
         if field_editor_focused && self.ids.ov_field_editor.0!=0 {self.ui.set_focus(Some(self.ids.ov_field_editor));self.ui.sync(&mut self.scene);}
         if let Some((index,session))=cell_select_session {
-            let id=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent][index];
+            let id=[self.ids.ov_field_editor,self.ids.ov_constraint_editor,self.ids.reference_editor.parent,self.ids.ov_csv_encoding][index];
             if self.ui.restore_select_state(id,&session) {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if table_tabs_focused { self.ui.set_focus(Some(self.ids.ov_table_tabs)); self.ui.sync(&mut self.scene); }
@@ -2448,6 +2463,9 @@ impl Demo {
             }
             sql_syntax::apply(&mut self.ui, area, &self.theme);
             self.ui.sync(&mut self.scene);
+        }
+        if let Some(session)=csv_encoding_session {
+            if self.ui.set_autocomplete_state(self.ids.ov_csv_custom_encoding,&session) {self.ui.set_focus(Some(self.ids.ov_csv_custom_encoding));self.ui.sync(&mut self.scene);}
         }
         if let Some(session) = collation_session {
             if self.ui.set_autocomplete_state(self.ids.ov_collation, &session) {
@@ -8188,6 +8206,32 @@ mod interaction_tests {
             let conn=demo.state.conn.as_ref().unwrap();assert!(conn.execute("UPDATE analytics.records SET a='blocked'",[]).is_err());conn.execute("UPDATE analytics.records SET a='x' WHERE id=7",[]).unwrap();
             assert_eq!(conn.query_row("SELECT value FROM analytics.audit",[],|row|row.get::<_,String>(0)).unwrap(),"x");
             conn.execute("INSERT INTO analytics.records(a,b) VALUES('third','south')",[]).unwrap();assert_eq!(conn.last_insert_rowid(),12);assert_eq!(conn.query_row("SELECT untouched FROM main.records",[],|row|row.get::<_,i64>(0)).unwrap(),42);
+        }
+    }
+
+    #[test]
+    fn csv_encoding_controls_keep_sessions_repair_errors_and_import_file_and_clipboard_text() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            for (width,height) in [(1400,1000),(800,600)] {
+                let dir=tempfile::tempdir().unwrap();let path=dir.path().join("customers.csv");std::fs::write(&path,b"value,note\r\ncaf\xe9,\x80\r\n").unwrap();
+                let mut demo=Demo::new(width,height,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();demo.state.csv_path=path.display().to_string();demo.state.csv_table="imported".into();demo.state.overlay=Some(OverlayKind::ImportCsv);demo.do_rebuild();
+                let finish=|demo:&mut Demo|{demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}demo.ui.sync(&mut demo.scene);};
+                let capture=|demo:&mut Demo,phase| {
+                    if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_CSV_ENCODING_QA_OUT") {
+                        let (width,height)=(demo.win_w,demo.win_h);demo.scene.mark_full_dirty(width as f32,height as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(width,height,clear);soft.render(&commands,&dirty);write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
+                        if let Ok(mut gpu)=GpuRenderer::try_new(width,height,clear) {gpu.render(&commands,&dirty);let a=soft.frame_pixels().unwrap().0;let b=gpu.frame_pixels().unwrap().0;write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}-metal.ppm"),b,width,height).unwrap();let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}/{width}/{phase}: {delta}");eprintln!("CSV encoding {theme_name}/{width}/{phase}: Soft/Metal delta {delta}");}else{eprintln!("CSV encoding GPU comparison not_run: adapter unavailable");}
+                    }
+                };
+                demo.ui.set_focus(Some(demo.ids.ov_csv_encoding));assert!(demo.ui.key_input(UiKey::Space));
+                for _ in 0..2 {assert!(demo.ui.key_input(UiKey::Down));finish(&mut demo);assert!(demo.ui.has_open_popup());assert_eq!(demo.ui.focused(),Some(demo.ids.ov_csv_encoding));}
+                assert_eq!(demo.state.csv_options().encoding,"ISO-8859-1");capture(&mut demo,"encoding");
+                assert!(demo.ui.key_input(UiKey::Down));finish(&mut demo);assert_eq!(demo.state.csv_encoding_idx,3);assert!(demo.ids.ov_csv_custom_encoding.0!=0);demo.ui.key_input(UiKey::Enter);finish(&mut demo);
+                demo.ui.set_focus(Some(demo.ids.ov_csv_custom_encoding));demo.ui.key_input(UiKey::SelectAll);assert!(demo.ui.paste_into_focused_text("windows-1252"));finish(&mut demo);assert_eq!(demo.state.csv_options().encoding,"windows-1252");capture(&mut demo,"custom");
+                demo.win_w=if width==800 {1400} else {800};demo.win_h=if height==600 {1000} else {600};demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.ov_csv_custom_encoding));assert!(demo.ui.has_open_popup());assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_csv_custom_encoding),Some("windows-1252"));
+                demo.ui.close_popup();demo.ui.set_autocomplete_value(demo.ids.ov_csv_custom_encoding,"bad-codec");finish(&mut demo);demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.as_deref().unwrap().contains("Unsupported CSV encoding"));assert_eq!(demo.state.overlay,Some(OverlayKind::ImportCsv));assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+                demo.clear_error();demo.do_rebuild();demo.ui.set_autocomplete_value(demo.ids.ov_csv_custom_encoding,"windows-1252");finish(&mut demo);demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT value||note FROM imported",[],|r|r.get::<_,String>(0)).unwrap(),"café€");
+                demo.state.overlay=Some(OverlayKind::PasteCsv);demo.state.csv_table="clipboard".into();demo.state.csv_custom_encoding="bad-codec".into();demo.state.csv_paste="value\n日本\n".into();demo.do_rebuild();assert_eq!(demo.ids.ov_csv_encoding.0,0);assert_eq!(demo.ids.ov_csv_custom_encoding.0,0);demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM clipboard",[],|r|r.get::<_,String>(0)).unwrap(),"日本");
+            }
         }
     }
 

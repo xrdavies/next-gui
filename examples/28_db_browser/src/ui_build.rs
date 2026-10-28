@@ -247,6 +247,8 @@ pub struct BuiltUi {
     pub ov_csv_header: WidgetId,
     pub ov_csv_delim: WidgetId,
     pub ov_csv_quote: WidgetId,
+    pub ov_csv_encoding: WidgetId,
+    pub ov_csv_custom_encoding: WidgetId,
     pub ov_csv_paste: WidgetId,
     pub ov_attach_path: WidgetId,
     pub ov_attach_schema: WidgetId,
@@ -636,6 +638,8 @@ pub fn build_ui(
     let mut ov_csv_header = z;
     let mut ov_csv_delim = z;
     let mut ov_csv_quote = z;
+    let mut ov_csv_encoding = z;
+    let mut ov_csv_custom_encoding = z;
     let mut ov_csv_paste = z;
     let mut ov_attach_path = z;
     let mut ov_attach_schema = z;
@@ -1302,7 +1306,17 @@ pub fn build_ui(
                                     type_sel,
                                 );
                             });
-                            c.text("Encoding: UTF-8");
+                            if kind==OverlayKind::ImportCsv {
+                                c.row(row,|r| {
+                                    r.text("Encoding");
+                                    ov_csv_encoding=r.select(["UTF-8","UTF-16","ISO-8859-1","Other"],Some(state.csv_encoding_idx),"Encoding",type_sel);
+                                    if state.csv_encoding_idx==3 {
+                                        let mut custom=next_gui_ui::AutocompleteStyle::from_theme(&theme);custom.width=260.0;
+                                        ov_csv_custom_encoding=r.autocomplete_placeholder(crate::csv_encoding::NAMES.iter().copied(),&state.csv_custom_encoding,"e.g. Shift_JIS",custom);
+                                    }
+                                });
+                                c.text("Unicode byte order marks are detected automatically.");
+                            } else {c.text("Clipboard text is Unicode.");}
                         }
                         OverlayKind::FindReplace => {
                             let mut scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
@@ -2190,6 +2204,8 @@ pub fn build_ui(
         status = bar.text_styled(status_text(state), status_fg, 12.0);
     });
 
+    if ov_csv_encoding.0!=0 {ui.set_accessible_name(ov_csv_encoding,"CSV file encoding");}
+    if ov_csv_custom_encoding.0!=0 {ui.set_accessible_name(ov_csv_custom_encoding,"Custom CSV encoding");}
     if ov_cipher_pass.0 != 0 {
         ui.set_text_input_secret(ov_cipher_pass, true);
     }
@@ -2688,6 +2704,8 @@ pub fn build_ui(
         ov_csv_header,
         ov_csv_delim,
         ov_csv_quote,
+        ov_csv_encoding,
+        ov_csv_custom_encoding,
         ov_csv_paste,
         ov_attach_path,
         ov_attach_schema,

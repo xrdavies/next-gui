@@ -985,6 +985,7 @@ fn csv_escape(s: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct CsvImportOptions {
+    pub encoding: String,
     pub has_header: bool,
     pub delimiter: char,
     pub quote: Option<char>,
@@ -993,6 +994,7 @@ pub struct CsvImportOptions {
 impl Default for CsvImportOptions {
     fn default() -> Self {
         Self {
+            encoding: "UTF-8".into(),
             has_header: true,
             delimiter: ',',
             quote: Some('"'),
@@ -1011,35 +1013,8 @@ pub fn import_csv_parse_opts(
     opts: &CsvImportOptions,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let raw = fs::read(path).map_err(|e| e.to_string())?;
-    let text = decode_csv_bytes(&raw)?;
+    let text = crate::csv_encoding::decode(&raw,&opts.encoding)?;
     import_csv_from_text(&text, opts)
-}
-
-fn decode_csv_bytes(raw: &[u8]) -> Result<String, String> {
-    if raw.starts_with(&[0xff, 0xfe, 0, 0]) || raw.starts_with(&[0, 0, 0xfe, 0xff]) {
-        return Err("CSV UTF-32 is not supported; convert to UTF-8 or UTF-16".into());
-    }
-    if raw.starts_with(&[0xff, 0xfe]) {
-        let units = raw[2..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        if raw[2..].len() % 2 != 0 {
-            return Err("CSV UTF-16LE has an incomplete code unit".into());
-        }
-        return String::from_utf16(&units).map_err(|e| format!("CSV UTF-16LE is invalid: {e}"));
-    }
-    if raw.starts_with(&[0xfe, 0xff]) {
-        let units = raw[2..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        if raw[2..].len() % 2 != 0 {
-            return Err("CSV UTF-16BE has an incomplete code unit".into());
-        }
-        return String::from_utf16(&units).map_err(|e| format!("CSV UTF-16BE is invalid: {e}"));
-    }
-    String::from_utf8(raw.to_vec()).map_err(|e| format!("CSV must be UTF-8 or UTF-16 with BOM: {e}"))
 }
 
 /// Parse CSV text (clipboard / file contents).
@@ -2573,15 +2548,15 @@ mod tests {
     }
 
     #[test]
-    fn csv_decoder_rejects_incomplete_and_invalid_utf16_and_utf32_boms() {
+    fn csv_decoder_rejects_invalid_utf16_and_accepts_utf32_boms() {
         for raw in [vec![0xff,0xfe,0], vec![0xfe,0xff,0], vec![0xff,0xfe,0,0xd8], vec![0xfe,0xff,0xd8,0]] {
-            assert!(decode_csv_bytes(&raw).is_err(), "{raw:?}");
+            assert!(crate::csv_encoding::decode(&raw,"UTF-8").is_err(), "{raw:?}");
         }
         for raw in [vec![0xff,0xfe,0,0,65,0,0,0], vec![0,0,0xfe,0xff,0,0,0,65]] {
-            assert!(decode_csv_bytes(&raw).unwrap_err().contains("UTF-32"));
+            assert_eq!(crate::csv_encoding::decode(&raw,"UTF-8").unwrap(),"A");
         }
-        assert_eq!(decode_csv_bytes(&[0xff,0xfe,0x3d,0xd8,0,0xde]).unwrap(), "😀");
-        assert_eq!(decode_csv_bytes(&[0xfe,0xff,0xd8,0x3d,0xde,0]).unwrap(), "😀");
+        assert_eq!(crate::csv_encoding::decode(&[0xff,0xfe,0x3d,0xd8,0,0xde],"UTF-8").unwrap(), "😀");
+        assert_eq!(crate::csv_encoding::decode(&[0xfe,0xff,0xd8,0x3d,0xde,0],"UTF-8").unwrap(), "😀");
     }
 
     #[test]

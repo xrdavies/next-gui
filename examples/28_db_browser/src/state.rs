@@ -489,6 +489,8 @@ pub struct AppState {
     pub csv_has_header: bool,
     pub csv_delim_idx: usize, // 0=, 1=; 2=tab 3=|
     pub csv_quote_idx: usize, // 0=" 1=' 2=none
+    pub csv_encoding_idx: usize,
+    pub csv_custom_encoding: String,
     pub csv_paste: String,
 
     // Attach
@@ -806,6 +808,8 @@ impl AppState {
             csv_has_header: true,
             csv_delim_idx: 0,
             csv_quote_idx: 0,
+            csv_encoding_idx: 0,
+            csv_custom_encoding: String::new(),
             csv_paste: String::new(),
             attach_path: String::new(),
             attach_schema: "other".into(),
@@ -2193,6 +2197,7 @@ impl AppState {
             _ => Some('"'),
         };
         CsvImportOptions {
+            encoding: match self.csv_encoding_idx {1=>"UTF-16",2=>"ISO-8859-1",3=>self.csv_custom_encoding.trim(),_=>"UTF-8"}.into(),
             has_header: self.csv_has_header,
             delimiter,
             quote,
@@ -3227,7 +3232,7 @@ impl AppState {
     /// Paste quoted TSV; one source cell fills the selected rectangle.
     pub fn paste_browse_tsv(&mut self, text: &str) -> Result<(), String> {
         let (_, rows) = db::import_csv_from_text(text, &CsvImportOptions {
-            has_header: false, delimiter: '\t', quote: Some('"'),
+            encoding: "UTF-8".into(), has_header: false, delimiter: '\t', quote: Some('"'),
         })?;
         self.paste_browse_cells(rows.into_iter().map(|row|
             row.into_iter().map(|s| db::CellValue::Text(s.into_bytes())).collect()
@@ -4821,6 +4826,31 @@ mod chart_default_tests {
         state.close_db();
         assert_eq!(state.chart_schema, "main");
         assert!(state.chart_table.is_none());
+    }
+
+    #[test]
+    fn csv_encoding_imports_real_files_and_preserves_pending_changes_on_decode_failure() {
+        let mut cases=vec![("UTF-8",b"value\r\nna\xc3\xafve\r\n".to_vec(),"naïve"),("ISO-8859-1",b"value\r\ncaf\xe9\r\n".to_vec(),"café"),("windows-1252",b"value\n\x80\n".to_vec(),"€"),("Shift_JIS",b"value\n\x93\xfa\x96\x7b\n".to_vec(),"日本"),("GBK",b"value\n\xd6\xd0\xce\xc4\n".to_vec(),"中文"),("windows-1251",b"value\n\xcf\xf0\xe8\xe2\xe5\xf2\n".to_vec(),"Привет")];
+        let text="value\r\n😀\r\n";
+        for (label,little,wide) in [("UTF-16",true,false),("UTF-16BE",false,false),("UTF-32LE",true,true),("UTF-32BE",false,true)] {
+            let mut raw=Vec::new();if wide {for ch in text.chars() {raw.extend(if little {(ch as u32).to_le_bytes()} else {(ch as u32).to_be_bytes()});}}
+            else {for unit in text.encode_utf16() {raw.extend(if little {unit.to_le_bytes()} else {unit.to_be_bytes()});}}
+            cases.push((label,raw,"😀"));
+        }
+        for (label,raw,value) in cases {
+            let dir=tempfile::tempdir().unwrap();let path=dir.path().join("encoded.csv");std::fs::write(&path,&raw).unwrap();
+            let mut state=test_state();state.conn.as_ref().unwrap().execute("INSERT INTO t VALUES('pending')",[]).unwrap();state.mark_dirty();
+            state.csv_path=path.display().to_string();state.csv_table="imported".into();state.overlay=Some(OverlayKind::ImportCsv);state.csv_encoding_idx=3;state.csv_custom_encoding="unknown-codec".into();
+            assert!(state.apply_csv_import().unwrap_err().contains("Unsupported CSV encoding"));assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert!(state.dirty);
+            let conn=state.conn.as_ref().unwrap();assert!(!conn.is_autocommit());assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|r|r.get::<_,i64>(0)).unwrap(),2);assert_eq!(conn.query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+            std::fs::write(&path,[0xff]).unwrap();state.csv_encoding_idx=0;
+            assert!(state.apply_csv_import().unwrap_err().contains("invalid or incomplete"));assert_eq!(state.overlay,Some(OverlayKind::ImportCsv));assert!(state.dirty);
+            let conn=state.conn.as_ref().unwrap();assert!(!conn.is_autocommit());assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|r|r.get::<_,i64>(0)).unwrap(),2);assert_eq!(conn.query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+            std::fs::write(&path,&raw).unwrap();
+            state.csv_encoding_idx=match label {"UTF-8"=>0,"UTF-16"=>1,"ISO-8859-1"=>2,_=>3};state.csv_custom_encoding=label.into();state.apply_csv_import().unwrap();
+            let conn=state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT value FROM main.imported",[],|r|r.get::<_,String>(0)).unwrap(),value,"{label}");assert!(!conn.is_autocommit());assert!(state.dirty);assert!(state.overlay.is_none());
+            conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row("SELECT count(*) FROM t",[],|r|r.get::<_,i64>(0)).unwrap(),1);assert_eq!(conn.query_row("SELECT count(*) FROM sqlite_schema WHERE name='imported'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        }
     }
 
     #[test]
