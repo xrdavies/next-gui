@@ -54,6 +54,14 @@ export the complete captured result without executing SQL again; raw typed
 snapshots retain BLOB/text distinctions, invalid UTF-8 and non-finite numbers
 until conversion to the chosen output format.
 
+Edit Pragmas exposes all18 original fields plus Cache Size and Busy Timeout.
+Boolean switches and named choices share value validation; Secure Delete retains
+Fast mode. Page Size/Auto Vacuum changes run VACUUM and refresh cached row IDs.
+Existing database edits require a default-Cancel Save and Apply confirmation;
+all values validate before any commit. Settings are read back from SQLite,
+including inferred LIKE behavior, with failed/partially applied settings reported.
+The form keeps focused editing/Undo, dropdown sessions and scrolling on rebuild.
+
 Native file pickers use `rfd`. Cancel means no operation.
 
 Save As uses a live SQLite backup (including WAL), commits pending edits and requires a new destination. It rejects cell drafts and clears disconnected temp/attached browse results when the connection changes. SQL dumps export all rows with their original SQLite types. File CSV/JSON commands export all selected tables/views; SQL result exports include every captured row beyond the 500-row display preview. Use SQL dumps for a type-preserving round trip.

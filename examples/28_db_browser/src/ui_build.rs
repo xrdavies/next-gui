@@ -91,6 +91,7 @@ pub struct BuiltUi {
     pub structure_splitter: WidgetId,
     pub shell_scroll: WidgetId,
     pub page_scroll: WidgetId,
+    pub pragma_scroll: WidgetId,
     pub dock_scroll: WidgetId,
     pub scene: Scene,
     pub menu_file: WidgetId,
@@ -726,6 +727,7 @@ pub fn build_ui(
     let mut image_export = z;
     let mut edit_image = z;
     let mut page_scroll = z;
+    let mut pragma_scroll = z;
     let mut dock_scroll = z;
     let mut remote_list = z;
     let mut remote_draft = z;
@@ -1950,70 +1952,54 @@ pub fn build_ui(
                                 return;
                             }
                             page_scroll = p.scroll_area(page_scroll_style, |p| {
-                            p.text("Database preferences (PRAGMA). Edit values then Save Pragmas.");
-                            p.scroll_area(pragma_col, |c| {
+                            p.text("Database preferences");
+                            p.text_styled("Page Size and Auto Vacuum changes rebuild the database when saved.", theme.colors.text_secondary, 11.0);
+                            pragma_scroll = p.scroll_area(pragma_col, |c| {
                                 for (i, (key, _val)) in state.pragmas.iter().enumerate() {
                                     let draft = state
                                         .pragma_drafts
                                         .get(i)
                                         .cloned()
                                         .unwrap_or_default();
-                                    c.row(tool_row, |row| {
-                                        row.text_styled(key, theme.colors.text_primary, 13.0);
-                                        match key.as_str() {
-                                            "foreign_keys" | "recursive_triggers" => {
-                                                let on = draft == "1"
-                                                    || draft.eq_ignore_ascii_case("on")
-                                                    || draft == "true";
-                                                let id = row.switch_styled(key, on, sw);
-                                                pragma_switches.push(id);
-                                                pragma_inputs.push(WidgetId(0));
-                                                pragma_selects.push(WidgetId(0));
-                                            }
-                                            "journal_mode" => {
-                                                let opts = vec![
-                                                    String::from("delete"),
-                                                    String::from("truncate"),
-                                                    String::from("persist"),
-                                                    String::from("memory"),
-                                                    String::from("wal"),
-                                                    String::from("off"),
-                                                ];
-                                                let sel = opts
-                                                    .iter()
-                                                    .position(|x: &String| x.eq_ignore_ascii_case(&draft))
-                                                    .unwrap_or(0);
-                                                let id = row.select(opts, Some(sel), key, prag_sel);
-                                                pragma_selects.push(id);
-                                                pragma_inputs.push(WidgetId(0));
-                                                pragma_switches.push(WidgetId(0));
-                                            }
-                                            "synchronous" => {
-                                                let opts = vec![
-                                                    String::from("OFF"),
-                                                    String::from("NORMAL"),
-                                                    String::from("FULL"),
-                                                    String::from("EXTRA"),
-                                                ];
-                                                let sel = match draft.as_str() {
-                                                    "0" | "OFF" | "off" => 0,
-                                                    "1" | "NORMAL" | "normal" => 1,
-                                                    "3" | "EXTRA" | "extra" => 3,
-                                                    _ => 2,
-                                                };
-                                                let id = row.select(opts, Some(sel), key, prag_sel);
-                                                pragma_selects.push(id);
-                                                pragma_inputs.push(WidgetId(0));
-                                                pragma_switches.push(WidgetId(0));
-                                            }
-                                            _ => {
-                                                let id = row.text_input_styled(&draft, key, prag_inp);
-                                                pragma_inputs.push(id);
-                                                pragma_switches.push(WidgetId(0));
-                                                pragma_selects.push(WidgetId(0));
-                                            }
+                                    let label = crate::pragmas::FIELDS.iter().find(|(name, _)| *name == key).map_or(key.as_str(), |(_, label)| *label);
+                                    let mut control = |row: &mut next_gui_ui::FlexBuilder<'_>| {
+                                        if crate::pragmas::is_boolean(key) {
+                                            let on = draft == "1" || draft.eq_ignore_ascii_case("on") || draft.eq_ignore_ascii_case("true");
+                                            let id = if key == "case_sensitive_like" {
+                                                let mut id = WidgetId(0);
+                                                row.tooltip("Inferred from LIKE behavior. Changing this setting replaces any LIKE function provided by an extension.", |row| { id = row.switch_styled("", on, sw); });
+                                                id
+                                            } else { row.switch_styled("", on, sw) };
+                                            pragma_switches.push(id);
+                                            pragma_inputs.push(WidgetId(0)); pragma_selects.push(WidgetId(0));
+                                        } else if !crate::pragmas::choices(key).is_empty() {
+                                            let options = crate::pragmas::choices(key);
+                                            let normalized = crate::pragmas::normalize(key, &draft).unwrap_or_else(|_| draft.clone());
+                                            let selected = options.iter().position(|(value, _)| value.eq_ignore_ascii_case(&normalized));
+                                            pragma_selects.push(row.select(options.iter().map(|(_, label)| *label), selected, "Choose a value", prag_sel));
+                                            pragma_inputs.push(WidgetId(0)); pragma_switches.push(WidgetId(0));
+                                        } else {
+                                            pragma_inputs.push(row.text_input_styled(&draft, key, prag_inp));
+                                            pragma_switches.push(WidgetId(0)); pragma_selects.push(WidgetId(0));
                                         }
-                                    });
+                                    };
+                                    if pragma_col.width < 430.0 {
+                                        let mut field = next_gui_ui::ColumnStyle::from_theme(&theme);
+                                        field.width = pragma_col.width - 16.0; field.padding = 6.0; field.gap = 4.0;
+                                        field.background = Some(theme.colors.surface);
+                                        c.column(field, |column| {
+                                            column.text_styled(label, theme.colors.text_secondary, 12.0);
+                                            control(column);
+                                        });
+                                    } else {
+                                        let mut field = tool_row; field.width = pragma_col.width - 16.0;
+                                        field.height = 38.0; field.padding = 4.0; field.background = None;
+                                        c.row(field, |row| {
+                                            let mut name = field; name.width = 230.0; name.padding = 0.0;
+                                            row.row(name, |name| { name.text_styled(label, theme.colors.text_primary, 13.0); });
+                                            control(row);
+                                        });
+                                    }
                                 }
                             });
                             p.scroll_row(tool_row, |row| {
@@ -2428,6 +2414,11 @@ pub fn build_ui(
             "Discard all unwritten changes and reload?".into(),
             "Revert",
         ),
+        ConfirmKind::Pragmas => (
+            "Save database changes and pragmas?",
+            "Applying these settings commits your current database edits. Page Size and Auto Vacuum changes also rebuild the database. Continue?".into(),
+            "Cancel",
+        ),
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
     let mut modal_style = ModalStyle::from_theme(&theme);
@@ -2436,7 +2427,7 @@ pub fn build_ui(
         modal_title,
         modal_body,
         modal_primary,
-        Some(if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
+        Some(if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
         modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
@@ -2544,6 +2535,13 @@ pub fn build_ui(
     for id in [btn_browse_new_tab, btn_browse_close_tab].into_iter().chain(browse_tab_btns.iter().copied()) {
         ui.set_button_enabled(id, !state.sql_busy);
     }
+    for (index, (key, _)) in state.pragmas.iter().enumerate() {
+        let label = crate::pragmas::FIELDS.iter().find(|(name, _)| *name == key).map_or(key.as_str(), |(_, label)| *label);
+        for ids in [&pragma_inputs, &pragma_selects, &pragma_switches] {
+            if let Some(id) = ids.get(index).filter(|id| id.0 != 0) { ui.set_accessible_name(*id, label); }
+        }
+    }
+    ui.set_button_enabled(btn_pragma_apply, state.conn.is_some() && !state.read_only && !state.sql_busy);
     ui.set_button_enabled(btn_browse_clear_sort, can_browse && !browse.ordering().is_empty());
     ui.set_button_enabled(btn_freeze, can_browse && browse.result.as_ref().is_some_and(|result| !result.columns.is_empty()));
     let record = browse.offset.saturating_add(browse.sel_row.unwrap_or(0));
@@ -2643,6 +2641,7 @@ pub fn build_ui(
         structure_splitter,
         shell_scroll,
         page_scroll,
+        pragma_scroll,
         dock_scroll,
         scene,
         menu_file,

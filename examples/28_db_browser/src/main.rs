@@ -21,6 +21,7 @@ mod reference_editor;
 mod table_migration;
 mod filters;
 mod prefs;
+mod pragmas;
 mod project;
 mod project_xml;
 mod sql_log;
@@ -231,6 +232,7 @@ struct BuiltUiIds {
     structure_splitter: WidgetId,
     shell_scroll: WidgetId,
     page_scroll: WidgetId,
+    pragma_scroll: WidgetId,
     dock_scroll: WidgetId,
     menu_file: WidgetId,
     menu_edit: WidgetId,
@@ -469,6 +471,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             structure_splitter: b.structure_splitter,
             shell_scroll: b.shell_scroll,
             page_scroll: b.page_scroll,
+            pragma_scroll: b.pragma_scroll,
             dock_scroll: b.dock_scroll,
             menu_file: b.menu_file,
             menu_edit: b.menu_edit,
@@ -713,7 +716,7 @@ impl Demo {
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             state.tab = match tab.to_ascii_lowercase().as_str() {
                 "browse" | "header-menu" => MainTab::Browse,
-                "pragmas" => MainTab::Pragmas,
+                "pragmas" | "pragmas-bottom" | "pragmas-confirm" => MainTab::Pragmas,
                 "sql" | "execute" | "sql-long" | "sql-calltip" | "sql-word" => MainTab::ExecuteSql,
                 "wizard" | "table" | "table-types" => {
                     state.open_create_table_wizard();
@@ -1224,6 +1227,16 @@ impl Demo {
                 }
                 state.export_dialog=Some(draft);
             }
+            if matches!(tab.as_str(), "pragmas" | "pragmas-bottom" | "pragmas-confirm") {
+                state.new_memory_db().unwrap();
+                state.dock_edit = false;
+                if tab == "pragmas-confirm" {
+                    state.conn.as_ref().unwrap().execute_batch("CREATE TABLE kept(v);INSERT INTO kept VALUES('pending')").unwrap();
+                    state.dirty = true;
+                    state.confirm_kind = ConfirmKind::Pragmas;
+                    state.confirm_open = true;
+                }
+            }
             if matches!(tab.as_str(), "export-progress" | "export-canceling") {
                 state.new_memory_db().unwrap();
                 let conn = state.conn.as_ref().unwrap();
@@ -1245,6 +1258,11 @@ impl Demo {
             }
         }
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("pragmas-bottom") {
+            built.ui.set_scroll_offset(built.pragma_scroll, 0.0, 10000.0);
+            built.ui.sync(&mut built.scene);
+        }
+
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
         if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);if matches!(edit.column,1|8) {if built.ui.is_select(built.ov_field_editor) {built.ui.key_input(UiKey::Space);} else {built.ui.open_autocomplete_options(built.ov_field_editor);}}}built.ui.sync(&mut built.scene);}
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
@@ -1445,17 +1463,8 @@ impl Demo {
                 }
             } else if sel.0 != 0 {
                 if let Some(si) = self.ui.select_selected(sel) {
-                    let val = match key.as_str() {
-                        "journal_mode" => ["delete", "truncate", "persist", "memory", "wal", "off"]
-                            .get(si)
-                            .copied()
-                            .unwrap_or("delete"),
-                        "synchronous" => ["OFF", "NORMAL", "FULL", "EXTRA"]
-                            .get(si)
-                            .copied()
-                            .unwrap_or("FULL"),
-                        _ => continue,
-                    };
+                    let Some((value, _)) = pragmas::choices(key).get(si) else { continue; };
+                    let val = *value;
                     self.state.pragma_drafts[i] = val.into();
                 }
             } else if inp.0 != 0 {
@@ -2439,6 +2448,13 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let pragma_scroll = self.ui.scroll_offset(self.ids.pragma_scroll);
+        let pragma_session = if self.state.tab == MainTab::Pragmas && self.last_tab == MainTab::Pragmas.index() && self.state.overlay.is_none() {
+            self.snapshot_inputs();
+            [&self.ids.pragma_inputs, &self.ids.pragma_selects, &self.ids.pragma_switches].iter().enumerate().find_map(|(kind, ids)| {
+                ids.iter().enumerate().find_map(|(index, id)| (id.0 != 0 && self.ui.focused() == Some(*id)).then(|| (kind, index, self.ui.text_input_state(*id), self.ui.select_state(*id))))
+            })
+        } else { None };
         let export_session=self.ids.data_export.session(&self.ui);
         if self.state.export_dialog.is_some() {self.snapshot_data_export();}
         self.snapshot_column_picker();
@@ -2537,6 +2553,14 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some((x, y)) = pragma_scroll { self.ui.set_scroll_offset(self.ids.pragma_scroll, x, y); }
+        if let Some((kind, index, text, select)) = pragma_session {
+            if let Some(id) = [&self.ids.pragma_inputs, &self.ids.pragma_selects, &self.ids.pragma_switches][kind].get(index).copied().filter(|id| id.0 != 0) {
+                if let Some(text) = text { self.ui.restore_text_input_state(id, &text); }
+                if let Some(select) = select { self.ui.restore_select_state(id, &select); }
+                self.ui.set_focus(Some(id));
+            }
+        }
         if let Some(session)=export_session {self.ids.data_export.restore(&mut self.ui,&session);}
         if let Some((index, session)) = csv_input_session { let id = [self.ids.ov_csv_table,self.ids.ov_csv_custom_delimiter,self.ids.ov_csv_custom_quote][index]; if self.ui.restore_text_input_state(id, &session) { self.ui.set_focus(Some(id)); } }
         if let Some(session) = csv_paste_session { if self.ui.restore_text_area_state(self.ids.ov_csv_paste, &session) { self.ui.set_focus(Some(self.ids.ov_csv_paste)); } }
@@ -4039,6 +4063,12 @@ impl Demo {
         }
         if id == self.ids.btn_pragma_apply {
             self.snapshot_inputs();
+            if self.state.dirty {
+                self.state.confirm_kind = ConfirmKind::Pragmas;
+                self.state.confirm_open = true;
+                self.rebuild = true;
+                return;
+            }
             match self.state.save_pragmas() {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
@@ -4400,7 +4430,7 @@ impl Demo {
                 return;
             }
             if matches!(kind, ConfirmKind::DeleteColumn(_)) { self.ui.set_focus(Some(self.ids.ov_fields_table)); }
-            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_)) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
+            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::Pragmas) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
             if !accepted { self.rebuild = true; return; }
             self.apply_confirmed_action(kind);
         }
@@ -4408,6 +4438,10 @@ impl Demo {
 
     fn apply_confirmed_action(&mut self, kind: ConfirmKind) {
         match kind {
+            ConfirmKind::Pragmas => match self.state.apply_pragmas(true) {
+                Ok(()) => self.clear_error(),
+                Err(error) => self.set_error(error),
+            },
             ConfirmKind::DeleteColumn(row) => match self.state.remove_wizard_column(row) {
                 Ok(()) => { self.clear_error(); self.state.status_msg = "Column removed from table draft".into(); }
                 Err(error) => self.set_error(error),

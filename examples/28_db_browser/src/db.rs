@@ -907,21 +907,11 @@ pub fn create_index_ddl_in(
     sql
 }
 
-/// Common pragmas for the Edit Pragmas tab.
-pub const PRAGMA_KEYS: &[&str] = &[
-    "journal_mode",
-    "synchronous",
-    "foreign_keys",
-    "cache_size",
-    "temp_store",
-    "locking_mode",
-    "auto_vacuum",
-    "busy_timeout",
-    "recursive_triggers",
-    "wal_autocheckpoint",
-];
-
 pub fn read_pragma(conn: &Connection, key: &str) -> Result<String, String> {
+    if key == "case_sensitive_like" {
+        return conn.query_row("SELECT NOT ('a' LIKE 'A')", [], |row| row.get::<_, i64>(0))
+            .map(|value| value.to_string()).map_err(|error| error.to_string());
+    }
     let sql = format!("PRAGMA {key}");
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
@@ -933,17 +923,16 @@ pub fn read_pragma(conn: &Connection, key: &str) -> Result<String, String> {
 }
 
 pub fn write_pragma(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
-    if !PRAGMA_KEYS.contains(&key) {
-        return Err("Unsupported pragma".into());
-    }
+    let value = crate::pragmas::normalize(key, value)?;
+    let value = if key == "secure_delete" && value == "2" { "FAST" } else { &value };
     conn.pragma_update(None, key, value)
         .map_err(|e| e.to_string())
 }
 
 pub fn read_all_pragmas(conn: &Connection) -> Vec<(String, String)> {
-    PRAGMA_KEYS
+    crate::pragmas::FIELDS
         .iter()
-        .map(|k| {
+        .map(|(k, _)| {
             let v = read_pragma(conn, k).unwrap_or_else(|e| format!("err: {e}"));
             ((*k).to_string(), v)
         })

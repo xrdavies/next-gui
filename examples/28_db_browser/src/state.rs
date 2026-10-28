@@ -630,6 +630,7 @@ pub enum ConfirmKind {
     DeleteColumn(usize),
     Documents,
     Revert,
+    Pragmas,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -717,7 +718,7 @@ impl AppState {
         state
     }
 
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         let mut state = Self {
             conn: None,
             path: String::new(),
@@ -2718,74 +2719,53 @@ impl AppState {
     }
 
     pub fn save_pragmas(&mut self) -> Result<(), String> {
+        self.apply_pragmas(false)
+    }
+
+    pub(crate) fn apply_pragmas(&mut self, commit_pending: bool) -> Result<(), String> {
         self.guard_writable()?;
-        self.guard_replace()?;
-        let pairs: Vec<(String, String)> = self
-            .pragmas
-            .iter()
-            .enumerate()
-            .map(|(i, (k, _))| {
-                let v = self.pragma_drafts.get(i).cloned().unwrap_or_default();
-                (k.clone(), v)
-            })
-            .collect();
+        if commit_pending {
+            if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        } else { self.guard_replace()?; }
+        let pairs = self.pragmas.iter().zip(&self.pragma_drafts)
+            .filter(|((_, old), draft)| old != *draft)
+            .map(|((key, _), value)| crate::pragmas::normalize(key, value).map(|value| (key.clone(), value)))
+            .collect::<Result<Vec<_>, _>>()?;
+        if pairs.is_empty() { self.status_msg = "Pragmas unchanged".into(); return Ok(()); }
         let mut logs = Vec::new();
-        {
-            let conn = self.conn.as_ref().unwrap();
-            conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
-            let result = (|| {
-                for (k, v) in &pairs {
-                    let vv = v.trim();
-                    if vv.is_empty() {
-                        continue;
-                    }
-                    let out = match k.as_str() {
-                        "foreign_keys" | "recursive_triggers" => {
-                            match vv.to_ascii_lowercase().as_str() {
-                                "1" | "on" | "true" => "ON",
-                                "0" | "off" | "false" => "OFF",
-                                _ => return Err(format!("Invalid boolean PRAGMA {k}")),
-                            }
-                        }
-                        _ => vv,
-                    };
-                    if self.pragmas.iter().any(|(key, old)| key == k && old == v) {
-                        continue;
-                    }
-                    db::write_pragma(conn, k, out)?;
-                    let actual = db::read_pragma(conn, k)?;
-                    let lower = out.to_ascii_lowercase();
-                    let expected = match (k.as_str(), lower.as_str()) {
-                        ("foreign_keys" | "recursive_triggers", "on" | "true") => "1",
-                        ("foreign_keys" | "recursive_triggers", "off" | "false")
-                        | ("synchronous", "off") => "0",
-                        ("synchronous", "normal") => "1",
-                        ("synchronous", "full") => "2",
-                        ("synchronous", "extra") => "3",
-                        ("temp_store", "default") | ("auto_vacuum", "none") => "0",
-                        ("temp_store", "file") | ("auto_vacuum", "full") => "1",
-                        ("temp_store", "memory") | ("auto_vacuum", "incremental") => "2",
-                        _ => out,
-                    };
-                    let matches = actual.eq_ignore_ascii_case(expected)
-                        || matches!(
-                            (actual.parse::<i64>(), expected.parse::<i64>()),
-                            (Ok(a), Ok(b)) if a == b
-                        );
-                    if !matches {
-                        return Err(format!("PRAGMA {k} requested {out}, actual {actual}; earlier settings may have applied. auto_vacuum changes from NONE require VACUUM."));
-                    }
-                    logs.push(format!("PRAGMA {k} = {out}"));
+        let conn = self.conn.as_ref().unwrap();
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        let result = (|| {
+            for (key, value) in &pairs {
+                db::write_pragma(conn, key, value)?;
+                logs.push(format!("PRAGMA {key} = {value}"));
+                if matches!(key.as_str(), "auto_vacuum" | "page_size") {
+                    conn.execute_batch("VACUUM").map_err(|e| format!("PRAGMA {key} was set, but VACUUM failed: {e}; earlier settings may have applied"))?;
+                    logs.push("VACUUM".into());
                 }
-                Ok::<_, String>(())
-            })();
-            db::begin_deferred(conn)?;
-            result?;
-        }
-        for l in logs {
-            self.log_sql(l);
+                let actual = db::read_pragma(conn, key)?;
+                if !actual.eq_ignore_ascii_case(value) {
+                    return Err(format!("PRAGMA {key} requested {value}, actual {actual}; earlier settings may have applied"));
+                }
+            }
+            Ok::<_, String>(())
+        })();
+        let resumed = db::begin_deferred(conn);
+        self.dirty = false;
+        for log in logs { self.log_sql(log); }
+        if pairs.iter().any(|(key, _)| matches!(key.as_str(), "page_size" | "auto_vacuum")) {
+            for tab in &mut self.browse_tabs {
+                tab.result = None; tab.rowids.clear(); tab.total_rows = None; tab.clear_selection();
+            }
+            self.clear_browse_editor();
+            self.refresh_browse()?;
         }
         self.refresh_pragmas()?;
+        match (result, resumed) {
+            (Err(error), Err(resume)) => return Err(format!("{error}; restoring the edit transaction failed: {resume}")),
+            (Err(error), _) | (_, Err(error)) => return Err(error),
+            _ => {}
+        }
         self.status_msg = "Pragmas applied".into();
         Ok(())
     }
@@ -4840,16 +4820,31 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn original_pragma_catalog_is_complete_and_auto_vacuum_applies_to_existing_tables() {
+        let mut state = test_state();
+        state.refresh_pragmas().unwrap();
+        for key in ["automatic_index", "checkpoint_fullfsync", "fullfsync", "ignore_check_constraints", "journal_size_limit", "max_page_count", "page_size", "secure_delete", "user_version", "case_sensitive_like"] {
+            assert!(state.pragmas.iter().any(|(name, _)| name == key), "missing {key}");
+        }
+        let vacuum = state.pragmas.iter().position(|(key, _)| key == "auto_vacuum").unwrap();
+        state.pragma_drafts[vacuum] = "1".into();
+        state.save_pragmas().unwrap();
+        assert_eq!(db::read_pragma(state.conn.as_ref().unwrap(), "auto_vacuum").unwrap(), "1");
+        assert_eq!(db::count_rows(state.conn.as_ref().unwrap(), "t").unwrap(), 1);
+        assert!(!state.conn.as_ref().unwrap().is_autocommit());
+    }
+
+    #[test]
     fn pragma_reports_actual_value_instead_of_false_success() {
         let mut state = test_state();
         state.refresh_pragmas().unwrap();
         let i = state
             .pragmas
             .iter()
-            .position(|(k, _)| k == "auto_vacuum")
+            .position(|(k, _)| k == "max_page_count")
             .unwrap();
         state.pragma_drafts[i] = "1".into();
-        assert!(state.save_pragmas().unwrap_err().contains("actual 0"));
+        assert!(state.save_pragmas().unwrap_err().contains("actual"));
         assert!(!state.conn.as_ref().unwrap().is_autocommit());
         state.refresh_pragmas().unwrap();
         let journal = state
