@@ -1368,26 +1368,54 @@ impl Renderer for GpuRenderer {
                             if pixels.len() < (*width as usize) * (*height as usize) {
                                 continue;
                             }
-                            let (tex, bind) = self.upload_texture(
-                                *width,
-                                *height,
-                                pixels,
-                                wgpu::TextureFormat::R8Unorm,
-                            );
-                            let verts = Self::blit_quad(&bounds, *color, fw, fh);
-                            let vb = self.device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
-                                    label: Some("blit-vb"),
-                                    contents: bytemuck::cast_slice(&verts),
-                                    usage: wgpu::BufferUsages::VERTEX,
-                                },
-                            );
-                            pass.set_pipeline(&self.blit_pipeline);
-                            pass.set_bind_group(0, &bind, &[]);
-                            pass.set_vertex_buffer(0, vb.slice(..));
-                            pass.draw(0..6, 0..1);
-                            blit_bufs.push(vb);
-                            mask_keep.push((tex, bind));
+                            let limit = self.device.limits().max_texture_dimension_2d;
+                            let visible = Rect::new(sx as f32, sy as f32, sw as f32, sh as f32);
+                            for ty in (0..*height).step_by(limit as usize) {
+                                for tx in (0..*width).step_by(limit as usize) {
+                                    let tw = limit.min(*width - tx);
+                                    let th = limit.min(*height - ty);
+                                    let tile_rect = Rect::new(
+                                        *x as f32 + tx as f32,
+                                        *y as f32 + ty as f32,
+                                        tw as f32,
+                                        th as f32,
+                                    );
+                                    if !tile_rect.intersects(&visible) {
+                                        continue;
+                                    }
+                                    let mut tile = Vec::new();
+                                    let pixels = if tw == *width && th == *height {
+                                        pixels.as_ref()
+                                    } else {
+                                        tile.reserve(tw as usize * th as usize);
+                                        for row in ty..ty + th {
+                                            let off = row as usize * *width as usize + tx as usize;
+                                            tile.extend_from_slice(&pixels[off..off + tw as usize]);
+                                        }
+                                        &tile
+                                    };
+                                    let (tex, bind) = self.upload_texture(
+                                        tw,
+                                        th,
+                                        pixels,
+                                        wgpu::TextureFormat::R8Unorm,
+                                    );
+                                    let verts = Self::blit_quad(&tile_rect, *color, fw, fh);
+                                    let vb = self.device.create_buffer_init(
+                                        &wgpu::util::BufferInitDescriptor {
+                                            label: Some("blit-vb"),
+                                            contents: bytemuck::cast_slice(&verts),
+                                            usage: wgpu::BufferUsages::VERTEX,
+                                        },
+                                    );
+                                    pass.set_pipeline(&self.blit_pipeline);
+                                    pass.set_bind_group(0, &bind, &[]);
+                                    pass.set_vertex_buffer(0, vb.slice(..));
+                                    pass.draw(0..6, 0..1);
+                                    blit_bufs.push(vb);
+                                    mask_keep.push((tex, bind));
+                                }
+                            }
                         }
                     }
                 }
@@ -1491,6 +1519,57 @@ mod tests {
             }
         }
         eprintln!("fractional primitives: actual Soft/GPU readback max channel delta {observed}");
+    }
+
+    #[test]
+    fn alpha_masks_tile_beyond_adapter_limit_on_both_axes_and_dirty_patches() {
+        let clear = Color::rgb(17, 31, 47);
+        let Ok(mut gpu) = GpuRenderer::try_new(8, 8, clear) else {
+            eprintln!("skip oversized alpha test: adapter unavailable");
+            return;
+        };
+        let limit = gpu.device.limits().max_texture_dimension_2d;
+        for vertical in [false, true] {
+            let (width, height) = if vertical {
+                (3, limit + 3)
+            } else {
+                (limit + 3, 3)
+            };
+            let pixels: std::sync::Arc<[u8]> = (0..width * height)
+                .map(|i| ((i * 37) % 256) as u8)
+                .collect::<Vec<_>>()
+                .into();
+            let commands = [DrawCommand::BlitAlpha {
+                x: if vertical { 2 } else { 2 - limit as i32 },
+                y: if vertical { 2 - limit as i32 } else { 2 },
+                width,
+                height,
+                pixels,
+                color: Color::rgba(219, 71, 133, 173),
+            }];
+            let mut soft = next_gui_render_soft::SoftRenderer::new(8, 8, clear);
+            for patch in [Rect::new(0.0, 0.0, 8.0, 8.0), Rect::new(1.0, 1.0, 4.0, 5.0)] {
+                let mut dirty = DirtyRegion::new();
+                dirty.add(patch);
+                soft.render(&commands, &dirty);
+                gpu.render(&commands, &dirty);
+                let a = soft.frame_pixels().unwrap().0;
+                let b = gpu.frame_pixels().unwrap().0;
+                let delta = a
+                    .iter()
+                    .zip(b)
+                    .flat_map(|(a, b)| {
+                        [0, 8, 16].map(|shift| ((a >> shift) & 255).abs_diff((b >> shift) & 255))
+                    })
+                    .max()
+                    .unwrap();
+                assert!(
+                    delta <= 2,
+                    "oversized alpha delta={delta}, vertical={vertical}, patch={patch:?}"
+                );
+            }
+        }
+        eprintln!("oversized alpha masks: both axes/dirty patches passed at adapter limit {limit}");
     }
 
     #[test]
