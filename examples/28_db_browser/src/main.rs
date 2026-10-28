@@ -793,15 +793,17 @@ impl Demo {
                     if tab.ends_with("-saved") { state.apply_table_wizard().unwrap(); }
                     MainTab::Structure
                 }
-                "table-move" | "table-move-saved" => {
+                "table-move" | "table-move-saved" | "table-move-views" | "table-move-views-saved" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS analytics;
                         CREATE TABLE main.records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL CHECK(length(name)>0),amount REAL DEFAULT 0,total REAL AS(amount*1.2) STORED);
                         INSERT INTO main.records(id,name,amount) VALUES(7,'First customer',12.5),(11,'Second customer',24);
                         CREATE INDEX main.by_name ON records(name COLLATE NOCASE);").unwrap();
+                    if tab.contains("-views") {state.conn.as_ref().unwrap().execute_batch("CREATE VIEW main.visible(id,display,amount,total) AS SELECT id,name,amount,total FROM main.records;CREATE VIEW main.customer_summary AS SELECT display,amount,total FROM main.visible;CREATE TRIGGER main.edit_visible INSTEAD OF UPDATE ON visible BEGIN UPDATE records SET name=new.display,amount=new.amount WHERE id=old.id;END;").unwrap();}
                     state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_schema="analytics".into();state.wizard_table_name="customer_archive".into();state.wizard_scroll=(0.0,0.0);state.wizard_table_advanced=true;
+                    if tab.contains("-views") {state.wizard_cols[1].name="label".into();state.sync_table_constraint_names().unwrap();}
                     if tab.ends_with("-saved") {state.apply_table_wizard().unwrap();}
-                    MainTab::Structure
+                    if tab=="table-move-views-saved" {state.switch_browse_table_in("analytics","visible").unwrap();MainTab::Browse}else{MainTab::Structure}
                 }
                 "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-reference-editor" | "table-field-reference-empty" | "table-field-check-editor" | "table-field-remove-confirm" | "table-advanced" => {
                     state.new_memory_db().unwrap();
@@ -7045,6 +7047,8 @@ mod interaction_tests {
                 CREATE TABLE main.records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL CHECK(length(name)>0),amount REAL DEFAULT 0,total REAL AS(amount*1.2) STORED);
                 INSERT INTO main.records(id,name,amount) VALUES(7,'First customer',12.5),(11,'Second customer',24);
                 CREATE INDEX main.by_name ON records(name COLLATE NOCASE);
+                CREATE VIEW main.visible AS SELECT id,name,amount,total FROM main.records;CREATE VIEW main.customer_summary AS SELECT name,amount FROM main.visible;
+                CREATE TRIGGER main.edit_visible INSTEAD OF UPDATE ON visible BEGIN UPDATE records SET name=new.name,amount=new.amount WHERE id=old.id;END;
                 CREATE TABLE analytics.occupied(untouched);INSERT INTO analytics.occupied VALUES(42);").unwrap();
             demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.do_rebuild();
             demo.handle_button(demo.ids.ov_table_advanced);demo.do_rebuild();
@@ -7065,6 +7069,7 @@ mod interaction_tests {
             }
             demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());assert_eq!(demo.state.browse().schema,"analytics");assert_eq!(demo.state.browse().table.as_deref(),Some("customer_archive"));assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(),2);
             let conn=demo.state.conn.as_ref().unwrap();assert!(conn.prepare("SELECT * FROM main.records").is_err());assert_eq!(conn.query_row("SELECT untouched FROM analytics.occupied",[],|row|row.get::<_,i64>(0)).unwrap(),42);assert_eq!(conn.query_row("SELECT sum(id) FROM analytics.customer_archive",[],|row|row.get::<_,i64>(0)).unwrap(),18);assert!(conn.execute("UPDATE analytics.customer_archive SET name=''",[]).is_err());assert_eq!(conn.query_row("SELECT total FROM analytics.customer_archive WHERE id=7",[],|row|row.get::<_,f64>(0)).unwrap(),15.0);
+            assert!(conn.prepare("SELECT * FROM main.visible").is_err());assert_eq!(conn.query_row("SELECT sum(id) FROM analytics.visible",[],|row|row.get::<_,i64>(0)).unwrap(),18);conn.execute("UPDATE analytics.visible SET name='changed',amount=10 WHERE id=7",[]).unwrap();assert_eq!(conn.query_row("SELECT total FROM analytics.customer_archive WHERE id=7",[],|row|row.get::<_,f64>(0)).unwrap(),12.0);assert_eq!(conn.query_row("SELECT name FROM analytics.customer_summary WHERE amount=10",[],|row|row.get::<_,String>(0)).unwrap(),"changed");
         }
     }
 

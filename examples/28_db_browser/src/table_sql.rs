@@ -1517,8 +1517,386 @@ pub fn relocate_dependency(sql: &str, object_schema: &str, table_schema: &str) -
     Ok(emit(command))
 }
 
+pub fn relocate_view(
+    sql: &str,
+    source: &str,
+    target: &str,
+    objects: &[&str],
+) -> Result<String, String> {
+    let mut command = parse(sql)?;
+    let Cmd::Stmt(Stmt::CreateView {
+        temporary,
+        view_name,
+        select,
+        ..
+    }) = &mut command
+    else {
+        return Err("Expected a view definition".into());
+    };
+    *temporary = false;
+    view_name.db_name = Some(identifier(target));
+    SchemaRelocation {
+        source,
+        target,
+        objects,
+    }
+    .select(select);
+    Ok(emit(command))
+}
+
+pub fn relocate_trigger_queries(
+    sql: &str,
+    source: &str,
+    target: &str,
+    objects: &[&str],
+) -> Result<String, String> {
+    let mut command = parse(sql)?;
+    match &mut command {
+        Cmd::Stmt(Stmt::CreateTrigger {
+            when_clause,
+            commands,
+            ..
+        }) => {
+            let relocation = SchemaRelocation {
+                source,
+                target,
+                objects,
+            };
+            if let Some(value) = when_clause {
+                relocation.expr(value);
+            }
+            for command in commands {
+                relocation.trigger(command);
+            }
+        }
+        Cmd::Stmt(Stmt::CreateIndex { .. }) => {}
+        _ => return Err("Expected an index or trigger definition".into()),
+    }
+    Ok(emit(command))
+}
+
+struct SchemaRelocation<'a> {
+    source: &'a str,
+    target: &'a str,
+    objects: &'a [&'a str],
+}
+
+impl SchemaRelocation<'_> {
+    fn schema(&self, schema: &mut Name, table: &Name) {
+        if (*schema).eq(self.source) && self.objects.iter().any(|name| table.eq(*name)) {
+            *schema = identifier(self.target);
+        }
+    }
+
+    fn table(&self, name: &mut QualifiedName) {
+        if let Some(schema) = &mut name.db_name {
+            self.schema(schema, &name.name);
+        }
+    }
+
+    fn select(&self, select: &mut sqlite3_parser::ast::Select) {
+        if let Some(with) = &mut select.with {
+            for cte in &mut with.ctes {
+                self.select(&mut cte.select);
+            }
+        }
+        self.body(&mut select.body.select);
+        for compound in select.body.compounds.iter_mut().flatten() {
+            self.body(&mut compound.select);
+        }
+        if let Some(order) = &mut select.order_by {
+            self.order(order);
+        }
+        if let Some(limit) = &mut select.limit {
+            self.expr(&mut limit.expr);
+            if let Some(offset) = &mut limit.offset {
+                self.expr(offset);
+            }
+        }
+    }
+
+    fn body(&self, body: &mut sqlite3_parser::ast::OneSelect) {
+        use sqlite3_parser::ast::{OneSelect, ResultColumn};
+        match body {
+            OneSelect::Values(rows) => {
+                for row in rows {
+                    for value in row {
+                        self.expr(value);
+                    }
+                }
+            }
+            OneSelect::Select {
+                columns,
+                from,
+                where_clause,
+                group_by,
+                having,
+                window_clause,
+                ..
+            } => {
+                for column in columns {
+                    if let ResultColumn::Expr(value, _) = column {
+                        self.expr(value);
+                    }
+                }
+                if let Some(from) = from {
+                    self.from(from);
+                }
+                for value in where_clause.iter_mut().chain(having) {
+                    self.expr(value);
+                }
+                for value in group_by.iter_mut().flatten() {
+                    self.expr(value);
+                }
+                for window in window_clause.iter_mut().flatten() {
+                    self.window(&mut window.window);
+                }
+            }
+        }
+    }
+
+    fn from(&self, from: &mut sqlite3_parser::ast::FromClause) {
+        use sqlite3_parser::ast::JoinConstraint;
+        if let Some(table) = &mut from.select {
+            self.select_table(table);
+        }
+        for join in from.joins.iter_mut().flatten() {
+            self.select_table(&mut join.table);
+            if let Some(JoinConstraint::On(value)) = &mut join.constraint {
+                self.expr(value);
+            }
+        }
+    }
+
+    fn select_table(&self, table: &mut sqlite3_parser::ast::SelectTable) {
+        use sqlite3_parser::ast::SelectTable;
+        match table {
+            SelectTable::Table(name, ..) => self.table(name),
+            SelectTable::TableCall(_, args, _) => {
+                for value in args.iter_mut().flatten() {
+                    self.expr(value);
+                }
+            }
+            SelectTable::Select(select, _) => self.select(select),
+            SelectTable::Sub(from, _) => self.from(from),
+        }
+    }
+
+    fn order(&self, order: &mut [SortedColumn]) {
+        for column in order {
+            self.expr(&mut column.expr);
+        }
+    }
+
+    fn window(&self, window: &mut sqlite3_parser::ast::Window) {
+        use sqlite3_parser::ast::FrameBound;
+        for value in window.partition_by.iter_mut().flatten() {
+            self.expr(value);
+        }
+        if let Some(order) = &mut window.order_by {
+            self.order(order);
+        }
+        if let Some(frame) = &mut window.frame_clause {
+            for bound in std::iter::once(&mut frame.start).chain(&mut frame.end) {
+                if let FrameBound::Following(value) | FrameBound::Preceding(value) = bound {
+                    self.expr(value);
+                }
+            }
+        }
+    }
+
+    fn tail(&self, tail: &mut sqlite3_parser::ast::FunctionTail) {
+        use sqlite3_parser::ast::Over;
+        if let Some(value) = &mut tail.filter_clause {
+            self.expr(value);
+        }
+        if let Some(over) = &mut tail.over_clause {
+            if let Over::Window(window) = over.as_mut() {
+                self.window(window);
+            }
+        }
+    }
+
+    fn upsert(&self, upsert: &mut sqlite3_parser::ast::Upsert) {
+        use sqlite3_parser::ast::UpsertDo;
+        if let Some(index) = &mut upsert.index {
+            self.order(&mut index.targets);
+            if let Some(value) = &mut index.where_clause {
+                self.expr(value);
+            }
+        }
+        if let UpsertDo::Set { sets, where_clause } = &mut upsert.do_clause {
+            for set in sets {
+                self.expr(&mut set.expr);
+            }
+            if let Some(value) = where_clause {
+                self.expr(value);
+            }
+        }
+        if let Some(next) = &mut upsert.next {
+            self.upsert(next);
+        }
+    }
+
+    fn trigger(&self, command: &mut sqlite3_parser::ast::TriggerCmd) {
+        use sqlite3_parser::ast::TriggerCmd;
+        match command {
+            TriggerCmd::Select(select) => self.select(select),
+            TriggerCmd::Delete { where_clause, .. } => {
+                if let Some(value) = where_clause {
+                    self.expr(value);
+                }
+            }
+            TriggerCmd::Insert { select, upsert, .. } => {
+                self.select(select);
+                if let Some(upsert) = upsert {
+                    self.upsert(upsert);
+                }
+            }
+            TriggerCmd::Update {
+                sets,
+                from,
+                where_clause,
+                ..
+            } => {
+                for set in sets {
+                    self.expr(&mut set.expr);
+                }
+                if let Some(from) = from {
+                    self.from(from);
+                }
+                if let Some(value) = where_clause {
+                    self.expr(value);
+                }
+            }
+        }
+    }
+
+    fn expr(&self, value: &mut Expr) {
+        use sqlite3_parser::ast::FunctionCallOrder;
+        match value {
+            Expr::DoublyQualified(schema, table, _) => self.schema(schema, table),
+            Expr::Exists(select) | Expr::Subquery(select) => self.select(select),
+            Expr::InSelect { lhs, rhs, .. } => {
+                self.expr(lhs);
+                self.select(rhs);
+            }
+            Expr::InTable { lhs, rhs, args, .. } => {
+                self.expr(lhs);
+                if args.is_none() {
+                    self.table(rhs);
+                }
+                for value in args.iter_mut().flatten() {
+                    self.expr(value);
+                }
+            }
+            Expr::Between {
+                lhs, start, end, ..
+            } => {
+                for value in [lhs, start, end] {
+                    self.expr(value);
+                }
+            }
+            Expr::Binary(lhs, _, rhs) => {
+                self.expr(lhs);
+                self.expr(rhs);
+            }
+            Expr::Case {
+                base,
+                when_then_pairs,
+                else_expr,
+            } => {
+                for value in base.iter_mut().chain(else_expr) {
+                    self.expr(value);
+                }
+                for (when, then) in when_then_pairs {
+                    self.expr(when);
+                    self.expr(then);
+                }
+            }
+            Expr::Cast { expr, .. }
+            | Expr::Collate(expr, _)
+            | Expr::IsNull(expr)
+            | Expr::NotNull(expr)
+            | Expr::Unary(_, expr) => self.expr(expr),
+            Expr::FunctionCall {
+                args,
+                order_by,
+                filter_over,
+                ..
+            } => {
+                for value in args.iter_mut().flatten() {
+                    self.expr(value);
+                }
+                if let Some(FunctionCallOrder::SortList(order)) = order_by {
+                    self.order(order);
+                }
+                if let Some(tail) = filter_over {
+                    self.tail(tail);
+                }
+            }
+            Expr::FunctionCallStar { filter_over, .. } => {
+                if let Some(tail) = filter_over {
+                    self.tail(tail);
+                }
+            }
+            Expr::InList { lhs, rhs, .. } => {
+                self.expr(lhs);
+                for value in rhs.iter_mut().flatten() {
+                    self.expr(value);
+                }
+            }
+            Expr::Like {
+                lhs, rhs, escape, ..
+            } => {
+                self.expr(lhs);
+                self.expr(rhs);
+                if let Some(value) = escape {
+                    self.expr(value);
+                }
+            }
+            Expr::Parenthesized(values) => {
+                for value in values {
+                    self.expr(value);
+                }
+            }
+            Expr::Raise(_, value) => {
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
+            Expr::Id(_)
+            | Expr::Name(_)
+            | Expr::Qualified(..)
+            | Expr::Literal(_)
+            | Expr::Variable(_) => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn view_relocation_follows_qualified_queries_without_rewriting_literals_or_other_names() {
+        let source="old.\"db";let target="new.\"db";let table=crate::db::qualified_name(source,"records");
+        let queries=[
+            format!("SELECT {table}.id,'old.\"db.records' AS literal FROM {table} WHERE id BETWEEN 1 AND 20"),
+            format!("WITH c AS(SELECT id,v FROM {table}) SELECT id,sum(v) OVER(PARTITION BY(SELECT 1 FROM {table} LIMIT 1) ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM c UNION ALL SELECT id,v FROM {table} WHERE 0"),
+            format!("SELECT id,CASE WHEN EXISTS(SELECT 1 FROM {table} WHERE v>0) THEN (SELECT max(v) FROM {table}) ELSE 0 END FROM {table} WHERE (id,v) IN {}.records AND CAST(v AS TEXT) NOT LIKE 'none'",crate::db::quote_ident(source)),
+            format!("SELECT r.id,sum(q.v) FROM (SELECT * FROM {table}) r JOIN {table} q ON q.id=r.id GROUP BY r.id HAVING sum(q.v)>0 ORDER BY (SELECT min(id) FROM {table}),r.id LIMIT(SELECT count(*) FROM {table}) OFFSET(SELECT 0 FROM {table} LIMIT 1)"),
+            format!("SELECT records.id FROM {table},json_each((SELECT json_array(1) FROM {table} LIMIT 1)) WHERE key=0"),
+            format!("SELECT id,count(*) FILTER(WHERE id IN(SELECT id FROM {table})) OVER w FROM {table} WINDOW w AS(ORDER BY id RANGE BETWEEN 1 PRECEDING AND CURRENT ROW)"),
+            format!("WITH seeds(x) AS(VALUES((SELECT min(id) FROM {table})),((SELECT max(id) FROM {table}))) SELECT x FROM seeds WHERE x IN(SELECT id FROM {table})"),
+            format!("SELECT group_concat(id ORDER BY(SELECT sum(v) FROM {table})) FROM {table}"),
+        ];
+        for query in queries {
+            let conn=rusqlite::Connection::open_in_memory().unwrap();conn.execute_batch(&format!("ATTACH ':memory:' AS {};ATTACH ':memory:' AS {};CREATE TABLE {table}(id INTEGER,v INTEGER);INSERT INTO {table} VALUES(7,10),(11,20);CREATE TABLE {}(id INTEGER,v INTEGER);INSERT INTO {} VALUES(7,10),(11,20);",crate::db::quote_ident(source),crate::db::quote_ident(target),crate::db::qualified_name(target,"records"),crate::db::qualified_name(target,"records"))).unwrap();
+            let original=format!("CREATE VIEW {} AS {query}",crate::db::qualified_name(source,"report"));conn.execute_batch(&original).unwrap();let expected=crate::db::browse_table_in(&conn,source,"report",&[],None,100,0).unwrap().rows;
+            let moved=super::relocate_view(&original,source,target,&["records","report"]).unwrap();conn.execute_batch(&moved).unwrap();conn.execute_batch(&format!("DROP TABLE {table}")).unwrap();let result=crate::db::browse_table_in(&conn,target,"report",&[],None,100,0).unwrap_or_else(|error|panic!("{query}: {error}: {moved}"));assert_eq!(result.rows,expected,"{query}: {moved}");
+        }
+        assert!(super::relocate_view("SELECT 1",source,target,&["records"]).is_err());assert!(super::relocate_view("CREATE VIEW report AS SELECT 1;DELETE FROM records",source,target,&["records"]).is_err());
+    }
+
     #[test]
     fn constraint_grid_sql_fragments_keep_inline_semantics_names_and_deferrals() {
         let mut primary=super::NamedIndexConstraint {name:Some("primary \"key".into()),columns:"id".into(),primary:true,auto_increment:true,inline:true,..Default::default()};

@@ -145,7 +145,7 @@ pub fn rebuild(
     sources: &[Option<String>],
     options: Option<table_sql::TableOptions>,
 ) -> Result<(), String> {
-    rebuild_to_schema(conn, (schema, table), schema, original, draft, sources, options)
+    rebuild_to_schema(conn, (schema, table), schema, original, draft, sources, options).map(|_| ())
 }
 
 pub fn rebuild_to_schema(
@@ -156,7 +156,7 @@ pub fn rebuild_to_schema(
     draft: &[ColDef],
     sources: &[Option<String>],
     options: Option<table_sql::TableOptions>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let (schema, table) = source;
     let moving = !schema.eq_ignore_ascii_case(target_schema);
     let old_without_rowid = without_rowid(conn, schema, table)?;
@@ -216,23 +216,11 @@ pub fn rebuild_to_schema(
         }
     }
     let objects = db::list_all_schemas(conn)?;
-    let mut trigger_probes = Vec::new();
-    if moving {
-        let triggered = objects.iter().filter(|object| object.kind == db::ObjectKind::Trigger).filter_map(|object| object.tbl_name.as_ref()).collect::<HashSet<_>>();
-        // A TEMP trigger can belong to a main/attached table; probe its real candidate owners.
-        let owners = objects.iter().filter(|object| matches!(object.kind, db::ObjectKind::Table | db::ObjectKind::View) && triggered.contains(&object.name) && !object.name.eq_ignore_ascii_case(table))
-            .map(|object| (object.schema.clone(), object.name.clone()))
-            .collect::<HashSet<_>>();
-        for (owner_schema, owner) in owners {
-            for query in mutation_probes(conn, &owner_schema, &owner)? {
-                if conn.prepare(&query).is_ok() { trigger_probes.push(query); }
-            }
-        }
-    }
     let mut views = Vec::new();
-    for object in objects {
+    let mut moved_views = Vec::new();
+    for object in &objects {
         if object.kind == db::ObjectKind::View {
-            let query = format!(
+            let mut query = format!(
                 "SELECT * FROM {} LIMIT 0",
                 db::qualified_name(&object.schema, &object.name)
             );
@@ -252,12 +240,49 @@ pub fn rebuild_to_schema(
                 conn.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>);
             }
             if valid && dependent.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(format!("Move dependent view {} with the table using an explicit SQL migration", db::qualified_name(&object.schema, &object.name)));
+                if !object.schema.eq_ignore_ascii_case(schema) {
+                    return Err(format!("Move dependent view {} with an explicit SQL migration", db::qualified_name(&object.schema, &object.name)));
+                }
+                if objects.iter().any(|target|target.schema.eq_ignore_ascii_case(target_schema) && target.kind!=db::ObjectKind::Trigger && target.name.eq_ignore_ascii_case(&object.name)) {
+                    return Err(format!("Target view already exists: {}",db::qualified_name(target_schema,&object.name)));
+                }
+                let definition=object.sql.as_deref().ok_or("Dependent view definition is missing")?.to_string();
+                moved_views.push((object.name.clone(),definition));
+                query=format!("SELECT * FROM {} LIMIT 0",db::qualified_name(target_schema,&object.name));
             }
             if valid {
                 views.push(query);
             }
         }
+    }
+    let relocated=std::iter::once(table).chain(moved_views.iter().map(|(name,_)|name.as_str())).collect::<Vec<_>>();
+    let definitions=moved_views.iter().map(|(name,sql)|table_sql::relocate_view(sql,schema,target_schema,&relocated).map(|sql|(name.clone(),sql))).collect::<Result<Vec<_>,_>>()?;
+    moved_views=definitions;
+    let mut view_triggers=Vec::new();
+    let mut trigger_probes=Vec::new();
+    if moving {
+        for object in objects.iter().filter(|object|object.kind==db::ObjectKind::Trigger && object.tbl_name.as_ref().is_some_and(|name|moved_views.iter().any(|(view,_)|view.eq_ignore_ascii_case(name)))) {
+            let sql=object.sql.as_deref().ok_or("View trigger definition is missing")?;
+            let temporary=object.schema.eq_ignore_ascii_case("temp");
+            let belongs=if temporary {
+                table_sql::trigger_table_schema(sql)?.ok_or("Qualify temporary view trigger targets before moving this table")?.eq(schema)
+            } else {object.schema.eq_ignore_ascii_case(schema)};
+            if belongs {view_triggers.push(table_sql::relocate_dependency(sql,if temporary {"temp"}else{target_schema},target_schema)?);}
+        }
+        let triggered=objects.iter().filter(|object|object.kind==db::ObjectKind::Trigger).filter_map(|object|object.tbl_name.as_ref()).collect::<HashSet<_>>();
+        // A TEMP trigger can belong to a main/attached table; probe its real candidate owners.
+        for owner in objects.iter().filter(|object|matches!(object.kind,db::ObjectKind::Table|db::ObjectKind::View) && triggered.contains(&object.name) && !object.name.eq_ignore_ascii_case(table)) {
+            let moved=owner.schema.eq_ignore_ascii_case(schema) && moved_views.iter().any(|(view,_)|view.eq_ignore_ascii_case(&owner.name));
+            for query in mutation_probes(conn,&owner.schema,&owner.name)? {
+                if conn.prepare(&query).is_ok() {
+                    trigger_probes.push(if moved {query.replace(&db::qualified_name(schema,&owner.name),&db::qualified_name(target_schema,&owner.name))}else{query});
+                }
+            }
+        }
+    }
+    if moving {
+        let relocated=std::iter::once(table).chain(moved_views.iter().map(|(name,_)|name.as_str())).collect::<Vec<_>>();
+        for definition in dependencies.iter_mut().chain(&mut view_triggers) {*definition=table_sql::relocate_trigger_queries(definition,schema,target_schema,&relocated)?;}
     }
     let prior_violations = foreign_key_violations(conn, schema)?;
     let target_violations = if !moving { None } else {
@@ -402,6 +427,7 @@ pub fn rebuild_to_schema(
             if before != after {
                 return Err("Table rebuild changed the row count".into());
             }
+            for (name,_) in &moved_views {db::drop_object(conn,db::ObjectKind::View,schema,name)?;}
             db::execute_single_statement(
                 conn,
                 &format!("DROP TABLE {}", db::qualified_name(schema, table)),
@@ -417,6 +443,8 @@ pub fn rebuild_to_schema(
             for dependency in &dependencies {
                 db::execute_single_statement(conn, dependency)?;
             }
+            for (_,definition) in &moved_views {db::execute_single_statement(conn,definition)?;}
+            for definition in &view_triggers {db::execute_single_statement(conn,definition)?;}
             if moving && !dependencies.is_empty() {
                 for sql in mutation_probes(conn, target_schema, table)? {
                     conn.prepare(&sql).map_err(|error| format!("Validate moved triggers: {error}"))?;
@@ -451,7 +479,7 @@ pub fn rebuild_to_schema(
                     return Err("Moving the table introduced a target foreign key violation".into());
                 }
             }
-            Ok(())
+            Ok(moved_views.iter().map(|(name,_)|name.clone()).collect())
         })
     })();
     let result = result
@@ -478,6 +506,68 @@ pub fn rebuild_to_schema(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_moves_relocate_chained_views_and_their_ordinary_and_temporary_triggers() {
+        for source in ["main","aux"] {
+            for target in ["main","temp","aux"].into_iter().filter(|target|*target!=source) {
+                let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");let to=db::qualified_name(target,"archive");
+                conn.execute_batch(&format!("PRAGMA foreign_keys=ON;ATTACH ':memory:' AS aux;
+                    CREATE TABLE {from}(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT CHECK(length(name)>0),amount INTEGER,total INTEGER AS(amount*2) STORED);
+                    INSERT INTO {from}(id,name,amount) VALUES(7,'first',10),(11,'second',20);UPDATE {}.sqlite_sequence SET seq=99 WHERE name='records';
+                    CREATE VIEW {}(id,display,amount,total) AS SELECT id,name,amount,total FROM {from};
+                    CREATE VIEW {} AS SELECT display,amount,total FROM {};
+                    CREATE TRIGGER {} INSTEAD OF UPDATE ON a_report WHEN EXISTS(SELECT 1 FROM {from} WHERE id=old.id) BEGIN UPDATE records SET name=new.display,amount=(SELECT new.amount FROM {from} WHERE id=old.id) FROM(SELECT max(amount) AS maximum FROM {from}) AS stats WHERE id=old.id;END;
+                    CREATE TRIGGER {} INSTEAD OF INSERT ON a_report BEGIN INSERT INTO records(name,amount) SELECT new.display,new.amount WHERE EXISTS(SELECT 1 FROM {});END;
+                    CREATE TRIGGER {} INSTEAD OF DELETE ON a_report BEGIN SELECT count(*) FROM {};DELETE FROM records WHERE id IN(SELECT id FROM {from} WHERE id=old.id);END;
+                    CREATE TEMP TABLE session_audit(value);CREATE TEMP TRIGGER session_edit INSTEAD OF UPDATE ON {} WHEN EXISTS(SELECT 1 FROM {from} WHERE id=old.id) BEGIN INSERT INTO session_audit VALUES(new.display);END;",
+                    db::quote_ident(source),db::qualified_name(source,"a_report"),db::qualified_name(source,"z_report"),db::qualified_name(source,"a_report"),db::qualified_name(source,"edit_report"),db::qualified_name(source,"insert_report"),db::qualified_name(source,"a_report"),db::qualified_name(source,"delete_report"),db::qualified_name(source,"z_report"),db::qualified_name(source,"a_report"))).unwrap();
+                conn.execute_batch(&format!("CREATE TABLE {}(id INTEGER PRIMARY KEY,value);CREATE TABLE {}(id INTEGER PRIMARY KEY,value);INSERT INTO {} VALUES(100,-1);
+                    CREATE TRIGGER {} AFTER INSERT ON records BEGIN INSERT INTO audit(id,value) SELECT new.id,(SELECT max(amount) FROM {from}) WHERE 1 ON CONFLICT(id) WHERE id>0 DO UPDATE SET value=(SELECT max(amount) FROM {from}) WHERE EXISTS(SELECT 1 FROM {}) ON CONFLICT DO NOTHING;END;",db::qualified_name(source,"audit"),db::qualified_name(target,"audit"),db::qualified_name(target,"audit"),db::qualified_name(source,"audit_insert"),db::qualified_name(source,"a_report"))).unwrap();
+                let baseline=format!("{:?}",db::list_all_schemas(&conn).unwrap());conn.execute_batch(&format!("BEGIN;INSERT INTO {from}(id,name,amount) VALUES(14,'pending',30)")).unwrap();
+                let columns=db::table_column_defs_in(&conn,source,"records").unwrap();let identities=columns.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();let mut draft=columns.clone();draft[1].name="label".into();
+                let moved=db::recreate_table_columns_between(&conn,(source,"records"),(target,"archive"),&draft,&identities,None).unwrap_or_else(|error|panic!("{source} → {target}: {error}"));assert_eq!(moved,["a_report","z_report"]);
+                let report=db::qualified_name(target,"a_report");let chained=db::qualified_name(target,"z_report");
+                assert_eq!(conn.query_row(&format!("SELECT sum(total) FROM {chained}"),[],|row|row.get::<_,i64>(0)).unwrap(),120);
+                conn.execute(&format!("UPDATE {report} SET display='changed',amount=40 WHERE id=7"),[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT total FROM {to} WHERE id=7"),[],|row|row.get::<_,i64>(0)).unwrap(),80);assert_eq!(conn.query_row("SELECT value FROM temp.session_audit",[],|row|row.get::<_,String>(0)).unwrap(),"changed");
+                conn.execute(&format!("DELETE FROM {report} WHERE id=11"),[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {to} WHERE id=11"),[],|row|row.get::<_,i64>(0)).unwrap(),0);
+                conn.execute(&format!("INSERT INTO {report}(display,amount) VALUES('next',50)"),[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT id FROM {to} WHERE label='next'"),[],|row|row.get::<_,i64>(0)).unwrap(),100);
+                assert_eq!(conn.query_row(&format!("SELECT value FROM {} WHERE id=100",db::qualified_name(target,"audit")),[],|row|row.get::<_,i64>(0)).unwrap(),50);
+                assert!(conn.prepare(&format!("SELECT * FROM {}",db::qualified_name(source,"a_report"))).is_err());assert!(!conn.is_autocommit());
+                conn.execute_batch("ROLLBACK").unwrap();assert_eq!(format!("{:?}",db::list_all_schemas(&conn).unwrap()),baseline);assert_eq!(conn.query_row(&format!("SELECT sum(total) FROM {}",db::qualified_name(source,"z_report")),[],|row|row.get::<_,i64>(0)).unwrap(),60);assert_eq!(conn.query_row("SELECT count(*) FROM temp.session_audit",[],|row|row.get::<_,i64>(0)).unwrap(),0);
+            }
+        }
+    }
+
+    #[test]
+    fn dependent_view_moves_reject_collisions_and_missing_dependencies_without_partial_changes() {
+        for source in ["main","aux"] {
+            for target in ["main","temp","aux"].into_iter().filter(|target|*target!=source) {
+                for case in ["view","index","trigger","missing-table","trigger-body","qualified","external-trigger","drop-column"] {
+                    let conn=Connection::open_in_memory().unwrap();let from=db::qualified_name(source,"records");
+                    conn.execute_batch(&format!("ATTACH ':memory:' AS aux;CREATE TABLE {from}(id INTEGER PRIMARY KEY,v TEXT);INSERT INTO {from} VALUES(7,'original');CREATE TABLE {}(value)",db::qualified_name(source,"audit"))).unwrap();
+                    let query=match case {"missing-table"=>{conn.execute_batch(&format!("CREATE TABLE {}(v);INSERT INTO {} VALUES('original')",db::qualified_name(source,"support"),db::qualified_name(source,"support"))).unwrap();"SELECT records.id,records.v FROM records JOIN support USING(v)".into()},"qualified"=>format!("SELECT id,v FROM {from}"),_=>"SELECT id,v FROM records".into()};
+                    conn.execute_batch(&format!("CREATE VIEW {} AS {query};CREATE TRIGGER {} INSTEAD OF UPDATE ON visible BEGIN {} END",db::qualified_name(source,"visible"),db::qualified_name(source,"edit_view"),if case=="trigger-body" {"INSERT INTO audit VALUES(new.v);"}else{"UPDATE records SET v=new.v WHERE id=old.id;"})).unwrap();
+                    let extra=match case {
+                        "view"=>format!("CREATE VIEW {} AS SELECT 42",db::qualified_name(target,"visible")),
+                        "index"=>format!("CREATE TABLE {}(v);CREATE INDEX {} ON dummy(v)",db::qualified_name(target,"dummy"),db::qualified_name(target,"visible")),
+                        "trigger"=>format!("CREATE TABLE {}(v);CREATE TRIGGER {} AFTER INSERT ON dummy BEGIN SELECT 1;END",db::qualified_name(target,"dummy"),db::qualified_name(target,"edit_view")),
+                        "external-trigger"=>format!("CREATE TABLE {}(v);CREATE TRIGGER {} AFTER INSERT ON other BEGIN UPDATE visible SET v=new.v;END",db::qualified_name(source,"other"),db::qualified_name(source,"external")),_=>String::new(),
+                    };conn.execute_batch(&extra).unwrap();conn.execute_batch(&format!("BEGIN;INSERT INTO {from} VALUES(13,'pending');PRAGMA legacy_alter_table=ON")).unwrap();
+                    let baseline=format!("{:?}",db::list_all_schemas(&conn).unwrap());let columns=db::table_column_defs_in(&conn,source,"records").unwrap();let mut draft=columns.clone();if case=="drop-column" {draft.pop();}let identities=draft.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
+                    let result=db::recreate_table_columns_between(&conn,(source,"records"),(target,"archive"),&draft,&identities,None);
+                    if (target=="temp" && matches!(case,"missing-table"|"trigger-body")) || case=="qualified" {
+                        result.unwrap();let visible=db::qualified_name(target,"visible");assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {visible}"),[],|row|row.get::<_,i64>(0)).unwrap(),if case=="missing-table" {7}else{20});
+                        conn.execute(&format!("UPDATE {visible} SET v='changed' WHERE id=7"),[]).unwrap();
+                        if case=="trigger-body" {assert_eq!(conn.query_row(&format!("SELECT value FROM {}",db::qualified_name(source,"audit")),[],|row|row.get::<_,String>(0)).unwrap(),"changed");}
+                        conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {}",db::qualified_name(source,"visible")),[],|row|row.get::<_,i64>(0)).unwrap(),7);continue;
+                    }
+                    assert!(result.is_err(),"{source} → {target}: {case}: {result:?}");assert_eq!(format!("{:?}",db::list_all_schemas(&conn).unwrap()),baseline);assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {from}"),[],|row|row.get::<_,i64>(0)).unwrap(),20);assert!(!conn.is_autocommit());assert!(conn.db_config(DbConfig::SQLITE_DBCONFIG_LEGACY_ALTER_TABLE).unwrap());
+                    conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {}",db::qualified_name(source,"visible")),[],|row|row.get::<_,i64>(0)).unwrap(),7);
+                }
+            }
+        }
+    }
 
     #[test]
     fn table_moves_keep_sparse_rowids_and_without_rowid_composite_keys() {
@@ -561,10 +651,10 @@ mod tests {
                     let before=format!("{:?}",db::list_all_schemas(&conn).unwrap());let columns=db::table_column_defs_in(&conn,source,"records").unwrap();let mut draft=columns.clone();if case=="not-null" {draft[1].notnull=true;}
                     let identities=columns.iter().map(|column|Some(column.name.clone())).collect::<Vec<_>>();
                     let result=db::recreate_table_columns_between(&conn,(source,"records"),(target,"archive"),&draft,&identities,None);
-                    if case=="dependent-view" && source=="temp" {
-                        // TEMP views can follow their table into an attached database.
-                        result.unwrap();assert_eq!(conn.query_row("SELECT sum(id) FROM temp.visible",[],|row|row.get::<_,i64>(0)).unwrap(),20);
-                        conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row("SELECT sum(id) FROM temp.visible",[],|row|row.get::<_,i64>(0)).unwrap(),7);continue;
+                    if case=="dependent-view" {
+                        let moved=result.unwrap();assert_eq!(moved,if source=="temp" {vec![]}else{vec!["visible".to_string()]});
+                        let view=db::qualified_name(if source=="temp" {"temp"}else{target},"visible");assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {view}"),[],|row|row.get::<_,i64>(0)).unwrap(),20);
+                        conn.execute_batch("ROLLBACK").unwrap();assert_eq!(conn.query_row(&format!("SELECT sum(id) FROM {}",db::qualified_name(source,"visible")),[],|row|row.get::<_,i64>(0)).unwrap(),7);continue;
                     }
                     if case=="external-trigger" && source=="temp" {
                         result.unwrap();conn.execute("INSERT INTO temp.other VALUES('changed')",[]).unwrap();assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {to} WHERE v='changed'"),[],|row|row.get::<_,i64>(0)).unwrap(),2);

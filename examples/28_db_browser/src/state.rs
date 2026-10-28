@@ -2052,32 +2052,36 @@ impl AppState {
         let previous_source = self.selected.as_ref().and_then(|s| self.schema.iter().find(|o| o.schema == s.schema && o.kind == s.kind && o.name == s.name)).and_then(|o| o.sql.clone());
         let clean_ddl = self.ddl_draft == previous_source.unwrap_or_default();
         let conn = self.conn.as_ref().unwrap();
-        if let Some(orig) = original.as_ref() {
-            db::recreate_table_columns_between(conn, (&orig.schema, &orig.name), (&schema, &name), &columns, &self.wizard_col_sources, Some(options))?;
+        let moved_views=if let Some(orig) = original.as_ref() {
+            let views=db::recreate_table_columns_between(conn, (&orig.schema, &orig.name), (&schema, &name), &columns, &self.wizard_col_sources, Some(options))?;
             self.log_sql(format!("-- modify table {} → {}", db::qualified_name(&orig.schema, &orig.name), db::qualified_name(&schema, &name)));
+            views
         } else {
             for column in &columns { crate::table_sql::column_definition(column, None)?; }
             let ddl = crate::table_sql::apply_table_options(&db::create_table_ddl_in(&schema, &name, &columns), options)?;
             db::execute_single_statement(conn, &ddl)?;
             self.log_sql(ddl);
-        }
+            Vec::new()
+        };
         self.mark_dirty();
         self.overlay = None;
         if let Some(orig) = original.as_ref().filter(|o| o.schema != schema || o.name != name) {
-            for tab in &mut self.browse_tabs {
-                let saved = if orig.schema == "main" { tab.table_options.remove(&orig.name) }
-                    else { tab.schema_table_options.get_mut(&orig.schema).and_then(|tables| tables.remove(&orig.name)) };
-                if let Some(options) = saved { tab.store_options(&schema, &name, options); }
-                if tab.schema == orig.schema && tab.table.as_deref() == Some(&orig.name) {
-                    tab.schema = schema.clone();
-                    tab.table = Some(name.clone());
-                    tab.title = if schema == "main" { name.clone() } else { db::qualified_name(&schema, &name) };
+            for (old_name,new_name) in std::iter::once((orig.name.as_str(),name.as_str())).chain(moved_views.iter().map(|name|(name.as_str(),name.as_str()))) {
+                for tab in &mut self.browse_tabs {
+                    let saved = if orig.schema == "main" { tab.table_options.remove(old_name) }
+                        else { tab.schema_table_options.get_mut(&orig.schema).and_then(|tables| tables.remove(old_name)) };
+                    if let Some(options) = saved { tab.store_options(&schema, new_name, options); }
+                    if tab.schema == orig.schema && tab.table.as_deref() == Some(old_name) {
+                        tab.schema = schema.clone();
+                        tab.table = Some(new_name.into());
+                        tab.title = if schema == "main" { new_name.into() } else { db::qualified_name(&schema, new_name) };
+                    }
                 }
+                for rule in &mut self.cond_rules {
+                    if rule.schema == orig.schema && rule.table.as_deref() == Some(old_name) { rule.schema = schema.clone(); rule.table = Some(new_name.into()); }
+                }
+                if self.chart_schema == orig.schema && self.chart_table.as_deref() == Some(old_name) { self.chart_schema = schema.clone(); self.chart_table = Some(new_name.into()); }
             }
-            for rule in &mut self.cond_rules {
-                if rule.schema == orig.schema && rule.table.as_deref() == Some(&orig.name) { rule.schema = schema.clone(); rule.table = Some(name.clone()); }
-            }
-            if self.chart_schema == orig.schema && self.chart_table.as_deref() == Some(&orig.name) { self.chart_schema = schema.clone(); self.chart_table = Some(name.clone()); }
         }
         if original.is_some() && !renames.is_empty() {
             for tab in &mut self.browse_tabs {
@@ -2099,6 +2103,18 @@ impl AppState {
                 if rule.schema == schema && rule.table.as_deref() == Some(&name) { rename_column(&mut rule.column, &renames); }
             }
             if self.chart_schema == schema && self.chart_table.as_deref() == Some(&name) { rename_column(&mut self.chart_column, &renames); }
+        }
+        for view in &moved_views {
+            let columns=db::table_column_names_in(self.conn.as_ref().unwrap(),&schema,view)?;
+            let changes=renames.iter().filter(|(from,to)|!columns.iter().any(|column|column.eq_ignore_ascii_case(from)) && columns.iter().any(|column|column.eq_ignore_ascii_case(to))).cloned().collect::<Vec<_>>();
+            for tab in &mut self.browse_tabs {
+                if let Some(mut options)=tab.stored_options(&schema,view).cloned() {options.rename_columns(&changes);options.remap_columns(&columns);tab.store_options(&schema,view,options);}
+                if tab.schema==schema && tab.table.as_deref()==Some(view) {
+                    let mut options=tab.options();options.rename_columns(&changes);options.remap_columns(&columns);tab.set_options(options);tab.result=None;tab.rowids.clear();tab.total_rows=None;tab.clear_selection();
+                }
+            }
+            for rule in &mut self.cond_rules {if rule.schema==schema && rule.table.as_deref()==Some(view) {rename_column(&mut rule.column,&changes);}}
+            if self.chart_schema==schema && self.chart_table.as_deref()==Some(view) {rename_column(&mut self.chart_column,&changes);}
         }
         self.refresh_schema()?;
         self.select_saved_object(&schema, ObjectKind::Table, &name, clean_ddl);
@@ -4126,6 +4142,29 @@ mod chart_default_tests {
         AppState::preflight_project_browse(&mut restored, state.conn.as_ref().unwrap()).unwrap();
         assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(), expected);
         assert_eq!(db::browse_table(state.conn.as_ref().unwrap(), "t", &[], None, 5, 0).unwrap().rows[0][0], "saved");
+    }
+
+    #[test]
+    fn moved_view_settings_follow_actual_output_names_and_keep_explicit_aliases() {
+        for source in ["main","aux"] {
+            for target in ["main","temp","aux"].into_iter().filter(|target|*target!=source) {
+                let mut state=test_state();state.conn.as_ref().unwrap().execute_batch(&format!("ATTACH ':memory:' AS aux;CREATE TABLE {}(a INTEGER,b INTEGER);INSERT INTO {} VALUES(25,50),(26,51);
+                    CREATE VIEW {} AS SELECT a,b FROM records;CREATE VIEW {} AS SELECT a AS a,b AS renamed_metric FROM records;",db::qualified_name(source,"records"),db::qualified_name(source,"records"),db::qualified_name(source,"visible"),db::qualified_name(source,"aliased"))).unwrap();state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema==source && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);
+                let options=BrowseTableOptions {column_names:vec!["a".into(),"b".into()],col_filters:vec!["=25".into(),"=50".into()],column_widths:vec![211.0,322.0],frozen_cols:Some(1),ordering:vec![db::OrderBy {column:"a".into(),descending:true}],..Default::default()};
+                state.switch_browse_table_in(source,"visible").unwrap();state.browse_mut().set_options(options.clone());state.browse_mut().store_options(source,"visible",options.clone());state.refresh_browse().unwrap();
+                state.add_browse_tab().unwrap();state.switch_browse_table_in(source,"aliased").unwrap();let mut aliases=options.clone();aliases.column_names[1]="renamed_metric".into();state.browse_mut().set_options(aliases.clone());state.browse_mut().store_options(source,"aliased",aliases.clone());state.refresh_browse().unwrap();
+                state.add_browse_tab().unwrap();state.switch_browse_table_in(source,"records").unwrap();
+                state.chart_schema=source.into();state.chart_table=Some("visible".into());state.chart_column="b".into();
+                for view in ["visible","aliased"] {state.cond_rules.push(CondFormatRule {schema:source.into(),table:Some(view.into()),column:"a".into(),op:0,value:"25".into(),color_rgb:0x123456});}
+                state.open_modify_table_wizard().unwrap();state.wizard_schema=target.into();state.wizard_table_name="archive".into();state.wizard_cols[0].name="label".into();state.wizard_cols[1].name="metric".into();state.apply_table_wizard().unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
+                let mut expected=options.clone();expected.column_names=vec!["label".into(),"metric".into()];expected.ordering[0].column="label".into();
+                assert_eq!(state.browse_tabs[0].schema,target);assert_eq!(state.browse_tabs[0].table.as_deref(),Some("visible"));assert_eq!(state.browse_tabs[0].options(),expected);assert_eq!(state.browse_tabs[0].stored_options(target,"visible"),Some(&expected));assert!(state.browse_tabs[0].stored_options(source,"visible").is_none());
+                assert_eq!(state.browse_tabs[1].schema,target);assert_eq!(state.browse_tabs[1].table.as_deref(),Some("aliased"));assert_eq!(state.browse_tabs[1].options(),aliases);assert_eq!(state.browse_tabs[1].stored_options(target,"aliased"),Some(&aliases));assert!(state.browse_tabs[1].stored_options(source,"aliased").is_none());
+                assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("visible"));assert_eq!(state.chart_column,"metric");assert_eq!(state.chart_points,[50.0,51.0]);assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,target);assert_eq!(state.cond_rules[1].column,"a");
+                for index in [0,1] {state.switch_browse_tab(index).unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),1);assert_eq!(state.browse().result.as_ref().unwrap().rows[0],["25","50"]);}
+                let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap()).unwrap();assert_eq!(restored.browse_tabs[0].options(),expected);assert_eq!(restored.browse_tabs[1].options(),aliases);
+            }
+        }
     }
 
     #[test]

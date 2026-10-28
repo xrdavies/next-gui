@@ -1474,9 +1474,10 @@ pub fn recreate_table_columns_in(
     sources: &[Option<String>],
     options: Option<crate::table_sql::TableOptions>,
 ) -> Result<(), String> {
-    recreate_table_columns_between(conn, (schema, old_name), (schema, new_name), cols, sources, options)
+    recreate_table_columns_between(conn, (schema, old_name), (schema, new_name), cols, sources, options).map(|_| ())
 }
 
+/// Apply an atomic table migration and return the names of views moved with it.
 pub fn recreate_table_columns_between(
     conn: &Connection,
     source: (&str, &str),
@@ -1484,7 +1485,7 @@ pub fn recreate_table_columns_between(
     cols: &[ColDef],
     sources: &[Option<String>],
     options: Option<crate::table_sql::TableOptions>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let (schema, old_name) = source; let (target_schema, new_name) = target;
     let moving = !schema.eq_ignore_ascii_case(target_schema);
     if moving {
@@ -1573,6 +1574,7 @@ pub fn recreate_table_columns_between(
         })
     } else { None };
     with_savepoint(conn, || {
+        let mut moved_views=Vec::new();
         let mut staged_removals = Vec::new();
         if rebuild {
             // Keep removed fields until native DROP can validate views/triggers after replacing their keys.
@@ -1629,7 +1631,7 @@ pub fn recreate_table_columns_between(
                     staged.push(column); identities.push(Some(temporary.clone()));
                 }
                 if moving { retarget_table_draft(&mut staged, &mut options, old_name, current_name)?; }
-                crate::table_migration::rebuild_to_schema(conn, (schema, current_name), target_schema, &current, &staged, &identities, options)?;
+                moved_views=crate::table_migration::rebuild_to_schema(conn, (schema, current_name), target_schema, &current, &staged, &identities, options)?;
                 for (original, temporary) in staged_removals {
                     drop_table_column_in(conn, target_schema, current_name, &temporary)
                         .map_err(|error| format!("Cannot remove column {original}: {error}"))?;
@@ -1645,7 +1647,7 @@ pub fn recreate_table_columns_between(
             }
         }
         rename_table_in(conn, target_schema, current_name, new_name)?;
-        Ok(())
+        Ok(moved_views)
     }).map_err(|error| if let Some(name) = move_name.as_deref() {
         format!("Cannot move {} to {}: {}", qualified_name(schema, old_name), qualified_name(target_schema, new_name),
             error.replace(&quote_ident(name), &quote_ident(old_name)).replace(name, old_name))
