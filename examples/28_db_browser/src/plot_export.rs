@@ -1,0 +1,235 @@
+//! Save the visible plot through the same raster renderer used on screen.
+use crate::{db, Demo};
+use next_gui_scene::RgbaImage;
+use std::{io::{Seek, Write}, path::{Path, PathBuf}};
+
+#[derive(Clone, Copy)]
+enum Format { Png, Jpeg, Bmp, Pdf }
+
+fn destination(path: &Path) -> (PathBuf, Format) {
+    match path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "png" => (path.into(), Format::Png),
+        "jpg" | "jpeg" => (path.into(), Format::Jpeg),
+        "bmp" => (path.into(), Format::Bmp),
+        "pdf" => (path.into(), Format::Pdf),
+        _ => { let mut name = path.as_os_str().to_os_string(); name.push(".png"); (PathBuf::from(name), Format::Png) }
+    }
+}
+
+fn encode(mut output: &mut std::fs::File, image: &RgbaImage, format: Format) -> Result<(), String> {
+    use image::{ColorType, ImageEncoder};
+    let result = match format {
+        Format::Png => image::codecs::png::PngEncoder::new(&mut output).write_image(image.pixels(), image.width(), image.height(), ColorType::Rgba8),
+        Format::Jpeg => image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 95).encode(image.pixels(), image.width(), image.height(), ColorType::Rgba8),
+        Format::Bmp => image::codecs::bmp::BmpEncoder::new(&mut output).encode(image.pixels(), image.width(), image.height(), ColorType::Rgba8),
+        Format::Pdf => return pdf(output, image).map_err(|e| e.to_string()),
+    };
+    result.map_err(|e| e.to_string())
+}
+
+// shortcut: PDF embeds lossless raster pixels; add vector primitives for resolution-independent PDF/print parity.
+fn pdf(output: &mut std::fs::File, image: &RgbaImage) -> std::io::Result<()> {
+    let (width, height) = (image.width(), image.height());
+    let mut offsets = [0u64; 6];
+    output.write_all(b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")?;
+    offsets[1] = output.stream_position()?;
+    output.write_all(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")?;
+    offsets[2] = output.stream_position()?;
+    output.write_all(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")?;
+    offsets[3] = output.stream_position()?;
+    writeln!(output, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Resources << /XObject << /Plot 4 0 R >> >> /Contents 5 0 R >>\nendobj")?;
+    offsets[4] = output.stream_position()?;
+    writeln!(output, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {} >>\nstream", u64::from(width)*u64::from(height)*3)?;
+    let mut row = vec![0u8; width as usize * 3];
+    for pixels in image.pixels().chunks_exact(width as usize * 4) {
+        for (source, target) in pixels.chunks_exact(4).zip(row.chunks_exact_mut(3)) {
+            for channel in 0..3 { target[channel] = ((u16::from(source[channel])*u16::from(source[3]) + 255*(255-u16::from(source[3])) + 127)/255) as u8; }
+        }
+        output.write_all(&row)?;
+    }
+    output.write_all(b"\nendstream\nendobj\n")?;
+    offsets[5] = output.stream_position()?;
+    let content = format!("q {width} 0 0 {height} 0 0 cm /Plot Do Q\n");
+    writeln!(output, "5 0 obj\n<< /Length {} >>\nstream\n{content}endstream\nendobj", content.len())?;
+    let xref = output.stream_position()?;
+    output.write_all(b"xref\n0 6\n0000000000 65535 f \n")?;
+    for offset in &offsets[1..] { writeln!(output, "{offset:010} 00000 n ")?; }
+    writeln!(output, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF")
+}
+
+fn save(conn: &rusqlite::Connection, path: &Path, image: &RgbaImage) -> Result<PathBuf, String> {
+    save_with(conn, path, |output, format| encode(output, image, format))
+}
+
+fn save_with(conn: &rusqlite::Connection, path: &Path, write: impl FnOnce(&mut std::fs::File, Format) -> Result<(), String>) -> Result<PathBuf, String> {
+    let (path, format) = destination(path);
+    db::guard_output_path(conn, &path)?;
+    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    write(temp.as_file_mut(), format)?;
+    temp.as_file_mut().sync_all().map_err(|e| e.to_string())?;
+    db::guard_output_path(conn, &path)?;
+    temp.persist(&path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+impl Demo {
+    pub(crate) fn save_plot(&mut self) {
+        let result = (|| {
+            self.state.guard_background_idle()?;
+            let Some(path) = crate::file_dlg::pick_save_plot() else { return Ok(None); };
+            let (width, height) = self.ui.chart_plot_size(self.ids.chart, 0).ok_or("No visible plot to save")?;
+            let image = self.ui.chart_plot_image(self.ids.chart, 0, width, height).ok_or("Plot image exceeds the 128 MiB image budget")?;
+            let conn = self.state.conn.as_ref().ok_or("No idle database connection")?;
+            save(conn, &path, &image).map(Some)
+        })();
+        match result {
+            Ok(Some(path)) => { self.clear_error(); self.state.status_msg = format!("Plot saved to {}", path.display()); }
+            Ok(None) => return,
+            Err(error) => self.set_error(error),
+        }
+        self.rebuild = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{plot, state::{DockKind, MainTab}, PresentBackend};
+
+    #[test]
+    fn formats_roundtrip_case_suffixes_and_pdf_cross_references() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let pixels = (0..32*20).flat_map(|index| if index%32<16 { [230,20,40,255] } else { [10,40,220,255] }).collect::<Vec<_>>();
+        let image = RgbaImage::new(32,20,pixels.clone()).unwrap();
+        for extension in ["png","PNG","jpg","JPEG","bmp","BMP","pdf","PDF","other",""] {
+            let name = if extension.is_empty() { "plot".into() } else { format!("plot.{extension}") };
+            let path = save(&conn, &dir.path().join(name), &image).unwrap();
+            assert!(path.is_file());
+            if matches!(extension,"other"|"") { assert_eq!(path.extension().unwrap(), "png"); }
+            let bytes = std::fs::read(&path).unwrap();
+            if extension.eq_ignore_ascii_case("pdf") {
+                assert!(bytes.starts_with(b"%PDF-1.4"));
+                let text = String::from_utf8_lossy(&bytes);
+                let xref = text.rsplit("startxref\n").next().unwrap().lines().next().unwrap().parse::<usize>().unwrap();
+                assert!(bytes[xref..].starts_with(b"xref\n0 6\n"));
+                let xref_text = std::str::from_utf8(&bytes[xref..]).unwrap();
+                for (object, line) in xref_text.lines().skip(3).take(5).enumerate() {
+                    let offset:usize = line[..10].parse().unwrap();
+                    assert!(bytes[offset..].starts_with(format!("{} 0 obj",object+1).as_bytes()));
+                }
+                assert!(text.contains("/MediaBox [0 0 32 20]"));
+                let header = format!("/BitsPerComponent 8 /Length {} >>\nstream\n",32*20*3);
+                let begin = bytes.windows(header.len()).position(|part|part==header.as_bytes()).unwrap()+header.len();
+                let rgb = pixels.chunks_exact(4).flat_map(|p|p[..3].iter().copied()).collect::<Vec<_>>();
+                assert_eq!(&bytes[begin..begin+rgb.len()],rgb);
+            } else {
+                let decoded = image::load_from_memory(&bytes).unwrap().to_rgba8();
+                assert_eq!(decoded.dimensions(),(32,20));
+                if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") {
+                    assert!(decoded.get_pixel(4,4)[0]>200 && decoded.get_pixel(24,4)[2]>190);
+                } else { assert_eq!(decoded.as_raw(), &pixels); }
+            }
+        }
+        let alpha = RgbaImage::new(1,1,vec![255,0,0,128]).unwrap();
+        let alpha_path = save(&conn,&dir.path().join("alpha.pdf"),&alpha).unwrap();
+        assert!(std::fs::read(alpha_path).unwrap().windows(3).any(|bytes|bytes==[255,127,127]));
+    }
+
+    #[test]
+    fn staged_save_preserves_destinations_databases_and_pending_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.png"); let aux = dir.path().join("aux.pdf");
+        let conn = rusqlite::Connection::open(&main).unwrap();
+        conn.execute("ATTACH ? AS aux",[aux.to_str().unwrap()]).unwrap();
+        conn.execute_batch("CREATE TABLE kept(x); CREATE TABLE aux.kept(x); BEGIN; INSERT INTO kept VALUES(19)").unwrap();
+        let before = std::fs::read(&main).unwrap(); let aux_before = std::fs::read(&aux).unwrap();
+        let image = RgbaImage::new(2,2,vec![255;16]).unwrap();
+        for path in [&main,&aux] { assert!(save(&conn,path,&image).unwrap_err().contains("open database")); }
+        assert_eq!(std::fs::read(&main).unwrap(),before); assert_eq!(std::fs::read(&aux).unwrap(),aux_before);
+        let path = dir.path().join("existing.png"); std::fs::write(&path,b"previous output").unwrap();
+        let count = std::fs::read_dir(dir.path()).unwrap().count();
+        let error = save_with(&conn,&path,|output,_| { output.write_all(b"incomplete encoding").unwrap(); Err("encoding failed".into()) }).unwrap_err();
+        assert_eq!(error,"encoding failed"); assert_eq!(std::fs::read(&path).unwrap(),b"previous output");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(),count);
+        let folder = dir.path().join("folder.png"); std::fs::create_dir(&folder).unwrap();
+        assert!(save(&conn,&folder,&image).is_err()); assert!(folder.is_dir());
+        save(&conn,&path,&image).unwrap(); assert!(image::open(path).is_ok());
+        assert!(!conn.is_autocommit());
+        assert_eq!(conn.query_row("SELECT x FROM kept",[],|row|row.get::<_,i64>(0)).unwrap(),19);
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(conn.query_row("SELECT count(*) FROM kept",[],|row|row.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    #[test]
+    fn plot_export_uses_current_view_selection_palette_and_no_query_replay() {
+        let mut demo = Demo::new(1400,1000,PresentBackend::Softbuffer);
+        demo.state.new_memory_db().unwrap();
+        demo.state.conn.as_ref().unwrap().execute_batch(crate::FULL_PLOT_QA_SQL).unwrap();
+        demo.state.tab = MainTab::ExecuteSql;
+        *demo.state.sql_editor_mut() = "UPDATE telemetry SET measured=measured+1 RETURNING sequence,measured,reference".into();
+        demo.state.run_sql_sync().unwrap();
+        demo.state.plot.settings.manual=false; demo.state.sync_current_plot().unwrap();
+        for (row,axis) in [(1,1),(2,2),(3,3)] { demo.state.plot.check(row,axis,true); }
+        demo.state.plot.set_styles(1,4);
+        demo.state.plot.settings.show_legend=true;
+        demo.state.dock_focus=DockKind::Plot; demo.state.dock_plot=true;
+        demo.do_rebuild();
+        assert_eq!(demo.ui.accessible_name(demo.ids.plot.save).as_deref(),Some("Save plot as PNG, JPEG, BMP or PDF"));
+        let data = demo.ui.chart_plot_mut(demo.ids.chart,0).unwrap();
+        assert!(data.zoom(0.7,0.5,0.5)); assert!(data.select_row(101,false));
+        let view = data.view();
+        demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();
+        assert_eq!(demo.ui.chart_plot(demo.ids.chart,0).unwrap().view(),view);
+        let directory = std::env::var("NEXT_GUI_PLOT_EXPORT_QA_OUT").ok();
+        let temporary = tempfile::tempdir().unwrap();
+        let folder = directory.as_deref().map(Path::new).unwrap_or(temporary.path());
+        std::fs::create_dir_all(folder).unwrap();
+        let result = demo.state.sql_result.as_ref().unwrap().all_values.clone().unwrap();
+        for (name,theme) in [("dark",next_gui_ui::Theme::dark()),("light",next_gui_ui::Theme::light())] {
+            demo.theme=crate::ui_build::browser_theme(theme,demo.state.prefs.font_size);
+            for (width,height) in [(1400,1000),(800,600)] {
+                demo.win_w=width; demo.win_h=height; demo.do_rebuild();
+                assert!(demo.ui.button_enabled(demo.ids.plot.save).unwrap());
+                let size = demo.ui.chart_plot_size(demo.ids.chart,0).unwrap();
+                let image = demo.ui.chart_plot_image(demo.ids.chart,0,size.0,size.1).unwrap();
+                assert!(image.pixels().chunks_exact(4).any(|p|p[..3]!=image.pixels()[..3]));
+                assert_eq!(demo.ui.chart_plot(demo.ids.chart,0).unwrap().view(),view);
+                for extension in ["png","jpg","bmp","pdf"] {
+                    save(demo.state.conn.as_ref().unwrap(),&folder.join(format!("plot-{name}-{width}.{extension}")),&image).unwrap();
+                }
+                let decoded=image::open(folder.join(format!("plot-{name}-{width}.png"))).unwrap().to_rgba8();
+                assert_eq!(decoded.as_raw().as_slice(),image.pixels().as_ref());
+                if directory.is_some() { capture(&mut demo,folder,&format!("{name}-{width}")); }
+            }
+        }
+        assert!(std::sync::Arc::ptr_eq(&result,demo.state.sql_result.as_ref().unwrap().all_values.as_ref().unwrap()));
+        let mut statement=demo.state.conn.as_ref().unwrap().prepare("SELECT measured FROM telemetry WHERE sequence=1").unwrap();
+        assert_eq!(statement.query_row([],|row|row.get::<_,f64>(0)).unwrap(),1344.0);
+        assert!(matches!(demo.state.plot.source,Some(plot::Source::Query(0))));
+    }
+
+    fn capture(demo:&mut Demo,folder:&Path,name:&str) {
+        use next_gui_render::{encode_scene,Renderer};
+        demo.scene.mark_full_dirty(demo.win_w as f32,demo.win_h as f32); let dirty=demo.scene.take_dirty();
+        let commands=encode_scene(&demo.scene,&dirty); let clear=crate::ui_build::clear_color(&demo.theme);
+        let mut soft=next_gui_render_soft::SoftRenderer::new(demo.win_w,demo.win_h,clear);soft.render(&commands,&dirty);
+        let pixels=soft.frame_pixels().unwrap().0;
+        crate::write_ppm(folder.join(format!("window-{name}.ppm")).to_str().unwrap(),pixels,demo.win_w,demo.win_h).unwrap();
+        if let Ok(mut gpu)=next_gui_render_gpu::GpuRenderer::try_new(demo.win_w,demo.win_h,clear) {
+            gpu.render(&commands,&dirty);let rendered=gpu.frame_pixels().unwrap().0;
+            crate::write_ppm(folder.join(format!("window-{name}-metal.ppm")).to_str().unwrap(),rendered,demo.win_w,demo.win_h).unwrap();
+            let bounds=demo.scene.iter_paint_order().into_iter().find(|n|demo.ui.widget_from_node(n.id)==Some(demo.ids.chart)).unwrap().bounds;
+            let mut delta=0;let mut count=0;
+            for y in (bounds.y.ceil().max(0.0) as usize+2)..((bounds.y+bounds.height).floor().min(demo.win_h as f32) as usize).saturating_sub(2) {
+                for x in (bounds.x.ceil().max(0.0) as usize+2)..((bounds.x+bounds.width).floor().min(demo.win_w as f32) as usize).saturating_sub(2) {
+                    for shift in [0,8,16] {delta=delta.max((((pixels[y*demo.win_w as usize+x]>>shift)&255) as i32-((rendered[y*demo.win_w as usize+x]>>shift)&255) as i32).abs());}
+                    count+=1;
+                }
+            }
+            assert!(count>1000 && delta<=2,"{name}: delta={delta},pixels={count}");
+            eprintln!("Plot export {name}: delta={delta},pixels={count}");
+        }
+    }
+}

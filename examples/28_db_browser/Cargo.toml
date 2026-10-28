@@ -21,7 +21,7 @@ next-gui-text = { workspace = true }
 next-gui-layout = { workspace = true }
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "hooks", "load_extension", "backup", "functions"] }
 rfd = "0.13.0"
-image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.24", default-features = false, features = ["png", "jpeg", "bmp"] }
 
 tempfile = "3"
 serde = { version = "1", features = ["derive"] }

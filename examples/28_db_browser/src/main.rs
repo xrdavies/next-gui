@@ -15,6 +15,7 @@ mod cell_clipboard;
 mod cell_snapshot;
 mod plot;
 mod plot_load;
+mod plot_export;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
@@ -2588,7 +2589,7 @@ impl Demo {
         let plot_focused=self.ui.focused()==Some(self.ids.chart);
         let plot_source = self.state.plot.source.clone();
         let plot_scroll = self.ui.table_scroll_offset(self.ids.plot.columns);
-        let plot_focus = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
+        let plot_focus = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend, self.ids.plot.save].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
         let pragma_scroll = self.ui.scroll_offset(self.ids.pragma_scroll);
         let pragma_session = if self.state.tab == MainTab::Pragmas && self.last_tab == MainTab::Pragmas.index() && self.state.overlay.is_none() {
             self.snapshot_inputs();
@@ -2703,7 +2704,7 @@ impl Demo {
         if plot_source == self.state.plot.source {
             if let Some((x, y)) = plot_scroll { self.ui.set_table_scroll_offset(self.ids.plot.columns, x, y); }
             if let Some(index) = plot_focus {
-                let id = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend][index];
+                let id = [self.ids.plot.mode, self.ids.plot.columns, self.ids.plot.line, self.ids.plot.marker, self.ids.plot.color, self.ids.plot.legend, self.ids.plot.save][index];
                 if id.0 != 0 { self.ui.set_focus(Some(id)); }
             }
         }
@@ -3960,6 +3961,7 @@ impl Demo {
     fn handle_button(&mut self, id: WidgetId) {
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
         if self.state.plot_work.is_some() { self.handle_plot_load_button(id); return; }
+        if id == self.ids.plot.save { self.save_plot(); return; }
         if id == self.ids.plot.load_all {
             self.snapshot_inputs();
             match self.state.start_plot_load() { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }

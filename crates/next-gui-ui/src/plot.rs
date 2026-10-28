@@ -528,6 +528,15 @@ impl Ui {
         true
     }
 
+    /// Dimensions of its last laid-out drawing surface, excluding the tile caption.
+    pub fn chart_plot_size(&self, id: WidgetId, tile: usize) -> Option<(u32, u32)> {
+        let Kind::Chart { tiles, plot_bounds, .. } = &self.widgets.get(&id)?.kind else { return None; };
+        if !matches!(tiles.get(tile)?.kind, ChartKind::Plot { .. }) { return None; }
+        let bounds = plot_bounds.get(tile)?;
+        if bounds.width <= 0.0 || bounds.height <= 0.0 { return None; }
+        Some((bounds.width.round().max(1.0) as u32, bounds.height.round().max(1.0) as u32))
+    }
+
     /// Export a Cartesian tile with its current viewport and selection.
     pub fn chart_plot_image(
         &self,
@@ -892,6 +901,9 @@ mod tests {
         assert_ne!(ui.chart_plot(id, 0).unwrap().view().y1, constrained.y1);
         assert!(ui.key_input(UiKey::Home));
         assert_eq!(ui.chart_plot(id, 0).unwrap().view(), data.view());
+        assert!(ui.chart_plot_size(id, 0).is_some_and(|(width, height)| width > 0 && height > 0));
+        assert_eq!(ui.chart_plot_size(id, 1), None);
+        assert_eq!(ui.chart_plot_size(WidgetId(0), 0), None);
         assert!(ui.chart_plot_image(id, 0, 400, 260).is_some());
         let mut changed = data;
         changed.series[0].points = points.to_vec().into();

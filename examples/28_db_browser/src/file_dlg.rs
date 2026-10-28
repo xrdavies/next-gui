@@ -64,3 +64,10 @@ pub fn pick_save_project() -> Option<PathBuf> {
 pub fn pick_save_image() -> Option<PathBuf> {
     rfd::FileDialog::new().set_title("Export Original Image").save_file()
 }
+
+pub fn pick_save_plot() -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title("Save Plot").set_file_name("plot.png")
+        .add_filter("PNG", &["png"]).add_filter("JPEG", &["jpg", "jpeg"])
+        .add_filter("PDF", &["pdf"]).add_filter("BMP", &["bmp"])
+        .add_filter("All files", &["*"]).save_file()
+}
