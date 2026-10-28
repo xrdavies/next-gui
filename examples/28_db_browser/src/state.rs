@@ -2263,7 +2263,8 @@ impl AppState {
     }
 
     pub fn column_type_names(&self) -> Vec<String> {
-        let mut types: Vec<_> = COLUMN_TYPES.iter().map(|s| (*s).to_string()).collect();
+        let names=if self.wizard_table_options.strict { &["INT","INTEGER","TEXT","BLOB","REAL","ANY"][..] } else {COLUMN_TYPES};
+        let mut types: Vec<_> = names.iter().map(|s| (*s).to_string()).collect();
         if let Some(column) = self.wizard_cols.get(self.wizard_col_sel) {
             if !types.contains(&column.type_name) { types.push(column.type_name.clone()); }
         }

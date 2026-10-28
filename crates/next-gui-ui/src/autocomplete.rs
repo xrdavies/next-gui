@@ -11,6 +11,7 @@ pub struct AutocompleteState {
     preedit: String,
     preedit_cursor: Option<(usize, usize)>,
     open: bool,
+    show_all: bool,
     highlighted: Option<String>,
 }
 
@@ -25,6 +26,7 @@ impl Ui {
             preedit,
             preedit_cursor,
             open,
+            show_all,
             highlight,
             ..
         } = &self.widgets.get(&id)?.kind
@@ -39,6 +41,7 @@ impl Ui {
             preedit: preedit.clone(),
             preedit_cursor: *preedit_cursor,
             open: *open,
+            show_all: *show_all,
             highlighted: highlight.and_then(|i| {
                 self.autocomplete_filtered(id)
                     .get(i)
@@ -52,6 +55,7 @@ impl Ui {
         if self.autocomplete_value(id) != Some(state.value.as_str()) {
             return false;
         }
+        if let Some(crate::Widget {kind:Kind::Autocomplete {show_all,..},..})=self.widgets.get_mut(&id) {*show_all=state.show_all;}
         let filtered = self.autocomplete_filtered(id);
         let open = state.open && state.preedit.is_empty() && !filtered.is_empty();
         if open {
@@ -91,8 +95,20 @@ impl Ui {
         true
     }
 
+    /// Open every option without changing the text, for an editable combo's dropdown arrow.
+    /// Typing returns to filtered suggestions; the session preserves this popup across rebuilds.
+    pub fn open_autocomplete_options(&mut self, id: WidgetId) -> bool {
+        if !matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Autocomplete {options,preedit,..}) if !options.is_empty() && preedit.is_empty()) {return false;}
+        self.close_popup_internal();
+        if let Some(crate::Widget {kind:Kind::Autocomplete {open,show_all,highlight,options,value,..},..})=self.widgets.get_mut(&id) {
+            *open=true;*show_all=true;*highlight=options.iter().position(|option|option==value).or(Some(0));
+        }
+        self.open_popup=Some(id);true
+    }
+
     pub(super) fn refresh_autocomplete_popup(&mut self, id: WidgetId) {
         self.close_popup_internal();
+        if let Some(crate::Widget {kind:Kind::Autocomplete {show_all,..},..})=self.widgets.get_mut(&id) {*show_all=false;}
         let matches = !self.autocomplete_filtered(id).is_empty();
         if let Some(widget) = self.widgets.get_mut(&id) {
             if let Kind::Autocomplete {
@@ -128,21 +144,32 @@ impl Ui {
         };
         let host = scene.get(widget.node?)?.bounds;
         let count = self.autocomplete_filtered(id).len();
-        if count == 0 || style.item_height <= 0.0 {
+        self.choice_popup_window(host,count,*highlight,style.item_height,style.popup_max_height,style.width)
+    }
+
+    pub(super) fn select_popup_window(&self,scene:&Scene,id:WidgetId)->Option<(Rect,Range<usize>)> {
+        let widget=self.widgets.get(&id)?;
+        let Kind::Select {options,selected,style,open:true,..}=&widget.kind else {return None;};
+        let host=scene.get(widget.node?)?.bounds;
+        self.choice_popup_window(host,options.len(),*selected,style.item_height,style.popup_max_height,style.width)
+    }
+
+    fn choice_popup_window(&self,host:Rect,count:usize,selected:Option<usize>,item_height:f32,max_height:f32,min_width:f32)->Option<(Rect,Range<usize>)> {
+        if count == 0 || item_height <= 0.0 {
             return None;
         }
-        let desired = (count as f32 * style.item_height).min(style.popup_max_height);
+        let desired = (count as f32 * item_height).min(max_height);
         let below = (self.viewport.1 - host.y - host.height).max(0.0);
         let above = host.y.max(0.0);
         let down = below >= desired || below >= above;
         let space = if down { below } else { above };
-        let rows = (space.min(desired) / style.item_height).floor() as usize;
+        let rows = (space.min(desired) / item_height).floor() as usize;
         if rows == 0 {
             return None;
         }
-        let height = rows as f32 * style.item_height;
-        let width = host.width.max(style.width).min(self.viewport.0);
-        let first = highlight
+        let height = rows as f32 * item_height;
+        let width = host.width.max(min_width).min(self.viewport.0);
+        let first = selected
             .unwrap_or(0)
             .min(count - 1)
             .saturating_sub(rows - 1);
@@ -302,6 +329,38 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn select_popup_fits_viewport_reveals_selection_and_hits_the_visible_option() {
+        for theme in [crate::Theme::dark(),crate::Theme::light()] {
+            let mut ui=crate::Ui::new();ui.set_theme(theme);ui.set_viewport(400.0,300.0);let mut scene=crate::Scene::new();let mut id=crate::WidgetId(0);
+            let style=crate::SelectStyle::from_theme(&theme);
+            ui.column(crate::ColumnStyle::default(),|c|{id=c.select((0..100).map(|i|format!("Option {i}")),Some(95),"",style);});
+            ui.sync(&mut scene);let host=ui.widgets[&id].node.unwrap();scene.set_bounds(host,crate::Rect::new(350.0,260.0,48.0,30.0));ui.set_focus(Some(id));assert!(ui.key_input(crate::UiKey::Space));
+            ui.paint_select_field(&mut scene,id);ui.paint_select_popup(&mut scene,id);
+            let (panel,visible)=ui.select_popup_window(&scene,id).unwrap();assert!(panel.x>=0.0 && panel.x+panel.width<=400.0);assert!(panel.y>=0.0 && panel.y+panel.height<=260.0);assert!(visible.contains(&95));
+            let aux=&ui.widgets[&id].aux;assert!(aux.len()<20);let selected_label=scene.get(aux[2+(95-visible.start)*2]).unwrap();assert_eq!(selected_label.fill,style.selected_fg);assert_eq!(scene.get(ui.widgets[&id].label_node.unwrap()).unwrap().fill,style.selected_fg);
+            assert!(ui.pointer_popup_item(&mut scene,id,panel.x+10.0,panel.y+style.item_height*0.5));assert_eq!(ui.select_selected(id),Some(visible.start));assert!(!ui.has_open_popup());
+            ui.set_select_selected(id,Some(99));ui.key_input(crate::UiKey::Space);ui.paint_select_popup(&mut scene,id);let (_,visible)=ui.select_popup_window(&scene,id).unwrap();assert!(visible.contains(&99));
+            let (panel,_)=ui.select_popup_window(&scene,id).unwrap();assert!(ui.pointer_scroll(&scene,panel.x+5.0,panel.y+5.0,0.0,-26.0));assert_eq!(ui.select_selected(id),Some(98));
+            scene.set_bounds(host,crate::Rect::new(0.0,0.0,48.0,30.0));ui.paint_select_popup(&mut scene,id);let (panel,_)=ui.select_popup_window(&scene,id).unwrap();assert!(panel.y>=30.0 && panel.y+panel.height<=300.0);
+        }
+    }
+
+    #[test]
+    fn all_options_dropdown_keeps_value_history_session_and_resumes_filtering() {
+        let mut ui=crate::Ui::new();let mut id=crate::WidgetId(0);
+        ui.column(crate::ColumnStyle::default(),|c|{id=c.autocomplete(["INTEGER","TEXT","REAL"],"TEXT",crate::AutocompleteStyle::default());});
+        assert!(ui.open_autocomplete_options(id));assert_eq!(ui.autocomplete_value(id),Some("TEXT"));assert_eq!(ui.autocomplete_filtered(id).len(),3);
+        ui.set_focus(Some(id));assert!(ui.key_input(crate::UiKey::Down));
+        let session=ui.autocomplete_state(id).unwrap();
+        let mut rebuilt=crate::Ui::new();let mut next=crate::WidgetId(0);rebuilt.column(crate::ColumnStyle::default(),|c|{next=c.autocomplete(["INTEGER","TEXT","REAL"],"TEXT",crate::AutocompleteStyle::default());});
+        assert!(rebuilt.set_autocomplete_state(next,&session));rebuilt.set_focus(Some(next));assert!(rebuilt.has_open_popup());
+        assert!(rebuilt.key_input(crate::UiKey::Enter));assert_eq!(rebuilt.autocomplete_value(next),Some("REAL"));
+        assert!(rebuilt.key_input(crate::UiKey::Undo));assert_eq!(rebuilt.autocomplete_value(next),Some("TEXT"));
+        rebuilt.key_input(crate::UiKey::SelectAll);rebuilt.paste_into_focused_text("IN");assert_eq!(rebuilt.autocomplete_filtered(next),vec![(0,"INTEGER".into())]);
+        rebuilt.ime_preedit("候選",None);assert!(!rebuilt.open_autocomplete_options(next));assert!(!rebuilt.open_autocomplete_options(crate::WidgetId(0)));
+    }
+
     use super::*;
     use crate::{AutocompleteStyle, ColumnStyle, UiKey};
 

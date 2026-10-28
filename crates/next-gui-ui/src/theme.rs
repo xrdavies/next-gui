@@ -908,7 +908,7 @@ impl TabsStyle {
             cross_align: CrossAlign::Start,
             size: scale(13.0, f),
             fg: c.text_secondary,
-            active_fg: c.on_accent,
+            active_fg: c.text_primary,
             strip_bg: c.strip_bg,
             active_bg: c.chrome,
             content_bg: c.content_bg,
@@ -941,6 +941,7 @@ impl SelectStyle {
             bg: c.popup,
             popup_bg: c.popup,
             selected_bg: c.selected_bg,
+            selected_fg: c.on_accent,
             focus_border: c.focus,
         }
     }

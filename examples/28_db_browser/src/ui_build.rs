@@ -1045,8 +1045,12 @@ pub fn build_ui(
                                         let value=match edit.column {0=>column.name.as_str(),1=>column.type_name.as_str(),6=>column.default_value.as_str(),7=>column.check_expression.as_str(),8=>column.collation.as_str(),9=>column.foreign_key_clause.as_str(),_=>""};
                                         ov_field_editor=c.table_cell_editor(ov_fields_table,sel,edit.column,|cell| {
                                             if edit.column==1 || edit.column==8 {
-                                                let items=if edit.column==1 {state.column_type_names()} else {state.column_collation_names()};
-                                                cell.autocomplete_placeholder(items,value,"",next_gui_ui::AutocompleteStyle::from_theme(&theme))
+                                                let mut items=if edit.column==1 {state.column_type_names()} else {state.column_collation_names()};
+                                                if !items.iter().any(|item|item==value) {items.push(value.into());}
+                                                if edit.column==8 || state.wizard_table_options.strict {
+                                                    let selected=items.iter().position(|item|item==value);
+                                                    cell.select(items,selected,"",next_gui_ui::SelectStyle::from_theme(&theme))
+                                                } else {cell.autocomplete_placeholder(items,value,"",next_gui_ui::AutocompleteStyle::from_theme(&theme))}
                                             } else {cell.text_input_styled(value,"",name_s)}
                                         }).unwrap_or(z);
                                     }
@@ -2194,6 +2198,7 @@ pub fn build_ui(
         ui.set_table_selected_col(ov_fields_table,state.wizard_field_column);
         ui.set_table_frozen_cols(ov_fields_table,1);
         ui.set_table_check_cells(ov_fields_table,table_field_checks(state));
+        ui.set_table_dropdown_columns(ov_fields_table,vec![1,8]);
         ui.set_table_editable_columns(ov_fields_table,if state.table_wizard_names_valid() {vec![0,1,6,7,8,9]} else {vec![0,1,6,8]});
         for (column,width) in state.wizard_field_widths.iter().enumerate() { ui.set_table_column_width(ov_fields_table,column,*width); }
         if let Some(edit)=&state.wizard_field_edit {
@@ -2201,7 +2206,7 @@ pub fn build_ui(
             if let Some(session)=&edit.autocomplete {ui.set_autocomplete_state(ov_field_editor,session);}
             ui.set_accessible_name(ov_field_editor,match edit.column {0=>"Column name cell",1=>"Column type cell",6=>"Column default cell",7=>"Column CHECK expression cell",8=>"Column collation cell",9=>"Column foreign key cell",_=>"Column cell"});
         }
-        ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key. Click a checkbox or press Space to toggle.");
+        ui.set_accessible_name(ov_fields_table,"Table definition fields: Name, Type, NN, PK, AI, U, Default, Check, Collation, Foreign Key. Click Type or Collation to open its dropdown; click a checkbox or press Space to toggle.");
         ui.set_accessible_name(ov_field_top,"Move selected column to top"); ui.set_accessible_name(ov_field_bottom,"Move selected column to bottom");
         for button in [ov_field_top,ov_btn_up] { ui.set_button_enabled(button,state.wizard_col_sel>0 && !state.wizard_cols.is_empty()); }
         for button in [ov_field_bottom,ov_btn_down] { ui.set_button_enabled(button,state.wizard_col_sel+1<state.wizard_cols.len()); }

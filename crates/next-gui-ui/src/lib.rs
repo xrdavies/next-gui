@@ -989,6 +989,8 @@ pub struct SelectStyle {
     pub popup_bg: Color,
     /// Selected / hover row background.
     pub selected_bg: Color,
+    /// Text on the selected field and option background.
+    pub selected_fg: Color,
     /// Focus border hint.
     pub focus_border: Color,
 }
@@ -1007,6 +1009,7 @@ impl Default for SelectStyle {
             bg: Color::rgb(0x2a, 0x2a, 0x32),
             popup_bg: Color::rgb(0x2a, 0x2a, 0x32),
             selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
+            selected_fg: Color::rgb(0xff, 0xff, 0xff),
             focus_border: Color::rgb(0x3b, 0x82, 0xf6),
         }
     }
@@ -1822,6 +1825,7 @@ enum Kind {
         /// Some(bool) renders an interactive checkbox in this cell.
         checks: Vec<Vec<Option<bool>>>,
         editable_columns: Vec<usize>,
+        dropdown_columns: Vec<usize>,
         editor: Option<TableCellEditor>,
         /// When true, only a visible window of body rows is materialized in scene aux.
         virtualized: bool,
@@ -2115,6 +2119,7 @@ enum Kind {
         preedit: String,
         preedit_cursor: Option<(usize, usize)>,
         open: bool,
+        show_all: bool,
         highlight: Option<usize>,
         placeholder: String,
         style: AutocompleteStyle,
@@ -3604,6 +3609,10 @@ impl Ui {
         if let Some(id) = self.open_popup {
             if self.autocomplete_popup_window(scene, id).is_some_and(|(panel, _)| panel.contains(x, y)) {
                 if dy != 0.0 { self.key_autocomplete(id, if dy > 0.0 { UiKey::Down } else { UiKey::Up }); }
+                return true;
+            }
+            if self.select_popup_window(scene,id).is_some_and(|(panel,_)|panel.contains(x,y)) {
+                if dy!=0.0 {self.key_select(id,if dy>0.0 {UiKey::Down} else {UiKey::Up});}
                 return true;
             }
         }
@@ -6023,7 +6032,8 @@ impl Ui {
                 }
             }
         }
-        if was_selected && idx>=0 {
+        let dropdown=column_hit.is_some_and(|column|matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Table {dropdown_columns,..}) if dropdown_columns.contains(&column)));
+        if (was_selected || dropdown) && idx>=0 {
             if let Some(column)=column_hit {if self.begin_table_cell_edit(id,idx as usize,column,None) {self.drag=None;return true;}}
         }
         if style.drag_select && idx >= 0 && (idx as usize) < n_rows {
@@ -6665,6 +6675,7 @@ impl Ui {
                 preedit,
                 preedit_cursor,
                 open,
+                show_all,
                 highlight,
                 ..
             } = &mut w.kind
@@ -6676,6 +6687,7 @@ impl Ui {
                 preedit.clear();
                 *preedit_cursor = None;
                 *open = false;
+                *show_all = false;
                 *highlight = None;
                 if self.open_popup == Some(id) {
                     self.open_popup = None;
@@ -8675,7 +8687,7 @@ impl Ui {
 
     fn autocomplete_filtered(&self, id: WidgetId) -> Vec<(usize, String)> {
         let (options, value) = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Autocomplete { options, value, .. }) => (options.clone(), value.clone()),
+            Some(Kind::Autocomplete { options, value, show_all, .. }) => (options.clone(), if *show_all {String::new()} else {value.clone()}),
             _ => return Vec::new(),
         };
         let needle = value.to_ascii_lowercase();
@@ -9105,10 +9117,9 @@ impl Ui {
                 kind: Kind::Select {
                     options, style, ..
                 },
-                aux,
                 ..
             }) => {
-                let panel = aux.first().and_then(|n| scene.get(*n)).map(|n| n.bounds);
+                let panel = self.select_popup_window(scene,id).map(|(panel,_)|panel);
                 (
                     options.len(),
                     style.item_height,
@@ -9153,6 +9164,9 @@ impl Ui {
                 true
             }
             2 => {
+                let Some((panel,visible))=self.select_popup_window(scene,id) else {return false;};
+                if !panel.contains(x,y) || i>=visible.len() {return false;}
+                let i=visible.start+i;
                 if let Some(w) = self.widgets.get_mut(&id) {
                     if let Kind::Select { selected, open, .. } = &mut w.kind {
                         *selected = Some(i);
@@ -12243,6 +12257,7 @@ impl Ui {
                     frozen_cols,
                     cell_bg,
                     checks,
+                    dropdown_columns,
                     virtualized,
                     style,
                     ..
@@ -12265,6 +12280,7 @@ impl Ui {
         let frozen_cols = *frozen_cols;
         let cell_bg = cell_bg.clone();
         let checks = checks.clone();
+        let dropdown_columns = dropdown_columns.clone();
         let check_style = self.checkbox_style();
         let virtualized = *virtualized;
         let style = *style;
@@ -12291,7 +12307,7 @@ impl Ui {
             (0, rows.len())
         };
         // Check cells reuse text nodes for boxes; optional final nodes paint ticks above them.
-        let stride = 1 + 2 * ncols + if checks.is_empty() { 0 } else { ncols };
+        let stride = 1 + 2 * ncols + if checks.is_empty() && dropdown_columns.is_empty() { 0 } else { ncols };
         let needed = ncols + count * stride;
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
@@ -12384,11 +12400,18 @@ impl Ui {
                 let visible = !clip.is_empty();
                 let col_sel = selected_col_range.map_or(selected_col == Some(ci), |(start, end)| ci >= start.min(end) && ci <= start.max(end));
                 let is_sel = row_sel && (!has_col_selection || col_sel);
+                let dropdown = dropdown_columns.contains(&ci) && checks.get(ri).and_then(|row|row.get(ci)).copied().flatten().is_none();
                 // cell background node
                 if let Some(&cbg) = aux.get(base + 1 + ci) {
                     scene.set_clip(cbg, Some(clip));
+                    scene.set_corner_radius(cbg,0.0);
                     if visible {
-                        if is_sel {
+                        if dropdown {
+                            scene.set_bounds(cbg,Rect::new(ox+2.0,y+2.0,(col.width-4.0).max(0.0),(style.row_height-4.0).max(0.0)));
+                            scene.set_fill(cbg,if is_sel {style.selected_bg} else {self.theme.colors.input_bg});
+                            scene.set_mask(cbg,None);scene.set_visible(cbg,true);
+                            self.apply_corner_radius(scene,cbg,false);
+                        } else if is_sel {
                             scene.set_bounds(
                                 cbg,
                                 Rect::new(ox, y, col.width.max(1.0), style.row_height),
@@ -12411,7 +12434,7 @@ impl Ui {
                         scene.set_visible(cbg, false);
                     }
                 }
-                let tick = aux.get(base + 1 + 2 * ncols + ci).copied().filter(|_| !checks.is_empty());
+                let tick = aux.get(base + 1 + 2 * ncols + ci).copied().filter(|_| !checks.is_empty() || !dropdown_columns.is_empty());
                 if let Some(checked) = checks.get(ri).and_then(|row| row.get(ci)).copied().flatten() {
                     let rect = table_check_rect(ox, y, col.width, style.row_height, check_style.box_size);
                     if let Some(&box_node) = aux.get(base + 1 + ncols + ci) {
@@ -12436,7 +12459,15 @@ impl Ui {
                     }
                     continue;
                 }
-                if let Some(tick) = tick { scene.set_visible(tick, false); }
+                if let Some(tick) = tick {
+                    if dropdown {
+                        let (_,mask)=self.font.rasterize_text("▾",style.size,None);
+                        let mask=AlphaMask::new(mask.width,mask.height,mask.pixels);
+                        scene.set_bounds(tick,Rect::new(ox+col.width-20.0,y+(style.row_height-mask.height as f32)*0.5,mask.width as f32,mask.height as f32));
+                        scene.set_fill(tick,if is_sel {style.selected_fg} else {style.fg});scene.set_mask(tick,Some(mask));scene.set_corner_radius(tick,0.0);scene.set_clip(tick,Some(clip));
+                    }
+                    scene.set_visible(tick,visible && dropdown && col.width>=24.0);
+                }
                 // A table row stays one line; copied cell text retains its original whitespace.
                 let single_line;
                 let display=if cell.contains(['\r','\n','\t']) {single_line=cell.replace(['\r','\n','\t']," ");single_line.as_str()} else {cell};
@@ -12445,7 +12476,7 @@ impl Ui {
                     scene.set_corner_radius(lab,0.0);
                     scene.set_clip(lab, Some(clip));
                     let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
-                    let max_w = (col.width - 8.0).max(4.0);
+                    let max_w = (col.width - if dropdown {28.0} else {8.0}).max(0.0);
                     if visible {
                         scene.set_bounds(
                             lab,
@@ -12575,10 +12606,10 @@ impl Ui {
             Some(i) if i < options.len() => options[i].clone(),
             _ => placeholder.clone(),
         };
-        let fg = match *selected {
+        let fg = if *open {style.selected_fg} else {match *selected {
             Some(i) if i < options.len() => style.fg,
             _ => style.placeholder_fg,
-        };
+        }};
         let open = *open;
         let style = *style;
         let Some(node) = *node else { return };
@@ -16022,7 +16053,7 @@ impl Ui {
     }
 
     fn paint_select_popup(&mut self, scene: &mut Scene, id: WidgetId) {
-        let (options, selected, style, host_bounds) = match self.widgets.get(&id) {
+        let (options, selected, style) = match self.widgets.get(&id) {
             Some(Widget {
                 kind:
                     Kind::Select {
@@ -16032,28 +16063,14 @@ impl Ui {
                         open,
                         ..
                     },
-                node,
                 ..
             }) if *open => {
-                let b = node.and_then(|n| scene.get(n).map(|n| n.bounds)).unwrap_or_else(Rect::empty);
-                (options.clone(), *selected, *style, b)
+                (options.clone(), *selected, *style)
             }
             _ => return,
         };
-        let n = options.len().max(1);
-        let popup_h = (style.item_height * n as f32).min(style.popup_max_height);
-        let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, host_bounds.width.max(style.width), popup_h);
-        let items: Vec<MenuItem> = options
-            .iter()
-            .enumerate()
-            .map(|(i, l)| MenuItem {
-                id: i as u64,
-                label: l.clone(),
-                enabled: true,
-            })
-            .collect();
-        // highlight selected via hover_bg on that row — pass selected index through paint
-        self.ensure_overlay_aux(scene, id, 1 + items.len() * 2);
+        let Some((panel,visible))=self.select_popup_window(scene,id) else {return;};
+        self.ensure_overlay_aux(scene, id, 1 + visible.len() * 2);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
         if let Some(&bg) = aux.first() {
             scene.set_bounds(bg, panel);
@@ -16063,30 +16080,32 @@ impl Ui {
             self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
-        for (i, item) in items.iter().enumerate() {
+        for (i, label) in options[visible.clone()].iter().enumerate() {
             let y = panel.y + i as f32 * style.item_height;
             let row = Rect::new(panel.x, y, panel.width, style.item_height);
-            let hi = selected == Some(i);
+            let hi = selected == Some(visible.start+i);
             if let Some(&rbg) = aux.get(1 + i * 2) {
                 scene.set_bounds(rbg, row);
                 scene.set_fill(rbg, if hi { style.selected_bg } else { style.popup_bg });
                 scene.set_mask(rbg, None);
                 scene.set_visible(rbg, true);
-                if hi {
-                    self.apply_corner_radius(scene, rbg, false);
-                }
+                scene.set_clip(rbg,Some(panel));
+                scene.set_corner_radius(rbg,0.0);
+                if hi {self.apply_corner_radius(scene,rbg,false);}
                 self.node_to_widget.insert(rbg, id);
             }
-            let (_, mask) = self.font.rasterize_text(&item.label, style.size, None);
+            let (_, mask) = self.font.rasterize_text(label, style.size, None);
             if let Some(&lab) = aux.get(1 + i * 2 + 1) {
                 let lx = row.x + style.padding;
                 let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-                scene.set_fill(lab, style.fg);
+                scene.set_fill(lab, if hi {style.selected_fg} else {style.fg});
                 scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
+                scene.set_clip(lab,Some(panel));
                 scene.set_visible(lab, true);
             }
         }
+        for &node in aux.iter().skip(1+visible.len()*2) {scene.set_visible(node,false);}
     }
 
     fn paint_tag(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -18302,6 +18321,7 @@ impl FlexBuilder<'_> {
                     cell_bg: Vec::new(),
                     checks: Vec::new(),
                     editable_columns: Vec::new(),
+                    dropdown_columns: Vec::new(),
                     editor: None,
                     virtualized: false,
                     style,
@@ -18965,6 +18985,7 @@ impl FlexBuilder<'_> {
                     cell_bg: Vec::new(),
                     checks: Vec::new(),
                     editable_columns: Vec::new(),
+                    dropdown_columns: Vec::new(),
                     editor: None,
                     virtualized: true,
                     style,
@@ -19622,6 +19643,7 @@ impl FlexBuilder<'_> {
                     preedit: String::new(),
                     preedit_cursor: None,
                     open: false,
+                    show_all: false,
                     highlight: None,
                     placeholder: placeholder.into(),
                     style,

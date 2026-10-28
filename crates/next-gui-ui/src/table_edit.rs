@@ -35,6 +35,14 @@ impl Ui {
         editable.sort_unstable();editable.dedup();*editable_columns=editable;true
     }
 
+    /// Paint combo controls in these columns and activate their editor on the first click.
+    /// Call `set_table_editable_columns` as well; check cells retain checkbox behavior.
+    pub fn set_table_dropdown_columns(&mut self, id: WidgetId, mut dropdowns: Vec<usize>) -> bool {
+        let Some(Widget {kind:Kind::Table {columns,dropdown_columns,..},..})=self.widgets.get_mut(&id) else {return false;};
+        if dropdowns.iter().any(|&column|column>=columns.len()) {return false;}
+        dropdowns.sort_unstable();dropdowns.dedup();*dropdown_columns=dropdowns;true
+    }
+
     /// The standard input currently mounted inside this table, if any.
     pub fn table_cell_editor(&self, id: WidgetId) -> Option<WidgetId> {
         match &self.widgets.get(&id)?.kind {Kind::Table {editor:Some(editor),..}=>Some(editor.widget),_=>None}
@@ -93,12 +101,13 @@ impl Ui {
     }
 
     pub(super) fn paint_table_editor(&mut self,scene:&mut Scene,id:WidgetId) {
-        let Some(Widget {kind:Kind::Table {editor:Some(editor),columns,rows,scroll_x,scroll_y,frozen_cols,style,..},node:Some(host),..})=self.widgets.get(&id) else {return;};
+        let Some(Widget {kind:Kind::Table {editor:Some(editor),columns,rows,scroll_x,scroll_y,frozen_cols,dropdown_columns,style,..},node:Some(host),..})=self.widgets.get(&id) else {return;};
         let editor=*editor;let host=*host;let bounds=scene.get(host).map(|node|node.bounds).unwrap_or_else(Rect::empty);
         let Some(column)=columns.get(editor.column).filter(|_|editor.row<rows.len()) else {self.hide_widget_subtree(scene,editor.widget);return;};
         let (x,clip)=table_column_rects(bounds,columns,style.padding,*scroll_x,*frozen_cols)[editor.column];
         let y=bounds.y+style.header_height+editor.row as f32*style.row_height-*scroll_y;
-        let rect=Rect::new(x+1.0,y+1.0,(column.width-2.0).max(1.0),(style.row_height-2.0).max(1.0));
+        let arrow=if dropdown_columns.contains(&editor.column) && matches!(self.widgets.get(&editor.widget).map(|w|&w.kind),Some(Kind::Autocomplete {..})) {24.0} else {0.0};
+        let rect=Rect::new(x+1.0,y+1.0,(column.width-2.0-arrow).max(1.0),(style.row_height-2.0).max(1.0));
         let clip=clip.intersect(&Rect::new(bounds.x,bounds.y+style.header_height,bounds.width,(bounds.height-style.header_height).max(0.0))).intersect(&rect);
         let Some(node)=self.widgets.get(&editor.widget).and_then(|w|w.node) else {return;};
         if clip.is_empty() {self.hide_widget_subtree(scene,editor.widget);return;}
@@ -124,6 +133,32 @@ impl FlexBuilder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropdown_columns_activate_on_first_click_clip_and_keep_virtual_rows_bounded() {
+        for theme in [Theme::dark(),Theme::light()] {
+            let mut ui=Ui::new();ui.set_theme(theme);let mut scene=Scene::new();let mut table=WidgetId(0);
+            ui.column(ColumnStyle {width:370.0,height:210.0,..Default::default()},|c| {
+                table=c.virtual_table(vec![TableColumn::new("Name",100.0),TableColumn::new("Type",150.0),TableColumn::new("Check",90.0)],
+                    (0..1000).map(|_|vec!["field".into(),"TEXT".into(),String::new()]).collect(),TableStyle {width:350.0,height:160.0,..Default::default()});
+            });
+            assert!(ui.set_table_editable_columns(table,vec![0,1,2]));assert!(ui.set_table_dropdown_columns(table,vec![2,1,1]));
+            assert!(!ui.set_table_dropdown_columns(table,vec![3]));assert!(!ui.set_table_dropdown_columns(WidgetId(0),vec![0]));
+            assert!(ui.set_table_check_cells(table,vec![vec![None,None,Some(false)];1000]));ui.set_table_frozen_cols(table,1);ui.sync(&mut scene);
+            let node=ui.widgets[&table].node.unwrap();let bounds=scene.get(node).unwrap().bounds;let style=match ui.widgets[&table].kind {Kind::Table {style,..}=>style,_=>unreachable!()};
+            let cells=match &ui.widgets[&table].kind {Kind::Table {columns,..}=>table_column_rects(bounds,columns,style.padding,0.0,1),_=>unreachable!()};
+            let y=bounds.y+style.header_height+style.row_height*0.5;
+            assert!(ui.pointer_pressed(&mut scene,cells[1].0+50.0,y));ui.pointer_released();
+            assert_eq!(ui.take_table_cell_edit(),Some((table,TableCellEditEvent::Begin {row:0,column:1,key:None})));
+            assert!(ui.widgets[&table].aux.len()<200);
+            assert!(ui.pointer_pressed(&mut scene,cells[0].0+20.0,y+style.row_height));ui.pointer_released();assert_eq!(ui.take_table_cell_edit(),None);
+            let rect=table_check_rect(cells[2].0,bounds.y+style.header_height,90.0,style.row_height,ui.checkbox_style().box_size);
+            assert!(ui.pointer_pressed(&mut scene,rect.x+rect.width*0.5,y));ui.pointer_released();assert_eq!(ui.take_table_check_change(),Some((table,0,2,true)));assert_eq!(ui.take_table_cell_edit(),None);
+            ui.set_table_scroll_offset(table,90.0,4000.0);ui.sync(&mut scene);
+            for &aux in &ui.widgets[&table].aux {let n=scene.get(aux).unwrap();if n.visible {let clip=n.clip.unwrap();assert!(clip.x>=bounds.x && clip.x+clip.width<=bounds.x+bounds.width+0.001);}}
+            assert!(ui.widgets[&table].aux.len()<200);
+        }
+    }
 
     #[test]
     fn disabled_input_blocks_focus_pointer_clipboard_ime_and_preserves_undo() {

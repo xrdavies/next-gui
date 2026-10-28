@@ -805,11 +805,17 @@ impl Demo {
                     if tab.ends_with("-saved") {state.apply_table_wizard().unwrap();}
                     if tab=="table-move-views-saved" {state.switch_browse_table_in("analytics","visible").unwrap();MainTab::Browse}else{MainTab::Structure}
                 }
-                "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-reference-editor" | "table-field-reference-empty" | "table-field-check-editor" | "table-field-remove-confirm" | "table-advanced" => {
+                "table-fields" | "table-fields-references" | "table-field-checks" | "table-field-editor" | "table-field-type-dropdown" | "table-field-collation-dropdown" | "table-field-strict-dropdown" | "table-field-reference-editor" | "table-field-reference-empty" | "table-field-check-editor" | "table-field-remove-confirm" | "table-advanced" => {
                     state.new_memory_db().unwrap();
                     state.conn.as_ref().unwrap().execute_batch("CREATE TABLE parent(id INTEGER PRIMARY KEY); INSERT INTO parent VALUES(1); CREATE TABLE records(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE DEFAULT 'customer' CHECK(length(name)>0) COLLATE NOCASE,parent_id INTEGER REFERENCES parent(id) ON UPDATE CASCADE ON DELETE SET NULL,amount REAL DEFAULT 0 CHECK(amount>=0),total REAL AS(amount*1.2) STORED); INSERT INTO records(name,parent_id,amount) VALUES('First customer',1,12.5),('Second customer',1,24);").unwrap();state.refresh_schema().unwrap();let row=state.schema.iter().position(|object|object.schema=="main" && object.name=="records").unwrap();state.select_schema_node(10_000+row as u64);state.open_modify_table_wizard().unwrap();state.wizard_col_sel=1;state.wizard_scroll=(0.0,180.0);state.wizard_field_column=Some(if tab=="table-fields-references" {9} else {0});state.wizard_field_scroll=(if tab=="table-fields-references" {10000.0} else {0.0},0.0);
                     if tab=="table-field-checks" || tab=="table-field-editor" {state.wizard_scroll=(0.0,0.0);}
                     if tab=="table-field-editor" {state.wizard_field_edit=Some(state::FieldCellEdit {column:0,original:"name".into(),reference:None,input:None,autocomplete:None});}
+                    if matches!(tab.as_str(),"table-field-type-dropdown"|"table-field-collation-dropdown"|"table-field-strict-dropdown") {
+                        let column=if tab=="table-field-collation-dropdown" {8} else {1};state.wizard_scroll=(0.0,0.0);state.wizard_field_column=Some(column);
+                        if tab=="table-field-strict-dropdown" {state.wizard_table_options.strict=true;}
+                        let original=if column==1 {state.wizard_cols[1].type_name.clone()} else {state.wizard_cols[1].collation.clone()};
+                        state.wizard_field_edit=Some(state::FieldCellEdit {column,original,reference:None,input:None,autocomplete:None});
+                    }
                     if tab=="table-field-remove-confirm" {state.wizard_scroll=(0.0,0.0);state.wizard_col_sel=0;state.confirm_kind=ConfirmKind::DeleteColumn(0);state.confirm_open=true;}
                     if tab=="table-field-check-editor" {state.wizard_scroll=(0.0,0.0);state.wizard_field_column=Some(7);state.wizard_field_edit=Some(state::FieldCellEdit {column:7,original:state.wizard_cols[1].check_expression.clone(),reference:None,input:None,autocomplete:None});}
                     if tab=="table-field-reference-editor" || tab=="table-field-reference-empty" {
@@ -1139,7 +1145,7 @@ impl Demo {
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if let Some(edit)=&state.wizard_constraint_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_constraint_editor));built.ui.key_input(if (edit.page,edit.column)==(0,1) {UiKey::Space} else {UiKey::SelectAll});}built.ui.sync(&mut built.scene);}
-        if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);}built.ui.sync(&mut built.scene);}
+        if let Some(edit)=&state.wizard_field_edit {if edit.reference.is_some() {built.reference_editor.focus(&mut built.ui,0);} else {built.ui.set_focus(Some(built.ov_field_editor));built.ui.key_input(UiKey::SelectAll);if matches!(edit.column,1|8) {if built.ui.is_select(built.ov_field_editor) {built.ui.key_input(UiKey::Space);} else {built.ui.open_autocomplete_options(built.ov_field_editor);}}}built.ui.sync(&mut built.scene);}
         if std::env::var_os("NEXT_GUI_DB_BROWSER_QA").is_some() && !state.find_text.is_empty() {
             built.ui.select_text_area_range(built.sql_area, 0..0);
             built.ui.find_in_text_area(built.sql_area, &state.find_text);
@@ -1741,7 +1747,7 @@ impl Demo {
         let id=self.ids.ov_field_editor;
         edit.input=self.ui.text_input_state(id);edit.autocomplete=self.ui.autocomplete_state(id);
         let column=edit.column;
-        let value=if column==1 || column==8 {self.ui.autocomplete_value(id)} else {self.ui.text_input_value(id)}.map(str::to_owned);
+        let value=if column==1 || column==8 {self.ui.autocomplete_value(id).or_else(||self.ui.select_value(id))} else {self.ui.text_input_value(id)}.map(str::to_owned);
         if let Some(value)=value {self.set_field_cell_value(column,&value);}
         if self.ui.focused()!=Some(id) {self.state.wizard_field_edit=None;self.rebuild=true;}
     }
@@ -1938,6 +1944,9 @@ impl Demo {
                 self.do_rebuild();let editor=self.ids.ov_field_editor;
                 if self.state.wizard_field_edit.as_ref().is_some_and(|edit|edit.reference.is_some()) {self.ids.reference_editor.focus(&mut self.ui,0);} else {self.ui.set_focus(Some(editor));self.ui.key_input(UiKey::SelectAll);}
                 if let Some(key)=key {self.ui.key_input(key);}
+                else if matches!(column,1|8) {
+                    if self.ui.is_select(editor) {self.ui.key_input(UiKey::Space);} else {self.ui.open_autocomplete_options(editor);}
+                }
                 self.ui.sync(&mut self.scene);
             }
             next_gui_ui::TableCellEditEvent::End {cancel}=> {
@@ -8172,6 +8181,52 @@ mod interaction_tests {
     }
 
     #[test]
+    fn field_dropdowns_open_on_first_click_keep_custom_types_and_save_collation() {
+        for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+            for (width,height) in [(1400,1000),(800,600)] {
+                let mut demo=Demo::new(width,height,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY,name TEXT DEFAULT 'kept' COLLATE NOCASE); INSERT INTO records VALUES(7,'alpha   ');").unwrap();
+                demo.state.refresh_schema().unwrap();let row=demo.state.schema.iter().position(|object|object.name=="records").unwrap();demo.state.select_schema_node(10_000+row as u64);demo.state.open_modify_table_wizard().unwrap();demo.do_rebuild();
+                let finish=|demo:&mut Demo| {demo.handle_table_cell_edit();if demo.rebuild {demo.do_rebuild();}demo.snapshot_inputs();if demo.rebuild {demo.do_rebuild();}demo.ui.sync(&mut demo.scene);};
+                let click=|demo:&mut Demo,column| {
+                    demo.ui.set_table_selected_col(demo.ids.ov_fields_table,Some(column));demo.ui.reveal_table_selection(demo.ids.ov_fields_table);demo.ui.sync(&mut demo.scene);
+                    let table=demo.ids.ov_fields_table;let bounds=demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(table)).unwrap().bounds;
+                    let style=next_gui_ui::TableStyle::from_theme(&demo.theme);let widths=demo.ui.table_column_widths(table).unwrap();let (sx,sy)=demo.ui.table_scroll_offset(table).unwrap();
+                    let x=(bounds.x+style.padding+widths[..column].iter().sum::<f32>()-sx+widths[column]*0.5).clamp(bounds.x+widths[0]+5.0,bounds.x+bounds.width-5.0);
+                    let y=bounds.y+style.header_height+style.row_height*1.5-sy;
+                    assert_eq!(demo.ui.hit_widget(&demo.scene,x,y),Some(table));assert!(demo.ui.pointer_pressed(&mut demo.scene,x,y));demo.ui.pointer_released();
+                    demo.snapshot_inputs();finish(demo);assert_eq!(demo.state.wizard_col_sel,1);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,column);assert!(demo.ui.has_open_popup());
+                };
+                let capture=|demo:&mut Demo,phase| {
+                    if let Ok(prefix)=std::env::var("NEXT_GUI_DB_BROWSER_FIELD_DROPDOWN_QA_OUT") {
+                        demo.scene.mark_full_dirty(width as f32,height as f32);let dirty=demo.scene.take_dirty();let commands=encode_scene(&demo.scene,&dirty);let clear=clear_color(&demo.theme);let mut soft=SoftRenderer::new(width,height,clear);soft.render(&commands,&dirty);
+                        write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}.ppm"),soft.frame_pixels().unwrap().0,width,height).unwrap();
+                        if let Ok(mut gpu)=GpuRenderer::try_new(width,height,clear) {gpu.render(&commands,&dirty);let a=soft.frame_pixels().unwrap().0;let b=gpu.frame_pixels().unwrap().0;write_ppm(&format!("{prefix}-{theme_name}-{width}-{phase}-metal.ppm"),b,width,height).unwrap();let delta=a.iter().zip(b).flat_map(|(a,b)|[0,8,16].map(|shift|(((a>>shift)&255)as i32-((b>>shift)&255)as i32).abs())).max().unwrap();assert!(delta<=2,"{theme_name}/{width}/{phase}: {delta}");eprintln!("Field dropdown {theme_name}/{width}/{phase}: Soft/Metal delta {delta}");}
+                        else {eprintln!("Field dropdown GPU comparison not_run: adapter unavailable");}
+                    }
+                };
+                capture(&mut demo,"closed");click(&mut demo,1);assert_eq!(demo.ui.autocomplete_value(demo.ids.ov_field_editor),Some("TEXT"));capture(&mut demo,"type");
+                assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_some());
+                demo.ui.paste_into_focused_text("VARCHAR(48)");demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].type_name,"VARCHAR(48)");
+                assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert_eq!(demo.state.wizard_cols[1].type_name,"TEXT");assert!(demo.state.wizard_field_edit.is_none());
+                click(&mut demo,1);demo.ui.paste_into_focused_text("VARCHAR(48)");demo.snapshot_inputs();assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);
+                click(&mut demo,8);assert!(demo.ui.is_select(demo.ids.ov_field_editor));assert!(!demo.ui.paste_into_focused_text("invalid_collation"));capture(&mut demo,"collation");
+                assert!(demo.ui.key_input(UiKey::Down));demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].collation,"RTRIM");
+                demo.do_rebuild();assert_eq!(demo.ui.select_value(demo.ids.ov_field_editor),Some("RTRIM"));
+                demo.ui.set_focus(Some(demo.ids.ov_field_editor));assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());
+                demo.handle_button(demo.ids.ov_btn_ok);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.overlay.is_none());
+                let conn=demo.state.conn.as_ref().unwrap();assert_eq!(conn.query_row("SELECT id FROM records WHERE name='alpha'",[],|row|row.get::<_,i64>(0)).unwrap(),7);
+                let defs=dbmod::table_column_defs_in(conn,"main","records").unwrap();assert_eq!(defs[1].type_name.replace(' ',""),"VARCHAR(48)");assert_eq!(defs[1].collation,"RTRIM");assert_eq!(defs[1].default_value,"'kept'");
+                demo.state.open_modify_table_wizard().unwrap();demo.state.wizard_table_options.strict=true;demo.state.wizard_cols[1].type_name="TEXT".into();demo.state.wizard_col_sel=0;demo.do_rebuild();click(&mut demo,1);
+                assert!(demo.ui.is_select(demo.ids.ov_field_editor));assert!(!demo.ui.paste_into_focused_text("VARCHAR(48)"));
+                let mut choices=Vec::new();for _ in 0..6 {demo.ui.key_input(UiKey::Down);choices.push(demo.ui.select_value(demo.ids.ov_field_editor).unwrap().to_owned());}
+                choices.sort();assert_eq!(choices,vec!["ANY","BLOB","INT","INTEGER","REAL","TEXT"]);demo.snapshot_inputs();
+                assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert_eq!(demo.state.wizard_cols[1].type_name,"TEXT");
+            }
+        }
+    }
+
+    #[test]
     fn field_text_cells_edit_cancel_tab_restore_history_and_save_real_constraints() {
         for (theme_name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
             let mut demo=Demo::new(1400,1000,PresentBackend::Softbuffer);demo.theme=ui_build::browser_theme(theme,demo.state.prefs.font_size);demo.state.new_memory_db().unwrap();
@@ -8187,7 +8242,7 @@ mod interaction_tests {
             assert!(demo.ui.key_input(UiKey::Escape));finish(&mut demo);assert_eq!(demo.state.wizard_cols[1].name,"name");assert!(!demo.state.wizard_cols[1].check_expression.contains("customer_name"));assert!(demo.state.wizard_field_edit.is_none());assert_eq!(demo.state.overlay,Some(OverlayKind::EditTable));
             begin(&mut demo,1,1,UiKey::Enter);demo.ui.paste_into_focused_text("VARCHAR(48)");demo.snapshot_inputs();assert_eq!(demo.state.wizard_cols[1].type_name,"VARCHAR(48)");assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());
             begin(&mut demo,1,6,UiKey::Char('4'));assert_eq!(demo.ui.text_input_value(demo.ids.ov_field_editor),Some("4"));assert_eq!(demo.state.wizard_cols[1].default_value,"4");
-            assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,7);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,8);demo.ui.paste_into_focused_text("RTRIM");demo.snapshot_inputs();assert!(demo.ui.has_open_popup());
+            assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,7);assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,8);assert!(demo.ui.is_select(demo.ids.ov_field_editor));assert!(demo.ui.key_input(UiKey::Down));demo.snapshot_inputs();assert!(demo.ui.has_open_popup());
             assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_some());assert!(demo.ui.key_input(UiKey::Enter));finish(&mut demo);assert!(demo.state.wizard_field_edit.is_none());assert_eq!(demo.state.wizard_cols[1].collation,"RTRIM");
             begin(&mut demo,1,8,UiKey::Edit);assert!(demo.ui.key_input(UiKey::BackTab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,7);assert!(demo.ui.key_input(UiKey::BackTab));finish(&mut demo);assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,6);assert_eq!(demo.ui.text_input_value(demo.ids.ov_field_editor),Some("4"));
             for _ in 0..3 {assert!(demo.ui.key_input(UiKey::Tab));finish(&mut demo);}assert_eq!(demo.state.wizard_field_edit.as_ref().unwrap().column,9);

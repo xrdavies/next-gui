@@ -153,7 +153,7 @@ pub fn table_options_in(conn: &Connection, schema: &str, table: &str) -> Result<
     crate::table_sql::table_options(&sql)
 }
 
-pub const COLUMN_TYPES: &[&str] = &["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC", "VARCHAR(255)"];
+pub const COLUMN_TYPES: &[&str] = &["INTEGER", "TEXT", "BLOB", "REAL", "NUMERIC"];
 
 /// Open connection (file or `:memory:`).
 pub fn open_path(path: &str) -> Result<crate::sql_log::LoggedConnection, String> {
