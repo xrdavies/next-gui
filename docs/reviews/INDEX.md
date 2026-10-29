@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [filter expression menus](R-20261030-035c0ae506f7.md) —806 tests,13 Soft/Metal pairs,8 native workflows and14 Office windows verified; full F02 remains in progress.
+Latest scoped review: [conditional format rule management](R-20261030-8e6bd3601ca7.md) —810 tests,17 Soft/Metal pairs and8 native Save/Cancel workflows verified; full F02 remains in progress.
 
 ## Findings
 
@@ -100,6 +100,7 @@ Latest scoped review: [filter expression menus](R-20261030-035c0ae506f7.md) —8
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-30 | `ac7df3b..8e6bd3601ca7` | Codex | issues —810 tests/strict checks,17 Metal pairs and8 native Save/Cancel flows; existing background rules now editable/removable/reorderable with atomic drafts; full parity pending | [Report](R-20261030-8e6bd3601ca7.md) |
 | 2026-10-29 | `52e3b19..b23ae67bf985` | Codex | issues —781 tests/strict checks,24 Metal pairs and four native wide/narrow Apply workflows; viewport F01 verified with retained editor focus/fresh history; full parity pending | [Report](R-20261029-b23ae67bf985.md) |
 | 2026-10-29 | `5689f27..68071fced248` | Codex | issues —779 tests/strict checks,24 Metal pairs,12 static and16 changed native key workflows; unique-column view editing and native XML verified; viewport F01 open, full parity pending | [Report](R-20261029-68071fced248.md) |
 | 2026-10-29 | `67c5a93..fd3e205e66fc` | Codex | issues —772 tests/strict checks,16 Metal pairs,8 native windows and8 changed keyboard flows; exact composite/WITHOUT ROWID mutations and cell-action focus verified, async feedback F01 closed; view keys/full parity pending | [Report](R-20261029-fd3e205e66fc.md) |

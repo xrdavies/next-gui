@@ -923,3 +923,7 @@ Automatic any-column and column filters run on the live connection in the existi
 ## 2026-10-30 filter expression menus
 
 [Review](../../docs/reviews/R-20261030-035c0ae506f7.md):806 tests,13 Soft/Metal pairs,8 native menu/replacement/Undo/Redo/clear workflows and14 Office windows pass. Shared TextInput/Autocomplete now support Unicode partial ranges, selection painting and retained history; shared menus support nested items and separators. Raw global-filter spacing survives rebuilds. Conditional-format context actions and the complete manager remain missing; full F02 remains **in_progress**.
+
+## 2026-10-30 conditional format rule management
+
+[Review](../../docs/reviews/R-20261030-8e6bd3601ca7.md):810 tests,17 Soft/Metal pairs and8 native Save/Cancel workflows pass. Existing qualified table background rules support editing, adding, removal and priority movement in a validated draft; Cancel retains current rules and Save changes matching order. Same-rule input sessions survive rebuilds. Full original filter syntax, foreground/fonts/alignment, canonical conditional-format XML and original dialog layout remain. F02 stays **in_progress**; native frontmost input and system IME/a11y/Print/pickers remain unaccepted.
