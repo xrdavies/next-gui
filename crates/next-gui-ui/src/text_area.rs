@@ -269,7 +269,8 @@ impl Ui {
         true
     }
 
-    /// Enable wrapping of long lines without changing the document or its history.
+    /// Wrap at Unicode word opportunities, with whole-grapheme fallback for long words.
+    /// Changes neither the document nor its history.
     pub fn set_text_area_wrap(&mut self, id: WidgetId, enabled: bool) -> bool {
         let Some(Widget {kind:Kind::TextArea {edit,..},..})=self.widgets.get_mut(&id) else {return false;};
         let no_wrap=!enabled;
@@ -288,7 +289,9 @@ impl Ui {
 
     pub(super) fn text_area_layout(&self, value:&str, style:TextAreaStyle, line_numbers:bool, no_wrap:bool, width:f32) -> (f32,next_gui_text::TextLayout) {
         let gutter=self.text_area_gutter_width(value,style,line_numbers,width);
-        (gutter,self.font.layout(value,style.size,(!no_wrap).then_some((width-2.0*style.padding_x-gutter).max(1.0))))
+        let layout=if no_wrap {self.font.layout(value,style.size,None)}
+            else {self.font.layout_word_wrapped(value,style.size,(width-2.0*style.padding_x-gutter).max(1.0))};
+        (gutter,layout)
     }
 
     pub(super) fn text_area_gutter_width(&self, value: &str, style: TextAreaStyle, enabled: bool, width: f32) -> f32 {
@@ -692,6 +695,7 @@ impl Ui {
         let (value, caret) = display_text(value, *caret, edit, preedit, *preedit_cursor);
         let placeholder = placeholder.clone();
         let style = *style;
+        let no_wrap=edit.no_wrap;
         let (gutter,layout) = self.text_area_layout(&value,style,*line_numbers,edit.no_wrap,bounds.width);
         let (label, chrome) = (*label_node, *chrome_node);
 
@@ -766,7 +770,8 @@ impl Ui {
         let placeholder_visible = value.is_empty() && !focused;
         let top = first as f32 * layout.line_height;
         let mut visible_layout = if placeholder_visible {
-            self.font.layout(&placeholder, style.size, Some(content.width))
+            if no_wrap {self.font.layout(&placeholder,style.size,None)}
+                else {self.font.layout_word_wrapped(&placeholder,style.size,content.width)}
         } else { layout.clone() };
         let mut colored_layouts: Vec<(Color, next_gui_text::TextLayout)> = Vec::new();
         if !placeholder_visible && !foregrounds.is_empty() {
@@ -896,6 +901,42 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrapped_text_keeps_fitting_words_and_source_indices_on_the_same_visual_line() {
+        let (ui,_,_)=editor("first second");
+        let size=18.0;let width=ui.font.measure_line("first ",size).0.max(ui.font.measure_line("second",size).0)+2.0;
+        let style=TextAreaStyle {size,padding_x:0.0,..TextAreaStyle::default()};
+        let (_,layout)=ui.text_area_layout("first second",style,false,false,width);
+        let points=layout.caret_positions("first second",ui.font.metrics(size).ascent);
+        assert!(points[6].1>points[0].1);
+        assert!(points[6..12].iter().all(|point|point.1==points[6].1));
+        assert_eq!(layout.glyphs.iter().map(|g|g.ch).collect::<String>(),"first second");
+    }
+
+    #[test]
+    fn word_wrapped_pointer_keys_ime_marks_and_history_share_source_positions() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut area=WidgetId(0);
+        let size=18.0;let width=ui.font.measure_line("first ",size).0.max(ui.font.measure_line("second",size).0)+2.0;
+        let text="first second\n中文（标点）e\u{301} 👩\u{200d}💻";
+        ui.column(ColumnStyle {width:250.0,height:200.0,..ColumnStyle::default()},|column| {
+            area=column.text_area(text,"first second",TextAreaStyle {width:width+12.0,height:160.0,padding_x:6.0,size,..TextAreaStyle::default()});
+        });
+        ui.set_focus(Some(area));ui.select_text_area_range(area,0..0);ui.sync(&mut scene);
+        let host=ui.widgets[&area].node.unwrap();let bounds=scene.get(host).unwrap().bounds;
+        let Kind::TextArea {style,..}=ui.widgets[&area].kind else {unreachable!()};
+        let (_,layout)=ui.text_area_layout(text,style,false,false,bounds.width);
+        let points=layout.caret_positions(text,ui.font.metrics(size).ascent);assert!(points[6].1>points[0].1);
+        assert!(ui.pointer_text_area(area,bounds,bounds.x+style.padding_x+points[7].0,bounds.y+style.padding_y+points[7].1+1.0,false));assert_eq!(ui.text_area_caret(area),Some(7));
+        ui.key_input(UiKey::Home);assert_eq!(ui.text_area_caret(area),Some(6));ui.key_input(UiKey::SelectEnd);assert_eq!(ui.focused_text_for_copy().as_deref(),Some("second"));
+        let selection=ui.text_area_selection(area).unwrap();ui.set_text_area_highlights(area,vec![0..5,6..12],Color::rgb(200,80,80));ui.sync(&mut scene);
+        let session=ui.text_area_state(area).unwrap();assert!(ui.ime_preedit("東京",Some((0,6))));ui.sync(&mut scene);
+        let ime=ui.ime_cursor_area(&scene).unwrap();let hint=ui.text_area_position_area(&scene,area,None).unwrap();assert_eq!((ime.0,ime.1),(hint.0,hint.1));assert_eq!(ui.text_area_value(area),Some(text));
+        assert!(ui.ime_clear_preedit());assert!(ui.restore_text_area_state(area,&session));assert_eq!(ui.text_area_selection(area),Some(selection.clone()));
+        assert!(ui.replace_text_area_selection(area,"replacement"));ui.key_input(UiKey::Undo);assert_eq!(ui.text_area_value(area),Some(text));assert_eq!(ui.text_area_selection(area),Some(selection));
+        ui.set_text_area_wrap(area,false);ui.sync(&mut scene);ui.set_text_area_wrap(area,true);ui.sync(&mut scene);assert_eq!(ui.text_area_scroll_offsets(area).unwrap().0,0.0);assert_eq!(ui.text_area_value(area),Some(text));
+        ui.set_text_area_read_only(area,true);ui.key_input(UiKey::SelectAll);assert_eq!(ui.focused_text_for_copy().as_deref(),Some(text));assert!(!ui.paste_into_focused_text("changed"));
+    }
 
     fn editor(text: &str) -> (Ui, Scene, WidgetId) {
         let mut ui = Ui::new();

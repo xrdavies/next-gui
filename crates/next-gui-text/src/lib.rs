@@ -8,6 +8,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Error loading or using a font.
 #[derive(Debug, Clone)]
@@ -222,6 +223,38 @@ impl Font {
             line_height: metrics.line_height,
             glyphs,
         }
+    }
+
+    /// Wrap at Unicode line opportunities, falling back to whole grapheme clusters.
+    /// Keeps source scalars and whitespace intact; explicit newlines retain empty lines.
+    /// A single cluster wider than the viewport may overflow and must be clipped by the caller.
+    pub fn layout_word_wrapped(&self, text: &str, px: f32, width: f32) -> TextLayout {
+        let mut layout=self.layout(text,px,None);
+        let limit=if width.is_finite() {width.max(1.0)}else{f32::MAX};
+        let ascent=self.metrics(px).ascent;
+        let space=|ch:char|ch.is_whitespace() && !matches!(ch,'\u{a0}'|'\u{202f}');
+        let (mut start,mut glyph,mut x,mut line,mut widest)=(0,0,0.0f32,0usize,0.0f32);
+        for (end,_) in unicode_linebreak::linebreaks(text) {
+            let segment=&text[start..end];start=end;
+            let count=segment.trim_end_matches(space).chars().filter(|ch|*ch!='\n').count();
+            let word_width=layout.glyphs[glyph..glyph+count].iter().map(|g|g.advance).sum::<f32>();
+            if x>0.0 && word_width<=limit && x+word_width>limit {widest=widest.max(x);x=0.0;line+=1;}
+            for cluster in segment.graphemes(true) {
+                let count=cluster.chars().filter(|ch|*ch!='\n').count();
+                let glyphs=&mut layout.glyphs[glyph..glyph+count];glyph+=count;
+                let advance=glyphs.iter().map(|g|g.advance).sum::<f32>();
+                let whitespace=cluster.chars().all(space);
+                if !whitespace && x>0.0 && x+advance>limit {widest=widest.max(x);x=0.0;line+=1;}
+                for glyph in glyphs {
+                    // Trailing wrap whitespace retains its source position without creating an empty line.
+                    if whitespace {glyph.advance=glyph.advance.min((limit-x).max(0.0));}
+                    glyph.x=x;glyph.baseline_y=line as f32*layout.line_height+ascent;x+=glyph.advance;
+                }
+                if cluster.contains('\n') {widest=widest.max(x);x=0.0;line+=1;}
+            }
+        }
+        layout.width=widest.max(x);layout.height=(line+1) as f32*layout.line_height;
+        layout
     }
 
     /// Rasterize a layout into one alpha mask (top-left origin).
@@ -458,6 +491,39 @@ mod tests {
 
     fn test_font() -> Font {
         load_default_cjk_font().expect("system CJK font required for tests")
+    }
+
+    #[test]
+    fn word_layout_preserves_words_punctuation_clusters_and_exact_source_carets() {
+        let font=test_font();let size=18.0;let ascent=font.metrics(size).ascent;
+        let text="first second";let width=font.measure_line("first ",size).0.max(font.measure_line("second",size).0)+2.0;
+        let layout=font.layout_word_wrapped(text,size,width);let points=layout.caret_positions(text,ascent);
+        assert_eq!(font.layout(text,size,Some(width)).caret_positions(text,ascent)[6].1,0.0);
+        assert!(points[6].1>points[0].1);assert!(points[6..12].iter().all(|point|point.1==points[6].1));
+        assert_eq!(layout.glyphs.iter().map(|glyph|glyph.ch).collect::<String>(),text);
+        for text in ["", "\n", "\n\n", "first\n\nsecond\n", "  first  second  ", "中文（标点）继续", "a\u{a0}b c\u{202f}d", "first\r\nsecond"] {
+            let layout=font.layout_word_wrapped(text,size,2000.0);let original=font.layout(text,size,None);
+            assert_eq!(layout.glyphs.iter().map(|g|(g.ch,g.x,g.baseline_y,g.advance)).collect::<Vec<_>>(),original.glyphs.iter().map(|g|(g.ch,g.x,g.baseline_y,g.advance)).collect::<Vec<_>>(),"{text:?}");
+            assert_eq!(layout.height,original.height);assert_eq!(layout.caret_positions(text,ascent).len(),text.chars().count()+1);
+        }
+        for text in ["abcdefghij".repeat(15),"e\u{301}".repeat(25),"👩\u{200d}💻".repeat(15),"🇨🇳🇯🇵".repeat(12)] {
+            let layout=font.layout_word_wrapped(&text,size,35.0);let points=layout.caret_positions(&text,ascent);let mut scalar=0;
+            assert!(layout.height>layout.line_height);assert_eq!(layout.glyphs.iter().map(|g|g.ch).collect::<String>(),text);
+            for cluster in text.graphemes(true) {let end=scalar+cluster.chars().count();assert!(points[scalar..end].iter().all(|point|point.1==points[scalar].1),"Split {cluster:?}");scalar=end;}
+        }
+        for text in ["中文（标点）继续", "中文，继续。测试！", "日本語「引用」続く"] {
+            let layout=font.layout_word_wrapped(text,size,font.measure_line("中文（",size).0+0.5);
+            for pair in layout.glyphs.windows(2) {if pair[0].baseline_y!=pair[1].baseline_y {
+                assert!(!matches!(pair[0].ch,'（'|'「'));assert!(!matches!(pair[1].ch,'）'|'」'|'，'|'。'|'！'));
+            }}
+        }
+        for width in [0.0,-1.0,f32::NAN,f32::INFINITY] {let layout=font.layout_word_wrapped("a\u{301}中文",size,width);assert!(layout.width.is_finite() && layout.height.is_finite());}
+        let width=font.measure_line("second",size).0;
+        for text in ["second ","second   ","second \n","second   \n"] {
+            let layout=font.layout_word_wrapped(text,size,width);
+            assert_eq!(layout.height,layout.line_height*if text.ends_with('\n') {2.0}else{1.0});assert!(layout.width<=width);
+            assert_eq!(layout.glyphs.iter().map(|g|g.ch).collect::<String>(),text.replace('\n',""));
+        }
     }
 
     #[test]
