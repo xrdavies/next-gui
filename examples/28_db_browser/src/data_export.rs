@@ -101,16 +101,7 @@ fn csv_value(value: ValueRef<'_>) -> String {
     match value {
         ValueRef::Null => String::new(),
         ValueRef::Integer(v) => v.to_string(),
-        ValueRef::Real(v) => {
-            let mut buffer = [0 as std::ffi::c_char; 32];
-            // Match SQLite's numeric column conversion, with its fixed bounded ASCII format.
-            unsafe {
-                rusqlite::ffi::sqlite3_snprintf(32, buffer.as_mut_ptr(), c"%!.15g".as_ptr(), v);
-                std::ffi::CStr::from_ptr(buffer.as_ptr())
-                    .to_string_lossy()
-                    .into_owned()
-            }
-        }
+        ValueRef::Real(v) => crate::db::sqlite_real_text(v),
         ValueRef::Text(bytes) | ValueRef::Blob(bytes) => match std::str::from_utf8(bytes) {
             Ok(text)
                 if text.chars().all(|ch| {

@@ -1618,7 +1618,7 @@ pub fn build_ui(
                                         let mut style=type_sel;style.width=(width*0.3).max(100.0);
                                         ov_cond_op=r.select(crate::cond_format::OPERATORS,Some(state.cond_op_idx),"Operator",style);
                                         let mut input=name_s;input.width=(width*0.6).max(100.0);
-                                        ov_cond_val=r.text_input_styled(&state.cond_value,"Comparison value",input);
+                                        ov_cond_val=r.text_input_styled(&state.cond_value,"Value or filter expression",input);
                                     });
                                     c.row(row,|r| {
                                         r.text("Background #RRGGBB");ov_cond_color=r.text_input_styled(&state.cond_color,"#E67E22",name_s);
@@ -2777,6 +2777,7 @@ pub fn build_ui(
         ui.set_button_enabled(cond_formats.down,draft.selected.is_some_and(|row|row+1<draft.rules.len()));
     }
     for (id,label) in [(cond_formats.table,"Conditional format priority list"),(cond_formats.add,"Add conditional format"),(cond_formats.remove,"Remove selected conditional format"),(cond_formats.up,"Move format earlier"),(cond_formats.down,"Move format later"),(ov_cond_col,"Conditional format column"),(ov_cond_op,"Conditional format operator"),(ov_cond_val,"Conditional format comparison value"),(ov_cond_color,"Conditional format background color")]{ui.set_accessible_name(id,label);}
+    ui.set_tooltip_text(ov_cond_val,"Filter expression uses the Browse syntax: >=3, 1~10, /pattern/ or LIKE wildcards. Empty applies to all text/numeric values. Right-click or Shift+F10 inserts a template.");
     ui.set_text_input_integer_range(ov_prefs_filter_delay, Some((0, 5000)));
     ui.set_accessible_name(ov_prefs_filter_delay, "Filter delay in milliseconds");
     ui.set_accessible_name(ov_prefs_filter_escape, "Filter escape character");

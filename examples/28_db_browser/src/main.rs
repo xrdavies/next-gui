@@ -36,6 +36,7 @@ mod filters;
 mod browse_filter;
 mod filter_menu;
 mod cond_format;
+mod cond_match;
 mod prefs;
 mod pragmas;
 mod project;
@@ -1191,8 +1192,9 @@ impl Demo {
                     state.overlay = Some(OverlayKind::ExportSql);
                     MainTab::Structure
                 }
-                "cond" | "condformat" | "condformat-narrow" => {
+                "cond" | "condformat" | "condformat-narrow" | "condformat-expression" | "condformat-expression-narrow" => {
                     cond_format::prepare_qa(&mut state);
+                    if tab.contains("expression") {state.cond_rules[0].op=5;state.cond_rules[0].value="2~4".into();state.begin_cond_formats().unwrap();}
                     if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     MainTab::Browse
                 }
@@ -6128,7 +6130,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("condformat-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

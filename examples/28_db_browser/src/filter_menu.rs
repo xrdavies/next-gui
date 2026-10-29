@@ -29,14 +29,20 @@ const CONDITIONS: [(&str, &str, Option<usize>); 13] = [
 ];
 
 impl Demo {
-    fn is_browse_filter(&self, id: WidgetId) -> bool {
+    fn is_filter_input(&self, id: WidgetId) -> bool {
         id.0 != 0
-            && (id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id))
+            && (id == self.ids.browse_global_filter
+                || self.ids.browse_col_filters.contains(&id)
+                || (self.state.overlay == Some(crate::state::OverlayKind::CondFormat)
+                    && self.state.cond_op_idx == 5
+                    && id == self.ids.ov_cond_val))
     }
 
     fn filter_menu_available(&self) -> bool {
         self.state.tab == MainTab::Browse
-            && self.state.overlay.is_none()
+            && (self.state.overlay.is_none()
+                || self.state.overlay == Some(crate::state::OverlayKind::CondFormat)
+                    && self.state.cond_formats.is_some())
             && !self.state.confirm_open
             && !self.state.sql_busy
             && self.ui.active_dialog().is_none()
@@ -86,7 +92,7 @@ impl Demo {
         let Some(input) = self
             .ui
             .hit_widget(&self.scene, x, y)
-            .filter(|id| self.is_browse_filter(*id))
+            .filter(|id| self.is_filter_input(*id))
         else {
             return false;
         };
@@ -109,7 +115,7 @@ impl Demo {
         {
             return false;
         }
-        let Some(input) = self.ui.focused().filter(|id| self.is_browse_filter(*id)) else {
+        let Some(input) = self.ui.focused().filter(|id| self.is_filter_input(*id)) else {
             return false;
         };
         let bounds = self
@@ -126,7 +132,7 @@ impl Demo {
     }
 
     fn edit_filter_menu_action(&mut self, item: u64, pasted: Option<&str>) {
-        let Some(input) = self.filter_context.filter(|id| self.is_browse_filter(*id)) else {
+        let Some(input) = self.filter_context.filter(|id| self.is_filter_input(*id)) else {
             return;
         };
         if !self.filter_menu_available() {
@@ -166,7 +172,9 @@ impl Demo {
                         self.ui.select_text_input_range(input, *start..*start + 1);
                     }
                     self.snapshot_inputs();
-                    self.flush_browse_filter();
+                    if input != self.ids.ov_cond_val {
+                        self.flush_browse_filter();
+                    }
                 }
             }
         }
@@ -182,7 +190,7 @@ impl Demo {
         if !self.filter_menu_available()
             || !self
                 .filter_context
-                .is_some_and(|id| self.is_browse_filter(id))
+                .is_some_and(|id| self.is_filter_input(id))
         {
             return true;
         }
@@ -223,6 +231,79 @@ mod tests {
     use crate::state::OverlayKind;
     use next_gui_ui::Theme;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn conditional_expression_helpers_edit_only_the_draft_and_save_validated_ranges() {
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 860), (800, 600)] {
+                let mut demo = fixture(width, height, theme);
+                crate::cond_format::prepare_qa(&mut demo.state);
+                demo.state.prefs.font_size = if width == 800 { 18.0 } else { 13.0 };
+                demo.state.cond_op_idx = 5;
+                demo.state.cond_value = "2~4".into();
+                demo.state.snapshot_cond_format_fields();
+                demo.do_rebuild();
+                let original = demo.state.cond_rules.clone();
+                for (index, (_, expression, placeholder)) in CONDITIONS.iter().enumerate() {
+                    let input = demo.ids.ov_cond_val;
+                    demo.ui.set_text_input(input, "previous");
+                    open(&mut demo, input);
+                    choose(&mut demo, index);
+                    assert_eq!(
+                        demo.state.cond_formats.as_ref().unwrap().rules[0].value,
+                        *expression
+                    );
+                    assert_eq!(demo.state.cond_rules, original);
+                    assert!(demo.state.browse_work.is_none());
+                    demo.do_rebuild();
+                    let input = demo.ids.ov_cond_val;
+                    assert_eq!(demo.ui.focused(), Some(input));
+                    assert_eq!(
+                        demo.ui.text_input_selection(input),
+                        placeholder.map(|start| start..start + 1)
+                    );
+                    demo.ui.key_input(UiKey::Undo);
+                    assert_eq!(demo.ui.text_input_value(input), Some("previous"));
+                    demo.ui.key_input(UiKey::Redo);
+                    demo.snapshot_inputs();
+                }
+                let input = demo.ids.ov_cond_val;
+                open(&mut demo, input);
+                demo.ui.key_input(UiKey::End);
+                demo.ui.key_input(UiKey::Right);
+                demo.ui.key_input(UiKey::End);
+                capture(&mut demo, &format!("format-menu-{name}-{width}"));
+                demo.ui.key_input(UiKey::Escape);
+                demo.ui.key_input(UiKey::Escape);
+                demo.ui.set_text_input(input, "/[/");
+                demo.snapshot_inputs();
+                demo.handle_button(demo.ids.ov_btn_ok);
+                demo.do_rebuild();
+                assert_eq!(demo.state.overlay, Some(OverlayKind::CondFormat));
+                assert_eq!(demo.state.cond_rules, original);
+                assert_eq!(demo.ui.text_input_value(demo.ids.ov_cond_val), Some("/[/"));
+                assert!(demo.state.error_msg.is_some());
+                capture(&mut demo, &format!("format-error-{name}-{width}"));
+                demo.clear_error();
+                demo.ui.set_text_input(demo.ids.ov_cond_val, "2~4");
+                demo.snapshot_inputs();
+                demo.handle_button(demo.ids.ov_btn_ok);
+                demo.do_rebuild();
+                assert!(demo.state.overlay.is_none());
+                assert!(demo.state.error_msg.is_none());
+                let colors = demo.state.cell_format_colors();
+                assert_eq!(
+                    colors[0][1],
+                    Some(next_gui_scene::Color::rgb(0x41, 0x6F, 0xA8))
+                );
+                assert!((1..4).all(
+                    |row| colors[row][1] == Some(next_gui_scene::Color::rgb(0xBF, 0x52, 0x66))
+                ));
+                assert!(colors[4][1].is_none());
+                capture(&mut demo, &format!("format-range-{name}-{width}"));
+            }
+        }
+    }
 
     fn open(demo: &mut Demo, input: WidgetId) {
         demo.ui.set_focus(Some(input));

@@ -6,12 +6,13 @@ use crate::{
 };
 use next_gui_ui::{SelectState, TextInputState};
 
-pub(crate) const OPERATORS: [&str; 5] = [
+pub(crate) const OPERATORS: [&str; 6] = [
     "Equal to",
     "Not equal to",
     "Contains",
     "Greater than",
     "Less than",
+    "Filter expression",
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -182,7 +183,7 @@ impl AppState {
                 if rule.op >= OPERATORS.len() {
                     return Err(error("choose a supported operator"));
                 }
-                if rule.op >= 3
+                if matches!(rule.op, 3 | 4)
                     && !rule
                         .value
                         .trim()
@@ -190,6 +191,14 @@ impl AppState {
                         .is_ok_and(|value| value.is_finite())
                 {
                     return Err(error("comparison value must be a finite number"));
+                }
+                if rule.op == 5 {
+                    crate::cond_match::validate(
+                        self.conn.as_ref().ok_or("No idle database available")?,
+                        &rule.value,
+                        &self.prefs.filter_escape,
+                    )
+                    .map_err(|message| error(&message))?;
                 }
                 let color = rule.color.strip_prefix('#').unwrap_or(&rule.color);
                 if color.len() != 6 || !color.bytes().all(|ch| ch.is_ascii_hexdigit()) {
@@ -200,7 +209,7 @@ impl AppState {
                     table: Some(draft.table.clone()),
                     column: rule.column.clone(),
                     op: rule.op,
-                    value: if rule.op >= 3 {
+                    value: if matches!(rule.op, 3 | 4) {
                         rule.value.trim().to_string()
                     } else {
                         rule.value.clone()

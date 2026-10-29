@@ -462,7 +462,7 @@ pub struct CondFormatRule {
     pub schema: String,
     pub table: Option<String>,
     pub column: String,
-    /// 0== 1!= 2contains 3> 4<
+    /// 0== 1!= 2contains 3> 4< 5=original filter expression
     pub op: usize,
     pub value: String,
     /// RGB packed 0xRRGGBB for cell tint
@@ -650,6 +650,7 @@ pub struct AppState {
     pub frozen_cols: usize,
     pub cond_rules: Vec<CondFormatRule>,
     pub cond_formats: Option<crate::cond_format::Draft>,
+    pub(crate) cond_match: std::cell::RefCell<Option<crate::cond_match::Cache>>,
     pub edit_mode: EditCellMode,
     pub edit_original: rusqlite::types::Value,
     edit_source: EditCellSource,
@@ -1019,6 +1020,7 @@ impl AppState {
             frozen_cols: 0,
             cond_rules: Vec::new(),
             cond_formats: None,
+            cond_match: Default::default(),
             edit_mode: EditCellMode::Text,
             edit_original: rusqlite::types::Value::Null,
             edit_source: EditCellSource::Browse,
@@ -2689,6 +2691,7 @@ impl AppState {
 
     pub fn close_db(&mut self) {
         self.cond_formats=None;
+        self.cond_match.get_mut().take();
         if self.overlay==Some(OverlayKind::CondFormat) {self.overlay=None;}
         self.cancel_browse_filter();
         self.view_key_dialog = None;
@@ -3738,47 +3741,7 @@ impl AppState {
     }
 
     pub fn cell_format_colors(&self) -> Vec<Vec<Option<next_gui_scene::Color>>> {
-        let Some(res) = self.browse().result.as_ref() else {
-            return Vec::new();
-        };
-        let mut out = Vec::with_capacity(res.rows.len());
-        for row in &res.rows {
-            let mut cols = Vec::with_capacity(res.columns.len());
-            for (ci, cname) in res.columns.iter().enumerate() {
-                let val = row.get(ci).map(|s| s.as_str()).unwrap_or("");
-                let mut tint = None;
-                for rule in &self.cond_rules {
-                    if rule.schema != self.browse().schema || rule.table != self.browse().table || &rule.column != cname {
-                        continue;
-                    }
-                    let hit = match rule.op {
-                        1 => val != rule.value,
-                        2 => val.contains(&rule.value),
-                        3 => {
-                            let a = val.parse::<f64>().ok();
-                            let b = rule.value.parse::<f64>().ok();
-                            matches!((a, b), (Some(a), Some(b)) if a > b)
-                        }
-                        4 => {
-                            let a = val.parse::<f64>().ok();
-                            let b = rule.value.parse::<f64>().ok();
-                            matches!((a, b), (Some(a), Some(b)) if a < b)
-                        }
-                        _ => val == rule.value,
-                    };
-                    if hit {
-                        let r = ((rule.color_rgb >> 16) & 0xff) as u8;
-                        let g = ((rule.color_rgb >> 8) & 0xff) as u8;
-                        let b = (rule.color_rgb & 0xff) as u8;
-                        tint = Some(next_gui_scene::Color::rgb(r, g, b));
-                        break;
-                    }
-                }
-                cols.push(tint);
-            }
-            out.push(cols);
-        }
-        out
+        crate::cond_match::colors(self)
     }
 
     pub fn sync_edit_cell_from_selection(&mut self) {
