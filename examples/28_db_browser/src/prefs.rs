@@ -18,6 +18,7 @@ pub struct Prefs {
     pub csv_separate_tables: bool,
     pub frozen_cols_default: usize,
     pub toolbar_styles: [usize; 5],
+    pub editor_word_wrap: bool,
 }
 
 impl Default for Prefs {
@@ -35,6 +36,7 @@ impl Default for Prefs {
             csv_separate_tables: false,
             frozen_cols_default: 0,
             toolbar_styles: [2, 2, 0, 0, 0],
+            editor_word_wrap: true,
         }
     }
 }
@@ -86,6 +88,9 @@ mod tests {
 
     #[test]
     fn old_preferences_enable_completion_and_explicit_false_round_trips() {
+        assert!(serde_json::from_str::<Prefs>("{}").unwrap().editor_word_wrap);
+        let wrap:Prefs=serde_json::from_str(r#"{"editor_word_wrap":false}"#).unwrap();
+        assert!(!serde_json::from_str::<Prefs>(&serde_json::to_string(&wrap).unwrap()).unwrap().editor_word_wrap);
         assert!(serde_json::from_str::<Prefs>("{}").unwrap().sql_completion);
         assert!(serde_json::from_str::<Prefs>("{}").unwrap().sql_upper_keywords);
         let prefs: Prefs = serde_json::from_str(r#"{"sql_completion":false,"sql_upper_keywords":false}"#).unwrap();

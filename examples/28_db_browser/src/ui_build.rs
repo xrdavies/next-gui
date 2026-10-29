@@ -178,6 +178,7 @@ pub struct BuiltUi {
     pub btn_cell_export: WidgetId,
     pub btn_cell_null: WidgetId,
     pub btn_cell_indent: WidgetId,
+    pub btn_cell_wrap: WidgetId,
     pub btn_edit_cell: WidgetId,
     pub schema_list: WidgetId,
     pub log_area: WidgetId,
@@ -612,6 +613,7 @@ pub fn build_ui(
     let mut btn_cell_export = z;
     let mut btn_cell_null = z;
     let mut btn_cell_indent = z;
+    let mut btn_cell_wrap = z;
     let mut btn_edit_cell = z;
     let mut schema_list = z;
     let mut log_area = z;
@@ -2215,6 +2217,9 @@ pub fn build_ui(
                             style.height = cell_field_height; style.item_height = cell_field_height;
                             style.popup_max_height = cell_field_height * crate::state::EditCellMode::LABELS.len() as f32;
                             edit_mode = r.select(crate::state::EditCellMode::LABELS, Some(state.edit_mode as usize), "Editor mode", style);
+                            btn_cell_wrap = if state.prefs.editor_word_wrap {
+                                r.tool_icon_button_styled(IconName::Wrap,"Wrap lines",theme.colors.selected_bg,theme.colors.text_primary)
+                            } else {r.tool_icon_button(IconName::Wrap,"Wrap lines")};
                             btn_cell_import = r.tool_icon_button(IconName::Open, "Import…");
                             btn_cell_export = r.tool_icon_button(IconName::Save, "Export…");
                             btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
@@ -2441,7 +2446,7 @@ pub fn build_ui(
         vec![btn_struct_new_table, btn_struct_new_index, btn_struct_modify, btn_struct_delete, btn_struct_refresh],
         vec![btn_add_row, btn_del_row, btn_form_view, btn_freeze, btn_cond_fmt, btn_fk_nav],
         vec![btn_sql_new_tab, btn_sql_open, btn_sql_save, btn_sql_save_as, btn_sql_run, btn_sql_line, btn_sql_stop, btn_sql_find, btn_sql_comment],
-        vec![btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent],
+        vec![btn_cell_wrap, btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent],
     ].into_iter().enumerate() {
         for button in buttons { ui.set_button_icon_layout(button, toolbar_layouts[index]); }
     }
@@ -2688,6 +2693,8 @@ pub fn build_ui(
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_input_enabled(edit_col, !cell_read_only);
     ui.set_text_area_read_only(edit_value, cell_read_only || state.edit_mode == crate::state::EditCellMode::Image);
+    ui.set_text_area_wrap(edit_value,state.prefs.editor_word_wrap);
+    ui.set_accessible_name(btn_cell_wrap,if state.prefs.editor_word_wrap {"Wrap cell lines (on)"} else {"Wrap cell lines (off)"});
     ui.set_button_enabled(btn_edit_cell, !cell_read_only);
     ui.set_button_enabled(btn_edit_discard, !cell_read_only);
     ui.set_button_enabled(btn_cell_import, !cell_read_only);
@@ -2937,6 +2944,7 @@ pub fn build_ui(
         btn_cell_export,
         btn_cell_null,
         btn_cell_indent,
+        btn_cell_wrap,
         btn_edit_cell,
         schema_list,
         log_area,

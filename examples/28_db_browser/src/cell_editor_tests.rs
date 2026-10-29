@@ -294,3 +294,57 @@ fn cell_dock_actions_and_content_fit_font_toolbar_and_window_changes() {
     assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));
     assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_discard),Some(false));
 }
+
+#[test]
+fn cell_wrap_toggle_preserves_drafts_selection_history_and_read_only_views() {
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    let line="SQL 中文🙂 value ".repeat(80);
+    let original=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
+    demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[&original]).unwrap();
+    demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
+    demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);
+    demo.state.sync_edit_cell_from_selection();demo.state.dock_focus=DockKind::Plot;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    demo.state.prefs.editor_word_wrap=true;demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.paste_into_focused_text(" draft 编辑");demo.snapshot_inputs();
+    let draft=demo.state.edit_value.clone();assert_ne!(draft,original);let end=draft.chars().count();
+    let revision=demo.state.edit_revision;
+    let folder=std::env::var("NEXT_GUI_CELL_WRAP_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+            demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+            demo.do_rebuild();
+            for enabled in [false,true] {
+                demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.select_text_area_range(demo.ids.edit_value,end-5..end);
+                demo.ui.sync(&mut demo.scene);demo.snapshot_inputs();
+                demo.ui.set_focus(Some(demo.ids.btn_cell_wrap));
+                if demo.state.prefs.editor_word_wrap!=enabled {demo.handle_button(demo.ids.btn_cell_wrap);}
+                demo.do_rebuild();
+                assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_wrap));
+                assert_eq!(demo.state.edit_revision,revision);assert_eq!(demo.state.edit_value,draft);assert!(demo.state.has_cell_draft());
+                assert_eq!(demo.ui.text_area_wrap(demo.ids.edit_value),Some(enabled));
+                assert_eq!(demo.ui.text_area_selection(demo.ids.edit_value),Some(end-5..end));
+                assert_eq!(demo.ui.text_area_caret(demo.ids.edit_value),Some(end));
+                let (x,y)=demo.ui.text_area_scroll_offsets(demo.ids.edit_value).unwrap();
+                if enabled {assert_eq!(x,0.0);assert!(y>0.0);} else {assert!(x>100.0);}
+                demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.sync(&mut demo.scene);
+                assert_eq!(demo.ui.focused_text_for_copy(),Some(draft.chars().skip(end-5).collect()));
+                if let Some(folder)=&folder {
+                    demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);
+                    crate::plot_export::capture(&mut demo,folder,&format!("cell-wrap-{name}-{width}-{}",if enabled {"on"} else {"off"}));
+                }
+            }
+        }
+    }
+    demo.ui.set_focus(Some(demo.ids.edit_value));assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();demo.do_rebuild();
+    assert_eq!(demo.state.edit_value,original);assert!(!demo.state.has_cell_draft());
+    assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();demo.do_rebuild();assert_eq!(demo.state.edit_value,draft);
+    demo.state.tab=MainTab::Pragmas;demo.do_rebuild();
+    assert_eq!(demo.ui.button_enabled(demo.ids.btn_cell_wrap),Some(true));
+    assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));
+    demo.handle_button(demo.ids.btn_cell_wrap);demo.do_rebuild();
+    assert_eq!(demo.state.edit_value,draft);assert_eq!(demo.ui.text_area_wrap(demo.ids.edit_value),Some(false));
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|row|row.get::<_,String>(0)).unwrap(),original);
+}

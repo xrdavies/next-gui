@@ -160,6 +160,10 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   TEXT/BLOB selector. Numeric edits preserve their type; invalid Hex/JSON is retained
   with an error. Apply or Discard Draft before changing the browse target. SQLite
   column affinity still determines the stored value, as with explicit SQL writes.
+- Edit Cell's checked Wrap lines tool persists its preference and switches between
+  character wrapping and horizontal scrolling without changing text, storage,
+  selection or Undo/Redo. Read-only views share it. Word/style-boundary wrapping
+  and complete RTL shaping remain unfinished.
 - Foreign-key navigation resolves omitted parent PK columns, groups composite keys
   and filters on the stored typed values; NULL keys report no parent. Source rows
   still require an unshadowed rowid.

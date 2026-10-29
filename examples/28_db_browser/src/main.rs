@@ -339,6 +339,7 @@ struct BuiltUiIds {
     btn_cell_export: WidgetId,
     btn_cell_null: WidgetId,
     btn_cell_indent: WidgetId,
+    btn_cell_wrap: WidgetId,
     btn_edit_cell: WidgetId,
     chart: WidgetId,
     plot: plot::Controls,
@@ -585,6 +586,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_cell_export: b.btn_cell_export,
             btn_cell_null: b.btn_cell_null,
             btn_cell_indent: b.btn_cell_indent,
+            btn_cell_wrap: b.btn_cell_wrap,
             btn_edit_cell: b.btn_edit_cell,
             chart: b.chart,
             plot: b.plot,
@@ -1361,6 +1363,15 @@ impl Demo {
                     state.browse_mut().sel_col = Some(3); state.sync_edit_cell_from_selection();
                     let mode = if tab.contains("evaluation") { crate::state::EditCellMode::Evaluation } else { crate::state::EditCellMode::Xml };
                     state.set_edit_mode(mode).unwrap(); state.dock_ratio = 0.62;
+                    if tab.contains("wrapped") {
+                        let line="SQL 中文🙂 value ".repeat(80);
+                        let text=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
+                        state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[text]).unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();
+                        state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();
+                        state.set_edit_mode(crate::state::EditCellMode::Text).unwrap();
+                        state.prefs.editor_word_wrap = !tab.contains("unwrapped");state.prefs.font_size=18.0;
+                    }
                     if tab.contains("under") { state.prefs.font_size = 18.0; state.prefs.toolbar_styles = [3; 5]; }
                     if tab.contains("large") { state.prefs.font_size = 28.0; state.prefs.toolbar_styles = [1; 5]; }
                     if mode == crate::state::EditCellMode::Evaluation { state.edit_value = "upper('中文a') || ' • ' || (SELECT count(*) FROM quarterly_revenue)".into(); }
@@ -1461,9 +1472,14 @@ impl Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
             if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
                 built.ui.set_focus(Some(built.edit_mode)); built.ui.key_input(UiKey::Space);
+            } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("toggle") {
+                built.ui.set_focus(Some(built.btn_cell_wrap));
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("chart") {
                 built.ui.set_focus(Some(built.chart));
             } else { built.ui.set_focus(Some(built.edit_value)); }
+            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("wrapped") {
+                let end=state.edit_value.chars().count();built.ui.select_text_area_range(built.edit_value,end..end);
+            }
             built.ui.sync(&mut built.scene);
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
@@ -2707,7 +2723,7 @@ impl Demo {
     fn do_rebuild(&mut self) {
         self.snapshot_cell_editor();
         let cell_focus = (self.last_edit_revision == self.state.edit_revision && self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value].into_iter()
+            .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.btn_cell_wrap].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -2989,7 +3005,7 @@ impl Demo {
         }
         if cell_revision == self.state.edit_revision {
             if let Some(index) = cell_focus {
-                let id = [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value][index];
+                let id = [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.btn_cell_wrap][index];
                 if id.0 != 0 {
                     if let Some(select) = cell_select { self.ui.restore_select_state(id, &select); }
                     self.ui.set_focus(Some(id));
@@ -4250,6 +4266,13 @@ impl Demo {
                 self.rebuild = true;
             }
             return;
+        }
+        if id == self.ids.btn_cell_wrap && id.0 != 0 {
+            self.state.prefs.editor_word_wrap = !self.state.prefs.editor_word_wrap;
+            if !cfg!(test) && std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none() {
+                if let Err(error) = self.state.prefs.save() {self.set_error(error);}
+            }
+            self.rebuild = true; return;
         }
         if id.0 != 0 && [self.ids.btn_cell_import, self.ids.btn_cell_export, self.ids.btn_cell_null, self.ids.btn_cell_indent].contains(&id) {
             self.snapshot_inputs();
