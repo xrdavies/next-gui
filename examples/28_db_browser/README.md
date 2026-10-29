@@ -183,8 +183,19 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   Only visible rows are rasterized, including million-byte buffers. Bytes remain
   in memory; editing may copy the shared buffer. History retains 100 byte deltas /
   8 MiB per stack, with one oversized edit retained. File import remains 16 MiB.
-  Custom binary search/display settings, complete original context menus and
-  cross-mode history remain unfinished.
+  Configured font families, original Print/context actions and cross-mode
+  history remain unfinished.
+- Edit Cell → Import offers file contents or a link. Links store the full UTF-8
+  filename as a TEXT draft; files are not read or embedded for a link. Open URL /
+  File sends the current text to its default application; relative filenames
+  resolve beside the database. Binary/image modes do not interpret bytes as URLs.
+  Open in External Editor writes a private type-suffixed copy, then offers Apply /
+  Cancel. Apply reads the saved regular file (up to16 MiB), verifies the original
+  cell/source/draft and uses the existing typed Apply/format-error flow. Cancel
+  retains the draft/history; readonly copies only offer Close. Copies are removed
+  on completion; read failures retain the copy for retry. An abnormal process
+  termination can leave a private temporary copy. Default application launches
+  run off the event thread; failures are shown without applying data.
 - Edit Cell's checked Auto mode tool defaults on and persists its preference.
   Printable UTF-8, non-number JSON, XML declarations and supported PNG/JPEG/BMP
   pictures choose a view; corrupt/oversized images fall back to Binary. Turning

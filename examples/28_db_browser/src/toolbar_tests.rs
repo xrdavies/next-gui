@@ -29,7 +29,7 @@ fn toolbar_styles_reach_all_groups_reveal_actions_and_keep_cell_drafts_and_query
                     demo.state.tab = tab; demo.do_rebuild();
                     let mut buttons = vec![demo.ids.btn_new, demo.ids.btn_open, demo.ids.btn_write, demo.ids.btn_revert, demo.ids.toolbar_extra,
                         demo.ids.btn_integrity, demo.ids.toolbar_project, demo.ids.btn_project_save, demo.ids.btn_theme,
-                        demo.ids.btn_cell_import, demo.ids.btn_cell_export, demo.ids.btn_cell_null, demo.ids.btn_cell_indent];
+                        demo.ids.btn_cell_import, demo.ids.btn_cell_export, demo.ids.btn_cell_null, demo.ids.btn_cell_indent, demo.ids.btn_cell_open, demo.ids.btn_cell_external];
                     buttons.extend(match tab {
                         MainTab::Structure => vec![demo.ids.btn_struct_new_table,demo.ids.btn_struct_new_index,demo.ids.btn_struct_modify,demo.ids.btn_struct_delete,demo.ids.btn_struct_refresh],
                         MainTab::Browse => vec![demo.ids.btn_add_row,demo.ids.btn_del_row,demo.ids.btn_form_view,demo.ids.btn_freeze,demo.ids.btn_cond_fmt,demo.ids.btn_fk_nav],

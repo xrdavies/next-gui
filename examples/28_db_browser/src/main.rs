@@ -252,6 +252,7 @@ struct Demo {
     last_log_revision: u64,
     last_edit_revision: u64,
     cell_clipboard: Option<cell_clipboard::CellClipboard>,
+    pending_opens: Vec<(next_gui_platform::desktop::OpenRequest,Option<PathBuf>)>,
     exit_requested: bool,
     reveal_browse_selection: bool,
     browse_header_column: Option<usize>,
@@ -343,6 +344,8 @@ struct BuiltUiIds {
     btn_edit_discard: WidgetId,
     btn_cell_import: WidgetId,
     btn_cell_export: WidgetId,
+    btn_cell_open: WidgetId,
+    btn_cell_external: WidgetId,
     hex_copy: WidgetId,
     hex_export: WidgetId,
     hex_insert: WidgetId,
@@ -595,6 +598,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_edit_discard: b.btn_edit_discard,
             btn_cell_import: b.btn_cell_import,
             btn_cell_export: b.btn_cell_export,
+            btn_cell_open: b.btn_cell_open,
+            btn_cell_external: b.btn_cell_external,
             hex_copy: b.hex_copy,
             hex_export: b.hex_export,
             hex_insert: b.hex_insert,
@@ -1434,6 +1439,15 @@ impl Demo {
                         }
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     }
+                    if tab.contains("actions-") {
+                        let hex=tab.contains("hex");let value=if hex {rusqlite::types::Value::Blob(vec![0,255,65,66])} else {rusqlite::types::Value::Text("https://sqlitebrowser.org/".into())};
+                        state.prefs.auto_switch_mode=false;
+                        state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[value]).unwrap();state.write_changes().unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();
+                        state.set_edit_mode(if hex {crate::state::EditCellMode::Hex} else {crate::state::EditCellMode::Text}).unwrap();
+                        if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    }
                     if tab.contains("hex-editor") {
                         let bytes=if tab.contains("empty") {Vec::new()} else {(0..(if tab.contains("million") {1_048_579}else{259})).map(|index|(index%256) as u8).collect()};
                         state.prefs.auto_switch_mode=false;
@@ -1551,6 +1565,9 @@ impl Demo {
         if state.dock_edit {
             if let Err(error) = state.sync_edit_cell_for_page() { state.error_msg = Some(error); }
         }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.contains("actions-external")) {
+            let path=state.begin_external_cell().unwrap();eprintln!("QA external copy: {}",path.display());
+        }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-session")) {
@@ -1664,6 +1681,7 @@ impl Demo {
             last_log_revision,
             last_edit_revision,
             cell_clipboard: None,
+            pending_opens: Vec::new(),
             exit_requested: false,
             reveal_browse_selection: false,
             browse_header_column: None,
@@ -1787,6 +1805,8 @@ impl Demo {
         if let Some(error)=self.ui.take_hex_editor_error(self.ids.edit_value) {self.set_error(error);}
         self.snapshot_cell_editor();
         self.ui.set_button_enabled(self.ids.hex_copy,self.ui.hex_editor_selection(self.ids.edit_value).is_some_and(|range|!range.is_empty()));
+        self.ui.set_button_enabled(self.ids.btn_cell_open,self.state.cell_open_target().is_ok());
+        self.ui.set_button_enabled(self.ids.btn_cell_external,!self.state.edit_col.is_empty() && (self.state.edit_type!=0 || self.state.edit_mode==crate::state::EditCellMode::Evaluation));
         if self.ids.sql_area.0 != 0 {
             if let Some(v) = self.ui.text_area_value(self.ids.sql_area) {
                 *self.state.sql_editor_mut() = v.to_string();
@@ -2849,7 +2869,7 @@ impl Demo {
             .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export].into_iter()
+            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -3146,7 +3166,7 @@ impl Demo {
             }
         }
         if let Some(index) = cell_tool_focus {
-            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export][index];
+            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external][index];
             if id.0 != 0 {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if mode_focused && self.ids.edit_mode.0 != 0 {
@@ -3224,17 +3244,9 @@ impl Demo {
     }
 
     fn open_url(&mut self, url: &str) {
-        #[cfg(target_os = "macos")]
-        let result = std::process::Command::new("open").arg(url).status();
-        #[cfg(target_os = "windows")]
-        let result = std::process::Command::new("rundll32")
-            .args(["url.dll,FileProtocolHandler", url])
-            .status();
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        let result = std::process::Command::new("xdg-open").arg(url).status();
-        match result {
-            Ok(status) if status.success() => self.state.status_msg = format!("Opened {url}"),
-            other => self.set_error(format!("Cannot open {url}: {other:?}")),
+        match next_gui_platform::desktop::OpenRequest::url(url) {
+            Ok(request)=>{self.pending_opens.push((request,None));self.state.status_msg=format!("Opening {url}…");}
+            Err(error)=>self.set_error(error.to_string()),
         }
         self.rebuild = true;
     }
@@ -3675,6 +3687,7 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
+        if self.state.external_cell.is_some() {self.set_error("Apply or cancel the external editing session first");self.rebuild=true;return;}
         let view_action=(mid::VIEW_DOCK_EDIT..=mid::VIEW_DOCK_REMOTE).contains(&item);
         if !view_action {if let Err(error)=self.state.guard_background_idle() {self.set_error(error);return;}}
         if self.state.wizard_column_picker.is_some() { return; }
@@ -4421,6 +4434,9 @@ impl Demo {
             }
             return;
         }
+        if id.0!=0 && id==self.ids.btn_cell_import {self.open_cell_import_menu();return;}
+        if id.0!=0 && id==self.ids.btn_cell_open {self.open_cell_link();return;}
+        if id.0!=0 && id==self.ids.btn_cell_external {self.open_external_cell();return;}
         if id.0 != 0 && [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.btn_cell_indent].contains(&id) {
             if id == self.ids.btn_cell_auto {
                 if let Err(error) = self.state.set_cell_auto_switch(!self.state.prefs.auto_switch_mode) {
@@ -4446,12 +4462,9 @@ impl Demo {
             }
             return;
         }
-        if id.0 != 0 && [self.ids.btn_cell_import, self.ids.btn_cell_export, self.ids.btn_cell_null].contains(&id) {
+        if id.0 != 0 && [self.ids.btn_cell_export, self.ids.btn_cell_null].contains(&id) {
             self.snapshot_inputs();
-            let result = if id == self.ids.btn_cell_import {
-                if self.state.edit_cell_read_only() { Err("This cell is read-only".into()) }
-                else if let Some(path) = file_dlg::pick_open_cell() { self.state.import_cell_file(&path) } else { return; }
-            } else if id == self.ids.btn_cell_export {
+            let result = if id == self.ids.btn_cell_export {
                 if let Some(path) = file_dlg::pick_save_cell() { self.state.export_cell_file(&path) } else { return; }
             } else { self.state.set_cell_null() };
             match result { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
@@ -5096,6 +5109,7 @@ impl Demo {
             let kind = self.state.confirm_kind;
             self.state.confirm_open = false;
             self.state.confirm_kind = ConfirmKind::None;
+            if kind == ConfirmKind::CellExternal {self.resolve_external_cell(action);return;}
             if kind == ConfirmKind::CellFormat {
                 self.resolve_cell_format(action);return;
             }
@@ -5200,7 +5214,7 @@ impl Demo {
                     }
                 }
             }
-            ConfirmKind::None | ConfirmKind::Documents | ConfirmKind::CellFormat => {}
+            ConfirmKind::None | ConfirmKind::Documents | ConfirmKind::CellFormat | ConfirmKind::CellExternal => {}
         }
         self.rebuild = true;
     }
@@ -5322,7 +5336,7 @@ impl Demo {
                     if let Err(error) = ctx.clipboard_set_text(name) { self.set_error(error.to_string()); }
                 }
                 self.browse_header_column = None;
-            } else if !self.handle_plot_menu_action(item) {
+            } else if !self.handle_cell_import_action(item) && !self.handle_plot_menu_action(item) {
                 self.handle_menu(item);
             }
         }
@@ -5360,6 +5374,7 @@ impl Demo {
 impl AppCallbacks for Demo {
     fn can_close(&self) -> bool {
         !self.state.dirty
+            && self.state.external_cell.is_none()
             && self.state.plot_work.is_none()
             && self.state.csv_work.is_none()
             && !self.state.sql_busy
@@ -5544,7 +5559,7 @@ impl AppCallbacks for Demo {
                 ..
             } => {
                 let text_clipboard = modifiers.commandish() && matches!(key, KeyCode::Char('c' | 'C' | 'x' | 'X' | 'v' | 'V'));
-                if self.ui.active_dialog().is_some() && !text_clipboard {
+                if (self.ui.active_dialog().is_some() || self.state.confirm_open) && !text_clipboard {
                     if let Some(key)=map_key(key,modifiers) {self.ui.key_input(key);}
                     self.after_ui(ctx);return;
                 }
@@ -5753,6 +5768,12 @@ impl AppCallbacks for Demo {
     }
 
     fn on_redraw(&mut self, ctx: &mut WindowCtx<'_>) {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.contains("actions-import")) && !self.qa_stepper_started {
+            self.qa_stepper_started=true;self.open_cell_import_menu();self.ui.sync(&mut self.scene);self.needs_paint=true;
+        }
+        self.poll_desktop_opens();
+        if self.rebuild {self.do_rebuild();}
+        if !self.pending_opens.is_empty() {ctx.request_redraw_after(std::time::Duration::from_millis(100));}
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-session")) && !self.qa_stepper_started {
             self.qa_stepper_started = true; self.do_rebuild();
         }

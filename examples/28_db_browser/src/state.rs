@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+#[path = "cell_actions.rs"]
+mod cell_actions;
+
 use rusqlite::{Connection, InterruptHandle};
 use crate::sql_log::{LoggedConnection, Source, SqlLog};
 
@@ -561,6 +564,7 @@ pub struct AppState {
 
     pub confirm_kind: ConfirmKind,
     pub confirm_open: bool,
+    pub external_cell: Option<cell_actions::ExternalCell>,
     pub pending_document: Option<DocumentAction>,
     pub pending_cell_save: Option<(Option<PathBuf>, Option<PathBuf>)>,
     pending_cell_apply: Option<CellApplyConfirmation>,
@@ -684,6 +688,7 @@ pub enum ConfirmKind {
     Revert,
     Pragmas,
     CellFormat,
+    CellExternal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -923,6 +928,7 @@ impl AppState {
             recent: VecDeque::new(),
             confirm_kind: ConfirmKind::None,
             confirm_open: false,
+            external_cell: None,
             pending_document: None,
             pending_cell_save: None,
             pending_cell_apply: None,
@@ -3848,6 +3854,7 @@ impl AppState {
     }
 
     fn reset_cell_editor_session(&mut self) {
+        self.cancel_external_cell();
         // Equal text in another cell must not inherit this cell's undo history.
         self.invalidate_cell_format();
         self.edit_revision = self.edit_revision.wrapping_add(1);
@@ -4010,17 +4017,14 @@ impl AppState {
     }
 
     pub fn import_cell_file(&mut self, path: &Path) -> Result<(), String> {
-        use std::io::Read;
         if self.edit_cell_read_only() { return Err("This cell is read-only".into()); }
-        // shortcut: bounded whole-cell editing; use a streaming binary editor for larger imports.
-        const LIMIT: u64 = 16 * 1024 * 1024;
-        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        let metadata = file.metadata().map_err(|e| e.to_string())?;
-        if !metadata.is_file() { return Err("Select a regular cell data file".into()); }
-        if metadata.len() > LIMIT { return Err("Cell import exceeds the 16 MiB editor limit".into()); }
-        let mut bytes = Vec::new();
-        file.take(LIMIT+1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-        if bytes.len() as u64 > LIMIT { return Err("Cell import exceeds the 16 MiB editor limit".into()); }
+        let bytes = cell_actions::read_cell_file(path)?;
+        self.load_cell_file_bytes(bytes);
+        self.status_msg = "File loaded into cell draft; Apply to update the record".into();
+        Ok(())
+    }
+
+    fn load_cell_file_bytes(&mut self, bytes: Vec<u8>) {
         let value = if self.edit_type == 4 || bytes.contains(&0) {
             rusqlite::types::Value::Blob(bytes)
         } else {
@@ -4034,8 +4038,6 @@ impl AppState {
         self.edit_image_view = next_gui_ui::ImageView::default();
         self.edit_image_kind.clear();
         self.show_loaded_edit_value();
-        self.status_msg = "File loaded into cell draft; Apply to update the record".into();
-        Ok(())
     }
 
     pub fn export_cell_file(&mut self, path: &Path) -> Result<(), String> {

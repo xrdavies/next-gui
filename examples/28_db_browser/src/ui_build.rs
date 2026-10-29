@@ -77,6 +77,8 @@ pub mod mid {
     pub const PLOT_LEGEND: u64 = 84;
     pub const PLOT_FIXED_FORMAT: u64 = 85;
     pub const PLOT_STACKED_BARS: u64 = 86;
+    pub const CELL_IMPORT: u64 = 90;
+    pub const CELL_IMPORT_LINK: u64 = 91;
 
     pub const HELP_ABOUT: u64 = 60;
     pub const HELP_WIKI: u64 = 61;
@@ -176,6 +178,8 @@ pub struct BuiltUi {
     pub btn_edit_discard: WidgetId,
     pub btn_cell_import: WidgetId,
     pub btn_cell_export: WidgetId,
+    pub btn_cell_open: WidgetId,
+    pub btn_cell_external: WidgetId,
     pub hex_copy: WidgetId,
     pub hex_export: WidgetId,
     pub hex_insert: WidgetId,
@@ -623,6 +627,8 @@ pub fn build_ui(
     let mut btn_edit_discard = z;
     let mut btn_cell_import = z;
     let mut btn_cell_export = z;
+    let mut btn_cell_open = z;
+    let mut btn_cell_external = z;
     let mut hex_copy=z;let mut hex_export=z;let mut hex_insert=z;
     let mut btn_cell_null = z;
     let mut btn_cell_indent = z;
@@ -2242,6 +2248,8 @@ pub fn build_ui(
                             } else {r.tool_icon_button(IconName::Wrap,"Word wrap")};
                             btn_cell_import = r.tool_icon_button(IconName::Open, "Import…");
                             btn_cell_export = r.tool_icon_button(IconName::Save, "Export…");
+                            btn_cell_external = r.tool_icon_button(IconName::File, "Open in External Editor…");
+                            btn_cell_open = r.tool_icon_button(IconName::Open, "Open URL / File in Default Application");
                             btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
                             btn_cell_indent = if state.prefs.indent_compact {
                                 r.tool_icon_button_styled(IconName::Code,"Indent / Compact",theme.colors.selected_bg,theme.colors.text_primary)
@@ -2442,7 +2450,7 @@ pub fn build_ui(
         vec![btn_struct_new_table, btn_struct_new_index, btn_struct_modify, btn_struct_delete, btn_struct_refresh],
         vec![btn_add_row, btn_del_row, btn_form_view, btn_freeze, btn_cond_fmt, btn_fk_nav],
         vec![btn_sql_new_tab, btn_sql_open, btn_sql_save, btn_sql_save_as, btn_sql_run, btn_sql_line, btn_sql_stop, btn_sql_find, btn_sql_comment],
-        vec![btn_cell_auto, btn_cell_wrap, btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent,hex_copy,hex_export],
+        vec![btn_cell_auto, btn_cell_wrap, btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent,hex_copy,hex_export,btn_cell_open,btn_cell_external],
     ].into_iter().enumerate() {
         for button in buttons { ui.set_button_icon_layout(button, toolbar_layouts[index]); }
     }
@@ -2611,6 +2619,14 @@ pub fn build_ui(
             format!("{}\n\nApply this draft to the selected cell anyway? The current draft will be stored without formatting.",state.edit_format_issue.as_ref().map_or("Invalid cell data",|issue|issue.message.as_str())),
             "Cancel",
         ),
+        ConfirmKind::CellExternal => (
+            "External Cell Editor",
+            state.external_cell.as_ref().map_or_else(||"The external editing session has ended.".into(),|external| {
+                let note=if external.read_only {"This cell is read-only. Close this copy when finished; changes will not be applied."} else {"Edit the temporary copy in its default application, save it, then Apply to update the selected cell. Cancel keeps the current draft."};
+                format!("{note}\n\n{}{}",external.path.display(),state.error_msg.as_ref().map_or(String::new(),|error|format!("\n\n{error}")))
+            }),
+            if state.external_cell.as_ref().is_some_and(|external|external.read_only) {"Close"} else {"Apply"},
+        ),
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
     let mut modal_style = ModalStyle::from_theme(&theme);
@@ -2619,7 +2635,7 @@ pub fn build_ui(
         modal_title,
         modal_body,
         modal_primary,
-        Some(if state.confirm_kind==ConfirmKind::CellFormat {"Apply Anyway"} else if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
+        if state.confirm_kind==ConfirmKind::CellExternal && state.external_cell.as_ref().is_some_and(|external|external.read_only) {None} else {Some(if state.confirm_kind==ConfirmKind::CellFormat {"Apply Anyway"} else if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into())},
         modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
@@ -2704,6 +2720,8 @@ pub fn build_ui(
     ui.set_button_enabled(btn_cell_import, !cell_read_only);
     ui.set_button_enabled(btn_cell_null, !cell_read_only);
     ui.set_button_enabled(btn_cell_export, !state.edit_col.is_empty());
+    ui.set_button_enabled(btn_cell_open,state.cell_open_target().is_ok());
+    ui.set_button_enabled(btn_cell_external,!state.edit_col.is_empty() && (state.edit_type!=0 || state.edit_mode==crate::state::EditCellMode::Evaluation));
     ui.set_button_enabled(btn_cell_indent, !state.edit_col.is_empty() && matches!(state.edit_mode, crate::state::EditCellMode::Json | crate::state::EditCellMode::Xml));
     ui.set_accessible_name(ov_without_rowid, "Table WITHOUT ROWID option");
     ui.set_accessible_name(ov_strict, "Table STRICT option");
@@ -2955,6 +2973,8 @@ pub fn build_ui(
         btn_edit_discard,
         btn_cell_import,
         btn_cell_export,
+        btn_cell_open,
+        btn_cell_external,
         hex_copy,hex_export,hex_insert,
         btn_cell_null,
         btn_cell_indent,
