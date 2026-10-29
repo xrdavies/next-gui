@@ -511,15 +511,10 @@ impl Ui {
         } else {
             text_area::display_text(value, *caret, edit, preedit, *preedit_cursor)
         };
-        let gutter = self.text_area_gutter_width(&display, *style, *line_numbers, bounds.width);
-        let layout = self.font.layout(
-            &display,
-            style.size,
-            Some((bounds.width - style.padding_x * 2.0 - gutter).max(1.0)),
-        );
+        let (gutter,layout)=self.text_area_layout(&display,*style,*line_numbers,edit.no_wrap,bounds.width);
         let (x, y) = layout.caret_top_left(&display, caret, self.font.metrics(style.size).ascent);
         Some((
-            (bounds.x + style.padding_x + gutter + x).floor(),
+            (bounds.x + style.padding_x + gutter + x - edit.scroll_x).floor(),
             (bounds.y + style.padding_y - scroll_y + y).floor(),
             2.0,
             self.font.metrics(style.size).ascent.ceil(),

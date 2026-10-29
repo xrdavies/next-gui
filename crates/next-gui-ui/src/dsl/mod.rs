@@ -158,6 +158,16 @@ Column {
     }
 
     #[test]
+    fn text_area_wrap_property_defaults_on_and_validates_booleans() {
+        for (property,expected) in [("",true),("wrap: true",true),("wrap: false",false)] {
+            let loaded=load_ngui(&format!("Column {{ TextArea @editor {{ {property} }} }}")).unwrap();
+            assert_eq!(loaded.ui.text_area_wrap(loaded.widget("editor").unwrap()),Some(expected));
+        }
+        let error=load_ngui(r#"Column { TextArea { wrap: "no" } }"#).unwrap_err();
+        assert!(error.message.contains("wrap: expected bool"));
+    }
+
+    #[test]
     fn text_area_line_numbers_property_uses_boolean_validation() {
         for (flag, expected) in [("true", true), ("false", false)] {
             let loaded = load_ngui(&format!("Column {{ TextArea @sql {{ line_numbers: {flag} }} }}")).unwrap();

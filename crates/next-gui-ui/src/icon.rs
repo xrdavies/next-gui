@@ -49,6 +49,8 @@ pub enum IconName {
     Step,
     /// Code / comment delimiters.
     Code,
+    /// Long line returning onto the next row.
+    Wrap,
 }
 
 impl IconName {
@@ -77,6 +79,7 @@ impl IconName {
             "undo" | "revert" => Self::Undo,
             "step" => Self::Step,
             "code" | "comment" => Self::Code,
+            "wrap" => Self::Wrap,
             _ => Self::Blank,
         }
     }
@@ -106,6 +109,7 @@ impl IconName {
             Self::Undo => "undo",
             Self::Step => "step",
             Self::Code => "code",
+            Self::Wrap => "wrap",
         }
     }
 }
@@ -230,6 +234,16 @@ pub fn rasterize_icon(name: IconName, size: f32) -> AlphaMask {
             p.line(m - inset - arm, inset + 1, m - inset, c, a);
             p.line(m - inset, c, m - inset - arm, m - inset - 1, a);
             p.line(c + 1, inset, c - 1, m - inset, a);
+        }
+        IconName::Wrap => {
+            let c=s as i32/2;let arm=(s as i32/6).max(1);let bottom=m-inset;
+            p.line(inset,inset,m-inset,inset,a);
+            p.line(inset,c,m-inset,c,a);
+            p.line(m-inset,c,m-inset,bottom,a);
+            p.line(m-inset,bottom,c,bottom,a);
+            p.line(c,bottom,c+arm,bottom-arm,a);
+            p.line(c,bottom,c+arm,bottom+arm,a);
+            p.line(inset,bottom,c-arm-1,bottom,a);
         }
         IconName::Folder => {
             let top = inset;
@@ -441,7 +455,7 @@ mod tests {
 
     #[test]
     fn database_action_icons_roundtrip_and_remain_distinct_at_supported_sizes() {
-        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code];
+        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code, IconName::Wrap];
         for size in [8.0, 18.0, 32.0, 64.0] {
             let mut masks = Vec::new();
             for icon in icons {

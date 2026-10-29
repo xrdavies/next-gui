@@ -122,19 +122,11 @@ impl Ui {
                 body_height,
                 ..
             } => (bounds, 0.0, (body_height - bounds.height).max(0.0)),
-            Kind::TextArea { value, style, .. } => {
-                let view = Rect::new(
-                    bounds.x,
-                    bounds.y + style.padding_y,
-                    bounds.width,
-                    (bounds.height - 2.0 * style.padding_y).max(1.0),
-                );
-                let layout = self.font.layout(
-                    value,
-                    style.size,
-                    Some((bounds.width - 2.0 * style.padding_x).max(1.0)),
-                );
-                (view, 0.0, (layout.height - view.height).max(0.0))
+            Kind::TextArea { value, style, line_numbers, edit, .. } => {
+                let (gutter,layout)=self.text_area_layout(value,*style,*line_numbers,edit.no_wrap,bounds.width);
+                let view=Rect::new(bounds.x+style.padding_x+gutter,bounds.y+style.padding_y,
+                    (bounds.width-2.0*style.padding_x-gutter).max(1.0),(bounds.height-2.0*style.padding_y).max(1.0));
+                (view,if edit.no_wrap {(layout.width+2.0-view.width).max(0.0)} else {0.0},(layout.height-view.height).max(0.0))
             }
             Kind::List { .. }
             | Kind::Tree { .. }

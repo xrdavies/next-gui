@@ -288,6 +288,34 @@ impl Font {
         }
     }
 
+    /// Rasterize into a fixed viewport without padding negative glyph bearings.
+    ///
+    /// Glyph positions are relative to the viewport origin; offscreen glyphs are
+    /// skipped. Invalid geometry or masks above 64 MiB return an empty mask.
+    pub fn rasterize_layout_clipped(&self, layout: &TextLayout, px: f32, width: u32, height: u32) -> AlphaMask {
+        // shortcut: 64 MiB mask/glyph budget; tile viewports if larger text surfaces are needed.
+        const MAX_PIXELS: usize = 64 * 1024 * 1024;
+        let Some(count) = (width as usize).checked_mul(height as usize)
+            .filter(|count| *count > 0 && *count <= MAX_PIXELS) else { return AlphaMask::empty(); };
+        if !px.is_finite() || px <= 0.0 { return AlphaMask::empty(); }
+        let mut pixels = vec![0; count];
+        for glyph in &layout.glyphs {
+            if !glyph.x.is_finite() || !glyph.baseline_y.is_finite() { continue; }
+            let face = self.face_for(glyph.ch);
+            let metrics = face.metrics(glyph.ch, px);
+            let x = (glyph.x + metrics.xmin as f32).round();
+            let y = (glyph.baseline_y - metrics.ymin as f32 - metrics.height as f32).round();
+            if x >= width as f32 || y >= height as f32
+                || x + metrics.width as f32 <= 0.0 || y + metrics.height as f32 <= 0.0 { continue; }
+            if metrics.width.checked_mul(metrics.height).is_none_or(|count| count > MAX_PIXELS) { continue; }
+            let (_, bitmap) = face.rasterize(glyph.ch, px);
+            blit_alpha(AlphaBlit { dest: &mut pixels, dest_w: width, dest_h: height,
+                x: x as i32, y: y as i32, src_w: metrics.width as u32,
+                src_h: metrics.height as u32, src: &bitmap });
+        }
+        AlphaMask { width, height, pixels: Arc::from(pixels) }
+    }
+
     /// Measure and rasterize in one step (optional wrap).
     pub fn rasterize_text(&self, text: &str, px: f32, max_width: Option<f32>) -> (TextLayout, AlphaMask) {
         let layout = self.layout(text, px, max_width);
@@ -430,6 +458,28 @@ mod tests {
 
     fn test_font() -> Font {
         load_default_cjk_font().expect("system CJK font required for tests")
+    }
+
+    #[test]
+    fn clipped_raster_matches_crop_and_bounds_long_offscreen_lines() {
+        let font=test_font();
+        let mut layout=font.layout("中文 Hello world — Latin\n第二行 alpha beta 中文",24.0,None);
+        let full=font.rasterize_layout(&layout,24.0);
+        for glyph in &mut layout.glyphs {glyph.x-=19.0;glyph.baseline_y-=3.0;}
+        let clipped=font.rasterize_layout_clipped(&layout,24.0,120,40);
+        assert_eq!((clipped.width,clipped.height),(120,40));
+        assert!(clipped.pixels.iter().any(|p|*p>0));
+        for y in 0..40 {for x in 0..120 {
+            assert_eq!(clipped.pixels[(y*120+x) as usize],full.pixels[((y+3)*full.width+x+19) as usize]);
+        }}
+        let mut long=font.layout(&"中".repeat(100_000),24.0,None);
+        let end=long.glyphs[99_990].x;
+        for glyph in &mut long.glyphs {glyph.x-=end;}
+        let clipped=font.rasterize_layout_clipped(&long,24.0,120,40);
+        assert_eq!(clipped.pixels.len(),120*40);
+        assert!(clipped.pixels.iter().any(|p|*p>0));
+        assert!(font.rasterize_layout_clipped(&long,24.0,u32::MAX,u32::MAX).is_empty());
+        assert!(font.rasterize_layout_clipped(&long,f32::NAN,120,40).is_empty());
     }
 
     #[test]

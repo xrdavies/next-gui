@@ -4550,7 +4550,8 @@ impl Ui {
             Some(Kind::ScrollArea {
                 scroll_x, scroll_y, ..
             }) => Some((*scroll_x, *scroll_y)),
-            Some(Kind::TextArea { scroll_y, .. } | Kind::Modal {scroll_y,open:true,..}) => Some((0.0, *scroll_y)),
+            Some(Kind::TextArea { scroll_y, edit, .. }) => Some((edit.scroll_x, *scroll_y)),
+            Some(Kind::Modal {scroll_y,open:true,..}) => Some((0.0, *scroll_y)),
             Some(Kind::List { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Tree { scroll_y, .. }) => Some((0.0, *scroll_y)),
             Some(Kind::Table { scroll_x, scroll_y, .. }) => Some((*scroll_x, *scroll_y)),
@@ -4566,7 +4567,7 @@ impl Ui {
         if !sx.is_finite() || !sy.is_finite() { return false; }
         if matches!(self.widgets.get(&id).map(|w| &w.kind),Some(Kind::Modal {..})) {return self.scroll_modal(id,sy);}
         if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { .. })) {
-            return self.set_text_area_scroll(id, sy);
+            return self.set_text_area_scroll_offsets(id, sx, sy);
         }
         if let Some(mut view) = self.image_view(id) {
             view.offset_x = sx;
@@ -7252,7 +7253,9 @@ impl Ui {
             {
                 *v = value.into();
                 *caret = v.chars().count();
-                *edit = TextAreaEdit::default();
+                let no_wrap=edit.no_wrap;
+                *edit=TextAreaEdit::default();
+                edit.no_wrap=no_wrap;
                 edit.reveal = true;
                 preedit.clear();
                 *preedit_cursor = None;

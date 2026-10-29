@@ -99,7 +99,7 @@ name, including later `set_button_label` changes. They return the actual button 
 the label, focus, disabled state and live tooltip retain their usual behavior.
 The equivalent `.ngui` property is `icon_layout: icon_only | text_only |
 text_beside_icon | text_under_icon`. Without an icon, normal text sizing applies.
-The new house glyphs are `database`, `undo`, `step` and `code`; consumers matching
+The new house glyphs are `database`, `undo`, `step`, `code` and `wrap`; consumers matching
 `IconName` exhaustively need corresponding arms. Existing button style structs and
 text builders are unchanged.
 
@@ -117,8 +117,14 @@ after editing or finding text. Both renderers use the same selection alpha mask.
   one undoable replacement; empty replacement deletes the selection.
 - `find_in_text_area`: literal, case-sensitive forward search with one wrap;
   selects and reveals the next match without changing focus.
-- `text_area_scroll` / `set_text_area_scroll`: vertical pixel offset; invalid
-  floats are rejected and the offset is clamped to the document.
+- `set_text_area_wrap(id, bool)` / `text_area_wrap`: line wrapping, enabled by
+  default; DSL `TextArea { wrap: false }` keeps physical lines and scrolls horizontally.
+  Switching preserves text, selection and history, and reveals the caret. Wrapping
+  uses the existing character layout; word-boundary wrapping is not yet provided.
+- `text_area_scroll` / `set_text_area_scroll`: vertical pixel offset, retaining x.
+  `text_area_scroll_offsets` / `set_text_area_scroll_offsets` expose both axes.
+  Invalid floats are rejected; offsets clamp to the document, with x zero while
+  wrapping. Wheel and draggable scrollbar thumbs share these offsets.
 - `set_text_area_foregrounds(id, spans)`: disjoint Unicode scalar ranges with
   per-range colors; rejects overlap/out-of-bounds ranges atomically. Empty
   ranges are ignored. Selection uses the normal foreground for readability.
@@ -131,7 +137,8 @@ after editing or finding text. Both renderers use the same selection alpha mask.
   selection. Numbers are excluded from document copy and undo. Default is off.
 - `text_area_state` / `restore_text_area_state`: opaque in-memory editing session
   for rebuilding widgets. Restore rejects a different document. Keep one session
-  per document; project files should save text separately.
+  per document; project files should save text separately. Restoration keeps the
+  destination widget's wrap option and reveals the caret when geometry changes.
 - `show_text_area_completions(id, range, items)`: application-filtered candidate
   labels/insertion text in a caret-anchored menu. The scalar range contains the
   unselected caret; acceptance is one undoable replacement. Up/Down, pages,
@@ -156,8 +163,9 @@ History stores up to 100 snapshots / 8 MiB per undo or redo stack, retaining one
 oversized edit. Snapshots share immutable text across rebuilds. Glyph layout still
 processes the complete document; masks and selection nodes cover the viewport.
 Apps supply token colors, completion candidates and hint text; TextArea has no built-in
-language lexer or semantic catalog. Grapheme-cluster navigation, word selection, horizontal scrolling
-and text-specific draggable scrollbar thumbs are not provided.
+language lexer or semantic catalog. Grapheme-cluster caret navigation and word
+selection are not provided. Clipped text rasterization bounds each viewport/glyph
+mask to 64 MiB; larger masks return empty and require tiled rendering.
 
 The e21 QA mode `NEXT_GUI_P1_REST_QA=textarea` captures the entry fields with the
 Drawer closed and exits. e28 exercises the same widget for SQL, Find, DDL and CSV.

@@ -6,6 +6,8 @@ use unicode_segmentation::UnicodeSegmentation;
 pub(super) struct TextAreaEdit {
     anchor: Option<usize>,
     goal_x: Option<f32>,
+    pub(super) no_wrap: bool,
+    pub(super) scroll_x: f32,
     undo: Vec<EditSnapshot>,
     redo: Vec<EditSnapshot>,
     pub(super) reveal: bool,
@@ -180,11 +182,13 @@ impl Ui {
         }
         *caret = state.snapshot.caret;
         *scroll_y = state.scroll_y;
+        let no_wrap = edit.no_wrap;
         *edit = state.edit.clone();
+        edit.no_wrap = no_wrap;
         *preedit = if *read_only { String::new() } else { state.preedit.clone() };
         *preedit_cursor = if *read_only { None } else { state.preedit_cursor };
-        edit.reveal |= state.viewport != (style.width, style.height) || state.font_size != style.size || state.line_numbers != *line_numbers;
-        if state.viewport.0 != style.width || state.font_size != style.size || state.line_numbers != *line_numbers {
+        edit.reveal |= state.viewport != (style.width, style.height) || state.font_size != style.size || state.line_numbers != *line_numbers || state.edit.no_wrap != no_wrap;
+        if state.viewport.0 != style.width || state.font_size != style.size || state.line_numbers != *line_numbers || state.edit.no_wrap != no_wrap {
             edit.goal_x = None;
         }
         true
@@ -263,6 +267,28 @@ impl Ui {
             edit.reveal = true;
         }
         true
+    }
+
+    /// Enable wrapping of long lines without changing the document or its history.
+    pub fn set_text_area_wrap(&mut self, id: WidgetId, enabled: bool) -> bool {
+        let Some(Widget {kind:Kind::TextArea {edit,..},..})=self.widgets.get_mut(&id) else {return false;};
+        let no_wrap=!enabled;
+        if edit.no_wrap != no_wrap {
+            edit.no_wrap = no_wrap; edit.goal_x = None; edit.reveal = true;
+            if enabled {edit.scroll_x=0.0;}
+        }
+        true
+    }
+
+    /// Whether long lines wrap, or None for a different widget kind.
+    pub fn text_area_wrap(&self, id: WidgetId) -> Option<bool> {
+        let Kind::TextArea {edit,..}=&self.widgets.get(&id)?.kind else {return None;};
+        Some(!edit.no_wrap)
+    }
+
+    pub(super) fn text_area_layout(&self, value:&str, style:TextAreaStyle, line_numbers:bool, no_wrap:bool, width:f32) -> (f32,next_gui_text::TextLayout) {
+        let gutter=self.text_area_gutter_width(value,style,line_numbers,width);
+        (gutter,self.font.layout(value,style.size,(!no_wrap).then_some((width-2.0*style.padding_x-gutter).max(1.0))))
     }
 
     pub(super) fn text_area_gutter_width(&self, value: &str, style: TextAreaStyle, enabled: bool, width: f32) -> f32 {
@@ -384,36 +410,30 @@ impl Ui {
         Some(*scroll_y)
     }
 
-    /// Scroll without moving the caret, clamping to wrapped document height.
-    pub fn set_text_area_scroll(&mut self, id: WidgetId, offset: f32) -> bool {
-        if !offset.is_finite() {
-            return false;
-        }
-        let Some(Widget {
-            kind: Kind::TextArea { value, style, line_numbers, .. },
-            ..
-        }) = self.widgets.get(&id)
-        else {
-            return false;
-        };
-        let gutter = self.text_area_gutter_width(value, *style, *line_numbers, style.width);
-        let layout = self.font.layout(
-            value,
-            style.size,
-            Some((style.width - 2.0 * style.padding_x - gutter).max(1.0)),
-        );
-        let offset = offset.clamp(
-            0.0,
-            (layout.height + 2.0 * style.padding_y - style.height).max(0.0),
-        );
-        let Kind::TextArea { scroll_y, edit, .. } = &mut self.widgets.get_mut(&id).unwrap().kind
-        else {
-            unreachable!()
-        };
-        edit.reveal = false;
-        let changed = *scroll_y != offset;
-        *scroll_y = offset;
-        changed
+    /// Both viewport offsets in pixels (horizontal is zero while wrapping).
+    pub fn text_area_scroll_offsets(&self,id:WidgetId)->Option<(f32,f32)> {
+        let Kind::TextArea {scroll_y,edit,..}=&self.widgets.get(&id)?.kind else {return None;};
+        Some((edit.scroll_x,*scroll_y))
+    }
+
+    /// Scroll vertically without moving the caret, retaining horizontal position.
+    pub fn set_text_area_scroll(&mut self,id:WidgetId,offset:f32)->bool {
+        let Some((x,_))=self.text_area_scroll_offsets(id) else {return false;};
+        self.set_text_area_scroll_offsets(id,x,offset)
+    }
+
+    /// Scroll both axes without moving the caret, clamping to the document bounds.
+    pub fn set_text_area_scroll_offsets(&mut self,id:WidgetId,x:f32,y:f32)->bool {
+        if !x.is_finite() || !y.is_finite() {return false;}
+        let Some(Widget {kind:Kind::TextArea {value,style,line_numbers,edit,..},..})=self.widgets.get(&id) else {return false;};
+        let (gutter,layout)=self.text_area_layout(value,*style,*line_numbers,edit.no_wrap,style.width);
+        let width=(style.width-2.0*style.padding_x-gutter).max(1.0);
+        let x=if edit.no_wrap {x.clamp(0.0,(layout.width+2.0-width).max(0.0))} else {0.0};
+        let y=y.clamp(0.0,(layout.height+2.0*style.padding_y-style.height).max(0.0));
+        let Kind::TextArea {scroll_y,edit,..}=&mut self.widgets.get_mut(&id).unwrap().kind else {unreachable!()};
+        edit.reveal=false;
+        let changed=edit.scroll_x!=x || *scroll_y!=y;
+        edit.scroll_x=x;*scroll_y=y;changed
     }
 
     pub(super) fn pointer_text_area(
@@ -431,6 +451,7 @@ impl Ui {
                     style,
                     line_numbers,
                     scroll_y,
+                    edit,
                     ..
                 },
             ..
@@ -438,17 +459,12 @@ impl Ui {
         else {
             return false;
         };
-        let gutter = self.text_area_gutter_width(value, *style, *line_numbers, bounds.width);
-        let layout = self.font.layout(
-            value,
-            style.size,
-            Some((bounds.width - 2.0 * style.padding_x - gutter).max(1.0)),
-        );
+        let (gutter,layout) = self.text_area_layout(value,*style,*line_numbers,edit.no_wrap,bounds.width);
         let points = layout.caret_positions(value, self.font.metrics(style.size).ascent);
         // shortcut: gutter clicks place the caret; add whole-line margin gestures with margin selection.
         let target = nearest(
             &points,
-            x - bounds.x - style.padding_x - gutter,
+            x - bounds.x - style.padding_x - gutter + edit.scroll_x,
             y - bounds.y - style.padding_y + scroll_y,
             layout.line_height,
         );
@@ -507,12 +523,7 @@ impl Ui {
         let len = value.chars().count();
         let range = selection(*caret, edit.anchor);
         let old = *caret;
-        let gutter = self.text_area_gutter_width(value, *style, *line_numbers, style.width);
-        let layout = self.font.layout(
-            value,
-            style.size,
-            Some((style.width - style.padding_x * 2.0 - gutter).max(1.0)),
-        );
+        let (_,layout) = self.text_area_layout(value,*style,*line_numbers,edit.no_wrap,style.width);
         let points = layout.caret_positions(value, self.font.metrics(style.size).ascent);
         let (x, y) = points[old.min(len)];
         let vertical = matches!(key, UiKey::Up | UiKey::Down | UiKey::SelectUp | UiKey::SelectDown
@@ -681,19 +692,20 @@ impl Ui {
         let (value, caret) = display_text(value, *caret, edit, preedit, *preedit_cursor);
         let placeholder = placeholder.clone();
         let style = *style;
-        let gutter = self.text_area_gutter_width(&value, style, *line_numbers, bounds.width);
+        let (gutter,layout) = self.text_area_layout(&value,style,*line_numbers,edit.no_wrap,bounds.width);
         let (label, chrome) = (*label_node, *chrome_node);
-        let layout = self.font.layout(
-            &value,
-            style.size,
-            Some((bounds.width - style.padding_x * 2.0 - gutter).max(1.0)),
-        );
+
         let points = layout.caret_positions(&value, self.font.metrics(style.size).ascent);
-        let (_, cy) = points[caret.min(points.len() - 1)];
+        let (cx, cy) = points[caret.min(points.len() - 1)];
+        let view_w = (bounds.width-2.0*style.padding_x-gutter).max(1.0);
+        let max_x = if edit.no_wrap {(layout.width+2.0-view_w).max(0.0)} else {0.0};
+        let mut scroll_x=edit.scroll_x.clamp(0.0,max_x);
         let view_h = (bounds.height - 2.0 * style.padding_y).max(1.0);
         let max_scroll = (layout.height - view_h).max(0.0);
         let mut scroll = scroll_y.clamp(0.0, max_scroll);
         if edit.reveal {
+            if cx < scroll_x {scroll_x=cx;}
+            if cx+2.0 > scroll_x+view_w {scroll_x=(cx+2.0-view_w).min(max_x);}
             if cy < scroll {
                 scroll = cy;
             }
@@ -704,6 +716,7 @@ impl Ui {
         if let Kind::TextArea { scroll_y, edit, .. } = &mut self.widgets.get_mut(&id).unwrap().kind
         {
             *scroll_y = scroll;
+            edit.scroll_x = scroll_x;
             edit.reveal = false;
         }
         let content = Rect::new(
@@ -739,7 +752,7 @@ impl Ui {
                 for i in range.start..range.end.min(points.len().saturating_sub(1)) {
                     let (x, y) = points[i];
                     let (nx, ny) = points[i + 1];
-                    append(x, if ny > y { content.width } else { nx.max(x + 2.0) }, y);
+                    append(x, if ny > y { scroll_x+content.width } else { nx.max(x + 2.0) }, y);
                 }
             }
             if let Some(previous) = segment { rectangles.push((previous, color)); }
@@ -780,6 +793,10 @@ impl Ui {
             for g in &mut visible_layout.glyphs { g.baseline_y -= top; }
         }
         visible_layout.height = view_h + layout.line_height;
+        for glyph in &mut visible_layout.glyphs {glyph.x-=scroll_x;}
+        for (_,layout) in &mut colored_layouts {for glyph in &mut layout.glyphs {glyph.x-=scroll_x;}}
+        let raster_width=content.width.ceil() as u32;
+        let raster_height=(view_h+layout.line_height).ceil() as u32;
         let marks_count = rectangles.len();
         let color_start = marks_count + if gutter > 0.0 { numbers.len() + 1 } else { 0 };
         self.ensure_aux_nodes(scene, host, id, color_start + colored_layouts.len());
@@ -808,9 +825,9 @@ impl Ui {
         }
         for (i, ((a, b, y), color)) in rectangles.into_iter().enumerate() {
             let n = aux[i];
-            let left = (content.x + a).floor();
+            let left = (content.x+a-scroll_x).floor().clamp(content.x,content.x+content.width);
             let top = (content.y + y - scroll).floor();
-            let width = (content.x + b).ceil() - left;
+            let width = ((content.x+b-scroll_x).ceil().clamp(content.x,content.x+content.width)-left).max(0.0);
             let height = layout.line_height.ceil();
             scene.set_visible(n, true);
             scene.set_bounds(n, Rect::new(left, top, width, height));
@@ -821,7 +838,7 @@ impl Ui {
             scene.set_fill(n, color);
         }
         if let Some(label) = label {
-            let mask = self.font.rasterize_layout(&visible_layout, style.size);
+            let mask = self.font.rasterize_layout_clipped(&visible_layout,style.size,raster_width,raster_height);
             scene.set_bounds(
                 label,
                 Rect::new(
@@ -848,7 +865,7 @@ impl Ui {
             scene.raise(label);
         }
         for (i, (color, layout)) in colored_layouts.into_iter().enumerate() {
-            let mask = self.font.rasterize_layout(&layout, style.size);
+            let mask = self.font.rasterize_layout_clipped(&layout,style.size,raster_width,raster_height);
             let n = aux[color_start + i];
             scene.set_bounds(n, Rect::new(content.x, content.y + top - scroll, mask.width as f32, mask.height as f32));
             scene.set_clip(n, Some(content));
@@ -862,7 +879,7 @@ impl Ui {
             scene.set_bounds(
                 chrome,
                 Rect::new(
-                    (content.x + x).floor(),
+                    (content.x + x - scroll_x).floor(),
                     (content.y + y - scroll).floor(),
                     2.0,
                     self.font.metrics(style.size).ascent.ceil(),
@@ -905,6 +922,69 @@ mod tests {
         ui.set_focus(Some(area));
         ui.sync(&mut scene);
         (ui, scene, area)
+    }
+
+    #[test]
+    fn unwrapped_text_shares_horizontal_scroll_hits_selection_ime_history_and_sessions() {
+        let line="Latin 中文🙂 ".repeat(100);
+        let text=format!("{line}first\n{line}second");
+        let (mut ui,mut scene,area)=editor(&text);
+        assert_eq!(ui.text_area_wrap(area),Some(true));
+        assert!(!ui.set_text_area_wrap(WidgetId(0),false));
+        assert!(ui.set_text_area_wrap(area,false));
+        ui.set_text_area_line_numbers(area,true);
+        ui.select_text_area_range(area,100..100);ui.sync(&mut scene);
+        assert!(ui.text_area_scroll_offsets(area).unwrap().0>0.0);
+        let host=ui.widgets[&area].node.unwrap();let bounds=scene.get(host).unwrap().bounds;
+        let Kind::TextArea {style,..}=ui.widgets[&area].kind else {panic!()};
+        let (gutter,layout)=ui.text_area_layout(&text,style,true,true,bounds.width);
+        let points=layout.caret_positions(&text,ui.font.metrics(style.size).ascent);
+        let offset=(points[100].0-40.0).max(0.0);
+        ui.set_text_area_scroll_offsets(area,offset,0.0);ui.sync(&mut scene);
+        assert!(ui.pointer_text_area(area,bounds,bounds.x+style.padding_x+gutter+40.0,
+            bounds.y+style.padding_y+layout.line_height*0.5,false));
+        assert_eq!(ui.text_area_caret(area),Some(100));
+        ui.select_text_area_range(area,98..103);ui.sync(&mut scene);
+        let selected=text.chars().skip(98).take(5).collect::<String>();
+        assert_eq!(ui.focused_text_for_copy().as_deref(),Some(selected.as_str()));
+        ui.ime_preedit("東京",Some((3,6)));ui.sync(&mut scene);
+        let ime=ui.ime_cursor_area(&scene).unwrap();
+        let hint=ui.text_area_position_area(&scene,area,None).unwrap();
+        assert_eq!((hint.0,hint.1),(ime.0,ime.1));
+        assert!(ime.0>=bounds.x+style.padding_x+gutter && ime.0+ime.2<=bounds.x+bounds.width);
+        assert!(ui.ime_commit("東京"));ui.sync(&mut scene);
+        let changed=ui.text_area_value(area).unwrap().to_owned();assert_ne!(changed,text);
+        assert!(ui.key_input(UiKey::Undo));ui.sync(&mut scene);assert_eq!(ui.text_area_value(area),Some(text.as_str()));
+        assert!(ui.key_input(UiKey::Redo));ui.sync(&mut scene);assert_eq!(ui.text_area_value(area),Some(changed.as_str()));
+        let state=ui.text_area_state(area).unwrap();let caret=ui.text_area_caret(area);
+        let (mut rebuilt,mut next,next_area)=editor(&changed);
+        rebuilt.set_text_area_wrap(next_area,false);rebuilt.set_text_area_line_numbers(next_area,true);
+        assert!(rebuilt.restore_text_area_state(next_area,&state));rebuilt.sync(&mut next);
+        assert_eq!(rebuilt.text_area_scroll_offsets(next_area),ui.text_area_scroll_offsets(area));
+        assert_eq!(rebuilt.text_area_caret(next_area),caret);
+        assert!(rebuilt.key_input(UiKey::Undo));assert_eq!(rebuilt.text_area_value(next_area),Some(text.as_str()));
+        ui.set_text_area_wrap(area,true);ui.sync(&mut scene);
+        assert_eq!(ui.text_area_scroll_offsets(area).unwrap().0,0.0);
+        assert_eq!(ui.text_area_caret(area),caret);assert_eq!(ui.text_area_value(area),Some(changed.as_str()));
+        ui.set_text_area_wrap(area,false);ui.key_input(UiKey::Home);ui.sync(&mut scene);
+        assert_eq!(ui.text_area_caret(area),Some(0));assert_eq!(ui.text_area_scroll_offsets(area).unwrap().0,0.0);
+        assert!(ui.pointer_scroll(&scene,bounds.x+bounds.width*0.5,bounds.y+30.0,80.0,0.0));ui.sync(&mut scene);
+        assert!(ui.text_area_scroll_offsets(area).unwrap().0>0.0);assert_eq!(ui.text_area_caret(area),Some(0));
+        ui.set_text_area_scroll_offsets(area,0.0,0.0);ui.sync(&mut scene);
+        let x=bounds.x+style.padding_x+gutter+6.0;let y=bounds.y+bounds.height-4.0;
+        assert!(ui.pointer_pressed(&mut scene,x,y));assert!(ui.pointer_moved(x+100.0,y));ui.pointer_released();ui.sync(&mut scene);
+        assert!(ui.text_area_scroll_offsets(area).unwrap().0>0.0);assert_eq!(ui.text_area_caret(area),Some(0));
+        ui.key_input(UiKey::SelectAll);ui.sync(&mut scene);
+        assert_eq!(ui.focused_text_for_copy().as_deref(),Some(changed.as_str()));
+        for node in scene.iter_paint_order() {
+            if node.visible && node.parent==Some(host) && node.mask.is_some() {
+                let mask=node.mask.as_ref().unwrap();
+                assert!(mask.width as f32<=bounds.width+1.0,"mask width={}",mask.width);
+            }
+        }
+        ui.set_text_area_read_only(area,true);assert!(!ui.paste_into_focused_text("unsafe"));
+        ui.set_text_area_value(area,"replacement");assert_eq!(ui.text_area_wrap(area),Some(false));
+        assert!(!ui.set_text_area_scroll_offsets(area,f32::NAN,0.0));
     }
 
     #[test]
