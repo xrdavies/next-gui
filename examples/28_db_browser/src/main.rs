@@ -35,6 +35,7 @@ mod table_migration;
 mod filters;
 mod browse_filter;
 mod filter_menu;
+mod cond_format;
 mod prefs;
 mod pragmas;
 mod project;
@@ -272,6 +273,7 @@ struct Demo {
 
 #[allow(dead_code)]
 struct BuiltUiIds {
+    cond_formats: cond_format::Controls,
     csv_files: csv_files::Controls,
     data_export: data_export::Controls,
     sql_export: sql_export::Controls,
@@ -529,6 +531,7 @@ struct BuiltUiIds {
 impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
+            cond_formats: b.cond_formats,
             csv_files: b.csv_files,
             data_export: b.data_export,
             sql_export: b.sql_export,
@@ -1188,8 +1191,9 @@ impl Demo {
                     state.overlay = Some(OverlayKind::ExportSql);
                     MainTab::Structure
                 }
-                "cond" | "condformat" => {
-                    state.overlay = Some(OverlayKind::CondFormat);
+                "cond" | "condformat" | "condformat-narrow" => {
+                    cond_format::prepare_qa(&mut state);
+                    if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     MainTab::Browse
                 }
                 "form" => {
@@ -1673,6 +1677,9 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("condformat") || tab=="cond") {
+            built.ui.set_focus(Some(built.ov_cond_val));built.ui.sync(&mut built.scene);
+        }
         if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             if tab.starts_with("filter-") {
                 let input=if tab.starts_with("filter-column") {built.browse_col_filters[1]} else {built.browse_global_filter};
@@ -2318,7 +2325,7 @@ impl Demo {
             OverlayKind::About => {}
             OverlayKind::CondFormat => {
                 if self.ids.ov_cond_col.0 != 0 {
-                    if let Some(v) = self.ui.text_input_value(self.ids.ov_cond_col) {
+                    if let Some(v) = self.ui.select_value(self.ids.ov_cond_col) {
                         self.state.cond_col = v.to_string();
                     }
                 }
@@ -2337,6 +2344,7 @@ impl Demo {
                         self.state.cond_color = v.to_string();
                     }
                 }
+                self.snapshot_cond_formats();
             }
         }
     }
@@ -2987,6 +2995,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let cond_view=cond_format::ViewSession::capture(self);
         let filter_input = browse_filter::InputSession::capture(&self.state, &self.ui, &self.ids);
         self.snapshot_cell_editor();
         let reveal_applied_cell = std::mem::take(&mut self.state.reveal_applied_cell);
@@ -3138,6 +3147,7 @@ impl Demo {
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
+        if let Some(session)=cond_view {session.restore(self);}
         if let Some(session)=modal_session {if self.ui.restore_modal_state(self.ids.modal,&session) {self.ui.sync(&mut self.scene);}}
         if let Some(session)=plot_session {if self.ui.restore_plot_session(self.ids.chart,0,&session) {if plot_focused {self.ui.set_focus(Some(self.ids.chart));} self.ui.sync(&mut self.scene);}}
         if plot_source == self.state.plot.source {
@@ -4130,6 +4140,7 @@ impl Demo {
                 self.state.csv_work=None;self.state.csv_files=None;self.state.csv_preview=None;
             }
             self.state.overlay = None;
+            self.state.cond_formats = None;
             self.state.cipher_open_path = None;
             self.state.cipher_passphrase.clear();
             self.rebuild = true;
@@ -4175,10 +4186,7 @@ impl Demo {
                     self.action_export_sql_do();
                     return true;
                 }
-                Some(OverlayKind::CondFormat) => {
-                    self.state.add_cond_format_rule();
-                    Ok(())
-                }
+                Some(OverlayKind::CondFormat) => self.state.save_cond_formats(),
                 Some(OverlayKind::LoadExtension) => {
                     let r = self.state.load_extension_apply();
                     if r.is_ok() {
@@ -4581,6 +4589,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        if self.handle_cond_format_button(id) {return;}
         self.cancel_browse_filter();
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
         if id==self.ids.btn_dock_edit_close || id==self.ids.btn_dock_close {
@@ -4952,7 +4961,8 @@ impl Demo {
             if self.state.cond_col.is_empty() {
                 self.state.cond_col = self.state.edit_col.clone();
             }
-            self.state.overlay = Some(OverlayKind::CondFormat);
+            self.snapshot_inputs();
+            if let Err(error)=self.state.begin_cond_formats() {self.set_error(error);}
             self.rebuild = true;
             return;
         }
@@ -5149,6 +5159,7 @@ impl Demo {
         }
         if let Some((_, error)) = self.ui.take_table_data_error() { self.set_error(error); }
         if self.ui.is_dragging() { return; }
+        if self.poll_cond_formats() {return;}
         if let Some(mode) = self.ui.select_selected(self.ids.plot.mode) {
             if (mode == 1) != self.state.plot.settings.manual {
                 self.state.plot.settings.manual = mode == 1;
@@ -6117,7 +6128,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

@@ -94,6 +94,7 @@ pub mod mid {
 
 #[allow(dead_code)]
 pub struct BuiltUi {
+    pub cond_formats: crate::cond_format::Controls,
     pub ui: Ui,
     pub csv_files: crate::csv_files::Controls,
     pub data_export: crate::data_export::Controls,
@@ -768,6 +769,7 @@ pub fn build_ui(
     let mut ov_prefs_upper_keywords = z;
     let mut ov_prefs_delim = z;
     let mut ov_frozen = z;
+    let mut cond_formats=crate::cond_format::Controls::default();
     let mut ov_cond_col = z;
     let mut ov_cond_op = z;
     let mut ov_cond_val = z;
@@ -1006,7 +1008,7 @@ pub fn build_ui(
             // —— Overlay wizard panel ——
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
-            panel.height = content_h - if matches!(kind, OverlayKind::FindReplace | OverlayKind::EditTable | OverlayKind::ImportCsv | OverlayKind::PasteCsv) { 0.0 } else { 50.0 };
+            panel.height = content_h - if matches!(kind, OverlayKind::FindReplace | OverlayKind::EditTable | OverlayKind::ImportCsv | OverlayKind::PasteCsv | OverlayKind::CondFormat) { 0.0 } else { 50.0 };
             let title = match kind {
                 OverlayKind::InsertRow => "New Record",
                 OverlayKind::EditTable => {
@@ -1030,7 +1032,7 @@ pub fn build_ui(
                 OverlayKind::Cipher => if state.cipher_open_path.is_some() { "Open Encrypted Database" } else { "Export Encrypted Copy" },
                 OverlayKind::Preferences => "Preferences",
                 OverlayKind::ExportSql => "Export Database to SQL",
-                OverlayKind::CondFormat => "Conditional Formatting",
+                OverlayKind::CondFormat => "Conditional Format Manager",
                 OverlayKind::LoadExtension => "Load Extension",
                 OverlayKind::About => "About",
             };
@@ -1072,7 +1074,7 @@ pub fn build_ui(
                 OverlayKind::ImportCsv | OverlayKind::PasteCsv => "Import",
                 OverlayKind::Attach => "Attach",
                 OverlayKind::ExportSql => "Export…",
-                OverlayKind::CondFormat => "Add Rule",
+                OverlayKind::CondFormat => "Save",
                 OverlayKind::Cipher => if state.cipher_open_path.is_some() { "Unlock" } else { "Export…" },
                 OverlayKind::LoadExtension => "Load",
                 _ => "Save",
@@ -1592,30 +1594,38 @@ pub fn build_ui(
                             c.text("https://sqlitebrowser.org/");
                         }
                         OverlayKind::CondFormat => {
-                            if let Some(table) = &state.browse().table {
-                                c.text(format!("Table: {}", db::qualified_name(&state.browse().schema, table)));
-                            }
-                            c.text("Rule: when cell matches, fill cell background");
-                            c.row(row, |r| {
-                                r.text("Column");
-                                ov_cond_col = r.text_input_styled(&state.cond_col, "col", name_s);
+                            let mut scroll=next_gui_ui::ScrollAreaStyle::from_theme(&theme);
+                            scroll.width=ov_col.width-16.0;scroll.height=ov_col.height-16.0;
+                            scroll.padding=0.0;scroll.background=None;
+                            ov_scroll=c.scroll_area(scroll,|c| {
+                            if let Some(draft)=&state.cond_formats {
+                                c.text(format!("{} · {} rules",db::qualified_name(&draft.schema,&draft.table),draft.rules.len()));
+                                c.text("The first matching rule sets the cell background.");
+                                c.row(row,|r| {
+                                    cond_formats.add=r.tool_button("+ Add");cond_formats.remove=r.tool_button("Remove");
+                                    cond_formats.up=r.tool_button("↑ Move up");cond_formats.down=r.tool_button("↓ Move down");
+                                });
+                                let width=(shell_w-72.0).max(200.0);
+                                let mut table_style=TableStyle::from_theme(&theme);table_style.width=width;table_style.height=190.0;
+                                cond_formats.table=c.table(vec![TableColumn::new("Column",width*0.25),TableColumn::new("Condition",width*0.5),TableColumn::new("Background",width*0.25)],draft.rows(),table_style);
+                                cond_formats.row=draft.selected_id();
+                                if draft.selected.is_some() {
+                                    c.row(row,|r| {
+                                        r.text("Column");let mut style=type_sel;style.width=(width*0.5).max(100.0);
+                                        ov_cond_col=r.select(draft.columns.clone(),draft.columns.iter().position(|column|column==&state.cond_col),"Choose a column",style);
+                                    });
+                                    c.row(row,|r| {
+                                        let mut style=type_sel;style.width=(width*0.3).max(100.0);
+                                        ov_cond_op=r.select(crate::cond_format::OPERATORS,Some(state.cond_op_idx),"Operator",style);
+                                        let mut input=name_s;input.width=(width*0.6).max(100.0);
+                                        ov_cond_val=r.text_input_styled(&state.cond_value,"Comparison value",input);
+                                    });
+                                    c.row(row,|r| {
+                                        r.text("Background #RRGGBB");ov_cond_color=r.text_input_styled(&state.cond_color,"#E67E22",name_s);
+                                    });
+                                } else {c.text("Add a rule to begin. Save applies the list; Cancel keeps the current formats.");}
+                            } else {c.text("Select a loaded table before opening the format manager.");}
                             });
-                            c.row(row, |r| {
-                                r.text("Op");
-                                ov_cond_op = r.select(
-                                    vec![String::from("=="), String::from("!="), String::from("contains"), String::from(">"), String::from("<")],
-                                    Some(state.cond_op_idx),
-                                    "op",
-                                    type_sel,
-                                );
-                                r.text("Value");
-                                ov_cond_val = r.text_input_styled(&state.cond_value, "value", name_s);
-                            });
-                            c.row(row, |r| {
-                                r.text("Color #RRGGBB");
-                                ov_cond_color = r.text_input_styled(&state.cond_color, "E67E22", name_s);
-                            });
-                            c.text(format!("Rules for this table: {}", state.cond_rules.iter().filter(|rule| rule.schema == state.browse().schema && rule.table == state.browse().table).count()));
                         }
                     }
                 });
@@ -2759,6 +2769,14 @@ pub fn build_ui(
         crate::sql_syntax::apply(&mut ui, ov_idx_preview, &theme);
     }
     ui.set_accessible_name(ov_idx_cols, "Index columns and expressions");
+    if let Some(draft)=state.cond_formats.as_ref().filter(|_|state.overlay==Some(OverlayKind::CondFormat)) {
+        ui.set_table_selected_row(cond_formats.table,draft.selected);ui.set_table_scroll_offset(cond_formats.table,draft.scroll.0,draft.scroll.1);
+        ui.set_button_enabled(cond_formats.add,!draft.columns.is_empty());
+        ui.set_button_enabled(cond_formats.remove,draft.selected.is_some());
+        ui.set_button_enabled(cond_formats.up,draft.selected.is_some_and(|row|row>0));
+        ui.set_button_enabled(cond_formats.down,draft.selected.is_some_and(|row|row+1<draft.rules.len()));
+    }
+    for (id,label) in [(cond_formats.table,"Conditional format priority list"),(cond_formats.add,"Add conditional format"),(cond_formats.remove,"Remove selected conditional format"),(cond_formats.up,"Move format earlier"),(cond_formats.down,"Move format later"),(ov_cond_col,"Conditional format column"),(ov_cond_op,"Conditional format operator"),(ov_cond_val,"Conditional format comparison value"),(ov_cond_color,"Conditional format background color")]{ui.set_accessible_name(id,label);}
     ui.set_text_input_integer_range(ov_prefs_filter_delay, Some((0, 5000)));
     ui.set_accessible_name(ov_prefs_filter_delay, "Filter delay in milliseconds");
     ui.set_accessible_name(ov_prefs_filter_escape, "Filter escape character");
@@ -3134,6 +3152,7 @@ pub fn build_ui(
         ov_prefs_upper_keywords,
         ov_prefs_delim,
         ov_frozen,
+        cond_formats,
         ov_cond_col,
         ov_cond_op,
         ov_cond_val,

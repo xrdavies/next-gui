@@ -456,7 +456,7 @@ impl EditCellMode {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CondFormatRule {
     #[serde(default = "main_schema")]
     pub schema: String,
@@ -649,6 +649,7 @@ pub struct AppState {
     pub prefs: crate::prefs::Prefs,
     pub frozen_cols: usize,
     pub cond_rules: Vec<CondFormatRule>,
+    pub cond_formats: Option<crate::cond_format::Draft>,
     pub edit_mode: EditCellMode,
     pub edit_original: rusqlite::types::Value,
     edit_source: EditCellSource,
@@ -1017,6 +1018,7 @@ impl AppState {
             prefs: crate::prefs::Prefs::load(),
             frozen_cols: 0,
             cond_rules: Vec::new(),
+            cond_formats: None,
             edit_mode: EditCellMode::Text,
             edit_original: rusqlite::types::Value::Null,
             edit_source: EditCellSource::Browse,
@@ -2686,6 +2688,8 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.cond_formats=None;
+        if self.overlay==Some(OverlayKind::CondFormat) {self.overlay=None;}
         self.cancel_browse_filter();
         self.view_key_dialog = None;
         self.insert_target = None;
@@ -3709,6 +3713,7 @@ impl AppState {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn add_cond_format_rule(&mut self) {
         let col = if self.cond_col.is_empty() {
             self.edit_col.clone()
