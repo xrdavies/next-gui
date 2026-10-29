@@ -166,6 +166,11 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   fitting words and CJK punctuation stay together. Read-only views share it.
   Unicode15 line rules use the existing scalar metrics; full shaping, bidi/RTL,
   discretionary hyphens and Scintilla style-specific wrapping remain unfinished.
+- Cell size follows the current visible draft through typing and Undo/Redo.
+  Text/JSON/XML/expressions use the original Qt UTF-16 character count; Hex shows
+  validated byte counts or an invalid-data notice. Image captions include format,
+  pixel dimensions and source bytes. Record/result position and full hover text
+  update together without rebuilding the editor or evaluating SQL expressions.
 - Edit Cell's checked Auto mode tool defaults on and persists its preference.
   Printable UTF-8, non-number JSON, XML declarations and supported PNG/JPEG/BMP
   pictures choose a view; corrupt/oversized images fall back to Binary. Turning

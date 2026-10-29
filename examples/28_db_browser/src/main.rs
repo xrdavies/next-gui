@@ -333,6 +333,7 @@ struct BuiltUiIds {
     edit_col: WidgetId,
     edit_value: WidgetId,
     edit_meta: WidgetId,
+    edit_meta_label: WidgetId,
     edit_type: WidgetId,
     btn_edit_discard: WidgetId,
     btn_cell_import: WidgetId,
@@ -581,6 +582,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             edit_col: b.edit_col,
             edit_value: b.edit_value,
             edit_meta: b.edit_meta,
+            edit_meta_label: b.edit_meta_label,
             edit_type: b.edit_type,
             btn_edit_discard: b.btn_edit_discard,
             btn_cell_import: b.btn_cell_import,
@@ -1421,6 +1423,18 @@ impl Demo {
                         }
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     }
+                    if tab.contains("info-") {
+                        let mode=if tab.contains("info-hex") || tab.contains("info-badhex") {crate::state::EditCellMode::Hex}else{crate::state::EditCellMode::Text};
+                        let value=if tab.contains("info-null") {rusqlite::types::Value::Null}
+                            else if mode==crate::state::EditCellMode::Hex {rusqlite::types::Value::Blob(vec![0,255,65])}
+                            else {rusqlite::types::Value::Text("A中文🙂".into())};
+                        state.prefs.auto_switch_mode=false;
+                        state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[value]).unwrap();state.write_changes().unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();state.set_edit_mode(mode).unwrap();
+                        if tab.contains("info-badhex") {state.edit_value="00 FF 4".into();}
+                        if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    }
                     if tab.contains("wrapped") {
                         let line=if tab.contains("words") {"Database editing preserves complete words. 中文（标点） e\u{301} 👩\u{200d}💻 ".repeat(24)}else{"SQL 中文🙂 value ".repeat(80)};
                         let text=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
@@ -1526,6 +1540,8 @@ impl Demo {
             built.ui.paste_into_focused_text("编辑"); built.ui.sync(&mut built.scene);
             state.edit_value = built.ui.text_area_value(built.edit_value).unwrap().to_string();
             state.edit_view = built.ui.text_area_state(built.edit_value);
+            ui_build::update_cell_caption(&mut built.ui,&state,built.edit_meta,built.edit_meta_label);
+            built.ui.sync(&mut built.scene);
         }
 
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
@@ -1733,6 +1749,7 @@ impl Demo {
             if changed {
                 self.state.invalidate_cell_format();self.state.refresh_cell_format_issue();
                 ui_build::highlight_cell_format(&mut self.ui,&self.state,self.ids.edit_value,&self.theme);
+                ui_build::update_cell_caption(&mut self.ui,&self.state,self.ids.edit_meta,self.ids.edit_meta_label);
             }
             if null_selected {
                 if let Err(error) = self.state.set_cell_null() { self.set_error(error); }

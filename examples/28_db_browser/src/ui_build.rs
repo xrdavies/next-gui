@@ -320,6 +320,7 @@ pub struct BuiltUi {
     pub btn_freeze: WidgetId,
     pub btn_cond_fmt: WidgetId,
     pub edit_meta: WidgetId,
+    pub edit_meta_label: WidgetId,
     pub toolbar_extra: WidgetId,
     pub toolbar_project: WidgetId,
     pub btn_project_save: WidgetId,
@@ -345,6 +346,13 @@ pub struct BuiltUi {
 pub fn clear_color(theme: &Theme) -> Color {
     // Match tab/shell fills so gaps never show a stale dark clear.
     theme.colors.content_bg
+}
+
+pub fn update_cell_caption(ui: &mut Ui, state: &AppState, host: WidgetId, label: WidgetId) {
+    if label.0 == 0 { return; }
+    let caption = state.cell_editor_caption();
+    ui.set_text(label, caption.clone());
+    ui.set_tooltip_text(host, caption);
 }
 
 fn schema_tree(state: &AppState) -> Vec<TreeNode> {
@@ -756,6 +764,7 @@ pub fn build_ui(
     let mut btn_freeze = z;
     let mut btn_cond_fmt = z;
     let mut edit_meta = z;
+    let mut edit_meta_label = z;
     let mut toolbar_extra = z;
     let mut toolbar_project = z;
     let mut btn_project_save = z;
@@ -2262,38 +2271,7 @@ pub fn build_ui(
                                 r.tool_button_styled("Apply", theme.colors.accent, theme.colors.on_accent);
                             btn_edit_discard = r.tool_button("Discard Draft");
                         });
-                        let mode = match state.edit_mode {
-                            crate::state::EditCellMode::Text => "Text",
-                            crate::state::EditCellMode::Hex => "Hex",
-                            crate::state::EditCellMode::Json => "JSON",
-                            crate::state::EditCellMode::Image => "Image",
-                            crate::state::EditCellMode::Xml => "XML",
-                            crate::state::EditCellMode::Evaluation => "SQL expression",
-                        };
-                        let record = if let Some((row, _)) = state.sql_cell_position() {
-                            let total = state.sql_result.as_ref().map_or(0, |result| result.all_values.as_ref().map_or(result.rows.len(), |values| values.len()));
-                            format!(" · SQL result {} of {total}", row.saturating_add(1))
-                        } else { state
-                            .browse()
-                            .sel_row
-                            .map(|row| {
-                                format!(
-                                    " · Record {} of {}",
-                                    state.browse().offset + row + 1,
-                                    state.browse().total_rows.unwrap_or(0)
-                                )
-                            })
-                            .unwrap_or_default() };
-                        let caption = format!(
-                            "{mode} · {} bytes{}{record}",
-                            state.edit_binary_len,
-                            if state.edit_image_kind.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" · {}", state.edit_image_kind)
-                            }
-                        );
-                        edit_meta = p.tooltip(caption.clone(), |p| { p.text(caption.clone()); });
+                        edit_meta = p.tooltip("", |p| { edit_meta_label = p.text(""); });
                     });
                 });
             };
@@ -2828,6 +2806,7 @@ pub fn build_ui(
     ui.set_accessible_name(plot_splitter,"Plot controls and chart splitter");
     ui.set_accessible_name(dock_splitter,"Resize cell editor and dock pages");
     ui.set_accessible_name(btn_dock_edit_close,"Close cell editor dock");
+    update_cell_caption(&mut ui,state,edit_meta,edit_meta_label);
     ui.set_accessible_name(edit_col,"Selected cell column");
     ui.set_accessible_name(edit_type,"Cell storage type");
     ui.set_accessible_name(edit_value,"Cell value");
@@ -3105,6 +3084,7 @@ pub fn build_ui(
         btn_freeze,
         btn_cond_fmt,
         edit_meta,
+        edit_meta_label,
         toolbar_extra,
         toolbar_project,
         btn_project_save,

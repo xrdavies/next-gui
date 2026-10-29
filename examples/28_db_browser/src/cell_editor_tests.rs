@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn cell_metadata_updates_with_input_and_history_without_rebuilding_the_editor() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);demo.state.new_memory_db().unwrap();
+    demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();demo.state.prefs.auto_switch_mode=false;
+    demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();demo.state.tab=MainTab::Browse;
+    demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;demo.state.sync_current_plot().unwrap();
+    let folder=std::env::var("NEXT_GUI_CELL_INFO_QA_OUT").ok().map(PathBuf::from);if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+        demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+        for (kind,mode,raw,draft) in [
+            ("text",EditCellMode::Text,Value::Text("A中文🙂".into()),"Updated 中文🙂"),
+            ("hex",EditCellMode::Hex,Value::Blob(vec![0,255,65]),"00 FF 41 42"),
+            ("json",EditCellMode::Json,Value::Text("{\"a\":1}".into()),"{\"a\":\"中文🙂\"}"),
+            ("xml",EditCellMode::Xml,Value::Text("<r>A</r>".into()),"<r>中文🙂</r>"),
+            ("evaluation",EditCellMode::Evaluation,Value::Text("original".into()),"random() + 1"),
+            ("null",EditCellMode::Text,Value::Null,"中文🙂"),
+        ] {
+            demo.state.discard_cell_draft();demo.state.tab=MainTab::Browse;
+            demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[&raw]).unwrap();demo.state.write_changes().unwrap();
+            demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();demo.state.set_edit_mode(mode).unwrap();demo.do_rebuild();
+            let before=demo.state.cell_editor_caption();assert_eq!(demo.ui.text_content(demo.ids.edit_meta_label),Some(before.as_str()));
+            let (editor,label,host,revision)=(demo.ids.edit_value,demo.ids.edit_meta_label,demo.ids.edit_meta,demo.state.edit_revision);
+            demo.ui.set_focus(Some(editor));assert!(demo.ui.key_input(UiKey::SelectAll));assert!(demo.ui.paste_into_focused_text(draft));demo.snapshot_inputs();
+            let changed=demo.state.cell_editor_caption();assert_ne!(changed,before,"{kind}");
+            assert_eq!(demo.state.edit_value,draft);assert_eq!(demo.ui.text_content(label),Some(changed.as_str()));assert_eq!(demo.ui.accessible_name(label).as_deref(),Some(changed.as_str()));
+            assert_eq!((demo.ids.edit_value,demo.ids.edit_meta_label,demo.ids.edit_meta,demo.state.edit_revision),(editor,label,host,revision));
+            assert_eq!(demo.ui.focused(),Some(editor));assert_eq!(demo.ui.text_area_caret(editor),Some(draft.chars().count()));assert!(!demo.rebuild);
+            assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();
+            let undone=if kind=="null" {before.replace("NULL · 0 bytes","Text · 0 characters")} else {before.clone()};
+            assert_eq!(demo.ui.text_content(label),Some(undone.as_str()));
+            assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();assert_eq!(demo.ui.text_content(label),Some(changed.as_str()));assert_eq!(demo.ui.focused(),Some(editor));
+            assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|r|r.get::<_,Value>(0)).unwrap(),raw);assert!(!demo.state.dirty);
+            if let Some(folder)=&folder {if matches!(mode,EditCellMode::Text|EditCellMode::Hex) && kind!="null" {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-info-{kind}-{name}-{width}"));}}
+            demo.state.tab=MainTab::Pragmas;demo.do_rebuild();assert_eq!(demo.ui.text_content(demo.ids.edit_meta_label),Some(changed.as_str()));
+            demo.ui.set_focus(Some(demo.ids.edit_value));assert!(!demo.ui.paste_into_focused_text("blocked"));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,draft);
+        }
+    }}
+}
+
+#[test]
 fn cell_bom_and_infinity_views_keep_typed_sources_history_and_apply_focus() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;
@@ -225,6 +267,7 @@ fn cell_image_preview_fits_its_pane_and_retains_zoom_focus_without_a_text_editor
     demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
     demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
     demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    assert!(demo.state.cell_editor_caption().starts_with(&format!("Image · PNG · 640×360 pixels · {} bytes",demo.state.edit_binary_len)));
     let folder=std::env::var("NEXT_GUI_CELL_IMAGE_QA_OUT").ok().map(PathBuf::from);
     if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
     let bounds=|demo:&Demo,id|demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(id)).unwrap().bounds;

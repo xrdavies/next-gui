@@ -3893,6 +3893,36 @@ impl AppState {
 
     pub fn edited_cell_value(&self) -> Result<rusqlite::types::Value, String> { self.cell_value(true) }
 
+    pub fn cell_editor_caption(&self) -> String {
+        if self.edit_col.is_empty() { return "No cell selected".into(); }
+        let mut caption = if self.edit_type == 0 && self.edit_mode != EditCellMode::Evaluation {
+            "NULL · 0 bytes".into()
+        } else { match self.edit_mode {
+            EditCellMode::Hex => match db::hex_len(&self.edit_value) {
+                Ok(count) => format!("Hex · {count} byte{}", if count==1 {""} else {"s"}),
+                Err(_) => "Hex · Invalid hexadecimal data".into(),
+            },
+            EditCellMode::Image => {
+                let image = self.edit_image_rgba.as_ref().map(|(width,height,_)|
+                    format!("{} · {width}×{height} pixels · ",self.edit_image_kind)).unwrap_or_default();
+                format!("Image · {image}{} bytes",self.edit_binary_len)
+            },
+            mode => {
+                // Match QString's character count, including surrogate pairs, without parsing a draft.
+                let count = self.edit_value.encode_utf16().count();
+                let name = if mode==EditCellMode::Evaluation {"SQL expression"} else {EditCellMode::LABELS[mode as usize]};
+                format!("{name} · {count} character{}",if count==1 {""} else {"s"})
+            },
+        }};
+        if let Some((row,_)) = self.sql_cell_position() {
+            let total=self.sql_result.as_ref().map_or(0,|result|result.all_values.as_ref().map_or(result.rows.len(),|values|values.len()));
+            caption.push_str(&format!(" · SQL result {} of {total}",row.saturating_add(1)));
+        } else if let Some(row)=self.browse().sel_row {
+            caption.push_str(&format!(" · Record {} of {}",self.browse().offset+row+1,self.browse().total_rows.unwrap_or(0)));
+        }
+        caption
+    }
+
     fn cell_value(&self, validate_format: bool) -> Result<rusqlite::types::Value, String> {
         use rusqlite::types::Value;
         if self.edit_mode == EditCellMode::Image {
@@ -4291,6 +4321,39 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn cell_editor_caption_tracks_visible_drafts_without_converting_or_evaluating_them() {
+        use rusqlite::types::Value;
+        assert_eq!(AppState::empty().cell_editor_caption(), "No cell selected");
+        let mut state=test_state();state.prefs.auto_switch_mode=false;state.refresh_schema().unwrap();
+        state.switch_browse_table_in("main","t").unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Text).unwrap();
+        assert_eq!(state.cell_editor_caption(),"Text · 5 characters · Record 1 of 1");
+        for (text,count) in [("",0),("A",1),("中文🙂",4),("e\u{301}",2),("👩\u{200d}💻",5)] {
+            state.edit_value=text.into();
+            assert_eq!(state.cell_editor_caption(),format!("Text · {count} character{} · Record 1 of 1",if count==1 {""} else {"s"}));
+        }
+        state.edit_mode=EditCellMode::Hex;state.edit_type=4;
+        for (text,info) in [("","0 bytes"),(" 00\n","1 byte"),("00\u{2003}Ff e4 b8 ad","5 bytes"),("0","Invalid hexadecimal data"),("0z","Invalid hexadecimal data"),("中0","Invalid hexadecimal data")] {
+            state.edit_value=text.into();assert_eq!(state.cell_editor_caption(),format!("Hex · {info} · Record 1 of 1"));
+        }
+        state.edit_mode=EditCellMode::Json;state.edit_value="{bad".into();
+        assert_eq!(state.cell_editor_caption(),"JSON · 4 characters · Record 1 of 1");
+        state.edit_mode=EditCellMode::Xml;state.edit_value="<r>".into();
+        assert_eq!(state.cell_editor_caption(),"XML · 3 characters · Record 1 of 1");
+        state.edit_type=0;assert_eq!(state.cell_editor_caption(),"NULL · 0 bytes · Record 1 of 1");
+        state.edit_mode=EditCellMode::Evaluation;state.edit_value="random()".into();
+        assert_eq!(state.cell_editor_caption(),"SQL expression · 8 characters · Record 1 of 1");
+        state.edit_mode=EditCellMode::Image;state.edit_type=4;state.edit_binary_len=71;state.edit_image_kind="PNG".into();state.edit_image_rgba=Some((2,3,vec![255;24]));
+        assert_eq!(state.cell_editor_caption(),"Image · PNG · 2×3 pixels · 71 bytes · Record 1 of 1");
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|row|row.get::<_,Value>(0)).unwrap(),Value::Text("saved".into()));
+        assert!(!state.dirty);
+        state.discard_cell_draft();state.tab=MainTab::ExecuteSql;state.run_sql_text_sync("SELECT '中文🙂' AS v UNION ALL SELECT 'second'").unwrap();
+        state.sql_selection.rows=Some((0,0));state.sql_selection.columns=Some((0,0));state.sync_edit_cell_from_sql_selection().unwrap();state.set_edit_mode(EditCellMode::Text).unwrap();
+        assert!(state.edit_cell_read_only());assert_eq!(state.cell_editor_caption(),"Text · 4 characters · SQL result 1 of 2");
+        state.sql_selection.rows=Some((1,1));state.sync_edit_cell_from_sql_selection().unwrap();
+        assert_eq!(state.cell_editor_caption(),"Text · 6 characters · SQL result 2 of 2");
     }
 
     #[test]

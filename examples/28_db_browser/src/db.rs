@@ -1794,6 +1794,18 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn hex_draft_size_and_decoding_share_strict_digits_and_whitespace_rules() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let hex=bytes.iter().map(|byte|format!("{byte:02x}\u{2003}\n")).collect::<String>();
+        assert_eq!(hex_len(&hex).unwrap(),bytes.len());assert_eq!(from_hex(&hex).unwrap(),bytes);
+        assert_eq!(hex_len("").unwrap(),0);assert!(from_hex(" \n\t").unwrap().is_empty());
+        for invalid in ["0","000","0x00","+1","-1","g0","0中","０１","AB\u{200b}CD"] {
+            assert!(hex_len(invalid).is_err(),"{invalid:?}");assert!(from_hex(invalid).is_err(),"{invalid:?}");
+        }
+        let large="00 ff\t41\n".repeat(100_000);assert_eq!(hex_len(&large).unwrap(),300_000);
+    }
+
+    #[test]
     fn generated_column_creation_metadata_and_legacy_alter_keep_visible_and_writable_columns() {
         let conn=Connection::open_in_memory().unwrap();
         conn.execute_batch("ATTACH ':memory:' AS \"aux.\"\"db\"; BEGIN;").unwrap();
@@ -3438,18 +3450,22 @@ pub fn to_hex(bytes: &[u8]) -> String {
     s
 }
 
-pub fn from_hex(s: &str) -> Result<Vec<u8>, String> {
-    let clean: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    if clean.len() % 2 != 0 {
-        return Err("hex length must be even".into());
+/// Validate a Hex draft and count bytes without allocating a decoded copy.
+pub fn hex_len(s: &str) -> Result<usize, String> {
+    let mut digits = 0;
+    for ch in s.chars().filter(|ch| !ch.is_whitespace()) {
+        if !ch.is_ascii_hexdigit() { return Err("Invalid hexadecimal digit".into()); }
+        digits += 1;
     }
-    let mut out = Vec::with_capacity(clean.len() / 2);
-    let bytes = clean.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let h = std::str::from_utf8(&bytes[i..i + 2]).map_err(|e| e.to_string())?;
-        out.push(u8::from_str_radix(h, 16).map_err(|e| e.to_string())?);
-        i += 2;
+    if digits % 2 != 0 { return Err("hex length must be even".into()); }
+    Ok(digits / 2)
+}
+
+pub fn from_hex(s: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(hex_len(s)?);
+    let mut digits = s.chars().filter_map(|ch| ch.to_digit(16));
+    while let (Some(high), Some(low)) = (digits.next(), digits.next()) {
+        out.push(((high << 4) | low) as u8);
     }
     Ok(out)
 }
