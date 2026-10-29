@@ -170,6 +170,10 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   it off retains the selected mode for later cells. Storage types and raw bytes
   remain separate from the view; image imports are drafts until Apply. RTL and
   additional Qt image formats/codecs remain unfinished.
+- Image mode uses a dedicated preview with a horizontally scrollable Fit/1:1/zoom/
+  original-image export row. The preview fills its pane without reserving a text
+  editor; zoom/pan and focused controls survive rebuilds. Empty previews disable
+  image actions, and large fonts retain the existing outer shell scroll.
 - Foreign-key navigation resolves omitted parent PK columns, groups composite keys
   and filters on the stored typed values; NULL keys report no parent. Source rows
   still require an unshadowed rowid.

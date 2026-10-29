@@ -1495,7 +1495,7 @@ impl Demo {
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("auto-select") {
                 built.ui.set_focus(Some(built.btn_cell_auto));
             } else if state.edit_mode == crate::state::EditCellMode::Image {
-                built.ui.set_focus(Some(built.edit_image));
+                built.ui.set_focus(Some(if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("actual") {built.image_actual} else {built.edit_image}));
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("toggle") {
                 built.ui.set_focus(Some(built.btn_cell_wrap));
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("chart") {
@@ -2747,10 +2747,10 @@ impl Demo {
     fn do_rebuild(&mut self) {
         self.snapshot_cell_editor();
         let cell_focus = (self.last_edit_revision == self.state.edit_revision && self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value].into_iter()
+            .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap].into_iter()
+            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -3032,7 +3032,7 @@ impl Demo {
         }
         if cell_revision == self.state.edit_revision {
             if let Some(index) = cell_focus {
-                let id = [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value][index];
+                let id = [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image][index];
                 if id.0 != 0 {
                     if let Some(select) = cell_select { self.ui.restore_select_state(id, &select); }
                     self.ui.set_focus(Some(id));
@@ -3047,7 +3047,7 @@ impl Demo {
             }
         }
         if let Some(index) = cell_tool_focus {
-            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap][index];
+            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export][index];
             if id.0 != 0 {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if mode_focused && self.ids.edit_mode.0 != 0 {

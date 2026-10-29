@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn cell_image_preview_fits_its_pane_and_retains_zoom_focus_without_a_text_editor() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    let pixels=image::RgbaImage::from_fn(640,360,|x,y|image::Rgba([(x*255/639) as u8,(y*255/359) as u8,150,if x<320 {255}else{128}]));
+    let mut bytes=std::io::Cursor::new(Vec::new());image::DynamicImage::ImageRgba8(pixels).write_to(&mut bytes,image::ImageOutputFormat::Png).unwrap();
+    let value=Value::Blob(bytes.into_inner());
+    demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[&value]).unwrap();
+    demo.state.prefs.auto_switch_mode=true;demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
+    demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    let folder=std::env::var("NEXT_GUI_CELL_IMAGE_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    let bounds=|demo:&Demo,id|demo.scene.iter_paint_order().into_iter().find(|node|demo.ui.widget_from_node(node.id)==Some(id)).unwrap().bounds;
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0),(800,600,28.0)] {
+            demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+            for readonly in [false,true] {
+                demo.state.tab=if readonly {MainTab::Pragmas}else{MainTab::Browse};demo.do_rebuild();
+                assert_eq!(demo.state.edit_mode,EditCellMode::Image);assert_eq!(demo.ids.edit_value,WidgetId(0));
+                assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(!readonly));
+                let scroll=demo.ids.dock_scrolls[DockKind::EditCell as usize];
+                demo.ui.set_scroll_offset(scroll,0.0,10000.0);demo.ui.sync(&mut demo.scene);
+                assert_eq!(demo.ui.scroll_offset(scroll).unwrap().1,0.0);
+                let pane=bounds(&demo,scroll);let preview=bounds(&demo,demo.ids.edit_image);
+                assert!(preview.height>=96.0 && preview.y>=pane.y && preview.y+preview.height<=pane.y+pane.height+0.1);
+                assert!(bounds(&demo,demo.ids.edit_mode).y<preview.y);
+                for id in [demo.ids.image_fit,demo.ids.image_actual,demo.ids.image_in,demo.ids.image_out,demo.ids.image_export] {
+                    assert_eq!(demo.ui.button_enabled(id),Some(true));assert!(bounds(&demo,id).y<preview.y);
+                    assert!(demo.ui.accessible_name(id).is_some());
+                }
+                let footer=bounds(&demo,demo.ids.btn_edit_cell);
+                demo.ui.set_focus(Some(demo.ids.image_actual));demo.handle_button(demo.ids.image_actual);demo.do_rebuild();
+                assert_eq!(demo.ui.focused(),Some(demo.ids.image_actual));assert_eq!(demo.state.edit_image_view.scale,Some(1.0));
+                demo.ui.set_focus(Some(demo.ids.edit_image));demo.ui.sync(&mut demo.scene);
+                let mut view=demo.ui.image_view(demo.ids.edit_image).unwrap();view.offset_x=10000.0;view.offset_y=10000.0;
+                demo.ui.set_image_view(demo.ids.edit_image,view);demo.snapshot_inputs();let view=demo.state.edit_image_view;
+                demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.edit_image));assert_eq!(demo.ui.image_view(demo.ids.edit_image),Some(view));
+                demo.ui.set_focus(Some(demo.ids.image_in));demo.handle_button(demo.ids.image_in);demo.do_rebuild();
+                assert_eq!(demo.ui.focused(),Some(demo.ids.image_in));assert_eq!(demo.state.edit_image_view.scale,Some(2.0));
+                demo.ui.set_focus(Some(demo.ids.image_fit));demo.handle_button(demo.ids.image_fit);demo.do_rebuild();
+                assert_eq!(demo.ui.focused(),Some(demo.ids.image_fit));assert_eq!(demo.state.edit_image_view.scale,None);
+                assert_eq!(bounds(&demo,demo.ids.btn_edit_cell),footer);assert_eq!(demo.state.edit_saved,value);assert!(!demo.state.has_cell_draft());
+                if let Some(folder)=&folder {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-image-{name}-{width}-{size}-{readonly}"));}
+            }
+        }
+    }
+    demo.state.tab=MainTab::Browse;demo.do_rebuild();demo.state.set_edit_mode(EditCellMode::Text).unwrap();demo.do_rebuild();
+    assert_ne!(demo.ids.edit_value,WidgetId(0));assert_eq!(demo.ids.edit_image,WidgetId(0));
+    demo.state.set_edit_mode(EditCellMode::Image).unwrap();demo.state.edit_image_rgba=None;demo.do_rebuild();
+    assert_eq!(demo.ids.edit_value,WidgetId(0));assert_ne!(demo.ids.edit_image,WidgetId(0));
+    for id in [demo.ids.image_fit,demo.ids.image_actual,demo.ids.image_in,demo.ids.image_out,demo.ids.image_export] {assert_eq!(demo.ui.button_enabled(id),Some(false));}
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|row|row.get::<_,Value>(0)).unwrap(),value);
+}
+
+#[test]
 fn cell_auto_mode_controls_keep_focus_drafts_storage_history_and_read_only_views() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;
@@ -346,9 +404,9 @@ fn cell_dock_actions_and_content_fit_font_toolbar_and_window_changes() {
     demo.state.discard_cell_draft(); demo.state.set_edit_mode(crate::state::EditCellMode::Image).unwrap(); demo.do_rebuild();
     let footer = bounds(&demo,demo.ids.btn_edit_cell);
     let scroll = demo.ids.dock_scrolls[DockKind::EditCell as usize];
-    assert!(demo.ui.set_scroll_offset(scroll,0.0,10000.0)); demo.ui.sync(&mut demo.scene);
-    assert!(demo.ui.scroll_offset(scroll).unwrap().1>0.0);
-    assert_eq!(bounds(&demo,demo.ids.btn_edit_cell),footer,"Image/content scrolling must not move the action footer");
+    demo.ui.set_scroll_offset(scroll,0.0,10000.0); demo.ui.sync(&mut demo.scene);
+    assert_eq!(demo.ui.scroll_offset(scroll).unwrap().1,0.0,"Image preview must fit its pane");
+    assert_eq!(bounds(&demo,demo.ids.btn_edit_cell),footer,"Image preview must not move the action footer");
     demo.state.tab=MainTab::Pragmas; demo.do_rebuild();
     assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));
     assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_discard),Some(false));

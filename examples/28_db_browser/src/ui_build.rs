@@ -798,7 +798,9 @@ pub fn build_ui(
         + 3.0*(cell_line_height-ui.font().measure_line("Ag",13.0).1.ceil()).max(0.0));
     let cell_tools_height = (toolbar_heights[4]+4.0).max(cell_field_height);
     let cell_footer_height = cell_action_height + cell_line_height + 16.0;
-    let dock_cell_minimum = dock_header_height + cell_footer_height + cell_field_height + cell_tools_height + 80.0;
+    let image_mode = state.edit_mode == crate::state::EditCellMode::Image;
+    let dock_cell_minimum = dock_header_height + cell_footer_height + cell_field_height + cell_tools_height
+        + if image_mode { 116.0 + cell_action_height } else { 80.0 };
     let dock_page_minimum = 2.0*dock_header_height + if selected_dock == DockKind::Plot {
         plot_minimums.0 + plot_minimums.1 + 14.0
     } else { 80.0 };
@@ -2230,28 +2232,26 @@ pub fn build_ui(
                             btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
                             btn_cell_indent = r.tool_icon_button(IconName::Code, "Indent");
                         });
-                        let mut cell_style = TextAreaStyle::from_theme(&theme);
-                        cell_style.width = edit_val_style.width;
-                        cell_style.size = theme.typography.input;
-                        cell_style.height = (edit_scroll_style.height - cell_field_height - cell_tools_height - 16.0).max(64.0);
-                        edit_value = c.text_area(&state.edit_value, "value", cell_style);
-                        if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
+                        if image_mode {
                             let mut istyle = ImageStyle::from_theme(&theme);
-                            istyle.width = (dock_w - 40.0).max(1.0);
-                            istyle.height = 200.0;
-                            c.row(tool_row, |r| {
+                            istyle.width = edit_val_style.width;
+                            istyle.height = (edit_scroll_style.height - cell_field_height - cell_tools_height - cell_action_height - 20.0).max(96.0);
+                            c.scroll_row(RowStyle { width: edit_val_style.width, height: cell_action_height, ..tool_row }, |r| {
                                 image_fit = r.tool_button("Fit");
                                 image_actual = r.tool_button("1:1");
                                 image_in = r.tool_button("+");
                                 image_out = r.tool_button("−");
+                                image_export = r.tool_button("Export Image…");
                             });
-                            image_export = c.tool_button("Export Image…");
-                            edit_image = c.image_rgba_caption(*w, *h, px, format!("{}×{}", w, h), istyle);
-                        } else if matches!(state.edit_mode, crate::state::EditCellMode::Image) {
-                            let mut istyle = ImageStyle::from_theme(&theme);
-                            istyle.width = 160.0;
-                            istyle.height = 48.0;
-                            edit_image = c.image_placeholder("No preview available", istyle);
+                            edit_image = if let Some((w, h, px)) = state.edit_image_rgba.as_ref() {
+                                c.image_rgba_caption(*w, *h, px, format!("{}×{}", w, h), istyle)
+                            } else { c.image_placeholder("No preview available", istyle) };
+                        } else {
+                            let mut cell_style = TextAreaStyle::from_theme(&theme);
+                            cell_style.width = edit_val_style.width;
+                            cell_style.size = theme.typography.input;
+                            cell_style.height = (edit_scroll_style.height - cell_field_height - cell_tools_height - 16.0).max(64.0);
+                            edit_value = c.text_area(&state.edit_value, "value", cell_style);
                         }
                     });
                     p.column(ColumnStyle { width: dock_w, height: cell_footer_height, padding: 4.0, gap: 2.0, ..edit_pane_style }, |p| {
@@ -2770,6 +2770,11 @@ pub fn build_ui(
     ui.set_button_enabled(btn_revert, can_write);
 
     ui.set_image_view(edit_image, state.edit_image_view);
+    for (id, label) in [(image_fit,"Fit image to preview"),(image_actual,"Show image at actual size"),
+        (image_in,"Zoom image in"),(image_out,"Zoom image out"),(image_export,"Export original image…")] {
+        ui.set_accessible_name(id,label);
+        ui.set_button_enabled(id,state.edit_image_rgba.is_some());
+    }
     ui.set_text_area_line_numbers(sql_area, true);
     ui.set_text_area_read_only(log_area, true);
     crate::csv_files::configure(&mut ui,csv_files,state);

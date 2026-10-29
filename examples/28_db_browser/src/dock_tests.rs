@@ -140,7 +140,8 @@ fn independent_cell_and_plot_docks_keep_drafts_scrolls_ratios_and_project_layout
         assert_ne!(id.0, 0);
         demo.ui.set_scroll_offset(id, 0.0, 60.0);
         let offset = demo.ui.scroll_offset(id).unwrap();
-        assert!(offset.1 > 0.0);
+        if dock == DockKind::EditCell { assert_eq!(offset.1,0.0,"Image preview must fit its pane"); }
+        else { assert!(offset.1 > 0.0); }
         demo.snapshot_inputs();
         assert_eq!(demo.state.dock_scroll[dock as usize], offset);
     }
