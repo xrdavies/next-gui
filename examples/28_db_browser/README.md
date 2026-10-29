@@ -412,3 +412,14 @@ ambiguous target keys. Trigger behavior belongs to the database, and the grid
 reloads the stored result after Apply. Missing INSTEAD OF triggers, ignored
 writes and SQLite errors retain the draft. Native desktop/platform and full
 original product/interface parity remain unfinished.
+
+
+Browse filters apply after a short typing pause (default200ms), immediately on
+focus loss, or with Enter/Apply. Preferences → Filter delay accepts0–5000ms;
+zero applies immediately. Filter escape defaults to backslash; use it before
+LIKE `%`/`_` to match literal wildcards, choose another single character, or
+leave it empty to disable escaping. Queries run on the existing connection in
+a cancellable background worker. New typing cancels old criteria, and failures
+retain the previous result and input. Composition, unapplied cell drafts and
+modal work suspend automatic filtering. The raw WHERE field still uses explicit
+Apply/Enter. Filter context helpers and complete original parity remain pending.

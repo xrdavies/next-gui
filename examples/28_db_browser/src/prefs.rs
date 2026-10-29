@@ -21,6 +21,8 @@ pub struct Prefs {
     pub editor_word_wrap: bool,
     pub auto_switch_mode: bool,
     pub indent_compact: bool,
+    pub filter_delay_ms: u64,
+    pub filter_escape: String,
 }
 
 impl Default for Prefs {
@@ -41,12 +43,17 @@ impl Default for Prefs {
             editor_word_wrap: true,
             auto_switch_mode: true,
             indent_compact: false,
+            filter_delay_ms: 200,
+            filter_escape: "\\".into(),
         }
     }
 }
 
 impl Prefs {
     pub fn config_path() -> PathBuf {
+        if std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_some() {
+            return std::env::temp_dir().join(format!("next-gui-e28-qa-prefs-{}", std::process::id())).join("prefs.json");
+        }
         if let Ok(home) = std::env::var("HOME") {
             let dir = PathBuf::from(home).join(".config").join("e28_db_browser");
             let _ = fs::create_dir_all(&dir);
@@ -56,6 +63,7 @@ impl Prefs {
     }
 
     pub fn load() -> Self {
+        if cfg!(test) || std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_some() { return Self::default(); }
         let path = Self::config_path();
         let Ok(text) = fs::read_to_string(&path) else {
             return Self::default();
@@ -64,10 +72,13 @@ impl Prefs {
         p.font_size = p.font_size.clamp(8.0, 32.0);
         p.frozen_cols_default = p.frozen_cols_default.min(20);
         for style in &mut p.toolbar_styles { *style = (*style).min(4); }
+        p.filter_delay_ms = p.filter_delay_ms.min(5000);
+        if crate::filters::validate_escape(&p.filter_escape).is_err() { p.filter_escape = "\\".into(); }
         p
     }
 
     pub fn save(&self) -> Result<(), String> {
+        if cfg!(test) { return Ok(()); }
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -89,6 +100,14 @@ pub fn toolbar_layout(style: usize) -> next_gui_ui::ButtonIconLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browse_filter_defaults_and_disabled_settings_roundtrip_without_user_preferences() {
+        let defaults:Prefs=serde_json::from_str("{}").unwrap();assert_eq!(defaults.filter_delay_ms,200);assert_eq!(defaults.filter_escape,"\\");
+        let configured:Prefs=serde_json::from_str(r#"{"filter_delay_ms":0,"filter_escape":""}"#).unwrap();
+        let restored:Prefs=serde_json::from_str(&serde_json::to_string(&configured).unwrap()).unwrap();assert_eq!(restored.filter_delay_ms,0);assert!(restored.filter_escape.is_empty());
+        assert_eq!(Prefs::load().filter_delay_ms,200);configured.save().unwrap();assert_eq!(Prefs::load().filter_delay_ms,200);
+    }
 
     #[test]
     fn old_preferences_enable_completion_and_explicit_false_round_trips() {

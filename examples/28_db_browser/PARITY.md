@@ -110,7 +110,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Table selector | done | |
-| Filter / WHERE | partial | Raw WHERE and original any-column term search share export conditions; Clear Filters, Enter and Cmd/Ctrl+Alt+F. Automatic debounce and escape preferences remain. |
+| Filter / WHERE | partial | Raw WHERE and original any-column/column search use the same condition builder. Automatic filters use a cancellable background query after the configured delay (default200ms,0–5000), or immediately on focus loss; Enter/Apply remain available. Configurable LIKE escape (default backslash, blank disables) reaches Browse, Plot and project preflight. Failed queries retain the previous result/draft; composition, cell drafts and modals suspend automatic queries. Filter context helpers/history, whole-result navigation and native acceptance remain. |
 | Data grid | partial | Filtered totals and clamped 500-row pages; resize, frozen columns, scrollbars and focus reveal. Anchored Shift ranges and pointer drag rectangles survive rebuilds. Copy/cut/paste supports typed internal cells with HTML provenance, quoted TSV, headers (Cmd/Ctrl+Shift+C), INSERT statements (Cmd/Ctrl+Alt+C), single-cell fill, and atomic row updates/rollback. External TSV preserves literal NULL as text. Inline editors, discontiguous/cross-page ranges, stationary edge autoscroll, hiding/reorder and complete bulk operations remain. |
 | Header-click sort | done | Ordinary clicks toggle one column; Ctrl/Cmd clicks append/toggle priorities. Priority labels and Clear Sort match upstream; filtered CSV/JSON exports and native XML retain all terms. Native modifier gestures await OS input acceptance. |
 | Filter-per-column | partial | Shared inputs align with resized/scrolled/frozen columns. DB4S comparisons, numeric ranges, NULL/empty text, wildcards and Unicode PCRE2 REGEXP are supported. Escape preference and automatic debounce remain. |
@@ -911,3 +911,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-9af4fd140
 ## 2026-10-29 Revert catalog follow-up (c660a4c210a0)
 
 Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-c660a4c210a0.md) verifies Revert F01: all qualified Browse caches and editor sessions invalidate after rollback; removed sources and invalid saved source settings clear, surviving settings and independent drafts/SQL snapshots remain, and post-rollback query errors report refresh notices.792 tests/strict checks,24 whole-frame Metal pairs,8 native windows and8 confirmation workflows pass; all8 modal Cmd+S frames remain unchanged. Print/context, filter debounce/escape, codecs/RTL/history, docking,500-record paging and full original visual/product/native/platform parity remain. No completion/publication claim; earlier exact Mob approval timed out/denied.
+
+
+## 2026-10-29 automatic Browse filtering
+
+Automatic any-column and column filters run on the live connection in the existing cancellable database worker. Typing replaces pending criteria; navigation restores the connection before proceeding. Old results remain visible until a successful replacement. Input focus, selection, composition and Undo survive refresh. Preferences expose the original200ms delay (0–5000) and backslash escape; blank disables LIKE escaping. Raw WHERE stays explicit Apply/Enter. Tests and QA preference paths are isolated from normal user preferences. Full original product/interface and ordinary desktop/platform acceptance remain in progress.

@@ -667,8 +667,11 @@ pub struct AppState {
     pub export_dialog: Option<crate::data_export::Draft>,
     pub export_work: Option<crate::export_jobs::Work>,
     pub plot_work: Option<crate::plot_load::Work>,
+    pub browse_work: Option<crate::browse_filter::Work>,
     pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
+    pub prefs_filter_delay: String,
+    pub prefs_filter_escape: String,
     pub prefs_toolbar_styles: [usize; 5],
     pub prefs_scroll: (f32, f32),
     pub prefs_frozen_cols: usize,
@@ -1032,9 +1035,12 @@ impl AppState {
             export_dialog: None,
             export_work: None,
             plot_work: None,
+            browse_work: None,
             sql_export: None,
             prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
+            prefs_filter_delay: "200".into(),
+            prefs_filter_escape: "\\".into(),
             prefs_toolbar_styles: [2, 2, 0, 0, 0],
             prefs_scroll: (0.0, 0.0),
             prefs_theme_dark: true,
@@ -1432,11 +1438,12 @@ impl AppState {
         Ok(())
     }
 
-    pub(crate) fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Result<Option<String>, String> {
+    pub(crate) fn composed_where(tab: &BrowseTabState, columns: &[String], filter_escape: &str) -> Result<Option<String>, String> {
+        crate::filters::validate_escape(filter_escape)?;
         let mut parts = Vec::new();
         if !tab.show_row_id && !tab.rowid_filter.is_empty() {
             crate::filters::validate(&tab.rowid_filter)?;
-            if let Some(condition) = crate::filters::condition(&tab.rowid_filter) {
+            if let Some(condition) = crate::filters::condition(&tab.rowid_filter, filter_escape) {
                 parts.push(format!("{} {condition}", db::quote_ident(tab.rowid_column.as_deref().ok_or("Refresh Browse before applying its rowid filter")?)));
             }
         }
@@ -1445,13 +1452,13 @@ impl AppState {
         }
         for (col, filter) in columns.iter().zip(&tab.col_filters) {
             crate::filters::validate(filter)?;
-            if let Some(condition) = crate::filters::condition(filter) {
+            if let Some(condition) = crate::filters::condition(filter, filter_escape) {
                 parts.push(format!("{} {condition}", db::quote_ident(col)));
             }
         }
         for filter in &tab.global_filters {
             crate::filters::validate(filter)?;
-            if let Some(condition) = crate::filters::condition(filter) {
+            if let Some(condition) = crate::filters::condition(filter, filter_escape) {
                 let any_column = columns.iter().map(|col| format!("{} {condition}", db::quote_ident(col)))
                     .collect::<Vec<_>>().join(" OR ");
                 if !any_column.is_empty() { parts.push(format!("({any_column})")); }
@@ -1480,13 +1487,14 @@ impl AppState {
             &schema,
             table,
             &candidate.ordering(),
-            Self::composed_where(&candidate, &columns)?.as_deref(),
+            Self::composed_where(&candidate, &columns, &self.prefs.filter_escape)?.as_deref(),
             path,
             json,
         )
     }
 
     pub fn refresh_browse(&mut self) -> Result<(), String> {
+        if self.browse_work.is_some() { return Err("Wait for Browse filtering to finish".into()); }
         if self.plot_work.is_some() { return Err("Cancel or finish plot loading first".into()); }
         let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
@@ -1512,106 +1520,15 @@ impl AppState {
             self.clear_browse_editor();
             return Ok(());
         };
-        let mut options = self.browse().options();
-        let columns = options.remap_source(self.conn.as_ref().unwrap(), &schema, &table, options.show_row_id)?;
-        let rowid_column = db::implicit_rowid_column_in(self.conn.as_ref().unwrap(), &schema, &table)?;
-        let mut candidate = self.browse().clone();
-        candidate.set_options(options);
-        candidate.rowid_column = rowid_column.clone();
-        let ordering = candidate.ordering();
-        let is_view = self
-            .schema
-            .iter()
-            .any(|o| o.schema == schema && o.name == table && o.kind == ObjectKind::View);
-
-        let where_sql = Self::composed_where(&candidate, &columns)?;
-
-        let total_rows = db::count_browse_rows_in(self.conn.as_ref().unwrap(), &schema, &table, where_sql.as_deref())?;
-        let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
-        let offset = self.browse().offset.min(last_page);
-        let (total_rows, mut result, row_keys) = {
-            let conn = self.conn.as_ref().unwrap();
-            if is_view && candidate.unlock_view_pk.is_some() {
-                let (result, keys) = db::browse_view_with_key_in(conn, &schema, &table, candidate.unlock_view_pk.as_deref().unwrap(), &ordering, where_sql.as_deref(), (db::DEFAULT_LIMIT, offset))?;
-                (total_rows, result, keys)
-            } else if is_view {
-                (
-                    total_rows,
-                    db::browse_table_in(
-                        conn,
-                        &schema,
-                        &table,
-                        &ordering,
-                        where_sql.as_deref(),
-                        db::DEFAULT_LIMIT,
-                        offset,
-                    )?,
-                    Vec::new(),
-                )
-            } else {
-                match db::browse_with_keys_in(
-                    conn,
-                    &schema,
-                    &table,
-                    &ordering,
-                    where_sql.as_deref(),
-                    db::DEFAULT_LIMIT,
-                    offset,
-                ) {
-                    Ok((q, row_keys)) => (total_rows, q, row_keys),
-                    Err(_) => (
-                        total_rows,
-                        db::browse_table_in(
-                            conn,
-                            &schema,
-                            &table,
-                            &ordering,
-                            where_sql.as_deref(),
-                            db::DEFAULT_LIMIT,
-                            offset,
-                        )?,
-                        Vec::new(),
-                    ),
-                }
-            }
-        };
-
-        if candidate.show_row_id {
-            db::show_rowid_column(&mut result, &row_keys, rowid_column.as_deref().ok_or("This source has no accessible rowid")?)?;
-        }
-
-        candidate.col_filters.resize(result.columns.len(), String::new());
-        let nrows = result.rows.len();
-        let truncated = result.truncated;
-        let order_note = if ordering.is_empty() { String::new() } else {
-            format!(" ORDER BY {}", ordering.iter().map(|order| format!("{} {}", db::quote_ident(&order.column), if order.descending { "DESC" } else { "ASC" })).collect::<Vec<_>>().join(", "))
-        };
-        {
-            let t = self.browse_mut();
-            t.set_options(candidate.options());
-            t.offset = offset;
-            t.title = if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) };
-            t.row_keys = row_keys;
-            t.rowid_column = rowid_column;
-            t.total_rows = Some(total_rows);
-            t.result = Some(result);
-            t.clear_selection();
-        }
+        let is_view = self.schema.iter().any(|o| o.schema == schema && o.name == table && o.kind == ObjectKind::View);
+        let candidate = crate::browse_filter::fetch(self.conn.as_ref().unwrap(), self.browse().clone(), is_view, &self.prefs.filter_escape)?;
+        self.status_msg = crate::browse_filter::status(&candidate);
+        *self.browse_mut() = candidate;
         self.clear_browse_editor();
-        self.status_msg = format!(
-            "Browse {} — {} rows {}–{} of {}{}{}",
-            if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) },
-            nrows,
-            if nrows == 0 { 0 } else { offset.saturating_add(1) },
-            offset.saturating_add(nrows),
-            total_rows,
-            if truncated { " (more pages)" } else { "" },
-            order_note
-        );
         Ok(())
     }
 
-    fn clear_browse_editor(&mut self) {
+    pub(crate) fn clear_browse_editor(&mut self) {
         self.reset_cell_editor_session();
         self.edit_source = EditCellSource::Browse;
         self.edit_col.clear();
@@ -2769,6 +2686,7 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.cancel_browse_filter();
         self.view_key_dialog = None;
         self.insert_target = None;
         self.plot_work = None;
@@ -3158,6 +3076,8 @@ fn open_shared_memory() -> Result<LoggedConnection, String> {
 impl AppState {
     pub fn sync_prefs_drafts(&mut self) {
         self.prefs_font_size = format!("{}", self.prefs.font_size as i32);
+        self.prefs_filter_delay = self.prefs.filter_delay_ms.to_string();
+        self.prefs_filter_escape = self.prefs.filter_escape.clone();
         self.prefs_toolbar_styles = self.prefs.toolbar_styles;
         self.prefs_scroll = (0.0, 0.0);
         self.prefs_theme_dark = self.prefs.default_theme_dark;
@@ -3177,7 +3097,11 @@ impl AppState {
         if !fs.is_finite() {
             return Err("font size must be finite".into());
         }
+        let filter_delay = self.prefs_filter_delay.trim().parse::<u64>().ok().filter(|delay| *delay <= 5000).ok_or("Filter delay must be an integer from 0 to 5000 ms")?;
+        crate::filters::validate_escape(&self.prefs_filter_escape)?;
         self.prefs.font_size = fs.clamp(9.0, 28.0);
+        self.prefs.filter_delay_ms = filter_delay;
+        self.prefs.filter_escape = self.prefs_filter_escape.clone();
         self.prefs.toolbar_styles = self.prefs_toolbar_styles.map(|style| style.min(4));
         self.prefs.default_theme_dark = self.prefs_theme_dark;
         self.prefs.confirm_drops = self.prefs_confirm_drops;
@@ -3272,7 +3196,7 @@ impl AppState {
         Ok(())
     }
 
-    fn preflight_project_browse(pf: &mut crate::project::ProjectFile, conn: &Connection) -> Result<(), String> {
+    fn preflight_project_browse(pf: &mut crate::project::ProjectFile, conn: &Connection, filter_escape: &str) -> Result<(), String> {
         if pf.browse_tabs.is_empty() {
             if let Some(table) = &pf.browse_table {
                 let mut tab = BrowseTabState::new(Some(table.clone()));
@@ -3301,7 +3225,7 @@ impl AppState {
                     tab.set_options(options);
                     tab.rowid_column = db::implicit_rowid_column_in(conn, &tab.schema, &table)?;
                     db::browse_table_in(conn, &tab.schema, &table, &tab.ordering(),
-                        Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
+                        Self::composed_where(tab, &columns, filter_escape)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
                 })();
                 result.map_err(|e| format!("Browse tab {}: {e}", tab.title))?;
             }
@@ -3322,7 +3246,7 @@ impl AppState {
                 stored.rowid_column = db::implicit_rowid_column_in(conn, schema, table)?;
                 let result = (|| {
                     db::browse_table_in(conn, schema, table, &stored.ordering(),
-                        Self::composed_where(&stored, &columns)?.as_deref(), 1, 0)
+                        Self::composed_where(&stored, &columns, filter_escape)?.as_deref(), 1, 0)
                 })();
                 result.map_err(|error| format!("Saved table {table}: {error}"))?;
             }
@@ -3360,7 +3284,7 @@ impl AppState {
             let conn = db::open_path(":memory:")?;
             crate::project_xml::restore_connection(&pf, &conn, path)?;
             crate::project_xml::restore_browse(&mut pf, &conn)?;
-            Self::preflight_project_browse(&mut pf, &conn)?;
+            Self::preflight_project_browse(&mut pf, &conn, &self.prefs.filter_escape)?;
             self.adopt_conn(conn, ":memory:".into(), false)?;
         } else {
             if !Path::new(&pf.db_path).is_file() {
@@ -3373,7 +3297,7 @@ impl AppState {
                 // Reuse the already unlocked connection; keys are never stored in projects.
                 let conn = self.conn.as_ref().ok_or("No unlocked connection")?;
                 crate::project_xml::restore_browse(&mut pf, conn)?;
-                Self::preflight_project_browse(&mut pf, conn)?;
+                Self::preflight_project_browse(&mut pf, conn, &self.prefs.filter_escape)?;
                 if !conn.is_autocommit() { conn.execute_batch("COMMIT").map_err(|e| e.to_string())?; }
                 let result = crate::project_xml::restore_connection(&pf, conn, path);
                 db::begin_deferred(conn)?;
@@ -3388,7 +3312,7 @@ impl AppState {
                 db::list_schema(&conn)?;
                 crate::project_xml::restore_connection(&pf, &conn, path)?;
                 crate::project_xml::restore_browse(&mut pf, &conn)?;
-                Self::preflight_project_browse(&mut pf, &conn)?;
+                Self::preflight_project_browse(&mut pf, &conn, &self.prefs.filter_escape)?;
                 self.adopt_conn(conn, pf.db_path.clone(), pf.read_only)?;
             }
         }
@@ -4505,7 +4429,7 @@ mod chart_default_tests {
         assert!(state.selected.is_none());assert!(state.ddl_draft.is_empty());assert!(state.chart_table.is_none());assert!(state.chart_points.is_empty());assert!(state.plot.source.is_none());assert!(state.plot.data.series.is_empty());
         assert_eq!(state.sql_editor(),"SELECT 'independent SQL draft';");assert_eq!(state.frozen_cols,2);assert!(state.apply_cell_draft().is_err());
         assert_eq!(state.cond_rules.len(),1);assert_eq!(state.cond_rules[0].table.as_deref(),Some("t"));assert_eq!(state.plot.settings.configs.len(),2);
-        let mut project=crate::project::ProjectFile::from_state(&state);AppState::preflight_project_browse(&mut project,state.conn.as_ref().unwrap()).unwrap();
+        let mut project=crate::project::ProjectFile::from_state(&state);AppState::preflight_project_browse(&mut project,state.conn.as_ref().unwrap(),&state.prefs.filter_escape).unwrap();
         for (index,expected) in ["saved","temp saved","aux saved"].into_iter().enumerate() {
             state.switch_browse_tab(index).unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows[0][1],expected);assert_eq!(state.browse().row_keys.len(),1);
         }
@@ -5193,7 +5117,7 @@ mod chart_default_tests {
         assert_eq!(state.browse().ordering(), [db::OrderBy { column: "c".into(), descending: false }]);
         assert_eq!(db::table_column_names_in(state.conn.as_ref().unwrap(), "temp", "same").unwrap(), ["a", "b", "c"]);
         let mut project: crate::project::ProjectFile = serde_json::from_str(&json).unwrap();
-        AppState::preflight_project_browse(&mut project, state.conn.as_ref().unwrap()).unwrap();
+        AppState::preflight_project_browse(&mut project, state.conn.as_ref().unwrap(), &state.prefs.filter_escape).unwrap();
         for options in [project.browse_tabs[0].options(), project.browse_tabs[1].stored_options("aux", "same").unwrap().clone()] {
             assert_eq!(options.column_names, ["a", "c"]);
             assert_eq!(options.col_filters, ["", ">0"]);
@@ -5319,7 +5243,7 @@ mod chart_default_tests {
         assert_eq!(state.cond_rules[1].table.as_deref(), Some("t"));
         let project = crate::project::ProjectFile::from_state(&state);
         let mut restored: crate::project::ProjectFile = serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
-        AppState::preflight_project_browse(&mut restored, state.conn.as_ref().unwrap()).unwrap();
+        AppState::preflight_project_browse(&mut restored, state.conn.as_ref().unwrap(), &state.prefs.filter_escape).unwrap();
         assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(), expected);
         assert_eq!(db::browse_table(state.conn.as_ref().unwrap(), "t", &[], None, 5, 0).unwrap().rows[0][0], "saved");
     }
@@ -5342,7 +5266,7 @@ mod chart_default_tests {
                 assert_eq!(state.browse_tabs[1].schema,target);assert_eq!(state.browse_tabs[1].table.as_deref(),Some("aliased"));assert_eq!(state.browse_tabs[1].options(),aliases);assert_eq!(state.browse_tabs[1].stored_options(target,"aliased"),Some(&aliases));assert!(state.browse_tabs[1].stored_options(source,"aliased").is_none());
                 assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("visible"));assert_eq!(state.chart_column,"metric");assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(),[50.0,51.0]);assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,target);assert_eq!(state.cond_rules[1].column,"a");
                 for index in [0,1] {state.switch_browse_tab(index).unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),1);assert_eq!(state.browse().result.as_ref().unwrap().rows[0],["25","50"]);}
-                let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap()).unwrap();assert_eq!(restored.browse_tabs[0].options(),expected);assert_eq!(restored.browse_tabs[1].options(),aliases);
+                let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap(),&state.prefs.filter_escape).unwrap();assert_eq!(restored.browse_tabs[0].options(),expected);assert_eq!(restored.browse_tabs[1].options(),aliases);
             }
         }
     }
@@ -5375,7 +5299,7 @@ mod chart_default_tests {
                 assert_eq!(state.browse().schema,target);assert_eq!(state.browse().table.as_deref(),Some("archive.\"t"));assert_eq!(state.browse().options(),expected);assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),1);
                 assert_eq!(state.chart_schema,target);assert_eq!(state.chart_table.as_deref(),Some("archive.\"t"));assert_eq!(state.chart_points.iter().map(|p| p.y).collect::<Vec<_>>(),[50.0,51.0]);
                 assert_eq!(state.cond_rules[0].schema,target);assert_eq!(state.cond_rules[0].column,"label");assert_eq!(state.cond_rules[1].schema,other);assert_eq!(state.cond_rules[1].column,"a");
-                let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap()).unwrap();assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(),expected);
+                let project=crate::project::ProjectFile::from_state(&state);let mut restored:crate::project::ProjectFile=serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();AppState::preflight_project_browse(&mut restored,state.conn.as_ref().unwrap(),&state.prefs.filter_escape).unwrap();assert_eq!(restored.browse_tabs[state.browse_tab_idx].options(),expected);
                 assert_eq!(state.conn.as_ref().unwrap().query_row(&format!("SELECT a FROM {}",db::qualified_name(target,"records")),[],|row|row.get::<_,i64>(0)).unwrap(),99);
             }
         }

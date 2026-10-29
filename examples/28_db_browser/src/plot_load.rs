@@ -48,7 +48,7 @@ impl AppState {
             let tab = self.browse();
             let name = tab.table.as_ref().ok_or("Select a table first")?;
             let result = tab.result.as_ref().ok_or("No Browse result")?.clone();
-            let filter = Self::composed_where(tab, &result.columns)?;
+            let filter = Self::composed_where(tab, &result.columns, &self.prefs.filter_escape)?;
             (plot::Source::Table { schema: tab.schema.clone(), table: name.clone() }, result, tab.offset, tab.total_rows, Some((tab.ordering(), filter, tab.show_row_id)))
         };
         let cached = self.plot.full_matches(&source, &preview);

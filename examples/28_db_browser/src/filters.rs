@@ -17,7 +17,12 @@ fn number(value: &str) -> Option<f32> {
     value.parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
-pub fn condition(value: &str) -> Option<String> {
+pub fn validate_escape(escape: &str) -> Result<(), String> {
+    if escape.chars().count() > 1 || escape.contains('\0') { return Err("Filter escape must be empty or one character, without NUL".into()); }
+    Ok(())
+}
+
+pub fn condition(value: &str, escape: &str) -> Option<String> {
     if value.is_empty() || value == "%" || value == "%%" {
         return None;
     }
@@ -54,7 +59,7 @@ pub fn condition(value: &str) -> Option<String> {
     } else {
         literal(&format!("%{value}%"))
     };
-    Some(format!("LIKE {operand}"))
+    Some(if escape.is_empty() { format!("LIKE {operand}") } else { format!("LIKE {operand} ESCAPE {}", literal(escape)) })
 }
 
 fn text(value: ValueRef<'_>) -> String {
@@ -100,6 +105,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn configured_like_escape_is_quoted_and_matches_literal_wildcards() {
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES('A_B'),('A%B'),('A\\B'),('AXB'),(NULL);").unwrap();
+        for (filter,escape,expected) in [(r"A\_B","\\","A_B"),("A!%B","!","A%B"),("A'%B","'","A%B"),("A界_B","界","A_B"),(r"A\\B","\\",r"A\B")] {
+            validate_escape(escape).unwrap();let sql=format!("SELECT v FROM t WHERE v {}",condition(filter,escape).unwrap());
+            let rows=conn.prepare(&sql).unwrap().query_map([],|row|row.get::<_,String>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();assert_eq!(rows,[expected],"{filter} {escape}");
+        }
+        let sql=format!("SELECT count(*) FROM t WHERE v {}",condition("A_B","").unwrap());assert_eq!(conn.query_row(&sql,[],|row|row.get::<_,i64>(0)).unwrap(),4);
+        assert_eq!(condition("=NULL","!").as_deref(),Some("IS NULL"));assert_eq!(condition("/A.B/","!").as_deref(),Some("REGEXP 'A.B'"));
+        for invalid in ["ab","🙂x","\0"] {assert!(validate_escape(invalid).is_err());}
+        for valid in ["","\\","'","🙂"] {validate_escape(valid).unwrap();}
+    }
+
+    #[test]
     fn original_filter_syntax_and_sql_quoting() {
         for (input, expected) in [
             ("foo", "LIKE '%foo%'"),
@@ -127,10 +146,10 @@ mod tests {
             (">NaN", "> 'NaN'"),
             (">1e999", "> '1e999'"),
         ] {
-            assert_eq!(condition(input).as_deref(), Some(expected), "{input}");
+            assert_eq!(condition(input, "").as_deref(), Some(expected), "{input}");
         }
         for input in ["", "%", "%%"] {
-            assert_eq!(condition(input), None);
+            assert_eq!(condition(input, ""), None);
         }
     }
 

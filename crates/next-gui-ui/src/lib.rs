@@ -4390,6 +4390,14 @@ impl Ui {
         Some((bounds.x+style.padding_x+width.min(visible),bounds.y+4.0,2.0,(bounds.height-8.0).max(8.0)))
     }
 
+    /// Whether the focused editor has an active IME composition.
+    pub fn ime_is_composing(&self) -> bool {
+        self.focus.and_then(|id| self.widgets.get(&id)).is_some_and(|widget| match &widget.kind {
+            Kind::TextInput { preedit, .. } | Kind::Autocomplete { preedit, .. } | Kind::TextArea { preedit, .. } => !preedit.is_empty(),
+            _ => false,
+        })
+    }
+
     /// Update IME preedit on the focused editor. Empty `text` clears composition.
     pub fn ime_preedit(&mut self, text: impl Into<String>, cursor: Option<(usize, usize)>) -> bool {
         self.cancel_pointer_repeat();
@@ -21005,8 +21013,10 @@ mod tests {
         let inode = ui.widgets.get(&input).unwrap().node.unwrap();
         let b = scene.get(inode).unwrap().bounds;
         assert!(ui.pointer_pressed(&mut scene, b.x + 4.0, b.y + 4.0));
+        assert!(!ui.ime_is_composing());
         assert!(ui.ime_commit("你好"));
         assert!(ui.ime_preedit("世界", Some((0, 6))));
+        assert!(ui.ime_is_composing());
         ui.sync(&mut scene);
         assert_eq!(ui.text_input_value(input), Some("你好"));
         let label = ui.widgets.get(&input).unwrap().label_node.unwrap();
@@ -21021,6 +21031,7 @@ mod tests {
         assert!(un.bounds.width > 1.0);
         // Clear preedit hides underline.
         assert!(ui.ime_clear_preedit());
+        assert!(!ui.ime_is_composing());
         ui.sync(&mut scene);
         assert!(!scene.get(ul).unwrap().visible);
     }

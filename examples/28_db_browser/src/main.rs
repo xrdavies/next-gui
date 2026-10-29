@@ -33,6 +33,7 @@ mod view_keys;
 mod reference_editor;
 mod table_migration;
 mod filters;
+mod browse_filter;
 mod prefs;
 mod pragmas;
 mod project;
@@ -264,6 +265,7 @@ struct Demo {
     exit_requested: bool,
     reveal_browse_selection: bool,
     browse_header_column: Option<usize>,
+    filter_session: browse_filter::Session,
 }
 
 #[allow(dead_code)]
@@ -475,6 +477,8 @@ struct BuiltUiIds {
     ov_cipher_page: WidgetId,
     ov_cipher_kdf: WidgetId,
     ov_prefs_font: WidgetId,
+    ov_prefs_filter_delay: WidgetId,
+    ov_prefs_filter_escape: WidgetId,
     ov_prefs_toolbars: [WidgetId; 5],
     ov_prefs_theme: WidgetId,
     ov_prefs_confirm: WidgetId,
@@ -730,6 +734,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_cipher_page: b.ov_cipher_page,
             ov_cipher_kdf: b.ov_cipher_kdf,
             ov_prefs_font: b.ov_prefs_font,
+            ov_prefs_filter_delay: b.ov_prefs_filter_delay,
+            ov_prefs_filter_escape: b.ov_prefs_filter_escape,
             ov_prefs_toolbars: b.ov_prefs_toolbars,
             ov_prefs_theme: b.ov_prefs_theme,
             ov_prefs_confirm: b.ov_prefs_confirm,
@@ -1639,6 +1645,15 @@ impl Demo {
                 else {state.confirm_kind=ConfirmKind::Revert;state.confirm_open=true;}
             }
         }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("filter-") {
+                state.new_memory_db().unwrap();
+                state.conn.as_ref().unwrap().execute_batch("CREATE TABLE names(name TEXT, amount INTEGER); INSERT INTO names VALUES('alpha',1),('alpine',2),('beta',3),('A_B',4),('A%B',5);").unwrap();
+                state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "names").unwrap(); state.tab=MainTab::Browse; state.dirty=true;
+                if tab.contains("escape") {state.prefs.filter_escape="!".into();}
+                if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+            }
+        }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("view-keys")) {
             state.plot.check(3,1,true);state.sync_current_plot().unwrap();
@@ -1656,6 +1671,7 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("filter-")) {built.ui.set_focus(Some(built.browse_global_filter));built.ui.sync(&mut built.scene);}
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("revert-")) && state.confirm_open {built.ui.set_focus(Some(built.modal));built.ui.sync(&mut built.scene);}
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| (tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-")) && tab.contains("apply")) {
             built.ui.set_focus(Some(built.btn_edit_cell)); built.ui.sync(&mut built.scene);
@@ -1741,11 +1757,14 @@ impl Demo {
         let last_log_revision = state.sql_log.revision();
         let last_edit_revision = state.edit_revision;
         let last_schema_names = state.schema_names.clone();
+        let ids = BuiltUiIds::from(&built);
+        let filter_session = browse_filter::Session::new(&state, &built.ui, &ids);
         Self {
+            filter_session,
             font,
             theme,
             state,
-            ids: BuiltUiIds::from(&built),
+            ids,
             last_body_ratio: built.ui.splitter_ratio(built.body_splitter),
             last_structure_ratio: built.ui.splitter_ratio(built.structure_splitter),
             last_dock_ratio: built.ui.splitter_ratio(built.dock_splitter),
@@ -2236,6 +2255,8 @@ impl Demo {
                 }
             }
             OverlayKind::Preferences => {
+                if let Some(value) = self.ui.text_input_value(self.ids.ov_prefs_filter_delay) { self.state.prefs_filter_delay = value.to_string(); }
+                if let Some(value) = self.ui.text_input_value(self.ids.ov_prefs_filter_escape) { self.state.prefs_filter_escape = value.to_string(); }
                 for (index, id) in self.ids.ov_prefs_toolbars.iter().enumerate() {
                     if let Some(style) = self.ui.select_selected(*id) { self.state.prefs_toolbar_styles[index] = style; }
                 }
@@ -2958,6 +2979,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let filter_input = browse_filter::InputSession::capture(&self.state, &self.ui, &self.ids);
         self.snapshot_cell_editor();
         let reveal_applied_cell = std::mem::take(&mut self.state.reveal_applied_cell);
         let cell_focus = ((self.last_edit_revision == self.state.edit_revision || reveal_applied_cell) && self.state.overlay.is_none() && !self.state.confirm_open)
@@ -2972,6 +2994,10 @@ impl Demo {
             && self.state.overlay.is_none() && !self.state.confirm_open;
         let mode_session = (mode_focused && self.last_edit_revision == self.state.edit_revision)
             .then(|| self.ui.select_state(self.ids.edit_mode).map(|session| (self.ui.select_selected(self.ids.edit_mode), session))).flatten();
+        let prefs_input = if self.state.overlay == Some(OverlayKind::Preferences) {
+            [self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape].into_iter().enumerate().find_map(|(index,id)|
+                (id.0!=0 && self.ui.focused()==Some(id)).then(||self.ui.text_input_state(id).map(|session|(index,session))).flatten())
+        } else {None};
         let prefs_session = if self.state.overlay == Some(OverlayKind::Preferences) {
             self.snapshot_overlay();
             self.ids.ov_prefs_toolbars.iter().enumerate().find_map(|(index, id)|
@@ -3313,6 +3339,11 @@ impl Demo {
         self.last_browse_sel = self.ui.select_selected(self.ids.browse_select);
         self.last_browse_row = self.state.browse().sel_row;
         self.last_log_revision = log_revision;
+        if self.state.overlay == Some(OverlayKind::Preferences) {
+            if let Some((index,session))=prefs_input {let id=[self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape][index];self.ui.set_focus(Some(id));self.ui.restore_text_input_state(id,&session);self.ui.sync(&mut self.scene);}
+        }
+        if let Some(session) = filter_input { session.restore(&self.state, &mut self.ui, &self.ids); self.ui.sync(&mut self.scene); }
+        self.filter_session.reconcile(&self.state, &self.ui, &self.ids);
     }
 
     fn refresh_sql_log(&mut self) -> bool {
@@ -3369,6 +3400,7 @@ impl Demo {
     }
 
     fn request_document_action(&mut self, action: DocumentAction) {
+        self.cancel_browse_filter();
         if let Err(error) = self.state.guard_background_idle() {
             self.set_error(error);
             return;
@@ -3833,6 +3865,7 @@ impl Demo {
     }
 
     fn handle_menu(&mut self, item: u64) {
+        self.cancel_browse_filter();
         if self.state.external_cell.is_some() {self.set_error("Apply or cancel the external editing session first");self.rebuild=true;return;}
         let view_action=(mid::VIEW_DOCK_EDIT..=mid::VIEW_DOCK_REMOTE).contains(&item);
         if !view_action {if let Err(error)=self.state.guard_background_idle() {self.set_error(error);return;}}
@@ -4398,6 +4431,7 @@ impl Demo {
             || self.ids.browse_table.0 == 0 || self.ui.focused() != Some(self.ids.browse_table) || self.ui.has_open_popup()
             || modifiers.shift || modifiers.alt { return false; }
         if modifiers.commandish() && matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
+            self.cancel_browse_filter();
             self.snapshot_inputs();
             let names = self.state.browse_tables();
             if names.is_empty() { return true; }
@@ -4538,6 +4572,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        self.cancel_browse_filter();
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
         if id==self.ids.btn_dock_edit_close || id==self.ids.btn_dock_close {
             self.snapshot_inputs();
@@ -5019,6 +5054,7 @@ impl Demo {
     }
 
     fn apply_browse_select(&mut self) -> Result<(), String> {
+        self.cancel_browse_filter();
         if self.ids.browse_select.0 == 0 {
             return Ok(());
         }
@@ -5242,6 +5278,7 @@ impl Demo {
             let Some(col_name) = res.columns.get(col_idx).cloned() else {
                 return;
             };
+            self.cancel_browse_filter();
             match self.state.sort_browse_column(col_name, append) {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
@@ -5524,6 +5561,7 @@ impl AppCallbacks for Demo {
     fn can_close(&self) -> bool {
         !self.state.dirty
             && self.state.external_cell.is_none()
+            && self.state.browse_work.is_none()
             && self.state.plot_work.is_none()
             && self.state.csv_work.is_none()
             && !self.state.sql_busy
@@ -5734,7 +5772,7 @@ impl AppCallbacks for Demo {
                         self.after_ui(ctx);
                         return;
                     }
-                    if key == KeyCode::Enter && self.ui.focused().is_some_and(|id| id == self.ids.browse_filter || id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)) {
+                    if key == KeyCode::Enter && !self.ui.ime_is_composing() && self.ui.focused().is_some_and(|id| id == self.ids.browse_filter || id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)) {
                         self.handle_button(self.ids.btn_browse_go);
                         self.after_ui(ctx);
                         return;
@@ -5949,6 +5987,8 @@ impl AppCallbacks for Demo {
                 self.needs_paint = true;
             }
         }
+        if let Some(delay) = self.advance_browse_filter(std::time::Instant::now()) { ctx.request_redraw_after(delay); }
+        if self.rebuild { self.do_rebuild(); }
         let hold_qa = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("pragmas-hold");
         if hold_qa && !self.qa_stepper_started {
             self.qa_stepper_started = true;
@@ -6068,7 +6108,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

@@ -310,6 +310,8 @@ pub struct BuiltUi {
     pub ov_cipher_page: WidgetId,
     pub ov_cipher_kdf: WidgetId,
     pub ov_prefs_font: WidgetId,
+    pub ov_prefs_filter_delay: WidgetId,
+    pub ov_prefs_filter_escape: WidgetId,
     pub ov_prefs_toolbars: [WidgetId; 5],
     pub ov_prefs_theme: WidgetId,
     pub ov_prefs_confirm: WidgetId,
@@ -402,7 +404,7 @@ pub fn status_text(state: &AppState) -> String {
             "not encrypted"
         },
     );
-    format!("{path} · {flags} · {}",state.status_msg)
+    format!("{path} · {flags} · {}{}", if state.browse_work.is_some() { "Filtering… · " } else { "" }, state.status_msg)
 }
 
 fn constraint_cell_editor(c: &mut next_gui_ui::FlexBuilder<'_>, table: WidgetId, state: &AppState, theme: &Theme) -> WidgetId {
@@ -757,6 +759,8 @@ pub fn build_ui(
     let mut ov_cipher_page = z;
     let mut ov_cipher_kdf = z;
     let mut ov_prefs_font = z;
+    let mut ov_prefs_filter_delay = z;
+    let mut ov_prefs_filter_escape = z;
     let mut ov_prefs_toolbars = [z; 5];
     let mut ov_prefs_theme = z;
     let mut ov_prefs_confirm = z;
@@ -1548,6 +1552,14 @@ pub fn build_ui(
                             c.row(row, |r| {
                                 r.text("Default frozen cols");
                                 ov_frozen = r.text_input_styled(format!("{}", state.prefs_frozen_cols), "0", name_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Filter delay (ms)");
+                                ov_prefs_filter_delay = r.text_input_styled(&state.prefs_filter_delay, "200", name_s);
+                            });
+                            c.row(row, |r| {
+                                r.text("Filter escape character");
+                                ov_prefs_filter_escape = r.text_input_styled(&state.prefs_filter_escape, "", name_s);
                             });
                             for (index, group) in crate::prefs::TOOLBAR_GROUPS.iter().enumerate() {
                                 c.row(RowStyle { height: row.height.max(state.prefs.font_size+20.0), ..row }, |r| {
@@ -2747,6 +2759,11 @@ pub fn build_ui(
         crate::sql_syntax::apply(&mut ui, ov_idx_preview, &theme);
     }
     ui.set_accessible_name(ov_idx_cols, "Index columns and expressions");
+    ui.set_text_input_integer_range(ov_prefs_filter_delay, Some((0, 5000)));
+    ui.set_accessible_name(ov_prefs_filter_delay, "Filter delay in milliseconds");
+    ui.set_accessible_name(ov_prefs_filter_escape, "Filter escape character");
+    ui.set_tooltip_text(ov_prefs_filter_delay, "Wait 0–5000 ms after typing before applying Browse filters; 0 applies immediately.");
+    ui.set_tooltip_text(ov_prefs_filter_escape, "One character escapes LIKE wildcards. Leave empty to disable escaping.");
     ui.set_accessible_name(ov_idx_where, "Partial index WHERE condition");
     if btn_sql_comment.0 != 0 {
         ui.set_accessible_name(btn_sql_comment, "Toggle SQL line comments (Ctrl/Cmd+/)");
@@ -3108,6 +3125,8 @@ pub fn build_ui(
         ov_cipher_page,
         ov_cipher_kdf,
         ov_prefs_font,
+        ov_prefs_filter_delay,
+        ov_prefs_filter_escape,
         ov_prefs_toolbars,
         ov_prefs_theme,
         ov_prefs_confirm,
