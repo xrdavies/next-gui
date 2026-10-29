@@ -2617,6 +2617,11 @@ pub fn build_ui(
             "Applying these settings commits your current database edits. Page Size and Auto Vacuum changes also rebuild the database. Continue?".into(),
             "Cancel",
         ),
+        ConfirmKind::CellFormat => (
+            "Invalid data for this mode",
+            format!("{}\n\nApply this draft to the selected cell anyway? The current draft will be stored without formatting.",state.edit_format_issue.as_ref().map_or("Invalid cell data",|issue|issue.message.as_str())),
+            "Cancel",
+        ),
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
     let mut modal_style = ModalStyle::from_theme(&theme);
@@ -2625,7 +2630,7 @@ pub fn build_ui(
         modal_title,
         modal_body,
         modal_primary,
-        Some(if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
+        Some(if state.confirm_kind==ConfirmKind::CellFormat {"Apply Anyway"} else if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into()),
         modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
@@ -2828,6 +2833,7 @@ pub fn build_ui(
     ui.set_accessible_name(edit_value,"Cell value");
     ui.set_accessible_name(edit_mode,"Cell editor mode");
     if let Some(view) = &state.edit_view { ui.restore_text_area_state(edit_value, view); }
+    highlight_cell_format(&mut ui,state,edit_value,&theme);
     if let Some(view) = &state.edit_col_view { ui.restore_text_input_state(edit_col, view); }
     ui.set_accessible_name(btn_dock_close,"Close selected dock page");
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
@@ -3128,4 +3134,11 @@ fn visible_docks_index(state: &AppState) -> usize {
         .iter()
         .position(|d| *d == state.dock_focus)
         .unwrap_or(0)
+}
+
+/// Existing scalar-range marks retain selection and history, including EOF errors.
+pub fn highlight_cell_format(ui: &mut Ui, state: &AppState, area: WidgetId, theme: &Theme) {
+    let ranges=state.edit_format_issue.as_ref().and_then(|issue|issue.position).map(|at|at..at.saturating_add(1).min(state.edit_value.chars().count())).into_iter().collect();
+    ui.set_text_area_highlights(area,ranges,theme.colors.danger);
+    ui.set_accessible_name(area,state.edit_format_issue.as_ref().map_or("Cell value".into(),|issue|format!("Cell value — {}",issue.message)));
 }

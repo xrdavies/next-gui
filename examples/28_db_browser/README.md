@@ -181,7 +181,7 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   spellings, object order and duplicate keys. It is bounded to16 MiB input/32 MiB
   output/depth128; XML retains its existing bounds and normalizes only inter-tag
   line indentation, preserving mixed text, inline spaces, CDATA, entities and
-  xml:space. Full Qt serialization and invalid-format override workflows remain.
+  xml:space. Full Qt serialization and cross-mode history details remain.
 - Foreign-key navigation resolves omitted parent PK columns, groups composite keys
   and filters on the stored typed values; NULL keys report no parent. Source rows
   still require an unshadowed rowid.
@@ -329,3 +329,13 @@ redraw, sync/repaint when it returns true, and schedule the next
 Deliver release events and call `Ui::cancel_pointer_repeat()` on native pointer
 leave, including when tracking is paused outside an arrow. A fresh declarative
 UI deliberately cancels capture; editor values/history use their existing sessions.
+
+Cell JSON/XML diagnostics now mark parser positions, including CJK and end-of-input,
+without replacing selection/history. Apply and focused Cmd/Ctrl+Enter open the same
+Cancel-default house confirmation for malformed format data. Apply Anyway stores
+the exact typed draft without formatting; it repeats writable/generated/source and
+storage checks and rejects changed confirmations. Save All retains chosen destinations
+and postpones SQL-file/database/project writes and document closing until the question
+is resolved. Cancel/Escape retain the draft and selection. Parser resource limits,
+INTEGER/REAL conversion errors and SQLite write failures cannot use this override.
+JSON error columns use parser byte units; visual marks convert them to scalar indices.

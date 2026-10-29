@@ -562,6 +562,9 @@ pub struct AppState {
     pub confirm_kind: ConfirmKind,
     pub confirm_open: bool,
     pub pending_document: Option<DocumentAction>,
+    pub pending_cell_save: Option<(Option<PathBuf>, Option<PathBuf>)>,
+    pending_cell_apply: Option<CellApplyConfirmation>,
+    pub edit_format_issue: Option<crate::cell_format::FormatDiagnostic>,
 
     // Phase 3
     pub project_path: Option<String>,
@@ -651,6 +654,20 @@ enum EditCellSource {
     Sql { identity: Arc<()>, row: usize, column: usize },
 }
 
+#[derive(Clone, PartialEq)]
+struct CellApplyConfirmation {
+    revision: u64,
+    path: String,
+    browse: usize,
+    target: (String, String, i64, String),
+    mode: EditCellMode,
+    storage: usize,
+    text: String,
+    original: rusqlite::types::Value,
+    saved: rusqlite::types::Value,
+    compact: bool,
+}
+
 pub struct SqlJob {
     handle: std::thread::JoinHandle<(LoggedConnection, Result<QueryResult, String>, bool)>,
 }
@@ -664,6 +681,7 @@ pub enum ConfirmKind {
     Documents,
     Revert,
     Pragmas,
+    CellFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -904,6 +922,9 @@ impl AppState {
             confirm_kind: ConfirmKind::None,
             confirm_open: false,
             pending_document: None,
+            pending_cell_save: None,
+            pending_cell_apply: None,
+            edit_format_issue: None,
             project_path: None,
             project_xml: None,
             saved_project: serde_json::Value::Null,
@@ -3254,7 +3275,7 @@ impl AppState {
         self.start_sql_text(sql[start..end].to_string())
     }
 
-    pub fn apply_cell_draft(&mut self) -> Result<(), String> {
+    fn cell_apply_target(&mut self) -> Result<(String, String, i64, String), String> {
         if self.sql_cell_read_only() { return Err("SQL result cells are read-only".into()); }
         if self.tab != MainTab::Browse || matches!(self.edit_source, EditCellSource::BrowseReadOnly) {
             return Err("This cell is read-only; select an editable Browse cell".into());
@@ -3268,12 +3289,67 @@ impl AppState {
         let column = self.edit_col.trim().to_string();
         if column.is_empty() { return Err("Select a column first".into()); }
         if self.edit_cell_generated() { return Err("Generated columns are read-only; edit their source columns".into()); }
+        Ok((schema, table, rowid, column))
+    }
+
+    fn cell_apply_confirmation(&mut self) -> Result<CellApplyConfirmation, String> {
+        let target=self.cell_apply_target()?;
+        Ok(CellApplyConfirmation {revision:self.edit_revision,path:self.path.clone(),browse:self.browse_tab_idx,
+            target,mode:self.edit_mode,storage:self.edit_type,text:self.edit_value.clone(),
+            original:self.edit_original.clone(),saved:self.edit_saved.clone(),compact:self.prefs.indent_compact})
+    }
+
+    pub fn invalidate_cell_format(&mut self) {
+        self.edit_format_issue=None;
+        self.pending_cell_apply=None;
+        if self.pending_cell_save.take().is_some() {self.pending_document=None;}
+        if self.confirm_kind==ConfirmKind::CellFormat {self.confirm_open=false;self.confirm_kind=ConfirmKind::None;}
+    }
+
+    pub fn refresh_cell_format_issue(&mut self) {
+        self.edit_format_issue=if self.edit_type==0 {None} else {match self.edit_mode {
+            EditCellMode::Json=>crate::cell_format::json_diagnostic(&self.edit_value),
+            EditCellMode::Xml=>crate::cell_format::xml_diagnostic(&self.edit_value),_=>None,
+        }};
+    }
+
+    /// Prepare a format-only question; storage/target errors never become an override.
+    pub fn prepare_cell_format_confirmation(&mut self) -> Result<bool, String> {
+        if !matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml) {return Ok(false);}
+        let confirmation=self.cell_apply_confirmation()?;
+        self.cell_value(false)?;
+        self.refresh_cell_format_issue();
+        if let Some(issue)=&self.edit_format_issue {
+            if !issue.can_apply_raw {return Err(issue.message.clone());}
+            self.pending_cell_apply=Some(confirmation);
+            self.confirm_kind=ConfirmKind::CellFormat;self.confirm_open=true;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn cancel_cell_format_confirmation(&mut self) {
+        self.pending_cell_apply=None;
+        if self.confirm_kind==ConfirmKind::CellFormat {self.confirm_open=false;self.confirm_kind=ConfirmKind::None;}
+    }
+
+    pub fn apply_confirmed_cell_format(&mut self) -> Result<(), String> {
+        let pending=self.pending_cell_apply.take().ok_or("The cell confirmation is no longer current")?;
+        if self.confirm_kind==ConfirmKind::CellFormat {self.confirm_open=false;self.confirm_kind=ConfirmKind::None;}
+        if pending!=self.cell_apply_confirmation()? {return Err("The cell changed; apply its current draft again".into());}
+        self.apply_cell_draft_inner(false)
+    }
+
+    pub fn apply_cell_draft(&mut self) -> Result<(), String> {self.apply_cell_draft_inner(true)}
+
+    fn apply_cell_draft_inner(&mut self, validate_format: bool) -> Result<(), String> {
+        let (schema,table,rowid,column)=self.cell_apply_target()?;
         let applied_mode = self.edit_mode;
         let evaluating = self.edit_mode == EditCellMode::Evaluation;
-        let compacting = self.prefs.indent_compact && matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml);
+        let compacting = validate_format && self.prefs.indent_compact && matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml);
         let mut value = if evaluating { crate::cell_format::evaluate(self.conn.as_ref().unwrap(), &self.edit_value)? }
             else if self.edit_mode == EditCellMode::Image { self.edit_original.clone() }
-            else { self.edited_cell_value()? };
+            else { self.cell_value(validate_format)? };
         if compacting {
             let text = match &value {rusqlite::types::Value::Text(text)=>Some((text.as_str(),false)),
                 rusqlite::types::Value::Blob(bytes)=>Some((std::str::from_utf8(bytes).map_err(|_|"Invalid UTF-8 format data")?,true)),_=>None};
@@ -3286,7 +3362,7 @@ impl AppState {
         self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
         self.mark_dirty();
         self.edit_saved = value;
-        if compacting {self.edit_original=self.edit_saved.clone();self.show_edit_value();}
+        if compacting || !validate_format {self.edit_original=self.edit_saved.clone();self.show_edit_value();}
         if evaluating {
             self.edit_original = self.edit_saved.clone(); self.edit_mode = EditCellMode::Text;
             self.edit_type = match self.edit_saved { rusqlite::types::Value::Null=>0, rusqlite::types::Value::Integer(_)=>1,
@@ -3454,6 +3530,11 @@ impl AppState {
         if let Some(path) = project {
             if let Some(conn) = &self.conn { db::guard_output_path(conn, path)?; }
             if database == Some(path) { return Err("Database and project destinations must differ".into()); }
+        }
+        // Validate before saving any SQL file; invalid cell data must not partially save documents.
+        if self.has_cell_draft() {
+            self.cell_apply_target()?;
+            if !matches!(self.edit_mode,EditCellMode::Evaluation|EditCellMode::Image) {self.edited_cell_value()?;}
         }
         for i in 0..self.sql_tabs.len() {
             if self.sql_tab_dirty(i) {
@@ -3739,6 +3820,7 @@ impl AppState {
 
     fn reset_cell_editor_session(&mut self) {
         // Equal text in another cell must not inherit this cell's undo history.
+        self.invalidate_cell_format();
         self.edit_revision = self.edit_revision.wrapping_add(1);
         self.edit_view = None;
         self.edit_col_view = None;
@@ -3772,6 +3854,7 @@ impl AppState {
         if self.edit_mode == EditCellMode::Image {
             self.decode_edit_image();
         }
+        self.refresh_cell_format_issue();
     }
 
     pub fn mark_cell_display_baseline(&mut self) {
@@ -4178,6 +4261,55 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn cell_format_confirmation_is_typed_source_bound_and_never_bypasses_write_guards() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.indent_compact=true;
+        state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        for (mode,bad) in [(EditCellMode::Json,"{\"键\":\"中文\",\"items\":[1,]}"),(EditCellMode::Xml,"<r>中文<x></r>")] {
+            for blob in [false,true] {
+                state.discard_cell_draft();state.goto_browse_record(1).unwrap();state.set_edit_mode(mode).unwrap();
+                state.edit_type=if blob {4}else{3};state.edit_value=bad.into();
+                let before=state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap();
+                assert!(state.apply_cell_draft().is_err());assert!(state.prepare_cell_format_confirmation().unwrap());
+                assert!(state.edit_format_issue.as_ref().unwrap().position.is_some());
+                assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),before);
+                state.cancel_cell_format_confirmation();assert!(state.has_cell_draft());assert_eq!(state.edit_value,bad);
+                assert!(state.apply_confirmed_cell_format().is_err());
+                assert!(state.prepare_cell_format_confirmation().unwrap());state.edit_value.push(' ');
+                assert!(state.apply_confirmed_cell_format().unwrap_err().contains("changed"));state.edit_value=bad.into();
+                assert!(state.prepare_cell_format_confirmation().unwrap());state.edit_col="other".into();
+                assert!(state.apply_confirmed_cell_format().is_err());state.edit_col="v".into();
+                assert!(state.prepare_cell_format_confirmation().unwrap());let rowid=state.browse().rowids[0];state.browse_mut().rowids[0]=rowid+1;
+                assert!(state.apply_confirmed_cell_format().unwrap_err().contains("changed"));state.browse_mut().rowids[0]=rowid;
+                assert!(state.prepare_cell_format_confirmation().unwrap());state.read_only=true;
+                assert!(state.apply_confirmed_cell_format().unwrap_err().contains("read-only"));state.read_only=false;
+                assert!(state.prepare_cell_format_confirmation().unwrap());state.apply_confirmed_cell_format().unwrap();
+                let expected=if blob {Value::Blob(bad.as_bytes().to_vec())}else{Value::Text(bad.into())};
+                assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),expected);
+                assert_eq!(state.edit_saved,expected);assert!(!state.has_cell_draft());assert!(state.dirty);
+                assert!(state.apply_confirmed_cell_format().is_err());
+            }
+        }
+        state.edit_type=1;state.edit_value="{bad".into();
+        assert!(state.prepare_cell_format_confirmation().unwrap_err().contains("INTEGER"));assert!(!state.confirm_open);
+        state.edit_type=2;state.edit_value="NaN".into();
+        assert!(state.prepare_cell_format_confirmation().unwrap_err().contains("finite"));assert!(!state.confirm_open);
+        state.edit_type=3;state.edit_value="<bad".into();state.tab=MainTab::Pragmas;
+        assert!(state.prepare_cell_format_confirmation().unwrap_err().contains("read-only"));state.tab=MainTab::Browse;
+        assert!(state.prepare_cell_format_confirmation().unwrap());state.set_edit_mode(EditCellMode::Text).unwrap();
+        assert!(!state.confirm_open);assert!(state.edit_format_issue.is_none());assert!(state.apply_confirmed_cell_format().is_err());
+        state.discard_cell_draft();
+        // An unchanged malformed BLOB must not be reconstructed from replacement glyphs.
+        let bytes=Value::Blob(vec![b'<',0xff,b'>']);state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[&bytes]).unwrap();
+        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Xml).unwrap();
+        assert!(state.prepare_cell_format_confirmation().unwrap());state.apply_confirmed_cell_format().unwrap();assert_eq!(state.edit_saved,bytes);
+        state.conn.as_ref().unwrap().execute_batch("CREATE TRIGGER reject_format BEFORE UPDATE ON t BEGIN SELECT RAISE(ABORT,'format write rejected'); END;").unwrap();
+        state.edit_value="<bad".into();assert!(state.prepare_cell_format_confirmation().unwrap());
+        assert!(state.apply_confirmed_cell_format().unwrap_err().contains("format write rejected"));assert!(state.has_cell_draft());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),bytes);
     }
 
     #[test]

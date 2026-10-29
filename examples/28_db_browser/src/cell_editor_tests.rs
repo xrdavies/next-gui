@@ -1,6 +1,90 @@
 use super::*;
 
 #[test]
+fn cell_invalid_format_modal_keeps_drafts_history_focus_and_explicit_apply() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    demo.state.prefs.auto_switch_mode=false;demo.state.prefs.indent_compact=true;
+    demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
+    demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    let folder=std::env::var("NEXT_GUI_CELL_FORMAT_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    let stored=|demo:&Demo|demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|r|r.get::<_,Value>(0)).unwrap();
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+            demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+            for (kind,mode,bad) in [("json",EditCellMode::Json,"{\n    \"name\": \"中文\",\n    \"steps\": [1,]\n}"),
+                ("xml",EditCellMode::Xml,"<?xml version='1.0'?>\n<report><name>中文</name>\n<item></report>")] {
+                demo.state.discard_cell_draft();
+                demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[if mode==EditCellMode::Json {"{\"saved\":true}"} else {"<r><saved/></r>"}]).unwrap();
+                demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+                demo.state.set_edit_mode(mode).unwrap();demo.do_rebuild();let original=stored(&demo);
+                demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text(bad);demo.snapshot_inputs();
+                assert!(demo.state.edit_format_issue.as_ref().unwrap().position.is_some());assert!(demo.ui.accessible_name(demo.ids.edit_value).unwrap().contains("Invalid"));
+                demo.ui.select_text_area_range(demo.ids.edit_value,2..5);demo.ui.sync(&mut demo.scene);let selection=demo.ui.text_area_selection(demo.ids.edit_value);
+                let revision=demo.state.edit_revision;
+                if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-format-mark-{kind}-{name}-{width}"));}
+                assert!(demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));
+                assert!(demo.state.confirm_open);assert_eq!(demo.state.confirm_kind,ConfirmKind::CellFormat);assert_eq!(demo.ui.focused(),Some(demo.ids.modal));
+                assert_eq!(stored(&demo),original);let modal=demo.ui.modal_state(demo.ids.modal).unwrap();demo.do_rebuild();assert_eq!(demo.ui.modal_state(demo.ids.modal),Some(modal));
+                if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-format-confirm-{kind}-{name}-{width}"));}
+                demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();
+                assert!(!demo.state.confirm_open);assert_eq!(demo.state.edit_value,bad);assert_eq!(stored(&demo),original);assert!(demo.state.has_cell_draft());
+                assert_eq!(demo.state.edit_revision,revision);assert_eq!(demo.ui.text_area_selection(demo.ids.edit_value),selection);assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));
+                assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();assert!(demo.state.edit_format_issue.is_none());
+                assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,bad);assert!(demo.state.edit_format_issue.is_some());
+                demo.handle_button(demo.ids.btn_edit_cell);demo.do_rebuild();assert!(demo.state.confirm_open);
+                demo.ui.key_input(UiKey::Tab);demo.do_rebuild();demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();
+                assert!(!demo.state.confirm_open);assert_eq!(stored(&demo),Value::Text(bad.into()));assert_eq!(demo.state.edit_value,bad);assert!(!demo.state.has_cell_draft());
+                assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));
+                demo.state.tab=MainTab::Pragmas;demo.do_rebuild();assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));
+                assert!(demo.state.edit_format_issue.is_some());assert!(!demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));
+                if width==800 {if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-format-readonly-{kind}-{name}-{width}"));}}
+                demo.state.tab=MainTab::Browse;demo.do_rebuild();
+                // A valid edit clears both the marker and its accessible diagnostic.
+                demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text(if mode==EditCellMode::Json {"{}"}else{"<r/>"});demo.snapshot_inputs();
+                assert!(demo.state.edit_format_issue.is_none());assert_eq!(demo.ui.accessible_name(demo.ids.edit_value),Some("Cell value".into()));demo.state.discard_cell_draft();
+                // Reset storage for the next mode/size so Undo reaches valid text.
+                demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region='original' WHERE observed='2026-10-01'",[]).unwrap();
+                demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+            }
+        }
+    }
+}
+
+#[test]
+fn cell_invalid_format_save_all_keeps_destinations_and_defers_document_actions() {
+    use crate::state::EditCellMode;
+    let dir=tempfile::tempdir().unwrap();let database=dir.path().join("saved.sqlite");let project=dir.path().join("saved.sqbpro");let sql=dir.path().join("saved.sql");
+    let mut demo=Demo::new(1000,740,PresentBackend::Softbuffer);demo.state.new_memory_db().unwrap();
+    demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('saved');").unwrap();
+    demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","t").unwrap();demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();
+    demo.state.save_as(database.to_str().unwrap()).unwrap();demo.state.project_path=Some(project.to_string_lossy().into_owned());
+    std::fs::write(&sql,"SELECT 'saved';").unwrap();demo.state.open_sql_file(&sql).unwrap();*demo.state.sql_editor_mut()="SELECT 'draft';".into();
+    demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.set_edit_mode(EditCellMode::Json).unwrap();demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text("{\"键\":\"中文\",bad}");demo.snapshot_inputs();let bad=demo.state.edit_value.clone();
+    assert!(demo.state.save_documents(None,Some(&project)).is_err());assert_eq!(std::fs::read_to_string(&sql).unwrap(),"SELECT 'saved';");assert!(!project.exists());
+    demo.handle_menu(mid::FILE_SAVE_ALL);demo.do_rebuild();assert!(demo.state.confirm_open);
+    assert_eq!(demo.state.pending_cell_save,Some((None,Some(project.clone()))));assert_eq!(std::fs::read_to_string(&sql).unwrap(),"SELECT 'saved';");
+    demo.ui.key_input(UiKey::Escape);demo.handle_modal();demo.do_rebuild();
+    assert!(!demo.state.confirm_open);assert!(demo.state.pending_cell_save.is_none());assert!(demo.state.has_cell_draft());assert!(!project.exists());assert_eq!(std::fs::read_to_string(&sql).unwrap(),"SELECT 'saved';");
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,String>(0)).unwrap(),"saved");
+    demo.request_document_action(DocumentAction::Exit);demo.do_rebuild();assert_eq!(demo.state.confirm_kind,ConfirmKind::Documents);
+    demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();
+    assert_eq!(demo.state.confirm_kind,ConfirmKind::CellFormat);assert_eq!(demo.state.pending_document,Some(DocumentAction::Exit));assert!(!demo.exit_requested);assert!(!project.exists());
+    demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();assert!(demo.state.has_cell_draft());assert!(!demo.exit_requested);assert!(demo.state.pending_document.is_none());
+    demo.request_document_action(DocumentAction::Exit);demo.do_rebuild();demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();
+    demo.ui.key_input(UiKey::Tab);demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();
+    assert!(demo.exit_requested);assert!(!demo.state.has_cell_draft());assert!(!demo.state.dirty);assert!(demo.state.pending_cell_save.is_none());
+    assert_eq!(std::fs::read_to_string(&sql).unwrap(),"SELECT 'draft';");assert!(project.exists());
+    let conn=rusqlite::Connection::open(&database).unwrap();assert_eq!(conn.query_row("SELECT v FROM t",[],|r|r.get::<_,String>(0)).unwrap(),bad);
+}
+
+#[test]
 fn cell_indent_toggle_keeps_clean_storage_drafts_undo_focus_and_read_only_views() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;

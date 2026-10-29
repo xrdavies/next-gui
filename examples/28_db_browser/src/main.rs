@@ -1384,6 +1384,19 @@ impl Demo {
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                         if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
                     }
+                    if tab.contains("invalid-") {
+                        let (mode,text)=if tab.contains("invalid-json") {(crate::state::EditCellMode::Json,"{\n    \"name\": \"中文\",\n    \"steps\": [1,]\n}")}
+                            else {(crate::state::EditCellMode::Xml,"<?xml version='1.0'?>\n<report><name>中文</name>\n<item></report>")};
+                        if tab.contains("readonly") {
+                            state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[text]).unwrap();
+                            state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();
+                            state.set_edit_mode(mode).unwrap();state.tab=MainTab::Pragmas;
+                        } else {
+                            state.set_edit_mode(mode).unwrap();state.edit_value=text.into();state.refresh_cell_format_issue();
+                            if tab.contains("confirm") {assert!(state.prepare_cell_format_confirmation().unwrap());}
+                        }
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    }
                     if tab.contains("wrapped") {
                         let line="SQL 中文🙂 value ".repeat(80);
                         let text=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
@@ -1491,7 +1504,8 @@ impl Demo {
         }
 
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
-            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
+            if state.confirm_open {built.ui.set_focus(Some(built.modal));}
+            else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
                 built.ui.set_focus(Some(built.edit_mode)); built.ui.key_input(UiKey::Space);
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("indent") {
                 built.ui.set_focus(Some(built.btn_cell_indent));
@@ -1671,13 +1685,15 @@ impl Demo {
             }
         }
         if self.last_edit_revision == self.state.edit_revision && !self.state.edit_cell_read_only() {
+            let mut changed=false;
             if self.ids.edit_col.0 != 0 {
                 if let Some(v) = self.ui.text_input_value(self.ids.edit_col) {
+                    changed |= self.state.edit_col!=v;
                     self.state.edit_col = v.to_string();
                 }
             }
             let null_selected = self.ui.select_selected(self.ids.edit_type) == Some(0) && self.state.edit_type != 0;
-            if let Some(t) = self.ui.select_selected(self.ids.edit_type) { self.state.edit_type = t; }
+            if let Some(t) = self.ui.select_selected(self.ids.edit_type) {changed |= self.state.edit_type!=t;self.state.edit_type = t;}
             if self.ids.edit_value.0 != 0 {
                 if let Some(v) = self.ui.text_area_value(self.ids.edit_value).map(str::to_owned) {
                     if self.state.edit_type == 0 && !v.is_empty() && v != self.state.edit_value && !null_selected
@@ -1685,8 +1701,13 @@ impl Demo {
                         self.state.edit_type = if self.state.edit_mode == crate::state::EditCellMode::Hex {4} else {3};
                         self.ui.set_select_selected(self.ids.edit_type, Some(self.state.edit_type));
                     }
+                    changed |= self.state.edit_value!=v;
                     self.state.edit_value = v;
                 }
+            }
+            if changed {
+                self.state.invalidate_cell_format();self.state.refresh_cell_format_issue();
+                ui_build::highlight_cell_format(&mut self.ui,&self.state,self.ids.edit_value,&self.theme);
             }
             if null_selected {
                 if let Err(error) = self.state.set_cell_null() { self.set_error(error); }
@@ -3062,6 +3083,7 @@ impl Demo {
             }
             self.ui.set_focus(Some(self.ids.edit_mode)); self.ui.sync(&mut self.scene);
         }
+        ui_build::highlight_cell_format(&mut self.ui,&self.state,self.ids.edit_value,&self.theme);
         self.last_edit_revision = self.state.edit_revision;
         if self.state.confirm_open { self.ui.set_focus(Some(self.ids.modal)); self.ui.sync(&mut self.scene); }
         let clear = clear_color(&self.theme);
@@ -3208,6 +3230,9 @@ impl Demo {
                 None => return Ok(false),
             }
         } else { None };
+        if self.state.has_cell_draft() && self.state.prepare_cell_format_confirmation()? {
+            self.state.pending_cell_save=Some((database,project));return Ok(false);
+        }
         self.state.save_documents(database.as_deref(), project.as_deref())?;
         Ok(true)
     }
@@ -3254,6 +3279,7 @@ impl Demo {
         };
         match result {
             Ok(true) => self.perform_document_action(action),
+            Ok(false) if self.state.confirm_kind==ConfirmKind::CellFormat && self.state.confirm_open=>self.state.pending_document=Some(action),
             Ok(false) => self.state.status_msg = "Action canceled; documents remain open".into(),
             Err(e) => self.set_error(format!("Save/discard incomplete; documents remain open: {e}")),
         }
@@ -3756,6 +3782,7 @@ impl Demo {
             mid::FILE_SAVE_ALL => {
                 match self.save_documents_interactive(true) {
                     Ok(true) => self.clear_error(),
+                    Ok(false) if self.state.confirm_kind==ConfirmKind::CellFormat && self.state.confirm_open=>{},
                     Ok(false) => self.state.status_msg = "Save canceled".into(),
                     Err(e) => self.set_error(e),
                 }
@@ -4177,7 +4204,7 @@ impl Demo {
             || self.state.edit_cell_read_only() { return false; }
         self.handle_button(self.ids.btn_edit_cell);
         self.do_rebuild();
-        self.ui.set_focus(Some(self.ids.edit_value)); self.ui.sync(&mut self.scene);
+        if !self.state.confirm_open {self.ui.set_focus(Some(self.ids.edit_value));self.ui.sync(&mut self.scene);}
         true
     }
 
@@ -4540,10 +4567,8 @@ impl Demo {
             if self.state.browse().sel_row.is_none() {
                 self.state.browse_mut().sel_row = self.ui.table_selected_row(self.ids.browse_table);
             }
-            match self.state.apply_cell_draft() {
-                Ok(()) => self.clear_error(),
-                Err(e) => self.set_error(e),
-            }
+            let result=self.state.prepare_cell_format_confirmation().and_then(|pending|if pending {Ok(())}else{self.state.apply_cell_draft()});
+            match result {Ok(())=>self.clear_error(),Err(e)=>self.set_error(e)}
             self.rebuild = true;
             return;
         }
@@ -4984,6 +5009,9 @@ impl Demo {
             let kind = self.state.confirm_kind;
             self.state.confirm_open = false;
             self.state.confirm_kind = ConfirmKind::None;
+            if kind == ConfirmKind::CellFormat {
+                self.resolve_cell_format(action);return;
+            }
             if kind == ConfirmKind::Documents {
                 self.resolve_document_action(action);
                 return;
@@ -4993,6 +5021,22 @@ impl Demo {
             if !accepted { self.rebuild = true; return; }
             self.apply_confirmed_action(kind);
         }
+    }
+
+    fn resolve_cell_format(&mut self, action: ModalAction) {
+        let save=self.state.pending_cell_save.take();
+        let document=if save.is_some() {self.state.pending_document.take()} else {None};
+        if action!=ModalAction::Secondary {
+            self.state.cancel_cell_format_confirmation();self.state.status_msg="Apply canceled; cell draft retained".into();
+        } else {
+            let result=self.state.apply_confirmed_cell_format().and_then(|()| {
+                if let Some((database,project))=save {self.state.save_documents(database.as_deref(),project.as_deref())} else {Ok(())}
+            });
+            match result {Ok(())=>{self.clear_error();if let Some(action)=document {self.perform_document_action(action);}},Err(error)=>self.set_error(error)}
+        }
+        if self.ids.edit_value.0!=0 {self.ui.set_focus(Some(self.ids.edit_value));}
+        self.rebuild=true;self.do_rebuild();
+        if self.ids.edit_value.0!=0 {self.ui.set_focus(Some(self.ids.edit_value));self.ui.sync(&mut self.scene);}
     }
 
     fn apply_confirmed_action(&mut self, kind: ConfirmKind) {
@@ -5069,7 +5113,7 @@ impl Demo {
                     }
                 }
             }
-            ConfirmKind::None | ConfirmKind::Documents => {}
+            ConfirmKind::None | ConfirmKind::Documents | ConfirmKind::CellFormat => {}
         }
         self.rebuild = true;
     }

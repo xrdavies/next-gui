@@ -1,9 +1,37 @@
 use roxmltree::{Document, ParsingOptions};
 
-pub fn validate_json(text: &str) -> Result<(), String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatDiagnostic {
+    pub message: String,
+    pub position: Option<usize>,
+    pub can_apply_raw: bool,
+}
+
+fn parse_json(text: &str) -> Result<(), serde_json::Error> {
     let mut parser=serde_json::Deserializer::from_str(text);
     serde::Deserialize::deserialize(&mut parser).map(|_:serde::de::IgnoredAny|())
-        .and_then(|()|parser.end()).map_err(|error|format!("Invalid JSON: {error}"))
+        .and_then(|()|parser.end())
+}
+
+pub fn validate_json(text: &str) -> Result<(), String> {
+    parse_json(text).map_err(|error|format!("Invalid JSON: {error}"))
+}
+
+fn scalar_position(text: &str, line: usize, column: usize, byte_column: bool) -> usize {
+    let start=text.split_inclusive('\n').take(line.saturating_sub(1)).map(str::len).sum::<usize>().min(text.len());
+    let tail=&text[start..];
+    if byte_column {
+        let mut byte=column.saturating_sub(1).min(tail.find('\n').unwrap_or(tail.len()));
+        while !tail.is_char_boundary(byte) {byte-=1;}
+        text[..start+byte].chars().count()
+    } else {text[..start].chars().count()+column.saturating_sub(1).min(tail.split('\n').next().unwrap_or("").chars().count())}
+}
+
+pub fn json_diagnostic(text: &str) -> Option<FormatDiagnostic> {
+    parse_json(text).err().map(|error|FormatDiagnostic {
+        position:Some(if error.is_eof() {text.chars().count()} else {scalar_position(text,error.line(),error.column(),true)}),
+        message:format!("Invalid JSON: {error}"), can_apply_raw:true,
+    })
 }
 
 pub fn format_json(text: &str, indent: bool) -> Result<String, String> {
@@ -65,12 +93,23 @@ pub fn automatic_mode(value: &rusqlite::types::Value) -> crate::state::EditCellM
     EditCellMode::Text
 }
 
-pub fn xml_document(text: &str) -> Result<Document<'_>, String> {
+fn parse_xml(text: &str) -> Result<Document<'_>, FormatDiagnostic> {
     // shortcut: bounded whole-cell XML; upgrade to streaming validation for larger cell editors.
-    if text.len() > 16 * 1024 * 1024 { return Err("XML exceeds the 16 MiB editor limit".into()); }
+    if text.len() > 16 * 1024 * 1024 { return Err(FormatDiagnostic {message:"XML exceeds the 16 MiB editor limit".into(),position:None,can_apply_raw:false}); }
     Document::parse_with_options(text, ParsingOptions { allow_dtd: true, nodes_limit: 250_000, entity_resolver: None })
-        .map_err(|error| format!("Invalid XML: {error}"))
+        .map_err(|error| {
+            let position=if matches!(error,roxmltree::Error::UnexpectedEndOfStream|roxmltree::Error::UnclosedRootNode) {text.chars().count()}
+                else {let pos=error.pos();scalar_position(text,pos.row as usize,pos.col as usize,false)};
+            FormatDiagnostic {message:format!("Invalid XML: {error}"),position:Some(position),
+                can_apply_raw:!matches!(error,roxmltree::Error::NodesLimitReached|roxmltree::Error::AttributesLimitReached|roxmltree::Error::NamespacesLimitReached|roxmltree::Error::EntityReferenceLoop(_))}
+        })
 }
+
+pub fn xml_document(text: &str) -> Result<Document<'_>, String> {
+    parse_xml(text).map_err(|error|error.message)
+}
+
+pub fn xml_diagnostic(text: &str) -> Option<FormatDiagnostic> {parse_xml(text).err()}
 
 pub fn indent_xml(text: &str) -> Result<String, String> {
     format_xml(text,true)
@@ -148,6 +187,22 @@ pub fn evaluate(conn: &rusqlite::Connection, expression: &str) -> Result<rusqlit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_diagnostics_locate_unicode_tokens_and_eof_without_bypassing_limits() {
+        for text in ["{\"键\":\"中文\",\"x\":]}","{\n  \"键\": \"中文\",\n  \"x\": ]\n}"] {
+            let issue=json_diagnostic(text).unwrap();assert!(issue.can_apply_raw);
+            assert_eq!(issue.position,Some(text[..text.find(']').unwrap()].chars().count()));
+        }
+        for text in ["{\"键\":\"中文\"","{\n\"键\": [1,\n"] {assert_eq!(json_diagnostic(text).unwrap().position,Some(text.chars().count()));}
+        assert!(json_diagnostic("{\"n\":1e9999}").is_none());
+        for text in ["<r>中文<x></r>","<r>\n中文<x>\n</r>"] {
+            assert_eq!(xml_diagnostic(text).unwrap().position,Some(text[..text.rfind("</r>").unwrap()].chars().count()));
+        }
+        for text in ["<r>中文","<r>\n中文<x"] {assert_eq!(xml_diagnostic(text).unwrap().position,Some(text.chars().count()));}
+        let issue=xml_diagnostic(&" ".repeat(16*1024*1024+1)).unwrap();assert!(!issue.can_apply_raw);assert!(issue.position.is_none());
+        let large=format!("<r>{}</r>","<x/>".repeat(250_001));assert!(!xml_diagnostic(&large).unwrap().can_apply_raw);
+    }
 
     #[test]
     fn json_formatting_uses_four_spaces_and_preserves_large_numbers_and_null() {
