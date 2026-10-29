@@ -7015,6 +7015,13 @@ impl Ui {
         )
     }
 
+    /// Update fallback help without replacing the tooltip host or its hover state.
+    pub fn set_tooltip_text(&mut self, id: WidgetId, value: impl Into<String>) -> bool {
+        let Some(Widget { kind: Kind::Tooltip { text, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        *text = value.into();
+        true
+    }
+
     /// Whether id is a Modal.
     pub fn is_modal(&self, id: WidgetId) -> bool {
         matches!(
@@ -21999,6 +22006,34 @@ mod tests {
         assert!(label.bounds.height > 160.0);
         let clip = label.clip.unwrap();
         assert!(clip.x >= 0.0 && clip.y >= 0.0 && clip.x + clip.width <= 640.0 && clip.y + clip.height <= 160.0);
+    }
+
+    #[test]
+    fn changing_tooltip_help_retains_hover_children_and_keyboard_focus() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(640.0, 480.0);
+        let (mut tip, mut child) = (WidgetId(0), WidgetId(0));
+        ui.row(RowStyle::default(), |row| {
+            tip = row.tooltip("Old size", |body| { child = body.button("Edit"); });
+        });
+        ui.sync(&mut scene);
+        ui.set_focus(Some(child));
+        ui.tooltip_hover = Some(tip);
+        assert!(!ui.set_tooltip_text(child, "Wrong widget"));
+        assert!(!ui.set_tooltip_text(WidgetId(0), "Missing widget"));
+        assert!(ui.set_tooltip_text(tip, "Updated 中文 size"));
+        ui.sync(&mut scene);
+        assert_eq!(ui.tooltip_hover, Some(tip));
+        assert_eq!(ui.focused(), Some(child));
+        assert_eq!(ui.accessible_name(child).as_deref(), Some("Edit"));
+        let label = ui.widgets[&tip].aux[1];
+        let expected = ui.font.rasterize_text("Updated 中文 size", ui.tooltip_style().size, None).1;
+        assert_eq!(scene.get(label).unwrap().mask.as_ref().unwrap().pixels, expected.pixels);
+        assert!(ui.set_tooltip_text(tip, ""));
+        ui.sync(&mut scene);
+        assert!(!scene.get(label).unwrap().visible);
+        assert_eq!(ui.focused(), Some(child));
     }
 
     #[test]
