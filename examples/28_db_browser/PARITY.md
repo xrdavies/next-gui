@@ -906,3 +906,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-b23ae67bf
 ## 2026-10-29 optional rowid follow-up (9af4fd140508)
 
 Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-9af4fd140508.md) verifies optional exact typed rowid display/sort/filter/edit, hidden filter/order retention, per-tab JSON/XML settings with independent canonical index mapping, full Plot projection and normalized moved virtual keys.789 tests/strict checks,20 whole-frame Metal pairs,8 native windows and4 Apply workflows pass. Revert F01 is open: rollback can leave Browse querying a removed pending table; this is the next fix. Print/context, codecs/RTL/history, docking,500-record paging and complete original visual/product/native/platform parity remain. No completion/publication claim; earlier exact Mob approval timed out/denied.
+
+
+## 2026-10-29 Revert catalog follow-up (c660a4c210a0)
+
+Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-c660a4c210a0.md) verifies Revert F01: all qualified Browse caches and editor sessions invalidate after rollback; removed sources and invalid saved source settings clear, surviving settings and independent drafts/SQL snapshots remain, and post-rollback query errors report refresh notices.792 tests/strict checks,24 whole-frame Metal pairs,8 native windows and8 confirmation workflows pass; all8 modal Cmd+S frames remain unchanged. Print/context, filter debounce/escape, codecs/RTL/history, docking,500-record paging and full original visual/product/native/platform parity remain. No completion/publication claim; earlier exact Mob approval timed out/denied.
