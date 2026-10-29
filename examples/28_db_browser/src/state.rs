@@ -3275,6 +3275,11 @@ impl AppState {
         self.start_sql_text(sql[start..end].to_string())
     }
 
+    fn edit_column_name(&self) -> &str {
+        self.browse().result.as_ref().and_then(|result|result.columns.iter().find(|name|name.eq_ignore_ascii_case(&self.edit_col)))
+            .map_or_else(||self.edit_col.trim(),String::as_str)
+    }
+
     fn cell_apply_target(&mut self) -> Result<(String, String, i64, String), String> {
         if self.sql_cell_read_only() { return Err("SQL result cells are read-only".into()); }
         if self.tab != MainTab::Browse || matches!(self.edit_source, EditCellSource::BrowseReadOnly) {
@@ -3286,7 +3291,7 @@ impl AppState {
         let table = tab.table.clone().ok_or("No browse table")?;
         let row = tab.sel_row.ok_or("Select a browse row first")?;
         let rowid = *tab.rowids.get(row).ok_or("No usable rowid for selection")?;
-        let column = self.edit_col.trim().to_string();
+        let column = self.edit_column_name().to_string();
         if column.is_empty() { return Err("Select a column first".into()); }
         if self.edit_cell_generated() { return Err("Generated columns are read-only; edit their source columns".into()); }
         Ok((schema, table, rowid, column))
@@ -3306,12 +3311,21 @@ impl AppState {
         if self.confirm_kind==ConfirmKind::CellFormat {self.confirm_open=false;self.confirm_kind=ConfirmKind::None;}
     }
 
-    pub fn refresh_cell_format_issue(&mut self) {
-        self.edit_format_issue=if self.edit_type==0 {None} else {match self.edit_mode {
-            EditCellMode::Json=>crate::cell_format::json_diagnostic(&self.edit_value),
-            EditCellMode::Xml=>crate::cell_format::xml_diagnostic(&self.edit_value),_=>None,
-        }};
+    fn cell_format_diagnostic(&self) -> Option<crate::cell_format::FormatDiagnostic> {
+        if self.edit_type==0 || !matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml) {return None;}
+        if self.edit_mode==EditCellMode::Xml && self.edit_value.len()>16*1024*1024 {return crate::cell_format::xml_diagnostic(&self.edit_value);}
+        if self.edit_display_unchanged() {
+            if let rusqlite::types::Value::Blob(bytes)=&self.edit_original {
+                if let Err(error)=std::str::from_utf8(bytes) {
+                    return Some(crate::cell_format::FormatDiagnostic {message:format!("Invalid UTF-8 format data at byte {}",error.valid_up_to()+1),
+                        position:Some(String::from_utf8_lossy(&bytes[..error.valid_up_to()]).chars().count()),can_apply_raw:true});
+                }
+            }
+        }
+        if self.edit_mode==EditCellMode::Json {crate::cell_format::json_diagnostic(&self.edit_value)} else {crate::cell_format::xml_diagnostic(&self.edit_value)}
     }
+
+    pub fn refresh_cell_format_issue(&mut self) {self.edit_format_issue=self.cell_format_diagnostic();}
 
     /// Prepare a format-only question; storage/target errors never become an override.
     pub fn prepare_cell_format_confirmation(&mut self) -> Result<bool, String> {
@@ -3358,9 +3372,19 @@ impl AppState {
                 value=if blob {rusqlite::types::Value::Blob(text.into_bytes())} else {rusqlite::types::Value::Text(text)};
             }
         }
-        db::update_cell_in(self.conn.as_ref().unwrap(), &schema, &table, rowid, &column, &value)?;
-        self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
-        self.mark_dirty();
+        let conn=self.conn.as_ref().unwrap();
+        let changed=db::with_savepoint(conn,|| {
+            let sql=format!("SELECT cell.{} FROM {} AS cell WHERE cell.rowid=?1",db::quote_ident(&column),db::qualified_name(&schema,&table));
+            let same=conn.query_row(&sql,[rowid],|row|Ok(row.get_ref(0)?==rusqlite::types::ValueRef::from(&value)))
+                .map_err(|error|if matches!(error,rusqlite::Error::QueryReturnedNoRows) {"The selected record no longer exists; refresh Browse".into()} else {error.to_string()})?;
+            if same {return Ok(false);}
+            if db::update_cell_in(conn,&schema,&table,rowid,&column,&value)?==0 {return Err("The cell update was ignored; draft retained".into());}
+            Ok(true)
+        })?;
+        if changed {
+            self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
+            self.mark_dirty();
+        }
         self.edit_saved = value;
         if compacting || !validate_format {self.edit_original=self.edit_saved.clone();self.show_edit_value();}
         if evaluating {
@@ -3372,14 +3396,14 @@ impl AppState {
         self.refresh_browse()?;
         // Refresh clears the editor; recover the updated record by identity, not its old row index.
         if let Some(row) = self.browse().rowids.iter().position(|id| *id == rowid) {
-            let col = self.browse().result.as_ref().and_then(|result| result.columns.iter().position(|name| name == &column));
+            let col = self.browse().result.as_ref().and_then(|result| result.columns.iter().position(|name| name.eq_ignore_ascii_case(&column)));
             let tab = self.browse_mut();
             tab.sel_row = Some(row); tab.sel_col = col;
             tab.goto_record = (tab.offset + row + 1).to_string();
             self.sync_edit_cell_from_selection();
             if !evaluating && self.edit_mode != applied_mode { self.set_edit_mode(applied_mode)?; }
         }
-        self.status_msg = "Cell updated (unwritten)".into();
+        self.status_msg = if changed {"Cell updated (unwritten)"} else {"Cell unchanged"}.into();
         Ok(())
     }
 
@@ -3389,7 +3413,7 @@ impl AppState {
         let Some(table) = tab.table.as_deref() else { return false; };
         let Some(sql) = self.schema.iter().find(|object| object.schema == tab.schema && object.name == table
             && object.kind == ObjectKind::Table).and_then(|object| object.sql.as_deref()) else { return false; };
-        let mut column = ColDef::new(self.edit_col.trim(), "");
+        let mut column = ColDef::new(self.edit_column_name(), "");
         crate::table_sql::read_column_constraints(sql, std::slice::from_mut(&mut column)).is_ok() && column.generated.is_some()
     }
 
@@ -3842,9 +3866,9 @@ impl AppState {
         self.edit_value = match self.edit_mode {
             EditCellMode::Hex => db::to_hex(&bytes),
             EditCellMode::Image => format!("[{} bytes — read-only image preview]", bytes.len()),
-            EditCellMode::Json if self.prefs.indent_compact => crate::cell_format::format_json(&String::from_utf8_lossy(&bytes),true)
+            EditCellMode::Json if self.prefs.indent_compact && std::str::from_utf8(&bytes).is_ok() => crate::cell_format::format_json(&String::from_utf8_lossy(&bytes),true)
                 .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
-            EditCellMode::Xml if self.prefs.indent_compact => crate::cell_format::indent_xml(&String::from_utf8_lossy(&bytes))
+            EditCellMode::Xml if self.prefs.indent_compact && std::str::from_utf8(&bytes).is_ok() => crate::cell_format::indent_xml(&String::from_utf8_lossy(&bytes))
                 .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
             EditCellMode::Text | EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation => String::from_utf8_lossy(&bytes).into_owned(),
         };
@@ -3888,8 +3912,7 @@ impl AppState {
         } else {
             &self.edit_value
         };
-        if validate_format && self.edit_mode == EditCellMode::Json { crate::cell_format::validate_json(text)?; }
-        if validate_format && self.edit_mode == EditCellMode::Xml { crate::cell_format::xml_document(text)?; }
+        if validate_format {if let Some(issue)=self.cell_format_diagnostic() {return Err(issue.message);}}
         if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml) && self.edit_display_unchanged() {
             return Ok(self.edit_original.clone());
         }
@@ -4261,6 +4284,84 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn cell_raw_utf8_diagnostics_preserve_original_blobs_until_explicit_repair() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.auto_switch_mode=false;state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        for (mode,prefix,suffix) in [(EditCellMode::Json,"{\"name\":\"中文\",\"bad\":\"","\"}"),(EditCellMode::Xml,"<r><name>中文</name><bad>","</bad></r>")] {
+            for compact in [false,true] {
+                state.discard_cell_draft();state.prefs.indent_compact=compact;
+                let mut bytes=prefix.as_bytes().to_vec();bytes.push(0xff);bytes.extend_from_slice(suffix.as_bytes());let raw=Value::Blob(bytes.clone());
+                state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[&raw]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(mode).unwrap();
+                assert_eq!(state.edit_value,String::from_utf8_lossy(&bytes));assert!(!state.has_cell_draft());
+                let issue=state.edit_format_issue.as_ref().unwrap();assert!(issue.message.contains("Invalid UTF-8"));assert_eq!(issue.position,Some(prefix.chars().count()));
+                assert!(state.apply_cell_draft().unwrap_err().contains("Invalid UTF-8"));assert!(state.prepare_cell_format_confirmation().unwrap());state.apply_confirmed_cell_format().unwrap();
+                assert_eq!(state.edit_saved,raw);assert!(!state.dirty);assert_eq!(state.status_msg,"Cell unchanged");assert!(!state.has_cell_draft());
+                state.tab=MainTab::Pragmas;assert!(state.prepare_cell_format_confirmation().unwrap_err().contains("read-only"));assert!(state.edit_format_issue.is_some());state.tab=MainTab::Browse;
+                state.edit_value=state.edit_value.replace('\u{fffd}',"repaired");state.refresh_cell_format_issue();assert!(state.edit_format_issue.is_none());assert!(state.has_cell_draft());
+                state.apply_cell_draft().unwrap();let Value::Blob(repaired)=&state.edit_saved else {panic!("BLOB storage changed")};
+                let text=std::str::from_utf8(repaired).unwrap();assert!(text.contains("repaired"));assert!(text.contains("中文"));assert!(!text.contains('\u{fffd}'));
+                assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),state.edit_saved);
+            }
+        }
+        state.tab=MainTab::ExecuteSql;state.run_sql_text_sync("SELECT CAST(X'7B2261223A22FF227D' AS TEXT) AS raw").unwrap();state.sql_selection.rows=Some((0,0));state.sql_selection.columns=Some((0,0));
+        state.sync_edit_cell_from_sql_selection().unwrap();state.set_edit_mode(EditCellMode::Json).unwrap();assert_eq!(state.edit_type,3);assert!(state.edit_format_issue.as_ref().unwrap().message.contains("Invalid UTF-8"));assert!(!state.has_cell_draft());
+        assert!(state.prepare_cell_format_confirmation().unwrap_err().contains("read-only"));
+    }
+
+    #[test]
+    fn cell_apply_preserves_quoted_column_names_and_generated_guards() {
+        let mut state=test_state();state.prefs.auto_switch_mode=false;
+        for name in [" Amount ","odd\"name"," "] {
+            state.conn.as_ref().unwrap().execute_batch(&format!("ALTER TABLE t ADD COLUMN {}; UPDATE t SET {}='saved';",db::quote_ident(name),db::quote_ident(name))).unwrap();
+        }
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE t ADD COLUMN \" Generated \" TEXT GENERATED ALWAYS AS(v||'!') VIRTUAL;").unwrap();
+        state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();state.goto_browse_record(1).unwrap();
+        for (index,name) in [(1," Amount "),(2,"odd\"name"),(3," ")] {
+            state.browse_mut().sel_col=Some(index);state.sync_edit_cell_from_selection();state.edit_col=name.to_ascii_uppercase();state.apply_cell_draft().unwrap();
+            assert_eq!(state.browse().sel_col,Some(index));assert_eq!(state.edit_col,name);assert!(!state.dirty);
+            state.edit_value="changed".into();state.apply_cell_draft().unwrap();assert_eq!(state.edit_value,"changed");assert_eq!(state.browse().sel_col,Some(index));
+            assert_eq!(state.conn.as_ref().unwrap().query_row(&format!("SELECT {} FROM t",db::quote_ident(name)),[],|r|r.get::<_,String>(0)).unwrap(),"changed");state.write_changes().unwrap();
+        }
+        state.browse_mut().sel_col=Some(4);state.sync_edit_cell_from_selection();state.edit_col=" GENERATED ".into();assert!(state.edit_cell_generated());
+        assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));assert!(!state.dirty);
+    }
+
+    #[test]
+    fn cell_apply_skips_unchanged_typed_values_and_rolls_back_ignored_trigger_effects() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.auto_switch_mode=false;state.prefs.indent_compact=false;
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE t ADD COLUMN Amount; CREATE TABLE audit(v); CREATE TRIGGER count_apply AFTER UPDATE ON t BEGIN INSERT INTO audit VALUES (new.Amount); END;").unwrap();
+        state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        for value in [Value::Null,Value::Integer(1),Value::Real(1.0),Value::Text("1".into()),Value::Blob(b"1".to_vec())] {
+            state.discard_cell_draft();state.conn.as_ref().unwrap().execute("UPDATE t SET Amount=?1",[&value]).unwrap();state.conn.as_ref().unwrap().execute("DELETE FROM audit",[]).unwrap();state.write_changes().unwrap();
+            state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();state.set_edit_mode(EditCellMode::Text).unwrap();state.edit_col="aMOUNT".into();
+            state.apply_cell_draft().unwrap();assert!(!state.dirty);assert!(!state.has_cell_draft());assert_eq!(state.status_msg,"Cell unchanged");assert_eq!(state.browse().sel_col,Some(1));assert_eq!(state.edit_col,"Amount");assert_eq!(state.edit_saved,value);
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM audit",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        }
+        state.edit_col="missing".into();state.edit_type=3;state.edit_value="missing".into();assert!(state.apply_cell_draft().unwrap_err().contains("no such column"));assert!(!state.dirty);state.edit_col="Amount".into();
+        state.edit_type=3;state.edit_value="1".into();state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,Value::Text("1".into()));assert!(state.dirty);
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM audit",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        for (storage,expected) in [(1,Value::Integer(1)),(2,Value::Real(1.0))] {state.edit_type=storage;state.edit_value="1".into();state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,expected);}
+        state.apply_cell_draft().unwrap();assert!(state.dirty);assert_eq!(state.status_msg,"Cell unchanged");
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM audit",[],|r|r.get::<_,i64>(0)).unwrap(),3);
+        state.conn.as_ref().unwrap().execute("UPDATE t SET Amount=1",[]).unwrap();state.conn.as_ref().unwrap().execute("DELETE FROM audit",[]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();
+        let calls=std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));let observed=calls.clone();
+        state.conn.as_ref().unwrap().create_scalar_function("unchanged_probe",0,rusqlite::functions::FunctionFlags::SQLITE_UTF8,move |_|{observed.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Ok(1i64)}).unwrap();
+        state.set_edit_mode(EditCellMode::Evaluation).unwrap();state.edit_value="unchanged_probe()".into();state.apply_cell_draft().unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),1);assert_eq!(state.edit_mode,EditCellMode::Text);assert!(!state.dirty);
+        // A typed target different from the viewed column must use its actual stored value.
+        state.browse_mut().sel_col=Some(0);state.sync_edit_cell_from_selection();state.edit_col="amount".into();state.apply_cell_draft().unwrap();
+        assert_eq!(state.edit_saved,Value::Text("saved".into()));assert_eq!(state.browse().sel_col,Some(1));assert!(state.dirty);
+        state.conn.as_ref().unwrap().execute_batch("INSERT INTO t(v,Amount) VALUES ('pending','keep'); CREATE TRIGGER ignore_apply BEFORE UPDATE ON t WHEN new.Amount='ignored' BEGIN INSERT INTO audit VALUES ('must roll back'); SELECT RAISE(IGNORE); END;").unwrap();
+        let count=state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM audit",[],|r|r.get::<_,i64>(0)).unwrap();
+        state.edit_value="ignored".into();assert!(state.apply_cell_draft().unwrap_err().contains("ignored"));assert!(state.has_cell_draft());assert!(state.dirty);
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT Amount FROM t WHERE rowid=1",[],|r|r.get::<_,String>(0)).unwrap(),"saved");
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM audit",[],|r|r.get::<_,i64>(0)).unwrap(),count);
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM t WHERE v='pending'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        state.conn.as_ref().unwrap().execute("DELETE FROM t WHERE rowid=1",[]).unwrap();assert!(state.apply_cell_draft().unwrap_err().contains("no longer exists"));assert_eq!(state.edit_value,"ignored");
     }
 
     #[test]

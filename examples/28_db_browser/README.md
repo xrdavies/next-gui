@@ -339,3 +339,11 @@ and postpones SQL-file/database/project writes and document closing until the qu
 is resolved. Cancel/Escape retain the draft and selection. Parser resource limits,
 INTEGER/REAL conversion errors and SQLite write failures cannot use this override.
 JSON error columns use parser byte units; visual marks convert them to scalar indices.
+
+Structured cell validation checks original BLOB UTF-8 before trusting a replacement-
+character preview; invalid source bytes stay raw until explicit confirmation or a
+real edit repairs them. Indent does not format that lossy preview. Apply compares
+the actual target's SQLite type and bytes, skips unchanged UPDATEs/triggers/dirty
+flags, restores ASCII-case aliases to the right column, and rejects vanished rows.
+A savepoint rolls back ignored updates and their trigger side effects while retaining
+previous pending changes and the current draft. Explicit evaluation still runs once.

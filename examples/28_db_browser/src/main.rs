@@ -1384,6 +1384,17 @@ impl Demo {
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                         if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
                     }
+                    if tab.contains("raw-utf8-") || tab.contains("noop-") {
+                        let (mode,prefix,suffix)=if tab.contains("json") {(crate::state::EditCellMode::Json,"{\"name\":\"中文\",\"bad\":\"","\"}")}
+                            else {(crate::state::EditCellMode::Xml,"<?xml version='1.0'?><r><name>中文</name><bad>","</bad></r>")};
+                        let value=if tab.contains("raw-utf8-") {let mut bytes=prefix.as_bytes().to_vec();bytes.push(0xff);bytes.extend_from_slice(suffix.as_bytes());rusqlite::types::Value::Blob(bytes)}
+                            else {rusqlite::types::Value::Text(format!("{prefix}valid{suffix}"))};
+                        state.prefs.indent_compact=tab.contains("raw-utf8-");state.prefs.auto_switch_mode=false;
+                        state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[value]).unwrap();state.write_changes().unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();state.set_edit_mode(mode).unwrap();
+                        if tab.contains("readonly") {state.tab=MainTab::Pragmas;} else if tab.contains("confirm") {assert!(state.prepare_cell_format_confirmation().unwrap());}
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    }
                     if tab.contains("invalid-") {
                         let (mode,text)=if tab.contains("invalid-json") {(crate::state::EditCellMode::Json,"{\n    \"name\": \"中文\",\n    \"steps\": [1,]\n}")}
                             else {(crate::state::EditCellMode::Xml,"<?xml version='1.0'?>\n<report><name>中文</name>\n<item></report>")};
@@ -4213,6 +4224,7 @@ impl Demo {
         if !matches!(self.state.edit_mode,EditCellMode::Json|EditCellMode::Xml) {return Err("Choose JSON or XML to format the cell".into());}
         let enabled=!self.state.prefs.indent_compact;
         let clean=!self.state.has_cell_draft();
+        if enabled && clean {if let Some(issue)=&self.state.edit_format_issue {return Err(issue.message.clone());}}
         let formatted = if enabled && self.state.edit_type!=0 {
             if self.state.edit_mode==EditCellMode::Json {cell_format::format_json(&self.state.edit_value,true)?}
             else {cell_format::indent_xml(&self.state.edit_value)?}

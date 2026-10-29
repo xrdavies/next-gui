@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn cell_raw_source_errors_and_unchanged_apply_preserve_bytes_drafts_and_focus() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    demo.state.prefs.auto_switch_mode=false;demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();demo.state.tab=MainTab::Browse;
+    demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    let folder=std::env::var("NEXT_GUI_CELL_APPLY_QA_OUT").ok().map(PathBuf::from);if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+            demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+            for (kind,mode,prefix,suffix) in [("json",EditCellMode::Json,"{\"name\":\"中文\",\"bad\":\"","\"}"),("xml",EditCellMode::Xml,"<?xml version='1.0'?><r><name>中文</name><bad>","</bad></r>")] {
+                demo.state.discard_cell_draft();demo.state.prefs.indent_compact=true;
+                let mut bytes=prefix.as_bytes().to_vec();bytes.push(0xff);bytes.extend_from_slice(suffix.as_bytes());let raw=Value::Blob(bytes.clone());
+                demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[&raw]).unwrap();demo.state.write_changes().unwrap();
+                demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();demo.state.set_edit_mode(mode).unwrap();demo.do_rebuild();
+                assert_eq!(demo.state.edit_value,String::from_utf8_lossy(&bytes));assert!(demo.ui.accessible_name(demo.ids.edit_value).unwrap().contains("Invalid UTF-8"));assert!(!demo.state.has_cell_draft());
+                demo.state.tab=MainTab::Pragmas;demo.do_rebuild();assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));assert!(demo.state.edit_format_issue.is_some());demo.state.tab=MainTab::Browse;demo.do_rebuild();
+                demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.sync(&mut demo.scene);
+                if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-apply-mark-{kind}-{name}-{width}"));}
+                assert!(demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));assert!(demo.state.confirm_open);
+                if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-apply-confirm-{kind}-{name}-{width}"));}
+                demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();assert_eq!(demo.state.edit_saved,raw);assert!(!demo.state.dirty);
+                demo.handle_button(demo.ids.btn_cell_indent);demo.do_rebuild();assert!(!demo.state.prefs.indent_compact);
+                demo.handle_button(demo.ids.btn_cell_indent);demo.do_rebuild();assert!(!demo.state.prefs.indent_compact);assert!(demo.state.error_msg.as_deref().unwrap().contains("Invalid UTF-8"));assert_eq!(demo.state.edit_value,String::from_utf8_lossy(&bytes));demo.clear_error();
+                demo.state.prefs.indent_compact=true;demo.handle_button(demo.ids.btn_edit_cell);demo.do_rebuild();demo.ui.key_input(UiKey::Tab);demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();
+                assert_eq!(demo.state.edit_saved,raw);assert_eq!(demo.state.status_msg,"Cell unchanged");assert!(!demo.state.dirty);assert!(!demo.state.has_cell_draft());assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));
+                if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-apply-unchanged-{kind}-{name}-{width}"));}
+                let repaired=String::from_utf8_lossy(&bytes).replace('\u{fffd}',"fixed");demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text(&repaired);demo.snapshot_inputs();assert!(demo.state.edit_format_issue.is_none());
+                assert!(demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));assert!(!demo.state.confirm_open);assert!(demo.state.dirty);assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));assert_eq!(demo.state.browse().sel_col,Some(3));
+                let Value::Blob(repaired)=&demo.state.edit_saved else {panic!("BLOB type changed")};assert!(std::str::from_utf8(repaired).unwrap().contains("fixed"));assert!(!demo.state.has_cell_draft());
+            }
+        }
+    }
+}
+
+#[test]
 fn cell_invalid_format_modal_keeps_drafts_history_focus_and_explicit_apply() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;
