@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [original conditional format expressions](R-20261030-d06fea875bb6.md) —815 tests,12 Soft/Metal pairs and8 native expression workflows verified; full F02 remains in progress.
+Latest scoped review: [conditional text styles](R-20261030-5cf0d804d6cc.md) — 821 tests, 16 Soft/Metal pairs, 8 native style workflows and 14 Office windows verified; full F02 remains in progress.
 
 ## Findings
 
@@ -100,6 +100,7 @@ Latest scoped review: [original conditional format expressions](R-20261030-d06fe
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-30 | `57f7162..5cf0d804d6cc` | Codex | issues — 821 tests/strict checks, 16 Metal pairs, 8 native style workflows and 14 Office windows; conditional typography verified, B/I/U list polish and full parity pending | [Report](R-20261030-5cf0d804d6cc.md) |
 | 2026-10-30 | `ac7df3b..8e6bd3601ca7` | Codex | issues —810 tests/strict checks,17 Metal pairs and8 native Save/Cancel flows; existing background rules now editable/removable/reorderable with atomic drafts; full parity pending | [Report](R-20261030-8e6bd3601ca7.md) |
 | 2026-10-29 | `52e3b19..b23ae67bf985` | Codex | issues —781 tests/strict checks,24 Metal pairs and four native wide/narrow Apply workflows; viewport F01 verified with retained editor focus/fresh history; full parity pending | [Report](R-20261029-b23ae67bf985.md) |
 | 2026-10-29 | `5689f27..68071fced248` | Codex | issues —779 tests/strict checks,24 Metal pairs,12 static and16 changed native key workflows; unique-column view editing and native XML verified; viewport F01 open, full parity pending | [Report](R-20261029-68071fced248.md) |
