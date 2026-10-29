@@ -1,0 +1,290 @@
+{
+  "workspace": {
+    "passed": 737,
+    "failed": 0,
+    "ignored": 0,
+    "groups": 43
+  },
+  "checks": {
+    "clippy": 0,
+    "workspace": 0,
+    "build": 0,
+    "macos": 0,
+    "windows": 0
+  },
+  "render": {
+    "window-cell-format-confirm-json-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-json-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-json-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-json-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-xml-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-xml-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-xml-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-confirm-xml-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-json-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-json-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-json-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-json-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-xml-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-xml-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-xml-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-mark-xml-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-readonly-json-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-readonly-json-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-readonly-xml-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-cell-format-readonly-xml-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    }
+  },
+  "browser_sha256": "15985fe9ea68fb4bfc0803945e0047ea2a5434bbc963dd537f0dca981aee2108",
+  "source_sha256": {
+    "examples/28_db_browser/src/browse_navigation_tests.rs": "9aa342d206f946c1f28689550e38911345e320335bc6c34fe1188a19faa8ec66",
+    "examples/28_db_browser/src/browse_sort_tests.rs": "eca9906ee5bd1d5b6736d0ed501265aa5e50ccd6b4ef5f2ecee4d51796493eae",
+    "examples/28_db_browser/src/cell_clipboard.rs": "7a9de2736821987e3348ec8a8f6e53eab0a7c86ef4e6447f53fecc3e3bf7ea1a",
+    "examples/28_db_browser/src/cell_editor_tests.rs": "3561ceb28dd791dd5641bd050be04de8c1f570700a07a10f6e2c56670f95b36c",
+    "examples/28_db_browser/src/cell_format.rs": "adff6506d858d9e1feb4bf80a3005d7643704206e5647a8ff5f99bbe0d6e87d4",
+    "examples/28_db_browser/src/cell_snapshot.rs": "39d860e50fc6cbf3ebfa80e7b5e0ba453494a91c90b400a172e737365767d75e",
+    "examples/28_db_browser/src/column_picker.rs": "6a3af59c4ee03db6d500d99efe43de7cb9076bc61a2839973fe7b6bc56ff5839",
+    "examples/28_db_browser/src/csv_encoding.rs": "a93cc828f83f4aeb6302ff3639afb59877487ff011ea95da4b6b0e0926c3ba42",
+    "examples/28_db_browser/src/csv_files.rs": "f0069aa64832cc04e66f07a5969b4f306ea0182d7de7384e7b76c83158c4d37d",
+    "examples/28_db_browser/src/csv_import.rs": "83862c6132c41504a53a9a329b0f95d91479d7885b97ec8ddd0ca8c834112215",
+    "examples/28_db_browser/src/csv_jobs.rs": "a4be0b73c5f448718d8cbcedc7963bde4b121a9a0c34c733bb3c031173a0960a",
+    "examples/28_db_browser/src/csv_numbers.rs": "5b01da7c5a90fb9831bfdbe8e7a4c2c20f161246df2d62f2d5beebc67d9c88e7",
+    "examples/28_db_browser/src/data_export.rs": "a34e3938aae360d3ee9faa28585aa215161e26c307abc62766e22d7dc4f1a78b",
+    "examples/28_db_browser/src/db.rs": "128e8475727d7a8f7f4a6017484560173f225fca2055ea8fc1ade86a9d1d8141",
+    "examples/28_db_browser/src/dock_tests.rs": "2cf72b8a3650cf6338dd9a2254fb6c2e4aa1a96380992258400d65de4d53dfe1",
+    "examples/28_db_browser/src/export_jobs.rs": "f891895712533d0b0f05e596d14e3ab752da6b49e132160f0ddcc898ac162f2d",
+    "examples/28_db_browser/src/file_dlg.rs": "c67e7c031e9c0a1ad0241ae222213e5b70767cc1c69673bf858d38f8a2353a6d",
+    "examples/28_db_browser/src/filters.rs": "92f095360e12392003dcb4dd4c30aad17376531f9b4d994ad61109b98767119b",
+    "examples/28_db_browser/src/index_sql.rs": "7db1be99fd7e9a3f5bc2a26344b41150572a42176b181d1437ac069936c0352c",
+    "examples/28_db_browser/src/main.rs": "8084b6775636e9e7659767067277fc35b1df0cedce612831d448a38a1e2e747b",
+    "examples/28_db_browser/src/plot.rs": "a2b0489ff3e246e261f71115b09dcf05334d1b4d93cd688af06932ad4e3d83ed",
+    "examples/28_db_browser/src/plot_export.rs": "82efb693e956e4ac80bfbff17dc3b46080588f657e2627cd698bf80eee47b9dc",
+    "examples/28_db_browser/src/plot_load.rs": "ea0de6cf2de2e92f16e09fee2ed9e05d1ceb0cbd43138328b8e1e5b762d93d88",
+    "examples/28_db_browser/src/pragmas.rs": "ff4f737e05ff9d1d6d542f9b72159b4e0163b58b0e3d0588676d1906d1a40635",
+    "examples/28_db_browser/src/prefs.rs": "7028f33de2641791ebe4544eb483b819b10197578ebd9f37e2fb15549687ecbe",
+    "examples/28_db_browser/src/project.rs": "42a7589b075bf3ec92bc93245fa71cad2262d176c741d48edce90b97d3505695",
+    "examples/28_db_browser/src/project_xml.rs": "c88b9f2bde33468ea6c5087682c29b25598873985c04005b9043487b38c78510",
+    "examples/28_db_browser/src/reference_editor.rs": "b6eada847536d987f8eb62bb6fc4519a8a090cdc05df26b75493fd50bd9af1c6",
+    "examples/28_db_browser/src/sql_calltip.rs": "a1f4f322b3ddab44b49be8156e35d6daa5f3dc8d49a040bd3ba4f73c11cb1501",
+    "examples/28_db_browser/src/sql_completion.rs": "7dc8e5347cd782cc705bd53df2f7c30f57997e45f09cc718f0a2c2df02a51d93",
+    "examples/28_db_browser/src/sql_editor.rs": "2a0b41026d27fe5af6ec203774cc0121e16a8486e596d9ae77d265e2f2de2c48",
+    "examples/28_db_browser/src/sql_export.rs": "f3d5aaec21088353b2b596457b5e0553e51aff6df8ddcd52e6ba23d0a8067ac5",
+    "examples/28_db_browser/src/sql_function_help.rs": "5d9581a5705c322dab8c23f63a414f65255abeee54eaf653d5c5d99f5c72c643",
+    "examples/28_db_browser/src/sql_log.rs": "d444beb9cddf1b4a53d7e0a95435ad20a9d9aacee5bda12283cf536ec322b8e3",
+    "examples/28_db_browser/src/sql_result_tests.rs": "71f76c5737289b32940986875ec26736cfa2a497cd60eb8bf7f1429c35cd2842",
+    "examples/28_db_browser/src/sql_search.rs": "1fb4207ab0ea4e50b18c37f90954bbfda8f85370be3934156d2fbcdc7262e66a",
+    "examples/28_db_browser/src/sql_syntax.rs": "c874a614014e16a2cacdf3f09c9a25c3401abc31236c683bc5cf35e66fc34cca",
+    "examples/28_db_browser/src/state.rs": "7209c70e3a7b76dbdf224bbda6cf1d87b801dfcb9122bbba5a2dad0f67d8325c",
+    "examples/28_db_browser/src/table_migration.rs": "e3cd5fc12d8e3c825da5b395ff295b7f87548ca1da1d46b7edf4fc7e05db3055",
+    "examples/28_db_browser/src/table_sql.rs": "1bfd7b3f47996af1170efbeaaffcaf0f9baf037d0e09fc8da63555c41b30d7d0",
+    "examples/28_db_browser/src/toolbar_tests.rs": "d1a29bea085c778ef3b00ef0052ef380bb3cc6c5e35496b6dda486d87f637816",
+    "examples/28_db_browser/src/ui_build.rs": "6dbb12d3184d520edd2055f2a7d70039a5c2d8eea14f94e158d2480e5bb8137d",
+    "Cargo.toml": "a7d7fc7762a12ae8c7eceaecdc9d0f25e7c6ad865e42e4031494195264b10ebd",
+    "Cargo.lock": "cf9c12f7b437718a6953a5a75e1fbb6d30c92cceed35de86ccdd2a5029bda3db"
+  },
+  "native": {
+    "dark-cell-mode-invalid-json": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-invalid-json": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-invalid-xml": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-invalid-xml": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-invalid-json-confirm": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-invalid-json-confirm": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-invalid-xml-confirm": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-invalid-xml-confirm": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-invalid-json-readonly-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-invalid-json-readonly-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "dark-cell-mode-invalid-xml-readonly-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    },
+    "light-cell-mode-invalid-xml-readonly-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2
+    }
+  },
+  "native_keys": {
+    "dark-json-edit": {
+      "captured": true,
+      "pid": 48980,
+      "window": 6792,
+      "owned_exit": -2
+    },
+    "dark-xml-edit": {
+      "captured": true,
+      "pid": 49013,
+      "window": 6798,
+      "owned_exit": -2
+    },
+    "light-json-edit": {
+      "captured": true,
+      "pid": 49032,
+      "window": 6802,
+      "owned_exit": -2
+    },
+    "light-xml-edit": {
+      "captured": true,
+      "pid": 49063,
+      "window": 6806,
+      "owned_exit": -2
+    }
+  },
+  "native_pixels": {
+    "dark-json": {
+      "cancel_changed_channels_excluding_title_status": 0,
+      "changed_channels_after_accept": 1426705,
+      "changed_channels_after_question": 1426800,
+      "height": 678,
+      "width": 846
+    },
+    "dark-xml": {
+      "cancel_changed_channels_excluding_title_status": 0,
+      "changed_channels_after_accept": 1426736,
+      "changed_channels_after_question": 1426830,
+      "height": 678,
+      "width": 846
+    },
+    "light-json": {
+      "cancel_changed_channels_excluding_title_status": 0,
+      "changed_channels_after_accept": 1404381,
+      "changed_channels_after_question": 1404462,
+      "height": 678,
+      "width": 846
+    },
+    "light-xml": {
+      "cancel_changed_channels_excluding_title_status": 0,
+      "changed_channels_after_accept": 1406525,
+      "changed_channels_after_question": 1406606,
+      "height": 678,
+      "width": 846
+    }
+  }
+}
