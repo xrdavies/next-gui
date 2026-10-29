@@ -1395,6 +1395,19 @@ impl Demo {
                         if tab.contains("readonly") {state.tab=MainTab::Pragmas;} else if tab.contains("confirm") {assert!(state.prepare_cell_format_confirmation().unwrap());}
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     }
+                    if tab.contains("bom-") || tab.contains("infinity") {
+                        let json=tab.contains("bom-json") || tab.contains("bom-malformed");
+                        let mode=if json {crate::state::EditCellMode::Json}else{crate::state::EditCellMode::Text};
+                        let (value,column,index)=if tab.contains("infinity") {(rusqlite::types::Value::Real(if tab.contains("negative") {f64::NEG_INFINITY}else{f64::INFINITY}),"revenue",1)}
+                            else if tab.contains("bom-malformed") {(rusqlite::types::Value::Text("\u{feff}{\"键\":\"中文\",\"bad\":]}".into()),"region",3)}
+                            else if json {(rusqlite::types::Value::Text("\u{feff}{\"键\":\"中文\",\"values\":[1,true]}".into()),"region",3)}
+                            else {(rusqlite::types::Value::Blob("\u{feff}中文\nOriginal text".as_bytes().to_vec()),"region",3)};
+                        state.prefs.auto_switch_mode=false;state.prefs.indent_compact=tab.contains("bom-json");
+                        state.conn.as_ref().unwrap().execute(&format!("UPDATE quarterly_revenue SET {column}=?1 WHERE observed='2026-10-01'"),[value]).unwrap();state.write_changes().unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(index);state.sync_edit_cell_from_selection();state.set_edit_mode(mode).unwrap();
+                        if tab.contains("readonly") {state.tab=MainTab::Pragmas;}else if tab.contains("confirm") {assert!(state.prepare_cell_format_confirmation().unwrap());}
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    }
                     if tab.contains("invalid-") {
                         let (mode,text)=if tab.contains("invalid-json") {(crate::state::EditCellMode::Json,"{\n    \"name\": \"中文\",\n    \"steps\": [1,]\n}")}
                             else {(crate::state::EditCellMode::Xml,"<?xml version='1.0'?>\n<report><name>中文</name>\n<item></report>")};

@@ -347,3 +347,12 @@ the actual target's SQLite type and bytes, skips unchanged UPDATEs/triggers/dirt
 flags, restores ASCII-case aliases to the right column, and rejects vanished rows.
 A savepoint rolls back ignored updates and their trigger side effects while retaining
 previous pending changes and the current draft. Explicit evaluation still runs once.
+
+Text and evaluation views hide one leading UTF-8 BOM. Text edits retain it exactly
+once, including typed BLOB/TEXT conversion and staged export; Hex exposes the raw
+bytes and can remove it. JSON accepts a BOM only at the absolute start, preserves
+it during lossless indentation/compaction and accounts for it in error positions.
+This deliberately preserves source bytes instead of normalizing them like the
+original JSON serializer. UTF-16/32 and selectable cell codecs remain unfinished.
+Stored SQLite REAL infinities remain clean and can be replaced with finite values;
+typing new infinities/NaN still fails validation. Evaluation retains SQLite types.

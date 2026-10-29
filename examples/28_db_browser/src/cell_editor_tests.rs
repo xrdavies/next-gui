@@ -1,6 +1,46 @@
 use super::*;
 
 #[test]
+fn cell_bom_and_infinity_views_keep_typed_sources_history_and_apply_focus() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    demo.state.prefs.auto_switch_mode=false;demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();demo.state.tab=MainTab::Browse;
+    demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    let folder=std::env::var("NEXT_GUI_CELL_BOM_QA_OUT").ok().map(PathBuf::from);if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+        demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+        for (kind,mode,raw,display) in [("text",EditCellMode::Text,Value::Blob("\u{feff}中文\nOriginal text".as_bytes().to_vec()),"中文\nOriginal text"),
+            ("json",EditCellMode::Json,Value::Text("\u{feff}{\"键\":\"中文\",\"values\":[1,true]}".into()),""),
+            ("infinity",EditCellMode::Text,Value::Real(if name=="dark" {f64::INFINITY}else{f64::NEG_INFINITY}),""),
+            ("invalid",EditCellMode::Json,Value::Text("\u{feff}{\"键\":\"中文\",\"bad\":]}".into()),"")] {
+            demo.state.discard_cell_draft();demo.state.prefs.indent_compact=kind=="json";
+            let (column,index)=if kind=="infinity" {("revenue",1)}else{("region",3)};
+            demo.state.conn.as_ref().unwrap().execute(&format!("UPDATE quarterly_revenue SET {column}=?1 WHERE observed='2026-10-01'"),[&raw]).unwrap();demo.state.write_changes().unwrap();demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(index);demo.state.sync_edit_cell_from_selection();demo.state.set_edit_mode(mode).unwrap();demo.do_rebuild();
+            assert!(!demo.state.has_cell_draft());assert_eq!(demo.state.edited_cell_value().is_ok(),kind!="invalid");let loaded=demo.state.edit_value.clone();
+            if kind=="text" {assert_eq!(loaded,display);}
+            if kind=="json" {assert!(loaded.starts_with('\u{feff}'));assert!(loaded.contains('\n'));}
+            demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.sync(&mut demo.scene);
+            if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-bom-{kind}-{name}-{width}"));}
+            if kind=="invalid" {
+                assert!(demo.ui.accessible_name(demo.ids.edit_value).unwrap().contains("Invalid JSON"));assert_eq!(demo.state.edit_format_issue.as_ref().unwrap().position,Some(loaded[..loaded.find(']').unwrap()].chars().count()));
+                assert!(demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));assert!(demo.state.confirm_open);
+                if let Some(folder)=&folder {crate::plot_export::capture(&mut demo,folder,&format!("cell-bom-question-{name}-{width}"));}
+                demo.ui.key_input(UiKey::Enter);demo.handle_modal();demo.do_rebuild();assert_eq!(demo.state.edit_value,loaded);assert!(!demo.state.dirty);assert!(!demo.state.has_cell_draft());continue;
+            }
+            assert!(demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));assert!(!demo.state.confirm_open);assert_eq!(demo.state.edit_saved,raw);assert!(!demo.state.dirty);assert!(!demo.state.has_cell_draft());assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));
+            let draft=if kind=="infinity" {"12.5"}else if kind=="json" {"\u{feff}{\"键\":\"改动\"}"}else{"改动\nNew text"};
+            demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text(draft);demo.snapshot_inputs();assert!(demo.state.has_cell_draft());
+            assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,loaded);assert!(!demo.state.has_cell_draft());
+            assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,draft);assert!(demo.state.has_cell_draft());
+            assert!(demo.handle_cell_apply_key(KeyCode::Enter,Modifiers {meta:true,..Modifiers::default()}));assert!(!demo.state.confirm_open);assert_eq!(demo.ui.focused(),Some(demo.ids.edit_value));assert!(!demo.state.has_cell_draft());
+            let expected=if kind=="infinity" {Value::Real(12.5)}else if kind=="json" {Value::Text(draft.into())}else{Value::Blob(format!("\u{feff}{draft}").into_bytes())};assert_eq!(demo.state.edit_saved,expected);assert!(demo.state.dirty);
+        }
+    }}
+}
+
+#[test]
 fn cell_raw_source_errors_and_unchanged_apply_preserve_bytes_drafts_and_focus() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;

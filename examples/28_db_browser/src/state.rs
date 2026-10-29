@@ -3870,9 +3870,11 @@ impl AppState {
                 .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
             EditCellMode::Xml if self.prefs.indent_compact && std::str::from_utf8(&bytes).is_ok() => crate::cell_format::indent_xml(&String::from_utf8_lossy(&bytes))
                 .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
-            EditCellMode::Text | EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation => String::from_utf8_lossy(&bytes).into_owned(),
+            EditCellMode::Text | EditCellMode::Evaluation => String::from_utf8_lossy(bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes)).into_owned(),
+            EditCellMode::Json | EditCellMode::Xml => String::from_utf8_lossy(&bytes).into_owned(),
         };
-        if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation) {
+        if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation)
+            || (self.edit_mode==EditCellMode::Text && bytes.starts_with(b"\xef\xbb\xbf")) {
             self.mark_cell_display_baseline();
         }
         if self.edit_mode == EditCellMode::Image {
@@ -3913,9 +3915,14 @@ impl AppState {
             &self.edit_value
         };
         if validate_format {if let Some(issue)=self.cell_format_diagnostic() {return Err(issue.message);}}
-        if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml) && self.edit_display_unchanged() {
+        if matches!(self.edit_mode, EditCellMode::Text | EditCellMode::Json | EditCellMode::Xml) && self.edit_display_unchanged() {
             return Ok(self.edit_original.clone());
         }
+        let restored;
+        let source_bom=match &self.edit_original {Value::Text(text)=>text.starts_with('\u{feff}'),Value::Blob(bytes)=>bytes.starts_with(b"\xef\xbb\xbf"),_=>false};
+        let text=if self.edit_mode==EditCellMode::Text && matches!(self.edit_type,3|4) && source_bom {
+            restored=format!("\u{feff}{text}");&restored
+        } else {text};
         match self.edit_type {
             1 => text
                 .trim()
@@ -3924,7 +3931,7 @@ impl AppState {
                 .map_err(|_| "Invalid INTEGER; select TEXT to change its type".into()),
             2 => {
                 let value = text.trim().parse::<f64>().map_err(|_| "Invalid REAL")?;
-                if !value.is_finite() {
+                if !value.is_finite() && self.edit_original!=Value::Real(value) {
                     return Err("REAL must be finite".into());
                 }
                 Ok(Value::Real(value))
@@ -4309,6 +4316,78 @@ mod chart_default_tests {
         state.tab=MainTab::ExecuteSql;state.run_sql_text_sync("SELECT CAST(X'7B2261223A22FF227D' AS TEXT) AS raw").unwrap();state.sql_selection.rows=Some((0,0));state.sql_selection.columns=Some((0,0));
         state.sync_edit_cell_from_sql_selection().unwrap();state.set_edit_mode(EditCellMode::Json).unwrap();assert_eq!(state.edit_type,3);assert!(state.edit_format_issue.as_ref().unwrap().message.contains("Invalid UTF-8"));assert!(!state.has_cell_draft());
         assert!(state.prepare_cell_format_confirmation().unwrap_err().contains("read-only"));
+    }
+
+    #[test]
+    fn cell_utf8_bom_survives_text_edits_modes_export_and_typed_apply_once() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.auto_switch_mode=false;state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        let directory=tempfile::tempdir().unwrap();let output=directory.path().join("cell.txt");
+        for blob in [false,true] {
+            let typed=|text:&str|if blob {Value::Blob(text.as_bytes().to_vec())} else {Value::Text(text.into())};
+            let raw=typed("\u{feff}中文\noriginal");state.discard_cell_draft();state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[&raw]).unwrap();state.write_changes().unwrap();
+            state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Text).unwrap();
+            assert_eq!(state.edit_value,"中文\noriginal");assert!(!state.has_cell_draft());assert_eq!(state.edited_cell_value().unwrap(),raw);
+            state.apply_cell_draft().unwrap();assert!(!state.dirty);assert_eq!(state.status_msg,"Cell unchanged");
+            state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(&output).unwrap(),"\u{feff}中文\noriginal".as_bytes());
+            state.edit_value="改动\nnew".into();assert!(state.has_cell_draft());let changed=typed("\u{feff}改动\nnew");assert_eq!(state.edited_cell_value().unwrap(),changed);
+            state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(&output).unwrap(),"\u{feff}改动\nnew".as_bytes());
+            state.set_edit_mode(EditCellMode::Hex).unwrap();assert_eq!(state.edit_value,db::to_hex("\u{feff}改动\nnew".as_bytes()));
+            state.set_edit_mode(EditCellMode::Text).unwrap();assert_eq!(state.edit_value,"改动\nnew");state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,changed);assert!(!state.has_cell_draft());
+            state.write_changes().unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();state.edit_value=db::to_hex(b"without BOM");state.set_edit_mode(EditCellMode::Text).unwrap();
+            assert_eq!(state.edit_value,"without BOM");assert_eq!(state.edited_cell_value().unwrap(),typed("without BOM"));state.discard_cell_draft();
+            state.edit_type=1;state.edit_value="42".into();assert_eq!(state.edited_cell_value().unwrap(),Value::Integer(42));state.edit_type=2;assert_eq!(state.edited_cell_value().unwrap(),Value::Real(42.0));
+            state.edit_type=if blob {3}else{4};state.edit_value="converted".into();let converted=if blob {Value::Text("\u{feff}converted".into())}else{Value::Blob("\u{feff}converted".as_bytes().to_vec())};assert_eq!(state.edited_cell_value().unwrap(),converted);
+            state.discard_cell_draft();state.set_cell_null().unwrap();assert_eq!(state.edited_cell_value().unwrap(),Value::Null);state.discard_cell_draft();
+            let expression=typed("\u{feff}40+2");state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[expression]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Evaluation).unwrap();
+            assert_eq!(state.edit_value,"40+2");assert!(!state.has_cell_draft());state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,Value::Integer(42));assert_eq!(state.edit_mode,EditCellMode::Text);
+        }
+        for text in ["\u{feff}","\u{feff}\u{feff}literal"] {
+            state.discard_cell_draft();state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[text]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Text).unwrap();
+            assert_eq!(state.edit_value,text.strip_prefix('\u{feff}').unwrap());assert_eq!(state.edited_cell_value().unwrap(),Value::Text(text.into()));state.apply_cell_draft().unwrap();assert!(!state.dirty);
+        }
+        let bytes=b"\xef\xbb\xbf\xff".to_vec();state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[&bytes]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Text).unwrap();
+        assert_eq!(state.edited_cell_value().unwrap(),Value::Blob(bytes));assert!(!state.has_cell_draft());state.edit_value="edited".into();assert!(state.edited_cell_value().unwrap_err().contains("Hex"));state.discard_cell_draft();
+        state.tab=MainTab::ExecuteSql;state.run_sql_text_sync("SELECT char(65279)||'中文' AS bom").unwrap();state.sql_selection.rows=Some((0,0));state.sql_selection.columns=Some((0,0));state.sync_edit_cell_from_sql_selection().unwrap();
+        state.set_edit_mode(EditCellMode::Text).unwrap();assert_eq!(state.edit_value,"中文");assert!(!state.has_cell_draft());assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(output).unwrap(),"\u{feff}中文".as_bytes());
+    }
+
+    #[test]
+    fn cell_stored_infinities_are_clean_and_preserved_without_allowing_new_nonfinite_reals() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.auto_switch_mode=false;state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        for value in [f64::INFINITY,f64::NEG_INFINITY] {
+            state.discard_cell_draft();state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[value]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(EditCellMode::Text).unwrap();
+            assert_eq!(state.edit_value,value.to_string());assert!(!state.has_cell_draft());assert_eq!(state.edited_cell_value().unwrap(),Value::Real(value));
+            state.apply_cell_draft().unwrap();assert!(!state.dirty);assert_eq!(state.status_msg,"Cell unchanged");
+            state.set_edit_mode(EditCellMode::Hex).unwrap();assert_eq!(state.edited_cell_value().unwrap(),Value::Real(value));assert!(!state.has_cell_draft());state.set_edit_mode(EditCellMode::Text).unwrap();
+            state.edit_value="NaN".into();assert!(state.edited_cell_value().unwrap_err().contains("finite"));state.discard_cell_draft();state.edit_value=(-value).to_string();assert!(state.edited_cell_value().unwrap_err().contains("finite"));
+            state.edit_value="12.5".into();state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,Value::Real(12.5));assert!(!state.has_cell_draft());
+            state.edit_value=value.to_string();assert!(state.edited_cell_value().unwrap_err().contains("finite"));state.discard_cell_draft();
+        }
+        state.tab=MainTab::ExecuteSql;state.run_sql_text_sync("SELECT 9e999 AS positive, -9e999 AS negative").unwrap();state.sql_selection.rows=Some((0,0));
+        for (column,value) in [(0,f64::INFINITY),(1,f64::NEG_INFINITY)] {state.sql_selection.columns=Some((column,column));state.sync_edit_cell_from_sql_selection().unwrap();assert_eq!(state.edit_value,value.to_string());assert!(!state.has_cell_draft());assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));}
+    }
+
+    #[test]
+    fn cell_bom_structured_formats_keep_bytes_through_indent_compact_and_confirmed_repair() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.auto_switch_mode=false;state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        let directory=tempfile::tempdir().unwrap();let output=directory.path().join("format.txt");
+        for (mode,raw,compact) in [(EditCellMode::Json,"\u{feff}{ \"键\":18446744073709551616,\"values\":[1,true] }","\u{feff}{\"键\":18446744073709551616,\"values\":[1,true]}"),
+            (EditCellMode::Xml,"\u{feff}<?xml version='1.0'?><r>\n  <name>中文</name>\n</r>","\u{feff}<?xml version='1.0'?><r><name>中文</name></r>")] {
+            for blob in [false,true] {for indent in [false,true] {
+                let typed=|text:&str|if blob {Value::Blob(text.as_bytes().to_vec())} else {Value::Text(text.into())};
+                state.discard_cell_draft();state.prefs.indent_compact=indent;state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[typed(raw)]).unwrap();state.write_changes().unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(mode).unwrap();
+                assert!(state.edit_format_issue.is_none());assert!(!state.has_cell_draft());assert!(state.edit_value.starts_with('\u{feff}'));
+                state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(&output).unwrap(),state.edit_value.as_bytes());
+                state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,typed(if indent {compact}else{raw}));assert_eq!(state.dirty,indent);assert!(!state.has_cell_draft());
+                state.set_edit_mode(EditCellMode::Text).unwrap();assert!(!state.edit_value.starts_with('\u{feff}'));state.set_edit_mode(EditCellMode::Hex).unwrap();assert!(state.edit_value.starts_with(&db::to_hex(b"\xef\xbb\xbf")));
+                state.set_edit_mode(mode).unwrap();assert!(state.edit_value.starts_with('\u{feff}'));assert!(!state.has_cell_draft());
+            }}
+        }
+        state.discard_cell_draft();state.prefs.indent_compact=false;state.set_edit_mode(EditCellMode::Json).unwrap();state.edit_type=3;state.edit_value="\u{feff}{\"键\":] }".into();state.refresh_cell_format_issue();
+        assert_eq!(state.edit_format_issue.as_ref().unwrap().position,Some(6));assert!(state.prepare_cell_format_confirmation().unwrap());state.apply_confirmed_cell_format().unwrap();assert_eq!(state.edit_saved,Value::Text("\u{feff}{\"键\":] }".into()));
     }
 
     #[test]

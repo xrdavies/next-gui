@@ -8,13 +8,14 @@ pub struct FormatDiagnostic {
 }
 
 fn parse_json(text: &str) -> Result<(), serde_json::Error> {
+    let text=text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut parser=serde_json::Deserializer::from_str(text);
     serde::Deserialize::deserialize(&mut parser).map(|_:serde::de::IgnoredAny|())
         .and_then(|()|parser.end())
 }
 
 pub fn validate_json(text: &str) -> Result<(), String> {
-    parse_json(text).map_err(|error|format!("Invalid JSON: {error}"))
+    json_diagnostic(text).map_or(Ok(()),|issue|Err(issue.message))
 }
 
 fn scalar_position(text: &str, line: usize, column: usize, byte_column: bool) -> usize {
@@ -28,9 +29,13 @@ fn scalar_position(text: &str, line: usize, column: usize, byte_column: bool) ->
 }
 
 pub fn json_diagnostic(text: &str) -> Option<FormatDiagnostic> {
-    parse_json(text).err().map(|error|FormatDiagnostic {
-        position:Some(if error.is_eof() {text.chars().count()} else {scalar_position(text,error.line(),error.column(),true)}),
-        message:format!("Invalid JSON: {error}"), can_apply_raw:true,
+    parse_json(text).err().map(|error| {
+        let source=text.strip_prefix('\u{feff}').unwrap_or(text);let bom=source.len()!=text.len();
+        let description=error.to_string();let reason=description.rsplit_once(" at line ").map_or(description.as_str(),|(reason,_)|reason);
+        FormatDiagnostic {
+            position:Some(if error.is_eof() {text.chars().count()} else {usize::from(bom)+scalar_position(source,error.line(),error.column(),true)}),
+            message:format!("Invalid JSON: {reason} at line {} column {}",error.line(),error.column()+if bom && error.line()==1 {3}else{0}),can_apply_raw:true,
+        }
     })
 }
 
@@ -38,7 +43,7 @@ pub fn format_json(text: &str, indent: bool) -> Result<String, String> {
     // shortcut: bounded whole-cell formatting; use streaming editing for larger JSON cells.
     if text.len()>16*1024*1024 {return Err("JSON exceeds the 16 MiB editor limit".into());}
     validate_json(text)?;
-    if text.trim()=="null" {return Ok(text.into());}
+    if text.strip_prefix('\u{feff}').unwrap_or(text).trim()=="null" {return Ok(text.into());}
     // Keep numeric spellings, escaped strings, duplicate keys and object order intact.
     let mut out=String::with_capacity(text.len());
     let (mut quoted,mut escaped,mut depth,mut previous)=(false,false,0usize,None);
@@ -88,7 +93,7 @@ pub fn automatic_mode(value: &rusqlite::types::Value) -> crate::state::EditCellM
     if text.chars().any(|ch| (ch.is_control() && !ch.is_whitespace())
         || matches!(ch as u32, 0xfdd0..=0xfdef) || ch as u32 & 0xfffe == 0xfffe) { return EditCellMode::Hex; }
     if text.starts_with("<?xml") { return EditCellMode::Xml; }
-    if !matches!(text.trim_start().as_bytes().first(),Some(b'-'|b'0'..=b'9')) && validate_json(text).is_ok() { return EditCellMode::Json; }
+    if !matches!(text.strip_prefix('\u{feff}').unwrap_or(text).trim_start().as_bytes().first(),Some(b'-'|b'0'..=b'9')) && validate_json(text).is_ok() { return EditCellMode::Json; }
     // shortcut: RTL stays in Text until shared shaping and bidirectional caret layout exist.
     EditCellMode::Text
 }
@@ -187,6 +192,32 @@ pub fn evaluate(conn: &rusqlite::Connection, expression: &str) -> Result<rusqlit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf8_bom_json_keeps_source_tokens_and_positions_and_numeric_auto_mode() {
+        use crate::state::EditCellMode;
+        use rusqlite::types::Value;
+        for (text,mode) in [("{\"键\":18446744073709551616}",EditCellMode::Json),("[1,true]",EditCellMode::Json),
+            ("null",EditCellMode::Json),("\"中文\"",EditCellMode::Json),("42",EditCellMode::Text),(" -1e10",EditCellMode::Text),
+            ("<?xml version='1.0'?><r/>",EditCellMode::Text)] {
+            let raw=format!("\u{feff}{text}");
+            assert_eq!(automatic_mode(&Value::Text(raw.clone())),mode);assert_eq!(automatic_mode(&Value::Blob(raw.clone().into_bytes())),mode);
+            if mode==EditCellMode::Json {
+                validate_json(&raw).unwrap();let pretty=format_json(&raw,true).unwrap();assert!(pretty.starts_with('\u{feff}'));
+                assert_eq!(format_json(&pretty,false).unwrap(),raw);
+            }
+        }
+        assert_eq!(format_json("\u{feff} null \n",false).unwrap(),"\u{feff} null \n");
+        for raw in ["\u{feff}{\"键\":\"中文\",\"x\":]}","\u{feff}{\n\"键\":\"中文\",\n\"x\": ]}"] {
+            let issue=json_diagnostic(raw).unwrap();assert_eq!(issue.position,Some(raw[..raw.find(']').unwrap()].chars().count()));
+            let line=raw[..raw.find(']').unwrap()].rsplit('\n').next().unwrap();assert!(issue.message.contains(&format!("column {}",line.len()+1)));
+        }
+        for raw in ["\u{feff}{\"键\":","\u{feff}{\n\"键\":["] {assert_eq!(json_diagnostic(raw).unwrap().position,Some(raw.chars().count()));}
+        for raw in [" \u{feff}{}","\u{feff}\u{feff}{}","[\u{feff}1]"] {assert!(validate_json(raw).is_err());}
+        for bytes in [vec![0xef,0xbb,0xbf,0xff],vec![0xef,0xbb,0xbf,0],vec![0xff,0xfe,b'a',0],vec![0,0,0xfe,0xff,0,0,0,b'a']] {
+            assert_eq!(automatic_mode(&Value::Blob(bytes)),EditCellMode::Hex);
+        }
+    }
 
     #[test]
     fn format_diagnostics_locate_unicode_tokens_and_eof_without_bypassing_limits() {
