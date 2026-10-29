@@ -916,3 +916,5 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-c660a4c21
 ## 2026-10-29 automatic Browse filtering
 
 Automatic any-column and column filters run on the live connection in the existing cancellable database worker. Typing replaces pending criteria; navigation restores the connection before proceeding. Old results remain visible until a successful replacement. Input focus, selection, composition and Undo survive refresh. Preferences expose the original200ms delay (0–5000) and backslash escape; blank disables LIKE escaping. Raw WHERE stays explicit Apply/Enter. Tests and QA preference paths are isolated from normal user preferences. Full original product/interface and ordinary desktop/platform acceptance remain in progress.
+
+[Review](../../docs/reviews/R-20261029-8df5c111638d.md):798 tests/strict checks,16 Soft/Metal pairs,8 native filter flows,4 preference and14 Office windows pass. Full F02 remains **in_progress**.

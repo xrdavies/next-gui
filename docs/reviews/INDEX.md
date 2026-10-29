@@ -10,6 +10,8 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
+Latest scoped review: [automatic Browse filters](R-20261029-8df5c111638d.md) —798 tests,16 Soft/Metal pairs,8 native filter flows,4 preference and14 Office windows verified; full F02 remains in progress.
+
 ## Findings
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
