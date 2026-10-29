@@ -37,6 +37,7 @@ mod browse_filter;
 mod filter_menu;
 mod cond_format;
 mod cond_match;
+mod cond_style;
 mod prefs;
 mod pragmas;
 mod project;
@@ -1198,6 +1199,11 @@ impl Demo {
                     if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     MainTab::Browse
                 }
+                "condformat-styles" | "condformat-styles-narrow" => {
+                    cond_style::prepare_qa(&mut state);
+                    if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    MainTab::Browse
+                }
                 "form" => {
                     state.browse_view = crate::state::BrowseViewMode::Form;
                     MainTab::Browse
@@ -2346,6 +2352,16 @@ impl Demo {
                         self.state.cond_color = v.to_string();
                     }
                 }
+                let controls=self.ids.cond_formats;
+                if let Some(value)=self.ui.text_input_value(controls.foreground) {self.state.cond_style.foreground=value.to_owned();}
+                if let Some(value)=self.ui.text_input_value(controls.size) {self.state.cond_style.size=value.to_owned();}
+                if let Some(value)=self.ui.select_value(controls.family) {
+                    self.state.cond_style.family=if self.ui.select_selected(controls.family)==Some(0) {String::new()} else {value.to_owned()};
+                }
+                if let Some(value)=self.ui.is_checked(controls.bold) {self.state.cond_style.bold=value;}
+                if let Some(value)=self.ui.is_checked(controls.italic) {self.state.cond_style.italic=value;}
+                if let Some(value)=self.ui.is_checked(controls.underline) {self.state.cond_style.underline=value;}
+                if let Some(value)=self.ui.select_selected(controls.alignment) {self.state.cond_style.alignment=value;}
                 self.snapshot_cond_formats();
             }
         }

@@ -44,6 +44,8 @@ mod autocomplete;
 pub use autocomplete::{AutocompleteState, SelectState};
 mod dialog;
 mod table_edit;
+mod table_style;
+pub use table_style::{TableCellStyle, TableTextAlign};
 mod table_data;
 pub use table_data::TableDataSource;
 use table_data::TableRows;
@@ -1882,8 +1884,10 @@ enum Kind {
         scroll_x: f32,
         /// Pin the first N columns so they stay visible while scrolling horizontally.
         frozen_cols: usize,
-        /// Optional per-cell foreground tint (conditional formatting).
+        /// Optional per-cell background tint (conditional formatting).
         cell_bg: Vec<Vec<Option<Color>>>,
+        /// Optional per-cell typography/color overrides.
+        cell_styles: Vec<Vec<Option<TableCellStyle>>>,
         /// Some(bool) renders an interactive checkbox in this cell.
         checks: Vec<Vec<Option<bool>>>,
         editable_columns: Vec<usize>,
@@ -5122,10 +5126,12 @@ impl Ui {
         let invalid_editor=match self.widgets.get(&id).map(|w|&w.kind) {
             Some(Kind::Table {editor:Some(editor),..}) if editor.row>=rows.len()=>Some(editor.widget),_=>None};
         if let Some(Widget { kind: Kind::Table {
-            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, editor, ..
+            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, cell_styles, cell_bg, editor, ..
         }, .. }) = self.widgets.get_mut(&id) {
             *slot = rows.into();
             checks.clear();
+            cell_styles.clear();
+            cell_bg.clear();
             if let Some(editor)=editor {if editor.row>=slot.len() && self.focus==Some(editor.widget) {self.focus=None;}}
             if let Some(last) = slot.len().checked_sub(1) {
                 *selected_row = selected_row.map(|i| i.min(last));
@@ -12361,6 +12367,7 @@ impl Ui {
                     scroll_x,
                     frozen_cols,
                     cell_bg,
+                    cell_styles,
                     checks,
                     dropdown_columns,
                     virtualized,
@@ -12384,6 +12391,7 @@ impl Ui {
         let scroll_x = *scroll_x;
         let frozen_cols = *frozen_cols;
         let cell_bg = cell_bg.clone();
+        let cell_styles = cell_styles.clone();
         let checks = checks.clone();
         let dropdown_columns = dropdown_columns.clone();
         let check_style = self.checkbox_style();
@@ -12505,7 +12513,8 @@ impl Ui {
             }
             for (ci, col) in columns.iter().enumerate() {
                 let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
-                let fmt = cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c);
+                let cell_style = cell_styles.get(ri).and_then(|row| row.get(ci)).and_then(Option::as_ref);
+                let fmt = cell_style.and_then(|style| style.background).or_else(|| cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c));
                 let (ox, clip) = cells[ci];
                 let clip = clip.intersect(&body_clip).intersect(&Rect::new(ox,y,col.width.max(0.0),style.row_height));
                 let visible = !clip.is_empty();
@@ -12582,12 +12591,17 @@ impl Ui {
                 // A table row stays one line; copied cell text retains its original whitespace.
                 let single_line;
                 let display=if cell.contains(['\r','\n','\t']) {single_line=cell.replace(['\r','\n','\t']," ");single_line.as_str()} else {cell};
-                let (_, mask) = self.font.rasterize_text(display, style.size, None);
+                let max_w = (col.width - if dropdown {28.0} else {8.0}).max(0.0);
+                let mask = if let Some(cell_style) = cell_style {
+                    table_style::text_mask(&self.font, display, cell_style, style.size, max_w, style.row_height)
+                } else {
+                    let (_, mask) = self.font.rasterize_text(display, style.size, None);
+                    AlphaMask::new(mask.width, mask.height, mask.pixels)
+                };
                 if let Some(&lab) = aux.get(base + 1 + ncols + ci) {
                     scene.set_corner_radius(lab,0.0);
                     scene.set_clip(lab, Some(clip));
                     let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
-                    let max_w = (col.width - if dropdown {28.0} else {8.0}).max(0.0);
                     if visible {
                         scene.set_bounds(
                             lab,
@@ -12600,6 +12614,8 @@ impl Ui {
                         );
                         let fg = if is_sel {
                             style.selected_fg
+                        } else if let Some(fg) = cell_style.and_then(|style| style.foreground) {
+                            fg
                         } else if fmt.is_some() {
                             // Contrasting text on filled cell
                             Color::rgb(0x10, 0x10, 0x18)
@@ -18551,6 +18567,7 @@ impl FlexBuilder<'_> {
                     scroll_x: 0.0,
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
+                    cell_styles: Vec::new(),
                     checks: Vec::new(),
                     editable_columns: Vec::new(),
                     dropdown_columns: Vec::new(),
@@ -19223,6 +19240,7 @@ impl FlexBuilder<'_> {
                     scroll_x: 0.0,
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
+                    cell_styles: Vec::new(),
                     checks: Vec::new(),
                     editable_columns: Vec::new(),
                     dropdown_columns: Vec::new(),

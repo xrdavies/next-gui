@@ -22,6 +22,7 @@ pub(crate) struct Rule {
     pub op: usize,
     pub value: String,
     pub color: String,
+    pub style: crate::cond_style::Draft,
 }
 
 #[derive(Clone, Debug)]
@@ -53,13 +54,27 @@ impl Draft {
                         OPERATORS.get(rule.op).unwrap_or(&"Unknown operator"),
                         rule.value
                     ),
+                    if rule.style.foreground.is_empty() { "Default".into() } else { rule.style.foreground.clone() },
                     rule.color.clone(),
+                    if rule.style.family.is_empty() { "Default".into() } else { rule.style.family.clone() },
+                    if rule.style.size.is_empty() { "Default".into() } else { rule.style.size.clone() },
+                    if rule.style.bold { "✓".into() } else { String::new() },
+                    if rule.style.italic { "✓".into() } else { String::new() },
+                    if rule.style.underline { "✓".into() } else { String::new() },
+                    crate::cond_style::ALIGNMENTS.get(rule.style.alignment).unwrap_or(&"Unknown").to_string(),
                 ]
             })
             .collect()
     }
     fn same_source(&self, state: &AppState) -> bool {
         self.schema == state.browse().schema && Some(&self.table) == state.browse().table.as_ref()
+    }
+
+    pub(crate) fn previews(&self, font: &next_gui_text::Font) -> Vec<Vec<Option<next_gui_ui::TableCellStyle>>> {
+        self.rules.iter().map(|rule| {
+            let style=rule.style.validate().ok().zip(u32::from_str_radix(rule.color.trim_start_matches('#'),16).ok());
+            vec![None,style.map(|(style,color)|style.cell(color,font))]
+        }).collect()
     }
 }
 
@@ -89,6 +104,7 @@ impl AppState {
                 op: rule.op,
                 value: rule.value.clone(),
                 color: format!("#{:06X}", rule.color_rgb),
+                style: (&rule.style).into(),
             })
             .collect();
         let selected = rules
@@ -121,6 +137,7 @@ impl AppState {
             self.cond_op_idx = rule.op;
             self.cond_value = rule.value.clone();
             self.cond_color = rule.color.clone();
+            self.cond_style = rule.style.clone();
         } else {
             self.cond_col = if draft.columns.contains(&self.edit_col) {
                 self.edit_col.clone()
@@ -130,6 +147,7 @@ impl AppState {
             self.cond_op_idx = 0;
             self.cond_value.clear();
             self.cond_color = "#E67E22".into();
+            self.cond_style = Default::default();
         }
     }
 
@@ -143,12 +161,14 @@ impl AppState {
         let changed = rule.column != self.cond_col
             || rule.op != self.cond_op_idx
             || rule.value != self.cond_value
-            || rule.color != self.cond_color;
+            || rule.color != self.cond_color
+            || rule.style != self.cond_style;
         if changed {
             rule.column = self.cond_col.clone();
             rule.op = self.cond_op_idx;
             rule.value = self.cond_value.clone();
             rule.color = self.cond_color.clone();
+            rule.style = self.cond_style.clone();
         }
         changed
     }
@@ -215,6 +235,7 @@ impl AppState {
                         rule.value.clone()
                     },
                     color_rgb: u32::from_str_radix(color, 16).unwrap(),
+                    style: rule.style.validate().map_err(|message| error(&message))?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -240,6 +261,13 @@ pub(crate) struct Controls {
     pub remove: WidgetId,
     pub up: WidgetId,
     pub down: WidgetId,
+    pub foreground: WidgetId,
+    pub family: WidgetId,
+    pub size: WidgetId,
+    pub bold: WidgetId,
+    pub italic: WidgetId,
+    pub underline: WidgetId,
+    pub alignment: WidgetId,
 }
 impl Default for Controls {
     fn default() -> Self {
@@ -250,11 +278,13 @@ impl Default for Controls {
             remove: WidgetId(0),
             up: WidgetId(0),
             down: WidgetId(0),
+            foreground: WidgetId(0), family: WidgetId(0), size: WidgetId(0), bold: WidgetId(0),
+            italic: WidgetId(0), underline: WidgetId(0), alignment: WidgetId(0),
         }
     }
 }
 
-fn fields(demo: &Demo) -> [WidgetId; 9] {
+fn fields(demo: &Demo) -> [WidgetId; 16] {
     let c = demo.ids.cond_formats;
     [
         c.table,
@@ -266,6 +296,7 @@ fn fields(demo: &Demo) -> [WidgetId; 9] {
         demo.ids.ov_cond_op,
         demo.ids.ov_cond_val,
         demo.ids.ov_cond_color,
+        c.foreground,c.family,c.size,c.bold,c.italic,c.underline,c.alignment,
     ]
 }
 
@@ -346,6 +377,8 @@ impl Demo {
         let rows = draft.rows();
         let selected = self.ui.table_selected_row(self.ids.cond_formats.table);
         self.ui.set_table_rows(self.ids.cond_formats.table, rows);
+        let previews=draft.previews(self.ui.font());
+        self.ui.set_table_cell_styles(self.ids.cond_formats.table,previews);
         self.ui
             .set_table_selected_row(self.ids.cond_formats.table, selected);
         self.ui.set_table_scroll_offset(
@@ -397,6 +430,7 @@ impl Demo {
                 op: 0,
                 value: String::new(),
                 color: "#E67E22".into(),
+                style: Default::default(),
             });
             draft.next_id += 1;
             draft.selected = draft.rules.len().checked_sub(1);
@@ -443,6 +477,7 @@ pub(crate) fn prepare_qa(state: &mut AppState) {
         op,
         value: value.into(),
         color_rgb,
+        style: Default::default(),
     })
     .collect();
     state.edit_col = "amount".into();
@@ -613,7 +648,7 @@ mod tests {
                     demo.ui.key_input(UiKey::BackTab);
                 }
                 assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.down));
-                for _ in 0..6 {
+                for _ in 0..13 {
                     demo.ui.key_input(UiKey::Tab);
                 }
                 assert_eq!(demo.ui.focused(), Some(demo.ids.ov_btn_ok));

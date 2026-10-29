@@ -1631,6 +1631,7 @@ name = "next-gui-text"
 version = "0.1.0"
 dependencies = [
  "fontdue",
+ "ttf-parser 0.20.0",
  "unicode-linebreak",
  "unicode-segmentation",
 ]

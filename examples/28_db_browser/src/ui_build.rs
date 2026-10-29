@@ -1600,14 +1600,16 @@ pub fn build_ui(
                             ov_scroll=c.scroll_area(scroll,|c| {
                             if let Some(draft)=&state.cond_formats {
                                 c.text(format!("{} · {} rules",db::qualified_name(&draft.schema,&draft.table),draft.rules.len()));
-                                c.text("The first matching rule sets the cell background.");
+                                c.text("The first matching rule sets the cell's colors and typography.");
                                 c.row(row,|r| {
                                     cond_formats.add=r.tool_button("+ Add");cond_formats.remove=r.tool_button("Remove");
                                     cond_formats.up=r.tool_button("↑ Move up");cond_formats.down=r.tool_button("↓ Move down");
                                 });
                                 let width=(shell_w-72.0).max(200.0);
                                 let mut table_style=TableStyle::from_theme(&theme);table_style.width=width;table_style.height=190.0;
-                                cond_formats.table=c.table(vec![TableColumn::new("Column",width*0.25),TableColumn::new("Condition",width*0.5),TableColumn::new("Background",width*0.25)],draft.rows(),table_style);
+                                let columns=[("Column",110.0),("Condition",240.0),("Foreground",110.0),("Background",110.0),("Font",180.0),("Size",60.0),("B",32.0),("I",32.0),("U",32.0),("Alignment",90.0)]
+                                    .into_iter().map(|(name,width)|TableColumn::new(name,width)).collect();
+                                cond_formats.table=c.table(columns,draft.rows(),table_style);
                                 cond_formats.row=draft.selected_id();
                                 if draft.selected.is_some() {
                                     c.row(row,|r| {
@@ -1622,6 +1624,26 @@ pub fn build_ui(
                                     });
                                     c.row(row,|r| {
                                         r.text("Background #RRGGBB");ov_cond_color=r.text_input_styled(&state.cond_color,"#E67E22",name_s);
+                                    });
+                                    c.row(row,|r| {
+                                        r.text("Foreground #RRGGBB");cond_formats.foreground=r.text_input_styled(&state.cond_style.foreground,"Default",name_s);
+                                    });
+                                    c.row(row,|r| {
+                                        r.text("Font");let families=state.cond_style.families();
+                                        let selected=if state.cond_style.family.is_empty() {Some(0)} else {families.iter().position(|family|family==&state.cond_style.family)};
+                                        let mut style=type_sel;style.width=(width*0.6).max(130.0);
+                                        cond_formats.family=r.select(families,selected,"Default",style);
+                                    });
+                                    c.row(row,|r| {
+                                        r.text("Size (pt)");cond_formats.size=r.text_input_styled(&state.cond_style.size,"Default",name_s);
+                                    });
+                                    c.row(row,|r| {
+                                        cond_formats.bold=r.checkbox("Bold",state.cond_style.bold);
+                                        cond_formats.italic=r.checkbox("Italic",state.cond_style.italic);
+                                        cond_formats.underline=r.checkbox("Underline",state.cond_style.underline);
+                                    });
+                                    c.row(row,|r| {
+                                        r.text("Alignment");cond_formats.alignment=r.select(crate::cond_style::ALIGNMENTS,Some(state.cond_style.alignment),"Left",type_sel);
                                     });
                                 } else {c.text("Add a rule to begin. Save applies the list; Cancel keeps the current formats.");}
                             } else {c.text("Select a loaded table before opening the format manager.");}
@@ -2578,7 +2600,8 @@ pub fn build_ui(
         }
         if browse_table.0 != 0 {
             ui.set_table_frozen_cols(browse_table, state.browse_frozen_cols());
-            ui.set_table_cell_bg(browse_table, state.cell_format_colors());
+            let styles=crate::cond_match::styles(state,ui.font());
+            ui.set_table_cell_styles(browse_table,styles);
             for (column, width) in state.browse().column_widths.iter().enumerate() {
                 ui.set_table_column_width(browse_table, column, *width);
             }
@@ -2770,6 +2793,7 @@ pub fn build_ui(
     }
     ui.set_accessible_name(ov_idx_cols, "Index columns and expressions");
     if let Some(draft)=state.cond_formats.as_ref().filter(|_|state.overlay==Some(OverlayKind::CondFormat)) {
+        let previews=draft.previews(ui.font());ui.set_table_cell_styles(cond_formats.table,previews);
         ui.set_table_selected_row(cond_formats.table,draft.selected);ui.set_table_scroll_offset(cond_formats.table,draft.scroll.0,draft.scroll.1);
         ui.set_button_enabled(cond_formats.add,!draft.columns.is_empty());
         ui.set_button_enabled(cond_formats.remove,draft.selected.is_some());
@@ -2778,6 +2802,15 @@ pub fn build_ui(
     }
     for (id,label) in [(cond_formats.table,"Conditional format priority list"),(cond_formats.add,"Add conditional format"),(cond_formats.remove,"Remove selected conditional format"),(cond_formats.up,"Move format earlier"),(cond_formats.down,"Move format later"),(ov_cond_col,"Conditional format column"),(ov_cond_op,"Conditional format operator"),(ov_cond_val,"Conditional format comparison value"),(ov_cond_color,"Conditional format background color")]{ui.set_accessible_name(id,label);}
     ui.set_tooltip_text(ov_cond_val,"Filter expression uses the Browse syntax: >=3, 1~10, /pattern/ or LIKE wildcards. Empty applies to all text/numeric values. Right-click or Shift+F10 inserts a template.");
+    for (id,label) in [(cond_formats.foreground,"Conditional format foreground color"),(cond_formats.family,"Conditional format font family"),(cond_formats.size,"Conditional format size in points"),(cond_formats.bold,"Conditional format bold"),(cond_formats.italic,"Conditional format italic"),(cond_formats.underline,"Conditional format underline"),(cond_formats.alignment,"Conditional format text alignment")] {ui.set_accessible_name(id,label);}
+    ui.set_tooltip_text(cond_formats.foreground,"#RRGGBB; blank keeps the default text color.");
+    ui.set_tooltip_text(cond_formats.family,"Installed font family. Unavailable project fonts are preserved and displayed using the default font.");
+    if state.overlay==Some(OverlayKind::CondFormat) && !state.cond_style.family.is_empty() {
+        if let Err(error)=next_gui_text::load_system_font(&state.cond_style.family,state.cond_style.bold,state.cond_style.italic) {
+            ui.set_tooltip_text(cond_formats.family,format!("{error}. Using the default font; the requested name is preserved."));
+        }
+    }
+    ui.set_tooltip_text(cond_formats.size,"1–99 points; blank keeps the table's default font size.");
     ui.set_text_input_integer_range(ov_prefs_filter_delay, Some((0, 5000)));
     ui.set_accessible_name(ov_prefs_filter_delay, "Filter delay in milliseconds");
     ui.set_accessible_name(ov_prefs_filter_escape, "Filter escape character");

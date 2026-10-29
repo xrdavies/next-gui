@@ -10,6 +10,9 @@ use std::path::Path;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
+mod system_fonts;
+pub use system_fonts::{load_system_font, system_font_families};
+
 /// Error loading or using a font.
 #[derive(Debug, Clone)]
 pub struct FontError(pub String);
@@ -66,7 +69,9 @@ impl AlphaMask {
 #[derive(Clone)]
 pub struct Font {
     inner: Arc<fontdue::Font>,
-    fallbacks: Vec<Arc<fontdue::Font>>,
+    fallbacks: Vec<Font>,
+    synthetic_bold: bool,
+    synthetic_italic: bool,
 }
 
 impl std::fmt::Debug for Font {
@@ -88,6 +93,8 @@ impl Font {
         Ok(Self {
             inner: Arc::new(font),
             fallbacks: Vec::new(),
+            synthetic_bold: false,
+            synthetic_italic: false,
         })
     }
 
@@ -103,24 +110,76 @@ impl Font {
     /// Measurement, layout and rasterization use the same chosen face. Vertical
     /// line metrics and the baseline continue to come from the primary face.
     pub fn with_fallback(mut self, fallback: Font) -> Self {
-        self.fallbacks.push(fallback.inner);
-        self.fallbacks.extend(fallback.fallbacks);
+        self.fallbacks.push(fallback);
         self
+    }
+
+    /// Synthesize missing bold/italic faces; existing glyph advances stay unchanged.
+    /// Prefer an installed face through [`load_system_font`] when one is available.
+    pub fn with_synthetic_style(mut self, bold: bool, italic: bool) -> Self {
+        self.synthetic_bold = bold;
+        self.synthetic_italic = italic;
+        self
+    }
+
+    fn glyph_metrics(&self, ch: char, px: f32) -> fontdue::Metrics {
+        let face = self.face_for(ch);
+        let mut metrics = face.inner.metrics(ch, px);
+        Self::style_metrics(&mut metrics, px, self.synthetic_bold || face.synthetic_bold, self.synthetic_italic || face.synthetic_italic);
+        metrics
+    }
+
+    fn style_metrics(metrics: &mut fontdue::Metrics, px: f32, bold: bool, italic: bool) {
+        if metrics.width == 0 || metrics.height == 0 { return; }
+        if italic {
+            let left = (metrics.ymin as f32 * 0.2).floor() as i32;
+            let right = ((metrics.ymin as f32 + metrics.height as f32) * 0.2).ceil() as i32;
+            metrics.xmin += left;
+            metrics.width += (right - left).max(0) as usize;
+        }
+        if bold { metrics.width += (px / 24.0).ceil().max(1.0) as usize; }
+    }
+
+    fn rasterize_glyph(&self, ch: char, px: f32) -> (fontdue::Metrics, Vec<u8>) {
+        let face = self.face_for(ch);
+        let (mut metrics, bitmap) = face.inner.rasterize(ch, px);
+        let bold = self.synthetic_bold || face.synthetic_bold;
+        let italic = self.synthetic_italic || face.synthetic_italic;
+        if (!bold && !italic) || bitmap.is_empty() { return (metrics, bitmap); }
+        let original = metrics;
+        Self::style_metrics(&mut metrics, px, bold, italic);
+        let mut styled = vec![0; metrics.width * metrics.height];
+        let bold = if bold { (px / 24.0).ceil().max(1.0) as usize } else { 0 };
+        for y in 0..original.height {
+            let shear = if italic {
+                ((original.ymin as f32 + (original.height - y) as f32) * 0.2).round() as i32
+            } else { 0 };
+            let offset = (original.xmin - metrics.xmin + shear).max(0) as usize;
+            for x in 0..original.width {
+                let value = bitmap[y * original.width + x];
+                for spread in 0..=bold {
+                    let index = y * metrics.width + offset + x + spread;
+                    if offset + x + spread < metrics.width { styled[index] = styled[index].max(value); }
+                }
+            }
+        }
+        (metrics, styled)
     }
 
     /// Whether any face in this stack contains a glyph for `ch`.
     pub fn has_glyph(&self, ch: char) -> bool {
-        self.face_for(ch).lookup_glyph_index(ch) != 0
+        self.face_for(ch).inner.lookup_glyph_index(ch) != 0
     }
 
-    fn face_for(&self, ch: char) -> &fontdue::Font {
+    fn face_for(&self, ch: char) -> &Self {
         if self.inner.lookup_glyph_index(ch) != 0 {
-            return &self.inner;
+            return self;
         }
         self.fallbacks
             .iter()
-            .find(|f| f.lookup_glyph_index(ch) != 0)
-            .unwrap_or(&self.inner)
+            .map(|font| font.face_for(ch))
+            .find(|font| font.inner.lookup_glyph_index(ch) != 0)
+            .unwrap_or(self)
     }
 
     /// Vertical metrics at `px` pixels.
@@ -161,7 +220,7 @@ impl Font {
             if ch == '\n' {
                 continue;
             }
-            let g = self.face_for(ch).metrics(ch, px);
+            let g = self.face_for(ch).inner.metrics(ch, px);
             width += g.advance_width;
         }
         (width, m.line_height)
@@ -198,7 +257,7 @@ impl Font {
                 push_line_break(&mut line_widths, &mut max_w, &mut x, &mut line);
                 continue;
             }
-            let g = self.face_for(ch).metrics(ch, px);
+            let g = self.face_for(ch).inner.metrics(ch, px);
             if let Some(limit) = max_width {
                 if x > 0.0 && x + g.advance_width > limit {
                     push_line_break(&mut line_widths, &mut max_w, &mut x, &mut line);
@@ -275,7 +334,7 @@ impl Font {
         let mut max_y = layout.height.ceil().max(1.0) as i32;
 
         for g in &layout.glyphs {
-            let (metrics, bitmap) = self.face_for(g.ch).rasterize(g.ch, px);
+            let (metrics, bitmap) = self.rasterize_glyph(g.ch, px);
             if metrics.width == 0 || metrics.height == 0 {
                 continue;
             }
@@ -334,14 +393,13 @@ impl Font {
         let mut pixels = vec![0; count];
         for glyph in &layout.glyphs {
             if !glyph.x.is_finite() || !glyph.baseline_y.is_finite() { continue; }
-            let face = self.face_for(glyph.ch);
-            let metrics = face.metrics(glyph.ch, px);
+            let metrics = self.glyph_metrics(glyph.ch, px);
             let x = (glyph.x + metrics.xmin as f32).round();
             let y = (glyph.baseline_y - metrics.ymin as f32 - metrics.height as f32).round();
             if x >= width as f32 || y >= height as f32
                 || x + metrics.width as f32 <= 0.0 || y + metrics.height as f32 <= 0.0 { continue; }
             if metrics.width.checked_mul(metrics.height).is_none_or(|count| count > MAX_PIXELS) { continue; }
-            let (_, bitmap) = face.rasterize(glyph.ch, px);
+            let (_, bitmap) = self.rasterize_glyph(glyph.ch, px);
             blit_alpha(AlphaBlit { dest: &mut pixels, dest_w: width, dest_h: height,
                 x: x as i32, y: y as i32, src_w: metrics.width as u32,
                 src_h: metrics.height as u32, src: &bitmap });
@@ -571,6 +629,28 @@ mod tests {
         assert!(!stacked.has_glyph('\u{10ffff}'));
     }
 
+    #[test]
+    fn synthetic_faces_keep_advances_and_clipped_metrics_consistent() {
+        let regular = test_font();
+        let text = "Ag jp 中文\nStyle";
+        let base = regular.rasterize_text(text, 24.0, None).1;
+        for (bold, italic) in [(true, false), (false, true), (true, true)] {
+            let font = regular.clone().with_synthetic_style(bold, italic);
+            assert_eq!(regular.measure_line(text, 24.0), font.measure_line(text, 24.0));
+            let mut layout = font.layout(text, 24.0, None);
+            let full = font.rasterize_layout(&layout, 24.0);
+            assert!(full.width != base.width || full.pixels != base.pixels);
+            if bold { assert!(full.pixels.iter().map(|value| *value as u64).sum::<u64>() >= base.pixels.iter().map(|value| *value as u64).sum()); }
+            // Shift negative-bearing glyphs into the viewport before comparing paths.
+            for glyph in &mut layout.glyphs { glyph.x += 12.0; glyph.baseline_y += 6.0; }
+            layout.width += 24.0; layout.height += 12.0;
+            let full = font.rasterize_layout(&layout, 24.0);
+            let clipped = font.rasterize_layout_clipped(&layout, 24.0, full.width, full.height);
+            assert_eq!(full.pixels, clipped.pixels);
+            assert!(font.rasterize_text("  ", 24.0, None).1.is_empty());
+        }
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn missing_cjk_symbols_use_the_fallback_for_measure_layout_and_pixels() {
@@ -593,6 +673,11 @@ mod tests {
         let mask = stacked.rasterize_layout(&isolated, 18.0);
         assert_eq!(mask.pixels.as_ref(), expected);
         assert_eq!(stacked.measure_line("A中", 18.0), primary.measure_line("A中", 18.0));
+        let styled = primary.with_fallback(symbols.clone().with_synthetic_style(true, true));
+        let normal = stacked.rasterize_text("▾", 18.0, None).1;
+        let mask = styled.rasterize_text("▾", 18.0, None).1;
+        assert!(normal.width != mask.width || normal.pixels != mask.pixels);
+        assert_eq!(styled.measure_line("▾", 18.0), stacked.measure_line("▾", 18.0));
     }
 
     fn ink_rows(mask: &AlphaMask, thresh: u8) -> Vec<u32> {

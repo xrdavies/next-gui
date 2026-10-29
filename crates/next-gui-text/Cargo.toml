@@ -7,5 +7,6 @@ description = "Font loading, metrics, and CJK-capable text layout for next-gui"
 
 [dependencies]
 fontdue = "0.8"
+ttf-parser = "=0.20.0"
 unicode-linebreak = "=0.1.5"
 unicode-segmentation = "1.13"

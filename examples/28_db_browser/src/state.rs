@@ -467,6 +467,8 @@ pub struct CondFormatRule {
     pub value: String,
     /// RGB packed 0xRRGGBB for cell tint
     pub color_rgb: u32,
+    #[serde(default)]
+    pub style: crate::cond_style::Style,
 }
 
 pub struct AppState {
@@ -686,6 +688,7 @@ pub struct AppState {
     pub cond_op_idx: usize,
     pub cond_value: String,
     pub cond_color: String,
+    pub(crate) cond_style: crate::cond_style::Draft,
     pub dock_remote: bool,
     pub browse_view: BrowseViewMode,
     #[allow(dead_code)]
@@ -1056,6 +1059,7 @@ impl AppState {
             cond_op_idx: 0,
             cond_value: String::new(),
             cond_color: "E67E22".into(),
+            cond_style: Default::default(),
             dock_remote: true,
             browse_view: BrowseViewMode::Table,
             form_field_idx: 0,
@@ -3736,10 +3740,12 @@ impl AppState {
             op: self.cond_op_idx,
             value: self.cond_value.clone(),
             color_rgb: rgb,
+            style: Default::default(),
         });
         self.status_msg = format!("Added format rule ({} rules)", self.cond_rules.len());
     }
 
+    #[cfg(test)]
     pub fn cell_format_colors(&self) -> Vec<Vec<Option<next_gui_scene::Color>>> {
         crate::cond_match::colors(self)
     }
@@ -4381,7 +4387,7 @@ mod chart_default_tests {
         state.plot.settings.manual=false;state.sync_current_plot().unwrap();assert!(state.plot.check(0,1,true));assert!(state.plot.check(2,2,true));state.sync_current_plot().unwrap();assert!(!state.plot.data.series.is_empty());
         state.plot.settings.configs.push(crate::plot::Config{source:crate::plot::Source::Table{schema:"main".into(),table:"t".into()},x:None,series:Vec::new()});
         state.plot.settings.configs.push(crate::plot::Config{source:crate::plot::Source::Query(0),x:None,series:Vec::new()});
-        for table in ["t","p"] {state.cond_rules.push(CondFormatRule{schema:"main".into(),table:Some(table.into()),column:"v".into(),op:2,value:"saved".into(),color_rgb:0x336699});}
+        for table in ["t","p"] {state.cond_rules.push(CondFormatRule{schema:"main".into(),table:Some(table.into()),column:"v".into(),op:2,value:"saved".into(),color_rgb:0x336699,style:Default::default()});}
         state.edit_value="unapplied cell draft".into();assert!(state.has_cell_draft());
         *state.sql_editor_mut()="SELECT 'independent SQL draft';".into();state.frozen_cols=2;
         state.selected=Some(SelectedObject{schema:"aux space".into(),kind:ObjectKind::Table,name:"p".into()});
@@ -5227,7 +5233,7 @@ mod chart_default_tests {
                 state.add_browse_tab().unwrap();state.switch_browse_table_in(source,"aliased").unwrap();let mut aliases=options.clone();aliases.column_names[1]="renamed_metric".into();state.browse_mut().set_options(aliases.clone());state.browse_mut().store_options(source,"aliased",aliases.clone());state.refresh_browse().unwrap();
                 state.add_browse_tab().unwrap();state.switch_browse_table_in(source,"records").unwrap();
                 state.chart_schema=source.into();state.chart_table=Some("visible".into());state.chart_column="b".into();
-                for view in ["visible","aliased"] {state.cond_rules.push(CondFormatRule {schema:source.into(),table:Some(view.into()),column:"a".into(),op:0,value:"25".into(),color_rgb:0x123456});}
+                for view in ["visible","aliased"] {state.cond_rules.push(CondFormatRule {schema:source.into(),table:Some(view.into()),column:"a".into(),op:0,value:"25".into(),color_rgb:0x123456,style:Default::default()});}
                 state.open_modify_table_wizard().unwrap();state.wizard_schema=target.into();state.wizard_table_name="archive".into();state.wizard_cols[0].name="label".into();state.wizard_cols[1].name="metric".into();state.apply_table_wizard().unwrap_or_else(|error|panic!("{source} → {target}: {error}"));
                 let mut expected=options.clone();expected.column_names=vec!["label".into(),"metric".into()];expected.ordering[0].column="label".into();
                 assert_eq!(state.browse_tabs[0].schema,target);assert_eq!(state.browse_tabs[0].table.as_deref(),Some("visible"));assert_eq!(state.browse_tabs[0].options(),expected);assert_eq!(state.browse_tabs[0].stored_options(target,"visible"),Some(&expected));assert!(state.browse_tabs[0].stored_options(source,"visible").is_none());

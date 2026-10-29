@@ -3,6 +3,7 @@ use crate::{
     db::{self, CellValue},
     state::{AppState, CondFormatRule},
 };
+#[cfg(test)]
 use next_gui_scene::Color;
 use rusqlite::{types::Value, Connection, Statement};
 use std::{borrow::Cow, sync::Arc};
@@ -192,7 +193,7 @@ fn matches(state: &AppState) -> Vec<Vec<Option<usize>>> {
         .collect()
 }
 
-pub(crate) fn colors(state: &AppState) -> Vec<Vec<Option<Color>>> {
+fn indices(state: &AppState) -> Vec<Vec<Option<usize>>> {
     let Some(result) = &state.browse().result else {
         return Vec::new();
     };
@@ -234,7 +235,11 @@ pub(crate) fn colors(state: &AppState) -> Vec<Vec<Option<Color>>> {
         found
     };
     found
-        .into_iter()
+}
+
+#[cfg(test)]
+pub(crate) fn colors(state: &AppState) -> Vec<Vec<Option<Color>>> {
+    indices(state).into_iter()
         .map(|row| {
             row.into_iter()
                 .map(|index| {
@@ -246,6 +251,15 @@ pub(crate) fn colors(state: &AppState) -> Vec<Vec<Option<Color>>> {
                 .collect()
         })
         .collect()
+}
+
+pub(crate) fn styles(state: &AppState, font: &next_gui_text::Font) -> Vec<Vec<Option<next_gui_ui::TableCellStyle>>> {
+    let mut styles = std::collections::HashMap::new();
+    indices(state).into_iter().map(|row| row.into_iter().map(|index| index.map(|index| {
+        styles.entry(index).or_insert_with(|| {
+            let rule = &state.cond_rules[index]; rule.style.cell(rule.color_rgb, font)
+        }).clone()
+    })).collect()).collect()
 }
 
 #[cfg(test)]
@@ -265,6 +279,7 @@ mod tests {
             op: 5,
             value: String::new(),
             color_rgb: 0xABCDEF,
+            style: Default::default(),
         }];
         state
     }

@@ -250,6 +250,7 @@ mod tests {
                 op: 3,
                 value: "10".into(),
                 color_rgb: 0x123456,
+                style: Default::default(),
             }],
             browse_tabs: vec![browse],
             sql_tabs: vec!["SELECT '中文\n\\\"';".into()],
