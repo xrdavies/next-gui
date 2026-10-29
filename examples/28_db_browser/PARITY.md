@@ -867,3 +867,8 @@ F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-987bcc9e25ac
 ### Typed source and unchanged Apply update (2026-10-29)
 
 F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-fd6d0d14751d.md) verifies raw UTF-8 diagnostics/explicit confirmation/repair, actual typed no-op comparison, ignored-trigger rollback with retained prior pending changes/drafts, and quoted/ASCII-alias target guards/restoration.741 tests/strict checks,24 whole-frame Metal pairs,12 native windows and8 raw/no-op keyboard workflows pass. BOM/codecs, nonfinite REAL source handling, full modes/history/actions and complete visual/product/native/platform parity remain. No completion or publication claim.
+
+
+### BOM and stored REAL source update (2026-10-29)
+
+F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-f543ef56518e.md) verifies UTF8 BOM text/source round-trip, typed edits/export/Hex/type transitions, leading JSON BOM Auto/formatting/source-relative error marks, readonly/evaluation and existing REAL infinity handling without new nonfinite input.746 tests/strict checks,20 whole-frame Metal pairs,16 native windows and8 BOM/no-op keyboard workflows pass. JSON source BOM preservation deliberately differs from original serializer normalization. Full codecs/RTL/binary/history/word/style wrap/actions and complete visual/product/native/platform parity remain. No completion or publication claim.
