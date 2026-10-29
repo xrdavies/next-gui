@@ -10,13 +10,25 @@ pub struct RowKey {
 
 impl RowKey {
     pub fn predicate(&self) -> Result<String, String> {
+        self.predicate_for(Some("cell"))
+    }
+
+    fn predicate_for(&self, qualifier: Option<&str>) -> Result<String, String> {
         if self.columns.is_empty() || self.columns.len() != self.values.len() {
             return Err("Record key dimensions do not match".into());
         }
         Ok(self
             .columns
             .iter()
-            .map(|column| format!("cell.{} IS ?", quote_ident(column)))
+            .map(|column| {
+                format!(
+                    "{}{} IS ?",
+                    qualifier
+                        .map(|name| format!("{}.", quote_ident(name)))
+                        .unwrap_or_default(),
+                    quote_ident(column)
+                )
+            })
             .collect::<Vec<_>>()
             .join(" AND "))
     }
@@ -100,7 +112,66 @@ pub fn browse_with_keys_in(
     limit: usize,
     offset: usize,
 ) -> Result<(QueryResult, Vec<RowKey>), String> {
-    let columns = key_columns(conn, schema, table)?;
+    browse_key_columns_in(
+        conn,
+        schema,
+        table,
+        key_columns(conn, schema, table)?,
+        ordering,
+        filter,
+        (limit, offset),
+    )
+}
+
+pub fn source_is_view_in(conn: &Connection, schema: &str, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        &format!(
+            "SELECT type='view' FROM {}.sqlite_schema WHERE name=? AND type IN ('table','view')",
+            quote_ident(schema)
+        ),
+        [table],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn browse_view_with_key_in(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    column: &str,
+    ordering: &[OrderBy],
+    filter: Option<&str>,
+    page: (usize, usize),
+) -> Result<(QueryResult, Vec<RowKey>), String> {
+    if !source_is_view_in(conn, schema, table)? {
+        return Err("Custom record keys are only available for views".into());
+    }
+    let columns = table_column_names_in(conn, schema, table)?;
+    let column = columns
+        .into_iter()
+        .find(|name| name.eq_ignore_ascii_case(column))
+        .ok_or("The view key column no longer exists")?;
+    browse_key_columns_in(
+        conn,
+        schema,
+        table,
+        vec![column].into(),
+        ordering,
+        filter,
+        page,
+    )
+}
+
+fn browse_key_columns_in(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    columns: Arc<[String]>,
+    ordering: &[OrderBy],
+    filter: Option<&str>,
+    (limit, offset): (usize, usize),
+) -> Result<(QueryResult, Vec<RowKey>), String> {
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
     let keys = columns
         .iter()
@@ -167,18 +238,26 @@ pub fn delete_row_in(
 ) -> Result<u64, String> {
     with_savepoint(conn, || {
         key.require_unique(conn, schema, table)?;
+        let view = source_is_view_in(conn, schema, table)?;
         let sql = format!(
-            "DELETE FROM {} AS cell WHERE {}",
+            "DELETE FROM {}{} WHERE {}",
             qualified_name(schema, table),
-            key.predicate()?
+            if view { "" } else { " AS cell" },
+            key.predicate_for((!view).then_some("cell"))?
         );
+        let before = conn.total_changes();
         let changed = conn
             .execute(&sql, params_from_iter(&key.values))
             .map_err(|e| e.to_string())?;
-        if changed != 1 {
+        // INSTEAD OF triggers write underlying tables but report zero direct changes.
+        if if view {
+            conn.total_changes() == before
+        } else {
+            changed != 1
+        } {
             return Err("The row deletion was ignored; no rows changed".into());
         }
-        Ok(changed as u64)
+        Ok(1)
     })
 }
 
@@ -223,7 +302,7 @@ pub fn update_cells_in(
     }) {
         return Err("Selected column is not editable".into());
     }
-    let virtual_table: bool = conn.query_row(&format!("SELECT sql LIKE 'CREATE VIRTUAL TABLE%' FROM {}.sqlite_schema WHERE type='table' AND name=?", quote_ident(schema)), [table], |row| row.get(0)).map_err(|e| e.to_string())?;
+    let (view, virtual_table): (bool, bool) = conn.query_row(&format!("SELECT type='view', coalesce(sql LIKE 'CREATE VIRTUAL TABLE%',0) FROM {}.sqlite_schema WHERE type IN ('table','view') AND name=?", quote_ident(schema)), [table], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|e| e.to_string())?;
     let assignments = columns
         .iter()
         .map(|column| format!("{} = ?", quote_ident(column)))
@@ -233,12 +312,15 @@ pub fn update_cells_in(
         let mut updated = Vec::with_capacity(updates.len());
         for (key, values) in updates {
             key.require_unique(conn, schema, table)?;
+            // SQLite's view rewrite cannot resolve an UPDATE target alias here.
             let mut sql = format!(
-                "UPDATE {} AS cell SET {assignments} WHERE {}",
+                "UPDATE {}{} SET {assignments} WHERE {}",
                 qualified_name(schema, table),
-                key.predicate()?
+                if view { "" } else { " AS cell" },
+                key.predicate_for((!view).then_some("cell"))?
             );
             let params = || params_from_iter(values.iter().chain(&key.values));
+            let before = conn.total_changes();
             let returned = if virtual_table {
                 // SQLite cannot RETURNING virtual updates; retain only a still-unique original key.
                 if conn.execute(&sql, params()).map_err(|e| e.to_string())? != 1 {
@@ -272,7 +354,10 @@ pub fn update_cells_in(
                     values,
                 }
             };
-            // AFTER triggers may move/delete the record after RETURNING computed its key.
+            if view && conn.total_changes() == before {
+                return Err("The view update was ignored; draft retained".into());
+            }
+            // AFTER/INSTEAD OF triggers may move/delete the record after RETURNING computed its key.
             updated.push((returned.match_count(conn, schema, table)? == 1).then_some(returned));
         }
         Ok(updated)

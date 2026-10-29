@@ -70,6 +70,7 @@ pub mod mid {
     pub const BROWSE_FREEZE: u64 = 70;
     pub const BROWSE_SELECT_COLUMN: u64 = 71;
     pub const BROWSE_COPY_COLUMN: u64 = 72;
+    pub const BROWSE_UNLOCK_VIEW: u64 = 73;
     pub const PLOT_COPY: u64 = 80;
     pub const PLOT_SAVE: u64 = 81;
     pub const PLOT_FIT: u64 = 82;
@@ -98,6 +99,7 @@ pub struct BuiltUi {
     pub sql_export: crate::sql_export::Controls,
     pub plot_load: crate::plot_load::Controls,
     pub column_picker: crate::column_picker::Controls,
+    pub view_keys: crate::view_keys::Controls,
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
     pub structure_splitter: WidgetId,
@@ -2782,6 +2784,9 @@ pub fn build_ui(
     ui.set_button_enabled(btn_run_ddl, main_selection && state.conn.is_some() && !state.read_only && !state.sql_busy);
     ui.set_button_enabled(btn_struct_modify, state.selected.as_ref().is_some_and(|s| matches!(s.kind, ObjectKind::Table | ObjectKind::Index)) && !state.read_only && !state.sql_busy);
     ui.set_button_enabled(btn_struct_delete, state.selected.is_some() && !state.read_only && !state.sql_busy);
+    let browse_writable = state.conn.is_some() && !state.read_only && !state.sql_busy && state.browse_editing_unlocked();
+    ui.set_button_enabled(btn_add_row, browse_writable);
+    ui.set_button_enabled(btn_del_row, browse_writable && state.browse().sel_row.is_some_and(|row| state.browse().row_keys.get(row).is_some()));
     ui.set_button_enabled(btn_write, can_write);
     ui.set_button_enabled(btn_revert, can_write);
 
@@ -2797,9 +2802,11 @@ pub fn build_ui(
     if csv_files.parent.0 != 0 { ui.set_dialog_open(csv_files.parent, true); }
     crate::csv_files::build_confirmation(&mut ui,&mut csv_files,state,&theme,width as f32);
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
+    let view_keys = crate::view_keys::build(&mut ui, state, &theme, width as f32);
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
     ui.sync(&mut scene);
     crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
+    crate::view_keys::restore(&mut ui, view_keys, state.view_key_dialog.as_ref());
     crate::csv_files::restore(&mut ui,csv_files,state);
     if let Some(draft)=state.wizard_constraint_edit.as_ref().and_then(|edit|edit.reference.as_ref()).or_else(||state.wizard_field_edit.as_ref().and_then(|edit|edit.reference.as_ref())) {crate::reference_editor::restore(&mut ui,reference_editor,draft);}
     ui.set_tree_scroll_offset(tree, state.schema_tree_scroll);
@@ -2893,6 +2900,7 @@ pub fn build_ui(
         sql_export,
         plot_load,
         column_picker,
+        view_keys,
         reference_editor,
         body_splitter,
         structure_splitter,

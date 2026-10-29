@@ -600,6 +600,7 @@ fn per_table_filters_sort_and_widths_restore_in_each_tab_and_project_roundtrip()
         ],
         column_widths: vec![147.0, 231.0],
         frozen_cols: Some(0),
+        unlock_view_pk: None,
     };
     demo.state.browse_mut().set_options(options.clone());
     demo.state.refresh_browse().unwrap();

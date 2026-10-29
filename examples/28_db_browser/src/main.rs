@@ -29,6 +29,7 @@ mod file_dlg;
 mod index_sql;
 mod table_sql;
 mod column_picker;
+mod view_keys;
 mod reference_editor;
 mod table_migration;
 mod filters;
@@ -271,6 +272,7 @@ struct BuiltUiIds {
     sql_export: sql_export::Controls,
     plot_load: plot_load::Controls,
     column_picker: column_picker::Controls,
+    view_keys: view_keys::Controls,
     reference_editor: reference_editor::Controls,
     status: WidgetId,
     body_splitter: WidgetId,
@@ -525,6 +527,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             sql_export: b.sql_export,
             plot_load: b.plot_load,
             column_picker: b.column_picker,
+            view_keys: b.view_keys,
             reference_editor: b.reference_editor,
             status: b.status,
             body_splitter: b.body_splitter,
@@ -1583,7 +1586,38 @@ impl Demo {
                 if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
             }
         }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("view-keys") {
+                state.new_memory_db().unwrap();state.conn.as_ref().unwrap().execute_batch(view_keys::QA_SQL).unwrap();
+                if tab.contains("long") {
+                    let fields=(0..48).map(|i|format!("id AS {}",db::quote_ident(&format!("Unique shipment column {i} — long 中文 label")))).collect::<Vec<_>>().join(",");
+                    state.conn.as_ref().unwrap().execute_batch(&format!("CREATE VIEW wide_view AS SELECT {fields} FROM shipments;")).unwrap();
+                }
+                state.write_changes().unwrap();state.refresh_schema().unwrap();state.tab=MainTab::Browse;
+                state.switch_browse_table_in("main",if tab.contains("long") {"wide_view"} else {"shipment_view"}).unwrap();
+                let locked=tab.contains("dialog") || tab.contains("locked") || tab.contains("menu");
+                if !locked {state.set_view_key(Some("Shipment ID".into())).unwrap();}
+                state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(if tab.contains("pk") {0} else {2});
+                state.prefs.auto_switch_mode=false;state.sync_edit_cell_from_selection();
+                state.dock_focus=DockKind::Plot;state.body_ratio=0.45;state.dock_ratio=0.62;
+                if tab.contains("apply") {state.edit_value=if tab.contains("pk") {"42"} else {"trigger saved 中文"}.into();}
+                if tab.contains("delete") {state.confirm_kind=ConfirmKind::DeleteRow;state.confirm_open=true;}
+                if tab.contains("insert") {
+                    state.open_insert_row().unwrap();state.insert_modes=vec![2,2,2,2];state.insert_values=vec!["100".into(),"Kyoto".into(),"new dispatch".into(),"4.5".into()];
+                }
+                if tab.contains("dialog") {
+                    let mut draft=view_keys::Draft::new(&mut state).unwrap();
+                    if tab.contains("long") {draft.selected=Some(47);}
+                    state.view_key_dialog=Some(draft);
+                }
+                if tab.contains("readonly") {state.read_only=true;}
+                if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+            }
+        }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("view-keys")) {
+            state.plot.check(3,1,true);state.sync_current_plot().unwrap();
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("row-keys")) {
             state.plot.check(4,1,true);state.sync_current_plot().unwrap();
         }
@@ -1595,8 +1629,11 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("row-keys") && tab.contains("apply")) {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| (tab.starts_with("row-keys") || tab.starts_with("view-keys")) && tab.contains("apply")) {
             built.ui.set_focus(Some(built.btn_edit_cell)); built.ui.sync(&mut built.scene);
+        }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("view-keys") && tab.contains("insert")) {
+            built.ui.set_focus(Some(built.ov_btn_ok));built.ui.sync(&mut built.scene);
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-session")) {
             built.ui.set_focus(Some(built.edit_value)); built.ui.select_text_area_range(built.edit_value, 2..6);
@@ -1719,6 +1756,7 @@ impl Demo {
     fn snapshot_inputs(&mut self) {
         if self.state.export_dialog.is_some() {self.snapshot_data_export();return;}
         self.snapshot_column_picker();
+        self.snapshot_view_key_dialog();
         if self.ids.tree.0 != 0 {
             for (database, name) in self.last_schema_names.iter().enumerate() {
                 let root = database as u64 * 5 + 1;
@@ -2910,6 +2948,12 @@ impl Demo {
             self.ids.ov_prefs_toolbars.iter().enumerate().find_map(|(index, id)|
                 (self.ui.focused() == Some(*id)).then(|| self.ui.select_state(*id).map(|state| (index, state))).flatten())
         } else { None };
+        let overlay_action_focus = self.state.overlay.and_then(|_| [self.ids.ov_btn_ok,self.ids.ov_btn_cancel].into_iter().position(|id| id.0!=0 && self.ui.focused()==Some(id)));
+        let insert_session = if self.state.overlay==Some(OverlayKind::InsertRow) {
+            self.snapshot_overlay();
+            self.ids.insert_values.iter().enumerate().find_map(|(index,id)| (self.ui.focused()==Some(*id)).then(|| (index,self.ui.text_input_state(*id),None)))
+                .or_else(||self.ids.insert_modes.iter().enumerate().find_map(|(index,id)| (self.ui.focused()==Some(*id)).then(|| (index,None,self.ui.select_state(*id)))))
+        } else { None };
         let modal_session=self.ui.modal_state(self.ids.modal);
         let plot_session=self.ui.plot_session(self.ids.chart,0);
         let plot_focused=self.ui.focused()==Some(self.ids.chart);
@@ -2928,6 +2972,7 @@ impl Demo {
         let export_session=self.ids.data_export.session(&self.ui);
         if self.state.export_dialog.is_some() {self.snapshot_data_export();}
         self.snapshot_column_picker();
+        self.snapshot_view_key_dialog();
         self.snapshot_csv_view();
         let csv_waiting=self.state.csv_work.is_some();
         let csv_overlay = matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
@@ -3133,6 +3178,20 @@ impl Demo {
                 sql_syntax::apply(&mut self.ui, [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview][index], &self.theme);
             }
             self.ui.sync(&mut self.scene);
+        }
+        if self.state.overlay==Some(OverlayKind::InsertRow) {
+            if let Some((index,input,select))=insert_session {
+                if let Some((id,session))=self.ids.insert_values.get(index).zip(input.as_ref()) {
+                    if self.ui.restore_text_input_state(*id,session) {self.ui.set_focus(Some(*id));}
+                }
+                if let Some((id,session))=self.ids.insert_modes.get(index).zip(select.as_ref()) {
+                    if self.ui.restore_select_state(*id,session) {self.ui.set_focus(Some(*id));}
+                }
+                self.ui.sync(&mut self.scene);
+            }
+        }
+        if let Some(id)=overlay_action_focus.and_then(|index|[self.ids.ov_btn_ok,self.ids.ov_btn_cancel].get(index).copied()).filter(|id|id.0!=0) {
+            self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);
         }
         self.last_schema_names = self.state.schema_names.clone();
         if self.ids.tree.0 != 0 {
@@ -3622,6 +3681,7 @@ impl Demo {
         if self.state.tab != MainTab::Browse
             || self.state.overlay.is_some()
             || self.state.confirm_open
+            || self.ui.active_dialog().is_some()
             || self.state.conn.is_none()
             || self.state.sql_busy
             || self.ui.hit_widget(&self.scene, x, y) != Some(self.ids.browse_table)
@@ -3644,7 +3704,7 @@ impl Demo {
                 .result
                 .as_ref()
                 .is_some_and(|result| !result.rows.is_empty());
-        let items = vec![
+        let mut items = vec![
             next_gui_ui::MenuItem::new(
                 mid::BROWSE_FREEZE,
                 if self.state.browse_frozen_cols() == 0 {
@@ -3660,8 +3720,13 @@ impl Demo {
             },
             next_gui_ui::MenuItem::new(mid::BROWSE_COPY_COLUMN, "Copy Column Name"),
         ];
-        self.ui
-            .open_context_menu(self.ids.context_menu, items, x, y)
+        if self.state.browse_is_view() {
+            let enabled = !self.state.read_only && !self.state.sql_busy && self.state.guard_background_idle().is_ok();
+            let action = if enabled { next_gui_ui::MenuItem::new(mid::BROWSE_UNLOCK_VIEW, "Unlock View Editing…") }
+                else { next_gui_ui::MenuItem::disabled(mid::BROWSE_UNLOCK_VIEW, "Unlock View Editing…") };
+            items.push(action.checked(self.state.browse().unlock_view_pk.is_some()));
+        }
+        self.ui.open_context_menu(self.ids.context_menu, items, x, y)
     }
 
     fn browse_header_name(&self) -> Option<&str> {
@@ -3675,6 +3740,15 @@ impl Demo {
     }
 
     fn handle_browse_header_action(&mut self, item: u64) -> bool {
+        if item == mid::BROWSE_UNLOCK_VIEW {
+            self.browse_header_column = None;
+            self.ui.close_popup();
+            if self.state.browse().unlock_view_pk.is_some() {
+                match self.state.set_view_key(None) { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
+                self.rebuild = true;
+            } else { self.open_view_key_dialog(); }
+            return true;
+        }
         if !matches!(item, mid::BROWSE_FREEZE | mid::BROWSE_SELECT_COLUMN) {
             return false;
         }
@@ -3718,7 +3792,7 @@ impl Demo {
         if self.state.external_cell.is_some() {self.set_error("Apply or cancel the external editing session first");self.rebuild=true;return;}
         let view_action=(mid::VIEW_DOCK_EDIT..=mid::VIEW_DOCK_REMOTE).contains(&item);
         if !view_action {if let Err(error)=self.state.guard_background_idle() {self.set_error(error);return;}}
-        if self.state.wizard_column_picker.is_some() { return; }
+        if self.state.wizard_column_picker.is_some() || self.state.view_key_dialog.is_some() { return; }
         self.snapshot_inputs();
         if self.handle_browse_header_action(item) { return; }
         let document_action = matches!(item, mid::FILE_NEW | mid::FILE_NEW_MEM | mid::FILE_OPEN | mid::FILE_OPEN_RO | mid::FILE_CLOSE | mid::FILE_PROJECT_OPEN | mid::FILE_PROJECT_CLOSE | mid::FILE_EXIT | mid::FILE_SAVE_ALL)
@@ -3965,6 +4039,7 @@ impl Demo {
             self.snapshot_inputs(); self.state.csv_preview = None; self.rebuild = true; return true;
         }
         if id == self.ids.ov_btn_cancel {
+            if self.state.overlay==Some(OverlayKind::InsertRow) {self.state.insert_target=None;}
             if matches!(self.state.overlay,Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {
                 self.state.csv_work=None;self.state.csv_files=None;self.state.csv_preview=None;
             }
@@ -4438,6 +4513,7 @@ impl Demo {
         if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_button(id);return;}
         if self.state.export_dialog.is_some() {self.handle_data_export_button(id);return;}
         if self.state.csv_work.is_some() {self.handle_csv_answer_button(id);return;}
+        if self.state.view_key_dialog.is_some() {self.handle_view_key_button(id);return;}
         if self.state.wizard_column_picker.is_some() {self.handle_column_picker_button(id);return;}
         if id==self.ids.reference_editor.reset {
             if let Some(draft)=self.state.wizard_constraint_edit.as_mut().and_then(|edit|edit.reference.as_mut()) {draft.reset();self.do_rebuild();self.snapshot_reference_cell(false);self.flush_table_foreign_key();}
@@ -5211,7 +5287,7 @@ impl Demo {
                 }
             }
             ConfirmKind::DeleteRow => {
-                if let Err(e) = self.state.guard_writable() {
+                if let Err(e) = self.state.guard_writable().and_then(|()| self.state.guard_browse_editable()) {
                     self.set_error(e);
                 } else {
                     let table = self.state.browse().table.clone();
@@ -5335,7 +5411,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         if let Some((id, color)) = self.ui.take_color_change() {
@@ -5741,6 +5817,7 @@ impl AppCallbacks for Demo {
                         }
                         if self.state.overlay.is_some() {
                             self.snapshot_inputs();
+                            if self.state.overlay==Some(OverlayKind::InsertRow) {self.state.insert_target=None;}
                             if matches!(self.state.overlay,Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {
                                 self.state.csv_work=None;self.state.csv_files=None;self.state.csv_preview=None;
                             }
@@ -5903,7 +5980,7 @@ impl AppCallbacks for Demo {
             if self.ui.is_select(self.ids.ov_field_editor) {self.ui.key_input(UiKey::Space);} else {self.ui.open_autocomplete_options(self.ids.ov_field_editor);}
             self.ui.sync(&mut self.scene);self.needs_paint=true;
         }
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref() == Ok("header-menu") && !self.ui.has_open_popup() {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab=="header-menu" || tab.starts_with("view-keys-menu")) && !self.ui.has_open_popup() {
             let bounds = self.scene.iter_paint_order().into_iter().find(
                 |node| self.ui.widget_from_node(node.id) == Some(self.ids.browse_table)
             ).map(|node| node.bounds);
@@ -5946,7 +6023,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

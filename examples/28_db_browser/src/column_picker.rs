@@ -328,6 +328,10 @@ impl Demo {
     }
     pub(crate) fn handle_column_list_activate(&mut self) {
         if let Some((id, _)) = self.ui.take_list_activate() {
+            if self.state.view_key_dialog.is_some() && id == self.ids.view_keys.list {
+                self.handle_view_key_button(self.ids.view_keys.apply);
+                return;
+            }
             let controls = self.ids.column_picker;
             if self.state.wizard_column_picker.is_some() {
                 if id == controls.lists[0] {

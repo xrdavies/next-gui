@@ -504,6 +504,7 @@ pub fn encode(project: &ProjectFile, path: &Path) -> Result<String, String> {
         tab.set("table", format!("{},{}:{}{name}", b.schema.len(), name.len(), b.schema));
         tab.set("title", &b.title);
         tab.set("custom_title", u8::from(b.title != name));
+        tab.set("next_gui_unlock_view_pk", serde_json::to_string(&b.unlock_view_pk).map_err(|e| e.to_string())?);
         if tab.attr("dock_id").is_none() {
             tab.set("dock_id", next_dock + index);
         }
@@ -609,6 +610,9 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let Content::Element(table) = &mut settings.content[index] else {
             unreachable!()
         };
+        table.set("unlock_view_pk", options.unlock_view_pk.as_deref().unwrap_or("_rowid_"));
+        // Preserve an actual column named _rowid_, which DB4S reserves as its locked sentinel.
+        table.set("next_gui_unlock_view_pk", serde_json::to_string(&options.unlock_view_pk).map_err(|e| e.to_string())?);
         // DB4S viewport settings include the leading row-id column; sort/filter fields do not.
         let frozen = options.frozen_cols.or_else(|| project.browse_tabs.iter()
             .any(|tab| tab.schema == schema && tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
@@ -695,6 +699,10 @@ fn restore_table_options(
     columns: &[String],
 ) -> Result<(), String> {
     tab.column_names = columns.to_vec();
+    tab.unlock_view_pk = if let Some(key) = table.attr("next_gui_unlock_view_pk") {
+        serde_json::from_str::<Option<String>>(key).map_err(|e| format!("Invalid project view key: {e}"))?
+    } else { table.attr("unlock_view_pk").filter(|key| !key.is_empty() && *key != "_rowid_").map(str::to_owned) };
+    tab.unlock_view_pk = tab.unlock_view_pk.as_ref().and_then(|key| columns.iter().find(|name| name.eq_ignore_ascii_case(key))).cloned();
     if let Some(count) = table.attr("freeze_columns") {
         tab.frozen_cols = Some(
             count.parse::<usize>()
@@ -770,7 +778,9 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
     else {
         return Ok(());
     };
-    for tab in &mut project.browse_tabs {
+    let extension = root.child("next_gui").map(|element| serde_json::from_str::<serde_json::Value>(&element.text())).transpose().map_err(|e| e.to_string())?;
+    let native_tabs: Vec<_> = root.child("tab_browse").into_iter().flat_map(|browse| browse.children().filter(|e| e.name == "table")).collect();
+    for (tab_index, tab) in project.browse_tabs.iter_mut().enumerate() {
         for table in settings
             .children()
             .filter(|e| e.name == "table")
@@ -795,9 +805,19 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             options.remap_columns(&columns);
             stored.set_options(options);
             // Per-tab overrides take precedence over DB4S's shared table setting.
+            let key_override = if active {
+                native_tabs.get(tab_index).and_then(|tab| tab.attr("next_gui_unlock_view_pk"))
+                    .map(|key| serde_json::from_str::<Option<String>>(key).map_err(|e| format!("Invalid project view key: {e}"))).transpose()?
+            } else { None };
+            let extended_tab = extension.as_ref().and_then(|value| value.get("browse_tabs")).and_then(|tabs| tabs.get(tab_index));
+            let extended_options = if active { extended_tab } else if schema == "main" {
+                extended_tab.and_then(|tab| tab.get("table_options")).and_then(|tables| tables.get(name))
+            } else { extended_tab.and_then(|tab| tab.get("schema_table_options")).and_then(|schemas| schemas.get(schema)).and_then(|tables| tables.get(name)) };
+            let key_override = key_override.or_else(|| extended_options.and_then(|options| options.get("unlock_view_pk")).map(|_| stored.unlock_view_pk.clone()));
             let frozen_override = stored.frozen_cols;
             let widths_override = (!stored.column_widths.is_empty()).then(|| stored.column_widths.clone());
             restore_table_options(&mut stored, table, &columns)?;
+            if let Some(key) = key_override { stored.unlock_view_pk = key.and_then(|key| columns.iter().find(|name| name.eq_ignore_ascii_case(&key))).cloned(); }
             if frozen_override.is_some() {
                 stored.frozen_cols = frozen_override;
             }
@@ -999,6 +1019,48 @@ pub fn restore_connection(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn view_keys_roundtrip_native_json_per_tab_overrides_and_locked_sentinel() {
+        use super::*;
+        let conn=Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::view_keys::QA_SQL).unwrap();
+        conn.execute_batch("CREATE VIEW sentinel_view AS SELECT id AS _rowid_, note FROM shipments;").unwrap();
+        let mut unlocked=BrowseTabState::new(Some("shipment_view".into()));
+        unlocked.unlock_view_pk=Some("Shipment ID".into());
+        let locked=BrowseTabState::new(Some("shipment_view".into()));
+        let mut sentinel=BrowseTabState::new(Some("sentinel_view".into()));sentinel.unlock_view_pk=Some("_rowid_".into());
+        let mut project=ProjectFile {db_path:":memory:".into(),browse_tabs:vec![unlocked,locked,sentinel],..ProjectFile::default()};
+        project.browse_tabs[0].store_options("main","sentinel_view",crate::state::BrowseTableOptions {unlock_view_pk:None,..Default::default()});
+        capture_connection(&mut project,&conn).unwrap();
+        let json=serde_json::to_string(&project).unwrap();
+        let json:ProjectFile=serde_json::from_str(&json).unwrap();
+        assert_eq!(json.browse_tabs[0].unlock_view_pk.as_deref(),Some("Shipment ID"));
+        assert_eq!(json.browse_tabs[1].unlock_view_pk,None);
+        let xml=encode(&project,Path::new("views.sqbpro")).unwrap();
+        for extension in [true,false] {
+            let mut root=parse(&xml).unwrap();if !extension {root.retain_elements(|e|e.name!="next_gui");}
+            let mut restored=decode(&render(&root).unwrap()).unwrap();restore_browse(&mut restored,&conn).unwrap();
+            assert_eq!(restored.browse_tabs[0].unlock_view_pk.as_deref(),Some("Shipment ID"));
+            assert_eq!(restored.browse_tabs[1].unlock_view_pk,None);
+            assert_eq!(restored.browse_tabs[2].unlock_view_pk.as_deref(),Some("_rowid_"));
+            if extension {assert_eq!(restored.browse_tabs[0].stored_options("main","sentinel_view").unwrap().unlock_view_pk,None);}
+        }
+        for (attribute,expected) in [("Shipment ID",Some("Shipment ID")),("",None),("_rowid_",None),("missing",None)] {
+            let xml=format!("<sqlb_project><db path=':memory:'/><tab_browse><table table='4,13:mainshipment_view'/><browse_table_settings><table schema='main' name='shipment_view' unlock_view_pk='{attribute}' future='keep'/></browse_table_settings></tab_browse></sqlb_project>");
+            let mut restored=decode(&xml).unwrap();restore_browse(&mut restored,&conn).unwrap();
+            assert_eq!(restored.browse_tabs[0].unlock_view_pk.as_deref(),expected);
+            restored.browse_tabs[0].unlock_view_pk=None;capture_connection(&mut restored,&conn).unwrap();
+            let root=parse(restored.db4s_xml.as_ref().unwrap()).unwrap();
+            let table=root.child("tab_browse").unwrap().child("browse_table_settings").unwrap().child("table").unwrap();
+            assert_eq!(table.attr("unlock_view_pk"),Some("_rowid_"));assert_eq!(table.attr("future"),Some("keep"));
+        }
+        let xml="<sqlb_project><db path=':memory:'/><tab_browse><table table='4,13:mainshipment_view'/><browse_table_settings><table name='shipment_view' next_gui_unlock_view_pk='42'/></browse_table_settings></tab_browse></sqlb_project>";
+        assert!(restore_browse(&mut decode(xml).unwrap(),&conn).unwrap_err().contains("Invalid project view key"));
+        let mut restored=decode(&xml.replace("'42'","'&quot;Shipment ID&quot;'")).unwrap();
+        conn.execute_batch("DROP VIEW shipment_view; CREATE VIEW shipment_view AS SELECT region,note FROM shipments;").unwrap();
+        restore_browse(&mut restored,&conn).unwrap();assert_eq!(restored.browse_tabs[0].unlock_view_pk,None);
+    }
+
     #[cfg(unix)]
     #[test]
     fn relative_database_path_survives_parent_directory_aliases() {

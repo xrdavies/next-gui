@@ -218,7 +218,11 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   and filters on the stored typed values; NULL keys report no parent. Source rows
   use typed row keys: an unshadowed rowid alias, or every ordered primary-key
   component for WITHOUT ROWID and fully shadowed tables. Ambiguous or stale keys
-  reject the entire operation; views still need an explicit custom-key workflow.
+  reject the entire operation. View headers offer Unlock View Editing: select a
+  unique output column and use the view's INSTEAD OF triggers for Apply, paste,
+  insertion and deletion. Relock with the checked header action; locked and
+  readonly views reject writes. Failed writes retain drafts and earlier pending
+  edits. Key settings follow tabs/tables and JSON/native XML projects.
 - SQL tabs own results, export snapshots, messages, widths and scroll positions.
   Save as VIEW takes an editable name and the executed result statement, so editing
   the script after execution does not change the view source.
@@ -390,3 +394,14 @@ This deliberately preserves source bytes instead of normalizing them like the
 original JSON serializer. UTF-16/32 and selectable cell codecs remain unfinished.
 Stored SQLite REAL infinities remain clean and can be replaced with finite values;
 typing new infinities/NaN still fails validation. Evaluation retains SQLite types.
+
+
+View keys use the original `unlock_view_pk` project setting. Empty or `_rowid_`
+means locked when importing an original project. An actual view output column
+named `_rowid_` can be selected locally and retained by next-gui's XML extension;
+the original application reserves that spelling for its locked sentinel. Unlock
+chooses a key without scanning the entire view; every write rejects missing or
+ambiguous target keys. Trigger behavior belongs to the database, and the grid
+reloads the stored result after Apply. Missing INSTEAD OF triggers, ignored
+writes and SQLite errors retain the draft. Native desktop/platform and full
+original product/interface parity remain unfinished.

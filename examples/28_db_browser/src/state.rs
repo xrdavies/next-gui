@@ -123,7 +123,7 @@ pub enum BrowseViewMode {
     Form = 1,
 }
 
-/// Full-window overlay wizards (Modal cannot host custom controls).
+/// Full-window overlay wizards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayKind {
     EditTable,
@@ -158,12 +158,14 @@ pub struct BrowseTableOptions {
     pub ordering: Vec<db::OrderBy>,
     pub column_widths: Vec<f32>,
     pub frozen_cols: Option<usize>,
+    pub unlock_view_pk: Option<String>,
 }
 
 impl BrowseTableOptions {
     fn rename_columns(&mut self, renames: &[(String, String)]) {
         for name in &mut self.column_names { rename_column(name, renames); }
         for order in &mut self.ordering { rename_column(&mut order.column, renames); }
+        if let Some(key) = &mut self.unlock_view_pk { rename_column(key, renames); }
     }
 
     pub fn remap_columns(&mut self, columns: &[String]) {
@@ -183,6 +185,7 @@ impl BrowseTableOptions {
                 self.frozen_cols = Some(positions.iter().take_while(|i| i.is_some_and(|i| i < count)).count());
             }
         }
+        self.unlock_view_pk = self.unlock_view_pk.as_ref().and_then(|key| columns.iter().find(|name| name.eq_ignore_ascii_case(key))).cloned();
         self.column_names = columns.to_vec();
     }
 }
@@ -217,6 +220,8 @@ pub struct BrowseTabState {
     pub column_widths: Vec<f32>,
     #[serde(default)]
     pub frozen_cols: Option<usize>,
+    #[serde(default)]
+    pub unlock_view_pk: Option<String>,
     #[serde(default)]
     pub scroll: (f32, f32),
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -269,6 +274,7 @@ impl BrowseTabState {
             ordering: self.ordering(),
             column_widths: self.column_widths.clone(),
             frozen_cols: self.frozen_cols,
+            unlock_view_pk: self.unlock_view_pk.clone(),
         }
     }
 
@@ -280,6 +286,7 @@ impl BrowseTabState {
         self.set_ordering(options.ordering);
         self.column_widths = options.column_widths;
         self.frozen_cols = options.frozen_cols;
+        self.unlock_view_pk = options.unlock_view_pk;
     }
 
     pub fn ordering(&self) -> Vec<db::OrderBy> {
@@ -358,6 +365,7 @@ impl BrowseTabState {
             additional_order: Vec::new(),
             column_widths: Vec::new(),
             frozen_cols: None,
+            unlock_view_pk: None,
             scroll: (0.0, 0.0),
             table_options: BTreeMap::new(),
             schema_table_options: BTreeMap::new(),
@@ -443,6 +451,8 @@ pub struct AppState {
     pub browse_tab_idx: usize,
     pub edit_col: String,
     pub edit_value: String,
+    pub view_key_dialog: Option<crate::view_keys::Draft>,
+    pub insert_target: Option<crate::view_keys::Source>,
     pub insert_columns: Vec<db::ColumnInfo>,
     pub insert_values: Vec<String>,
     pub insert_modes: Vec<usize>,
@@ -810,6 +820,8 @@ impl AppState {
             browse_tab_idx: 0,
             edit_col: String::new(),
             edit_value: String::new(),
+            view_key_dialog: None,
+            insert_target: None,
             insert_columns: Vec::new(),
             insert_values: Vec::new(),
             insert_modes: Vec::new(),
@@ -1414,7 +1426,10 @@ impl AppState {
         let offset = self.browse().offset.min(last_page);
         let (total_rows, result, row_keys) = {
             let conn = self.conn.as_ref().unwrap();
-            if is_view {
+            if is_view && candidate.unlock_view_pk.is_some() {
+                let (result, keys) = db::browse_view_with_key_in(conn, &schema, &table, candidate.unlock_view_pk.as_deref().unwrap(), &ordering, where_sql.as_deref(), (db::DEFAULT_LIMIT, offset))?;
+                (total_rows, result, keys)
+            } else if is_view {
                 (
                     total_rows,
                     db::browse_table_in(
@@ -1702,10 +1717,14 @@ impl AppState {
     pub fn open_insert_row(&mut self) -> Result<(), String> {
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
+        self.guard_browse_editable()?;
+        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        let target = crate::view_keys::Source::new(self)?;
         let table = self.browse().table.as_ref().ok_or("Select a table")?;
         self.insert_columns = db::table_columns_in(self.conn.as_ref().unwrap(), &schema, table)?;
         self.insert_values = vec![String::new(); self.insert_columns.len()];
         self.insert_modes = vec![0; self.insert_columns.len()];
+        self.insert_target = Some(target);
         self.overlay = Some(OverlayKind::InsertRow);
         Ok(())
     }
@@ -1713,6 +1732,13 @@ impl AppState {
     pub fn apply_insert_row(&mut self) -> Result<(), String> {
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
+        self.guard_browse_editable()?;
+        if self.overlay != Some(OverlayKind::InsertRow) || self.insert_target.as_ref().is_none_or(|source| !source.matches(self)) {
+            return Err("The insertion source changed; reopen New Record".into());
+        }
+        if self.insert_columns.len() != self.insert_modes.len() || self.insert_columns.len() != self.insert_values.len() {
+            return Err("Record input dimensions do not match".into());
+        }
         let table = self.browse().table.as_ref().ok_or("Select a table")?;
         let mut columns = Vec::new();
         let mut values = Vec::new();
@@ -1739,14 +1765,20 @@ impl AppState {
                 vec!["?"; values.len()].join(",")
             )
         };
-        self.conn
-            .as_ref()
-            .unwrap()
-            .execute(&sql, rusqlite::params_from_iter(values))
-            .map_err(|e| e.to_string())?;
+        let conn = self.conn.as_ref().unwrap();
+        db::with_savepoint(conn, || {
+            let view = db::source_is_view_in(conn, &schema, table)?;
+            let before = conn.total_changes();
+            let changed = conn.execute(&sql, rusqlite::params_from_iter(values)).map_err(|e| e.to_string())?;
+            if if view { conn.total_changes() == before } else { changed != 1 } {
+                return Err("The record insertion was ignored; draft retained".into());
+            }
+            Ok(())
+        })?;
         self.mark_dirty();
         self.refresh_browse()?;
         self.status_msg = "Record inserted (unwritten)".into();
+        self.insert_target = None;
         self.overlay = None;
         Ok(())
     }
@@ -2452,6 +2484,8 @@ impl AppState {
     ) -> Result<(), String> {
         self.guard_replace()?;
         db::list_schema(&conn)?;
+        self.view_key_dialog = None;
+        self.insert_target = None;
         conn.bind_log(&self.sql_log);
         self.conn = Some(conn);
         self.plot.clear();
@@ -2625,6 +2659,8 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.view_key_dialog = None;
+        self.insert_target = None;
         self.plot_work = None;
         self.plot.clear();
         self.plot.settings.configs.clear();
@@ -3282,6 +3318,7 @@ impl AppState {
         }
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
+        self.guard_browse_editable()?;
         let tab = self.browse();
         let table = tab.table.clone().ok_or("No browse table")?;
         let row = tab.sel_row.ok_or("Select a browse row first")?;
@@ -3440,6 +3477,7 @@ impl AppState {
     pub fn cut_browse_cells(&mut self) -> Result<(), String> {
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
+        self.guard_browse_editable()?;
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let tab = self.browse();
         let result = tab.result.as_ref().ok_or("No browse data")?;
@@ -3483,6 +3521,7 @@ impl AppState {
     pub fn paste_browse_cells(&mut self, mut rows: Vec<Vec<db::CellValue>>) -> Result<(), String> {
         let schema = self.browse().schema.clone();
         self.guard_writable()?;
+        self.guard_browse_editable()?;
         if self.has_cell_draft() {
             return Err("Apply or discard the cell draft first".into());
         }
@@ -3727,7 +3766,7 @@ impl AppState {
     }
 
     fn browse_cell_read_only(&self) -> bool {
-        self.read_only || self.browse().sel_row.and_then(|row| self.browse().row_keys.get(row)).is_none()
+        self.read_only || !self.browse_editing_unlocked() || self.browse().sel_row.and_then(|row| self.browse().row_keys.get(row)).is_none()
             || self.edit_cell_generated()
     }
 
@@ -4990,11 +5029,18 @@ mod chart_default_tests {
         state.refresh_browse().unwrap();
         assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 2);
         let mut options = state.browse().options();
+        options.unlock_view_pk = Some("c".into());
+        options.rename_columns(&[("c".into(), "renamed".into())]);
+        assert_eq!(options.unlock_view_pk.as_deref(), Some("renamed"));
+        options.rename_columns(&[("renamed".into(), "c".into())]);
         options.remap_columns(&["C".into(), "a".into(), "added".into()]);
+        assert_eq!(options.unlock_view_pk.as_deref(), Some("C"));
         assert_eq!(options.col_filters, [">0", "", ""]);
         assert_eq!(options.column_widths, [333.0, 111.0, 140.0]);
         assert_eq!(options.frozen_cols, Some(0));
         assert_eq!(options.ordering[0].column, "C");
+        options.remap_columns(&["a".into()]);
+        assert_eq!(options.unlock_view_pk, None);
     }
 
     #[test]
