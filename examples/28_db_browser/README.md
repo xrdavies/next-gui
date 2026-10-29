@@ -22,7 +22,7 @@ The structure tree groups objects under main, temp and attached databases, inclu
 
 Structure navigation retains focus, expanded groups and scroll position across page/UI rebuilds. Keyboard selection reveals the active object; expansion state follows database names when an attachment is detached. These view settings last for the current database session.
 
-**Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK).
+**Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK). Revert invalidates every Browse cache, clears sources removed by rollback and reloads the active surviving source. Valid table settings and independent SQL/definition drafts and result snapshots remain; invalid filter/plot queries report a refresh notice after the successful rollback.
 
 **Phase 2:** EditTable/EditIndex overlay wizards · CSV import wizard (+ clipboard) · per-column browse filters + multi browse tabs · Execute SQL multi-tabs / Find-Replace / Stop (interrupt) · Pragma labeled form · JSON export · Recent files · Attach Database.
 

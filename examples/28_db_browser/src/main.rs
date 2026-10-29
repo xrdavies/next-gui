@@ -1626,6 +1626,19 @@ impl Demo {
                 if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
             }
         }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("revert-") {
+                state.new_memory_db().unwrap();state.conn.as_ref().unwrap().execute_batch(browse_rowid::QA_SQL).unwrap();state.write_changes().unwrap();state.refresh_schema().unwrap();
+                state.tab=MainTab::Browse;state.switch_browse_table_in("main","measurements").unwrap();state.set_show_rowid(true).unwrap();state.add_browse_tab().unwrap();
+                state.conn.as_ref().unwrap().execute_batch("CREATE TABLE pending_measurements AS SELECT region,reading,note FROM measurements LIMIT 4; UPDATE measurements SET reading=reading+100;").unwrap();state.refresh_schema().unwrap();
+                if tab.contains("missing") {state.switch_browse_table_in("main","pending_measurements").unwrap();} else {state.refresh_browse().unwrap();}
+                state.set_show_rowid(true).unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(2);state.prefs.auto_switch_mode=false;state.sync_edit_cell_from_selection();
+                state.dirty=true;state.dock_focus=DockKind::Plot;state.body_ratio=0.45;state.dock_ratio=0.62;
+                if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                if tab.contains("after") {state.revert_changes().unwrap();}
+                else {state.confirm_kind=ConfirmKind::Revert;state.confirm_open=true;}
+            }
+        }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("view-keys")) {
             state.plot.check(3,1,true);state.sync_current_plot().unwrap();
@@ -1634,6 +1647,7 @@ impl Demo {
             state.plot.check(4,1,true);state.sync_current_plot().unwrap();
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("rowid-")) { let shown=usize::from(state.browse().show_row_id);state.plot.check(1,1,true);state.plot.check(2+shown,2,true);state.sync_current_plot().unwrap(); }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("revert-")) {state.plot.check(0,1,true);state.plot.check(3,2,true);state.sync_current_plot().unwrap();}
         if state.dock_edit {
             if let Err(error) = state.sync_edit_cell_for_page() { state.error_msg = Some(error); }
         }
@@ -1642,6 +1656,7 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("revert-")) && state.confirm_open {built.ui.set_focus(Some(built.modal));built.ui.sync(&mut built.scene);}
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| (tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-")) && tab.contains("apply")) {
             built.ui.set_focus(Some(built.btn_edit_cell)); built.ui.sync(&mut built.scene);
         }
@@ -6053,7 +6068,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

@@ -1329,6 +1329,7 @@ impl AppState {
 
     pub fn revert_changes(&mut self) -> Result<(), String> {
         self.guard_background_idle()?;
+        if self.sql_busy { return Err("Stop or finish SQL before reverting".into()); }
         if self.read_only {
             return Err("Database is open read-only".into());
         }
@@ -1336,14 +1337,53 @@ impl AppState {
             return Err("No database open".into());
         };
         db::rollback_and_begin(conn)?;
-        self.edit_col.clear();
+        self.clear_browse_editor();
         self.dirty = false;
         self.log_sql("-- REVERT CHANGES (ROLLBACK)");
+        let definition_was_clean = self.selected.as_ref().and_then(|selected| self.schema.iter().find(|object| object.schema == selected.schema && object.kind == selected.kind && object.name == selected.name))
+            .is_some_and(|object| object.sql.as_deref().unwrap_or_default() == self.ddl_draft);
+        for tab in &mut self.browse_tabs {
+            tab.result = None;
+            tab.row_keys.clear();
+            tab.rowid_column = None;
+            tab.total_rows = None;
+            tab.clear_selection();
+        }
+        if matches!(self.plot.source, Some(crate::plot::Source::Table { .. })) { self.plot.clear(); }
         self.refresh_schema()?;
-        self.refresh_browse()?;
+        let source_exists = |schema: &str, name: &str| self.schema.iter().any(|object| object.schema == schema && object.name == name && matches!(object.kind, ObjectKind::Table | ObjectKind::View));
+        for tab in &mut self.browse_tabs {
+            tab.table_options.retain(|table, _| source_exists("main", table));
+            for (schema, tables) in &mut tab.schema_table_options { tables.retain(|table, _| source_exists(schema, table)); }
+            if tab.table.as_ref().is_some_and(|name| !source_exists(&tab.schema, name)) {
+                let mut empty = BrowseTabState::new_in(&tab.schema, None);
+                empty.table_options = std::mem::take(&mut tab.table_options);
+                empty.schema_table_options = std::mem::take(&mut tab.schema_table_options);
+                *tab = empty;
+            }
+        }
+        self.plot.settings.configs.retain(|config| match &config.source {
+            crate::plot::Source::Table { schema, table } => source_exists(schema, table),
+            crate::plot::Source::Query(_) => true,
+        });
+        self.cond_rules.retain(|rule| rule.table.as_ref().is_none_or(|table| source_exists(&rule.schema, table)));
+        if let Some(selected) = &self.selected {
+            let object = self.schema.iter().find(|object| object.schema == selected.schema && object.kind == selected.kind && object.name == selected.name);
+            if definition_was_clean { self.ddl_draft = object.and_then(|object| object.sql.clone()).unwrap_or_default(); }
+            if object.is_none() { self.selected = None; }
+        }
+        if let Some(table) = &self.chart_table {
+            if !source_exists(&self.chart_schema, table) {
+                self.chart_table = None;
+                self.chart_column.clear();
+            }
+        }
+        let browse_error = self.refresh_browse().err();
         self.refresh_pragmas()?;
-        self.refresh_chart()?;
+        let chart_error = self.refresh_chart().err();
         self.status_msg = "Changes reverted".into();
+        if let Some(error) = browse_error { self.status_msg.push_str(&format!("; Browse unavailable: {error}")); }
+        if let Some(error) = chart_error { self.status_msg.push_str(&format!("; Plot unavailable: {error}")); }
         Ok(())
     }
 
@@ -4427,6 +4467,73 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn revert_reconciles_all_qualified_browse_tabs_and_keeps_independent_drafts() {
+        let mut state=test_state();
+        state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS \"aux space\"; CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp saved'); CREATE TABLE \"aux space\".t(v); INSERT INTO \"aux space\".t VALUES('aux saved'); COMMIT; BEGIN;").unwrap();
+        state.refresh_schema().unwrap();state.prefs.auto_switch_mode=false;
+        for (index,schema) in ["main","temp","aux space"].into_iter().enumerate() {
+            if index>0 {state.add_browse_tab().unwrap();}
+            state.switch_browse_table_in(schema,"t").unwrap();state.set_show_rowid(true).unwrap();
+            state.browse_mut().column_widths=vec![55.0,211.0+index as f32];state.browse_mut().frozen_cols=Some(1);
+            state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(1);state.sync_edit_cell_from_selection();
+        }
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE main.p(v,qty); INSERT INTO main.p VALUES('main pending',1); CREATE VIEW pending_view AS SELECT * FROM main.p; CREATE TEMP TABLE p(v,qty); INSERT INTO temp.p VALUES('temp pending',2); CREATE TABLE \"aux space\".p(v,qty); INSERT INTO \"aux space\".p VALUES('aux pending',3);").unwrap();
+        state.refresh_schema().unwrap();
+        for (schema,table) in [("main","p"),("main","pending_view"),("temp","p"),("aux space","p")] {
+            state.add_browse_tab().unwrap();state.switch_browse_table_in(schema,table).unwrap();state.goto_browse_record(1).unwrap();
+        }
+        state.chart_schema="aux space".into();state.chart_table=Some("p".into());state.chart_column="qty".into();state.refresh_chart().unwrap();assert_eq!(state.chart_points.len(),1);
+        state.plot.settings.manual=false;state.sync_current_plot().unwrap();assert!(state.plot.check(0,1,true));assert!(state.plot.check(2,2,true));state.sync_current_plot().unwrap();assert!(!state.plot.data.series.is_empty());
+        state.plot.settings.configs.push(crate::plot::Config{source:crate::plot::Source::Table{schema:"main".into(),table:"t".into()},x:None,series:Vec::new()});
+        state.plot.settings.configs.push(crate::plot::Config{source:crate::plot::Source::Query(0),x:None,series:Vec::new()});
+        for table in ["t","p"] {state.cond_rules.push(CondFormatRule{schema:"main".into(),table:Some(table.into()),column:"v".into(),op:2,value:"saved".into(),color_rgb:0x336699});}
+        state.edit_value="unapplied cell draft".into();assert!(state.has_cell_draft());
+        *state.sql_editor_mut()="SELECT 'independent SQL draft';".into();state.frozen_cols=2;
+        state.selected=Some(SelectedObject{schema:"aux space".into(),kind:ObjectKind::Table,name:"p".into()});
+        state.ddl_draft=state.schema.iter().find(|object|object.schema=="aux space" && object.name=="p").unwrap().sql.clone().unwrap();
+        state.dirty=true;state.revert_changes().unwrap();
+        assert!(!state.dirty);assert!(!state.conn.as_ref().unwrap().is_autocommit());assert_eq!(state.browse_tabs.len(),7);
+        for (index,tab) in state.browse_tabs.iter().enumerate() {
+            assert!(tab.result.is_none());assert!(tab.row_keys.is_empty());assert_eq!(tab.sel_row,None);assert_eq!(tab.total_rows,None);assert_eq!(tab.rowid_column,None);
+            if index<3 {assert_eq!(tab.table.as_deref(),Some("t"));assert!(tab.show_row_id);assert_eq!(tab.column_widths,[55.0,211.0+index as f32]);assert_eq!(tab.frozen_cols,Some(1));}
+            else {assert!(tab.table.is_none());assert_eq!(tab.title,"Browse");assert!(tab.stored_options(&tab.schema,if index==4 {"pending_view"} else {"p"}).is_none());}
+        }
+        assert_eq!(state.browse().schema,"aux space");assert!(state.edit_col.is_empty());assert!(state.edit_value.is_empty());assert!(!state.has_cell_draft());assert_eq!(state.edit_saved,rusqlite::types::Value::Null);
+        assert!(state.selected.is_none());assert!(state.ddl_draft.is_empty());assert!(state.chart_table.is_none());assert!(state.chart_points.is_empty());assert!(state.plot.source.is_none());assert!(state.plot.data.series.is_empty());
+        assert_eq!(state.sql_editor(),"SELECT 'independent SQL draft';");assert_eq!(state.frozen_cols,2);assert!(state.apply_cell_draft().is_err());
+        assert_eq!(state.cond_rules.len(),1);assert_eq!(state.cond_rules[0].table.as_deref(),Some("t"));assert_eq!(state.plot.settings.configs.len(),2);
+        let mut project=crate::project::ProjectFile::from_state(&state);AppState::preflight_project_browse(&mut project,state.conn.as_ref().unwrap()).unwrap();
+        for (index,expected) in ["saved","temp saved","aux saved"].into_iter().enumerate() {
+            state.switch_browse_tab(index).unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows[0][1],expected);assert_eq!(state.browse().row_keys.len(),1);
+        }
+        for schema in ["main","temp","aux space"] {assert!(db::table_column_names_in(state.conn.as_ref().unwrap(),schema,"p").is_err());}
+    }
+
+    #[test]
+    fn revert_restores_dropped_and_renamed_sources_and_reports_invalid_filters_after_rollback() {
+        let mut state=test_state();
+        state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS \"aux space\"; CREATE TEMP TABLE t(v); INSERT INTO temp.t VALUES('temp saved'); CREATE TABLE \"aux space\".t(v); INSERT INTO \"aux space\".t VALUES('aux saved'); COMMIT; BEGIN;").unwrap();state.refresh_schema().unwrap();
+        for (index,schema) in ["main","temp","aux space"].into_iter().enumerate() {if index>0 {state.add_browse_tab().unwrap();}state.switch_browse_table_in(schema,"t").unwrap();state.goto_browse_record(1).unwrap();}
+        state.run_sql_text_sync("INSERT INTO main.t VALUES('query pending') RETURNING v;").unwrap();
+        let result=state.sql_result.as_ref().unwrap().values.identity();
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE main.t ADD COLUMN extra INTEGER; UPDATE main.t SET extra=2; DROP TABLE temp.t; ALTER TABLE \"aux space\".t RENAME TO renamed;").unwrap();state.refresh_schema().unwrap();
+        state.browse_tabs.push(BrowseTabState::new_in("aux space",Some("renamed".into())));state.browse_tab_idx=3;state.refresh_browse().unwrap();state.switch_browse_tab(0).unwrap();
+        state.browse_mut().filter="extra>=1".into();state.refresh_browse().unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows.len(),2);
+        state.chart_schema="main".into();state.chart_table=Some("t".into());state.chart_column="extra".into();state.refresh_chart().unwrap();
+        state.selected=Some(SelectedObject{schema:"main".into(),kind:ObjectKind::Table,name:"t".into()});state.ddl_draft=state.schema.iter().find(|object|object.schema=="main" && object.name=="t").unwrap().sql.clone().unwrap();
+        *state.sql_editor_mut()="SELECT 'keep draft without replay';".into();state.dirty=true;state.revert_changes().unwrap();
+        assert!(!state.dirty);assert!(state.status_msg.starts_with("Changes reverted; Browse unavailable:"));assert!(state.status_msg.contains("extra"));assert!(state.status_msg.contains("Plot unavailable"));
+        assert!(state.browse().result.is_none());assert!(state.browse().row_keys.is_empty());assert!(state.chart_points.is_empty());assert!(!state.ddl_draft.contains("extra"));assert!(state.selected.is_some());
+        assert_eq!(state.sql_result.as_ref().unwrap().values.identity(),result);assert_eq!(state.sql_result.as_ref().unwrap().rows[0][0],"query pending");assert_eq!(state.sql_editor(),"SELECT 'keep draft without replay';");
+        assert_eq!(db::count_rows(state.conn.as_ref().unwrap(),"t").unwrap(),1);assert!(state.browse_tabs[3].table.is_none());
+        state.browse_mut().filter.clear();state.chart_column.clear();
+        for (index,expected) in ["saved","temp saved","aux saved"].into_iter().enumerate() {state.switch_browse_tab(index).unwrap();assert_eq!(state.browse().result.as_ref().unwrap().rows[0][0],expected);}
+        state.ddl_draft="-- independent definition draft".into();state.revert_changes().unwrap();assert_eq!(state.ddl_draft,"-- independent definition draft");
+        state.sql_busy=true;assert!(state.revert_changes().unwrap_err().contains("finish SQL"));state.sql_busy=false;
+        state.read_only=true;assert!(state.revert_changes().unwrap_err().contains("read-only"));
     }
 
     #[test]

@@ -1128,3 +1128,37 @@ fn selected_and_highlighted_labels_have_readable_contrast_in_both_themes() {
         }
     }
 }
+
+#[test]
+fn revert_modal_cancel_and_accept_reconcile_sources_and_rebuild() {
+    let folder=std::env::var("NEXT_GUI_REVERT_QA_OUT").ok().map(std::path::PathBuf::from);
+    if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,font) in [(1400,860,13.0),(800,600,18.0)] {
+            for missing in [false,true] {
+                let mut demo=Demo::new(width,height,PresentBackend::Softbuffer);
+                demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(crate::browse_rowid::QA_SQL).unwrap();demo.state.write_changes().unwrap();demo.state.refresh_schema().unwrap();
+                demo.state.tab=MainTab::Browse;demo.state.switch_browse_table_in("main","measurements").unwrap();demo.state.set_show_rowid(true).unwrap();demo.state.add_browse_tab().unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE pending_measurements AS SELECT region,reading,note FROM measurements LIMIT 4; UPDATE measurements SET reading=reading+100;").unwrap();demo.state.refresh_schema().unwrap();
+                if missing {demo.state.switch_browse_table_in("main","pending_measurements").unwrap();} else {demo.state.refresh_browse().unwrap();}
+                demo.state.set_show_rowid(true).unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(2);demo.state.prefs.auto_switch_mode=false;demo.state.sync_edit_cell_from_selection();
+                demo.state.dirty=true;demo.state.dock_focus=DockKind::Plot;demo.state.body_ratio=0.45;demo.state.dock_ratio=0.62;demo.state.prefs.font_size=font;demo.theme=ui_build::browser_theme(theme,font);
+                demo.state.sync_current_plot().unwrap();assert!(demo.state.plot.check(0,1,true));assert!(demo.state.plot.check(3,2,true));demo.do_rebuild();
+                let kind=if missing {"missing"} else {"existing"};
+                let capture=|demo:&mut Demo,stage:&str| {if let Some(folder)=&folder {demo.ui.sync(&mut demo.scene);crate::plot_export::capture(demo,folder,&format!("revert-{kind}-{stage}-{name}-{width}"));}};
+                demo.handle_button(demo.ids.btn_revert);demo.do_rebuild();assert!(demo.state.confirm_open);assert_eq!(demo.state.confirm_kind,ConfirmKind::Revert);
+                demo.ui.set_focus(Some(demo.ids.modal));capture(&mut demo,"confirm");
+                assert!(demo.ui.key_input(UiKey::Escape));demo.handle_modal();demo.do_rebuild();
+                assert!(!demo.state.confirm_open);assert!(demo.state.dirty);assert!(demo.state.error_msg.is_none());assert!(demo.state.browse().result.is_some());
+                assert_eq!(dbmod::count_rows(demo.state.conn.as_ref().unwrap(),"pending_measurements").unwrap(),4);capture(&mut demo,"cancelled");
+                demo.handle_button(demo.ids.btn_revert);demo.do_rebuild();demo.ui.set_focus(Some(demo.ids.modal));assert!(demo.ui.key_input(UiKey::Enter));demo.handle_modal();demo.do_rebuild();
+                assert!(!demo.state.confirm_open);assert!(!demo.state.dirty);assert!(demo.state.error_msg.is_none(),"{:?}",demo.state.error_msg);assert!(demo.state.status_msg.starts_with("Changes reverted"));
+                assert!(demo.state.browse().row_keys.is_empty() || !missing);assert_eq!(demo.state.browse().sel_row,None);assert!(demo.state.edit_col.is_empty());
+                if missing {assert!(demo.state.browse().table.is_none());assert!(demo.state.browse().result.is_none());}
+                else {assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][2],"1.25");assert_eq!(demo.state.browse().row_keys.len(),18);}
+                assert!(dbmod::table_column_names_in(demo.state.conn.as_ref().unwrap(),"main","pending_measurements").is_err());capture(&mut demo,"reverted");
+                demo.state.switch_browse_tab(0).unwrap();demo.do_rebuild();assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][2],"1.25");assert_eq!(demo.state.browse().row_keys.len(),18);
+            }
+        }
+    }
+}
