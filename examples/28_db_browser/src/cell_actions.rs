@@ -305,7 +305,7 @@ impl Demo {
             }
             .map_err(|error| error.to_string())?;
             self.pending_opens.push((request, None));
-            self.state.status_msg = format!("Opening {target}…");
+            self.state.status_msg = format!("Open requested: {target}");
             Ok(())
         });
         if let Err(error) = result {
@@ -382,12 +382,10 @@ impl Demo {
                 None => self.pending_opens.push((request, external)),
                 Some(Ok(())) => {}
                 Some(Err(error)) => {
-                    if external.as_ref().is_some_and(|path| {
-                        self.state
-                            .external_cell
-                            .as_ref()
-                            .is_some_and(|cell| *path == cell.path.to_path_buf())
-                    }) {
+                    if let Some(path) = external {
+                        if !self.state.external_cell.as_ref().is_some_and(|cell| path == cell.path.to_path_buf()) {
+                            continue;
+                        }
                         self.state.cancel_external_cell();
                     }
                     self.set_error(error.to_string());
@@ -667,6 +665,42 @@ mod tests {
         assert_eq!(demo.state.edit_value, "changed");
         assert!(demo.state.has_cell_draft());
         assert_eq!(demo.ui.focused(), Some(demo.ids.edit_value));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn desktop_open_errors_only_affect_the_current_external_copy() {
+        let mut demo = editor(Value::Text("original".into()), EditCellMode::Text);
+        let closed = demo.state.begin_external_cell().unwrap();
+        demo.state.cancel_external_cell();
+        let current = demo.state.begin_external_cell().unwrap();
+        for external in [Some(closed), Some(current.clone()), None] {
+            demo.state.status_msg = "Current activity".into();
+            demo.state.error_msg = None;
+            demo.rebuild = false;
+            // NUL makes spawn fail before launching any desktop application.
+            let request = OpenRequest::path(Path::new("\0")).unwrap();
+            let stale = external.as_ref().is_some_and(|path| path != &current);
+            demo.pending_opens.push((request, external));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !demo.pending_opens.is_empty() {
+                demo.poll_desktop_opens();
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if stale {
+                assert_eq!(demo.state.status_msg, "Current activity");
+                assert!(demo.state.error_msg.is_none());
+                assert!(!demo.rebuild);
+                assert_eq!(demo.state.external_cell.as_ref().unwrap().path.to_path_buf(), current);
+                assert!(current.is_file());
+            } else {
+                assert!(demo.state.error_msg.is_some());
+                assert!(demo.rebuild);
+                assert!(demo.state.external_cell.is_none());
+                assert!(!current.exists());
+            }
+        }
     }
 
     #[test]

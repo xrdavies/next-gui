@@ -3245,7 +3245,7 @@ impl Demo {
 
     fn open_url(&mut self, url: &str) {
         match next_gui_platform::desktop::OpenRequest::url(url) {
-            Ok(request)=>{self.pending_opens.push((request,None));self.state.status_msg=format!("Opening {url}…");}
+            Ok(request)=>{self.pending_opens.push((request,None));self.state.status_msg=format!("Open requested: {url}");}
             Err(error)=>self.set_error(error.to_string()),
         }
         self.rebuild = true;
