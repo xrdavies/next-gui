@@ -57,6 +57,25 @@ impl Description {
     pub(crate) fn bold(&self) -> bool {
         number(&self.fields[4]).clamp(0, 99) > 57
     }
+    pub(crate) fn weight(&self) -> u16 {
+        let legacy = number(&self.fields[4]).clamp(0, 99);
+        // Qt's legacy-to-OpenType conversion chooses the nearest anchor, preferring lighter ties.
+        [
+            (0, 100),
+            (12, 200),
+            (25, 300),
+            (50, 400),
+            (57, 500),
+            (63, 600),
+            (75, 700),
+            (81, 800),
+            (87, 900),
+        ]
+        .into_iter()
+        .min_by_key(|(old, _)| (legacy - *old).abs())
+        .unwrap()
+        .1
+    }
     pub(crate) fn italic(&self) -> bool {
         number(&self.fields[5]) != 0
     }
@@ -200,9 +219,61 @@ pub(crate) fn prepare_qa(state: &mut crate::state::AppState) {
     state.begin_cond_formats().unwrap();
 }
 
+pub(crate) fn prepare_weight_qa(state: &mut crate::state::AppState) {
+    prepare_qa(state);
+    let family = ["Avenir Next", "Avenir", "Helvetica Neue", "DejaVu Sans"]
+        .into_iter()
+        .find(|family| {
+            next_gui_text::system_font_families()
+                .iter()
+                .any(|name| name == family)
+        })
+        .unwrap_or("sans-serif");
+    for (index, description) in [
+        format!("{family},18.5,-1,5,57,2,1,1,0,0"),
+        format!("{family},-1,25,5,63,0,0,1,0,0"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut style = decode(&description);
+        style.foreground_rgb = state.cond_rules[index].style.foreground_rgb;
+        style.alignment = state.cond_rules[index].style.alignment;
+        state.cond_rules[index].style = style;
+    }
+    state.begin_cond_formats().unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_weights_follow_qt_conversion_without_reducing_medium_and_demi_to_bold() {
+        for (legacy, expected) in [
+            (0, 100),
+            (12, 200),
+            (25, 300),
+            (50, 400),
+            (57, 500),
+            (60, 500),
+            (63, 600),
+            (69, 600),
+            (75, 700),
+            (81, 800),
+            (87, 900),
+            (99, 900),
+        ] {
+            let text = format!("Avenir Next,18,-1,5,{legacy},0,0,0,0,0");
+            let font = Description::parse(&text).unwrap();
+            assert_eq!(font.weight(), expected, "{legacy}");
+            let style = decode(&text);
+            assert_eq!(
+                Draft::from(&style).validate().unwrap().qfont.as_deref(),
+                Some(text.as_str())
+            );
+        }
+    }
 
     #[test]
     fn native_qfont_preserves_unedited_fractional_pixel_and_legacy_properties() {
@@ -259,72 +330,62 @@ mod tests {
     fn native_font_controls_render_and_save_cancel_without_normalizing_unedited_properties() {
         use crate::browse_filter::tests::{capture, fixture};
         use next_gui_ui::Theme;
-        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
-            for (width, height) in [(1400, 860), (800, 600)] {
-                let mut demo = fixture(width, height, theme);
-                prepare_qa(&mut demo.state);
-                if width == 800 {
-                    demo.state.prefs.font_size = 18.0;
+        for (prefix, prepare) in [
+            ("native-font", prepare_qa as fn(&mut crate::state::AppState)),
+            ("weighted-font", prepare_weight_qa),
+        ] {
+            for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+                for (width, height) in [(1400, 860), (800, 600)] {
+                    let mut demo = fixture(width, height, theme);
+                    prepare(&mut demo.state);
+                    if width == 800 {
+                        demo.state.prefs.font_size = 18.0;
+                    }
+                    demo.state.overlay = None;
+                    demo.state.cond_formats = None;
+                    demo.do_rebuild();
+                    let original = demo.state.cond_rules.clone();
+                    let styles = crate::cond_match::styles(&demo.state, demo.ui.font());
+                    assert_eq!(
+                        styles[1][1].as_ref().unwrap().size,
+                        Some(18.5 * POINT_SCALE)
+                    );
+                    assert!(styles[1][1].as_ref().unwrap().strikeout);
+                    assert_eq!(styles[0][1].as_ref().unwrap().size, Some(25.0));
+                    capture(&mut demo, &format!("{prefix}-browse-{theme_name}-{width}"));
+                    demo.state.begin_cond_formats().unwrap();
+                    demo.do_rebuild();
+                    assert_eq!(demo.state.cond_style.size, "18.5");
+                    capture(&mut demo, &format!("{prefix}-manager-{theme_name}-{width}"));
+                    demo.ui
+                        .set_text_input(demo.ids.cond_formats.foreground, "#F8D56B");
+                    demo.snapshot_inputs();
+                    demo.do_rebuild();
+                    assert_eq!(demo.state.cond_style.qfont, original[0].style.qfont);
+                    capture(&mut demo, &format!("{prefix}-edited-{theme_name}-{width}"));
+                    demo.handle_button(demo.ids.ov_btn_cancel);
+                    demo.do_rebuild();
+                    assert_eq!(demo.state.cond_rules, original);
+                    capture(&mut demo, &format!("{prefix}-cancel-{theme_name}-{width}"));
+                    demo.state.begin_cond_formats().unwrap();
+                    demo.do_rebuild();
+                    demo.ui
+                        .set_text_input(demo.ids.cond_formats.foreground, "#F8D56B");
+                    demo.handle_button(demo.ids.ov_btn_ok);
+                    demo.do_rebuild();
+                    assert!(demo.state.overlay.is_none(), "{:?}", demo.state.error_msg);
+                    assert_eq!(
+                        demo.state.cond_rules[0].style.qfont,
+                        original[0].style.qfont
+                    );
+                    assert_eq!(
+                        demo.state.cond_rules[0].style.foreground_rgb,
+                        Some(0xF8D56B)
+                    );
+                    assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
+                    assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 5);
+                    capture(&mut demo, &format!("{prefix}-saved-{theme_name}-{width}"));
                 }
-                demo.state.overlay = None;
-                demo.state.cond_formats = None;
-                demo.do_rebuild();
-                let original = demo.state.cond_rules.clone();
-                let styles = crate::cond_match::styles(&demo.state, demo.ui.font());
-                assert_eq!(
-                    styles[1][1].as_ref().unwrap().size,
-                    Some(18.5 * POINT_SCALE)
-                );
-                assert!(styles[1][1].as_ref().unwrap().strikeout);
-                assert_eq!(styles[0][1].as_ref().unwrap().size, Some(25.0));
-                capture(
-                    &mut demo,
-                    &format!("native-font-browse-{theme_name}-{width}"),
-                );
-                demo.state.begin_cond_formats().unwrap();
-                demo.do_rebuild();
-                assert_eq!(demo.state.cond_style.size, "18.5");
-                capture(
-                    &mut demo,
-                    &format!("native-font-manager-{theme_name}-{width}"),
-                );
-                demo.ui
-                    .set_text_input(demo.ids.cond_formats.foreground, "#F8D56B");
-                demo.snapshot_inputs();
-                demo.do_rebuild();
-                assert_eq!(demo.state.cond_style.qfont, original[0].style.qfont);
-                capture(
-                    &mut demo,
-                    &format!("native-font-edited-{theme_name}-{width}"),
-                );
-                demo.handle_button(demo.ids.ov_btn_cancel);
-                demo.do_rebuild();
-                assert_eq!(demo.state.cond_rules, original);
-                capture(
-                    &mut demo,
-                    &format!("native-font-cancel-{theme_name}-{width}"),
-                );
-                demo.state.begin_cond_formats().unwrap();
-                demo.do_rebuild();
-                demo.ui
-                    .set_text_input(demo.ids.cond_formats.foreground, "#F8D56B");
-                demo.handle_button(demo.ids.ov_btn_ok);
-                demo.do_rebuild();
-                assert!(demo.state.overlay.is_none(), "{:?}", demo.state.error_msg);
-                assert_eq!(
-                    demo.state.cond_rules[0].style.qfont,
-                    original[0].style.qfont
-                );
-                assert_eq!(
-                    demo.state.cond_rules[0].style.foreground_rgb,
-                    Some(0xF8D56B)
-                );
-                assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
-                assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 5);
-                capture(
-                    &mut demo,
-                    &format!("native-font-saved-{theme_name}-{width}"),
-                );
             }
         }
     }

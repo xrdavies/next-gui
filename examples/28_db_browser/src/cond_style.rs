@@ -1,6 +1,6 @@
 //! Persisted typography and editable, validated conditional-format style fields.
 use next_gui_scene::Color;
-use next_gui_text::{load_system_font, system_font_families, Font};
+use next_gui_text::{load_system_font_with_weight, system_font_families, Font};
 use next_gui_ui::{TableCellStyle, TableTextAlign};
 
 pub(crate) const ALIGNMENTS: [&str; 4] = ["Left", "Right", "Center", "Justify"];
@@ -138,19 +138,26 @@ impl Style {
             .and_then(crate::cond_font::Description::parse);
         let font = if !self.family.is_empty() {
             Some(
-                load_system_font(&self.family, self.bold, self.italic)
-                    .map(|font| {
-                        font.with_fallback(
-                            fallback
-                                .clone()
-                                .with_synthetic_style(self.bold, self.italic),
-                        )
-                    })
-                    .unwrap_or_else(|_| {
+                load_system_font_with_weight(
+                    &self.family,
+                    native
+                        .as_ref()
+                        .map(|font| font.weight())
+                        .unwrap_or(if self.bold { 700 } else { 400 }),
+                    self.italic,
+                )
+                .map(|font| {
+                    font.with_fallback(
                         fallback
                             .clone()
-                            .with_synthetic_style(self.bold, self.italic)
-                    }),
+                            .with_synthetic_style(self.bold, self.italic),
+                    )
+                })
+                .unwrap_or_else(|_| {
+                    fallback
+                        .clone()
+                        .with_synthetic_style(self.bold, self.italic)
+                }),
             )
         } else if self.bold || self.italic {
             Some(

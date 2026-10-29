@@ -11,7 +11,7 @@ use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 mod system_fonts;
-pub use system_fonts::{load_system_font, system_font_families};
+pub use system_fonts::{load_system_font, load_system_font_with_weight, system_font_families};
 
 /// Error loading or using a font.
 #[derive(Debug, Clone)]

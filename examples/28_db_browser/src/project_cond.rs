@@ -420,6 +420,23 @@ mod tests {
             root.ensure("tab_browse")
                 .ensure("browse_table_settings")
                 .retain_elements(|table| table.attr("schema").unwrap_or("main") == "main");
+            if std::env::var_os("NEXT_GUI_PROJECT_WEIGHT_QA").is_some() {
+                for rule in exported
+                    .cond_rules
+                    .iter_mut()
+                    .filter(|rule| rule.column == "name")
+                {
+                    let mut style = crate::cond_font::decode(if rule.value.is_empty() {
+                        "Avenir Next,18.5,-1,5,57,2,1,1,0,0"
+                    } else {
+                        "Avenir Next,-1,25,5,63,0,0,1,0,0"
+                    });
+                    style.foreground_rgb = rule.style.foreground_rgb;
+                    style.alignment = rule.style.alignment;
+                    rule.style = style;
+                }
+                capture(&exported, &conn, &mut root).unwrap();
+            }
             exported.db4s_xml = Some(render(&root).unwrap());
             std::fs::write(
                 Path::new(&out).join("exported.sqbpro"),

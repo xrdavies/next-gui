@@ -47,6 +47,19 @@ pub fn load_system_font(family: &str, bold: bool, italic: bool) -> Result<Font, 
         .load(family, bold, italic)
 }
 
+/// Resolve an installed family at an OpenType weight between 1 and 1000.
+/// The closest installed face with the requested slant is preferred. Missing bold
+/// (600 or greater) and italic faces are synthesized as in [`load_system_font`].
+pub fn load_system_font_with_weight(
+    family: &str,
+    weight: u16,
+    italic: bool,
+) -> Result<Font, FontError> {
+    SYSTEM_FONTS
+        .get_or_init(Catalog::system)
+        .load_weight(family, weight, italic)
+}
+
 impl Catalog {
     fn system() -> Self {
         let mut catalog = Self::default();
@@ -195,8 +208,15 @@ impl Catalog {
     }
 
     fn load(&self, family: &str, bold: bool, italic: bool) -> Result<Font, FontError> {
+        self.load_weight(family, if bold { 700 } else { 400 }, italic)
+    }
+
+    fn load_weight(&self, family: &str, weight: u16, italic: bool) -> Result<Font, FontError> {
+        if !(1..=1000).contains(&weight) {
+            return Err(FontError("Font weight must be between 1 and 1000".into()));
+        }
         let key = family.to_lowercase();
-        let weight: u16 = if bold { 700 } else { 400 };
+        let bold = weight >= 600;
         let index = self
             .faces
             .iter()
@@ -420,6 +440,60 @@ mod tests {
             assert!(mask.pixels.iter().any(|pixel| *pixel > 0));
             assert!(normal.width != mask.width || normal.pixels != mask.pixels);
         }
+        for weight in [0, 1001, u16::MAX] {
+            assert!(load_system_font_with_weight(&face.family, weight, false).is_err());
+        }
+        let weighted = load_system_font_with_weight(&face.family, 400, false).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&regular.inner, &weighted.inner));
+        for weight in [1, 100, 200, 300, 500, 600, 800, 900, 1000] {
+            assert!(load_system_font_with_weight(&face.family, weight, false).is_ok());
+        }
+        let bold = load_system_font(&face.family, true, false).unwrap();
+        let weighted = load_system_font_with_weight(&face.family, 700, false).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&bold.inner, &weighted.inner));
+        let mut tested = std::collections::BTreeSet::new();
+        for normal in catalog
+            .faces
+            .iter()
+            .filter(|face| face.weight == 400 && !face.italic)
+        {
+            if tested.contains(&normal.family) {
+                continue;
+            }
+            let Some(medium) = catalog
+                .faces
+                .iter()
+                .find(|face| face.weight == 500 && !face.italic && face.family == normal.family)
+            else {
+                continue;
+            };
+            let regular = catalog.load_weight(&normal.family, 400, false).unwrap();
+            let medium_font = catalog.load_weight(&normal.family, 500, false).unwrap();
+            assert!(!std::sync::Arc::ptr_eq(&regular.inner, &medium_font.inner));
+            let a = regular.rasterize_text("Medium ABC 123", 24.0, None).1;
+            let b = medium_font.rasterize_text("Medium ABC 123", 24.0, None).1;
+            assert!(a.width != b.width || a.pixels != b.pixels);
+            let repeated = catalog
+                .load_weight(&normal.family.to_uppercase(), 500, false)
+                .unwrap();
+            assert!(std::sync::Arc::ptr_eq(&medium_font.inner, &repeated.inner));
+            eprintln!(
+                "Weighted face verified: {}400 -> {}500 ({}:{})",
+                normal.family,
+                medium.family,
+                medium.path.display(),
+                medium.index
+            );
+            tested.insert(normal.family.clone());
+            if tested.len() == 3 {
+                break;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        assert!(
+            !tested.is_empty(),
+            "macOS installed regular/medium face coverage"
+        );
         let mut isolated = Catalog::default();
         isolated.add(Path::new("bad.ttf"), b"invalid font");
         assert!(isolated.faces.is_empty());

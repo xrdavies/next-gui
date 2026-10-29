@@ -1210,6 +1210,11 @@ impl Demo {
                     if tab.ends_with("narrow") { state.prefs.font_size = 18.0; }
                     MainTab::Browse
                 }
+                "condformat-weights" | "condformat-weights-narrow" => {
+                    cond_font::prepare_weight_qa(&mut state);
+                    if tab.ends_with("narrow") { state.prefs.font_size = 18.0; }
+                    MainTab::Browse
+                }
                 "form" => {
                     state.browse_view = crate::state::BrowseViewMode::Form;
                     MainTab::Browse
