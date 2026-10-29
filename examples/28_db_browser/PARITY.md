@@ -947,3 +947,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261030-d06fea875
 ## 2026-10-30 native conditional format projects (7b8c844f8bd3)
 
 [Review](../../docs/reviews/R-20261030-7b8c844f8bd3.md): 827 tests, 20 Soft/Metal pairs, 8 native workflows, 14 fresh Office windows and an actual exported project opened in original DB4S v3.13.1 pass. Native conditional maps resolve attached names and rowid-based indices, retain metadata and per-column priority through reorder/clear/native-only round trips, and preserve imported font descriptions including fractional/pixel sizes and rendered strikeout. Invalid native styles preserve the active session. Native alpha/full weight/style/DPI fidelity, legacy numeric export edges, original per-column modal/Reset/Help, Browse context actions, row-id/display formats, whole-result Browse and full native/platform acceptance remain. F02 stays **in_progress**.
+
+
+## 2026-10-30 native conditional font weights (cac3431a68cc)
+
+[Review](../../docs/reviews/R-20261030-cac3431a68cc.md):828 tests,40 Soft/Metal pairs,8 native workflows,14 fresh Office windows and original DB4S exported-project opening pass. Native Qt weights now select distinct installed faces with backward-compatible boolean loading; raw fonts survive Save/Cancel. Exact styleName/fixedPitch/custom DPI/variable/bitmap/color fonts and fallback fidelity, original per-column modal/Reset/Help, Browse context actions, row-id/display formats, whole-result Browse and complete native/platform acceptance remain. F02 stays **in_progress**.
