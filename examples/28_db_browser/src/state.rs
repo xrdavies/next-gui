@@ -3270,13 +3270,23 @@ impl AppState {
         if self.edit_cell_generated() { return Err("Generated columns are read-only; edit their source columns".into()); }
         let applied_mode = self.edit_mode;
         let evaluating = self.edit_mode == EditCellMode::Evaluation;
-        let value = if evaluating { crate::cell_format::evaluate(self.conn.as_ref().unwrap(), &self.edit_value)? }
+        let compacting = self.prefs.indent_compact && matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml);
+        let mut value = if evaluating { crate::cell_format::evaluate(self.conn.as_ref().unwrap(), &self.edit_value)? }
             else if self.edit_mode == EditCellMode::Image { self.edit_original.clone() }
             else { self.edited_cell_value()? };
+        if compacting {
+            let text = match &value {rusqlite::types::Value::Text(text)=>Some((text.as_str(),false)),
+                rusqlite::types::Value::Blob(bytes)=>Some((std::str::from_utf8(bytes).map_err(|_|"Invalid UTF-8 format data")?,true)),_=>None};
+            if let Some((text,blob))=text {
+                let text=if self.edit_mode==EditCellMode::Json {crate::cell_format::format_json(text,false)?} else {crate::cell_format::compact_xml(text)?};
+                value=if blob {rusqlite::types::Value::Blob(text.into_bytes())} else {rusqlite::types::Value::Text(text)};
+            }
+        }
         db::update_cell_in(self.conn.as_ref().unwrap(), &schema, &table, rowid, &column, &value)?;
         self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
         self.mark_dirty();
         self.edit_saved = value;
+        if compacting {self.edit_original=self.edit_saved.clone();self.show_edit_value();}
         if evaluating {
             self.edit_original = self.edit_saved.clone(); self.edit_mode = EditCellMode::Text;
             self.edit_type = match self.edit_saved { rusqlite::types::Value::Null=>0, rusqlite::types::Value::Integer(_)=>1,
@@ -3750,18 +3760,22 @@ impl AppState {
         self.edit_value = match self.edit_mode {
             EditCellMode::Hex => db::to_hex(&bytes),
             EditCellMode::Image => format!("[{} bytes — read-only image preview]", bytes.len()),
-            EditCellMode::Json => db::try_pretty_json(&String::from_utf8_lossy(&bytes))
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned()),
-            EditCellMode::Xml => crate::cell_format::indent_xml(&String::from_utf8_lossy(&bytes))
+            EditCellMode::Json if self.prefs.indent_compact => crate::cell_format::format_json(&String::from_utf8_lossy(&bytes),true)
                 .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
-            EditCellMode::Text | EditCellMode::Evaluation => String::from_utf8_lossy(&bytes).into_owned(),
+            EditCellMode::Xml if self.prefs.indent_compact => crate::cell_format::indent_xml(&String::from_utf8_lossy(&bytes))
+                .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
+            EditCellMode::Text | EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation => String::from_utf8_lossy(&bytes).into_owned(),
         };
         if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml | EditCellMode::Evaluation) {
-            self.edit_display_baseline = Some((self.edit_type, self.edit_value.clone()));
+            self.mark_cell_display_baseline();
         }
         if self.edit_mode == EditCellMode::Image {
             self.decode_edit_image();
         }
+    }
+
+    pub fn mark_cell_display_baseline(&mut self) {
+        self.edit_display_baseline = Some((self.edit_type,self.edit_value.clone()));
     }
 
     fn edit_display_unchanged(&self) -> bool {
@@ -3791,11 +3805,7 @@ impl AppState {
         } else {
             &self.edit_value
         };
-        if validate_format && self.edit_mode == EditCellMode::Json
-            && serde_json::from_str::<serde_json::Value>(text).is_err()
-        {
-            return Err("Invalid JSON".into());
-        }
+        if validate_format && self.edit_mode == EditCellMode::Json { crate::cell_format::validate_json(text)?; }
         if validate_format && self.edit_mode == EditCellMode::Xml { crate::cell_format::xml_document(text)?; }
         if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml) && self.edit_display_unchanged() {
             return Ok(self.edit_original.clone());
@@ -4171,6 +4181,27 @@ mod chart_default_tests {
     }
 
     #[test]
+    fn cell_indent_preferences_keep_raw_views_and_compact_only_explicit_typed_apply() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        for (raw,mode,compact) in [("{ \"n\":18446744073709551616, \"text\":\"中文\" }",EditCellMode::Json,"{\"n\":18446744073709551616,\"text\":\"中文\"}"),
+            ("<r>\n  <item a='1'>中文</item>\n</r>",EditCellMode::Xml,"<r><item a='1'>中文</item></r>")] {
+            for blob in [false,true] {
+                let typed=|text:&str|if blob {Value::Blob(text.as_bytes().to_vec())}else{Value::Text(text.into())};
+                let value=typed(raw);state.prefs.indent_compact=false;
+                state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[&value]).unwrap();state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.set_edit_mode(mode).unwrap();
+                assert_eq!(state.edit_value,raw);assert!(!state.has_cell_draft());state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,value);
+                state.prefs.indent_compact=true;state.set_edit_mode(mode).unwrap();assert!(state.edit_value.contains('\n'));assert!(!state.has_cell_draft());
+                assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),value);
+                state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,typed(compact));assert!(!state.has_cell_draft());
+                state.tab=MainTab::Pragmas;state.edit_value="invalid".into();assert!(state.apply_cell_draft().is_err());
+                assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),typed(compact));
+                state.tab=MainTab::Browse;state.discard_cell_draft();
+            }
+        }
+    }
+
+    #[test]
     fn automatic_cell_modes_keep_types_manual_choices_drafts_and_image_imports_safe() {
         use rusqlite::types::Value;
         let mut state=test_state();state.prefs.auto_switch_mode=true;
@@ -4221,7 +4252,7 @@ mod chart_default_tests {
     #[test]
     fn cell_xml_and_evaluation_preserve_types_drafts_and_read_only_sources() {
         use rusqlite::types::Value;
-        let mut state = test_state();
+        let mut state = test_state();state.prefs.indent_compact=true;
         state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "t").unwrap();
         let raw = "<r xmlns='urn:cell'><item a='1'>中文</item><empty/></r>";
         let dir = tempfile::tempdir().unwrap(); let output = dir.path().join("draft.xml");
@@ -4340,7 +4371,7 @@ mod chart_default_tests {
         state.goto_browse_record(1).unwrap();
         state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(),
             "SELECT 9223372036854775807 AS exact,1.25 AS decimal,NULL AS missing,CAST(X'80FF00' AS TEXT) AS bytes,X'00FF' AS payload,'{\"a\":1}' AS json").unwrap());
-        for (column, storage, text) in [(0, 1, "9223372036854775807"), (1, 2, "1.25"), (2, 0, ""), (3, 3, "80FF00"), (4, 4, "00FF"), (5, 3, "{\n  \"a\": 1\n}")] {
+        for (column, storage, text) in [(0, 1, "9223372036854775807"), (1, 2, "1.25"), (2, 0, ""), (3, 3, "80FF00"), (4, 4, "00FF"), (5, 3, "{\"a\":1}")] {
             state.sql_selection = SqlSelection { rows: Some((0, 0)), columns: Some((column, column)) };
             assert!(state.sync_edit_cell_from_sql_selection().unwrap());
             assert_eq!(state.sql_cell_position(), Some((0, column)));
@@ -4353,7 +4384,7 @@ mod chart_default_tests {
             assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));
             state.discard_cell_draft(); assert_eq!(state.edit_value, text);
         }
-        state.set_edit_mode(EditCellMode::Json).unwrap();
+        state.prefs.indent_compact=true;state.set_edit_mode(EditCellMode::Json).unwrap();
         assert!(state.edit_value.contains("\n")); assert!(!state.has_cell_draft());
         assert!(!state.sync_edit_cell_from_sql_selection().unwrap());
         assert_eq!(state.edit_mode, EditCellMode::Json);

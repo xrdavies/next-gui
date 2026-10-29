@@ -3454,11 +3454,6 @@ pub fn from_hex(s: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-pub fn try_pretty_json(text: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
-    serde_json::to_string_pretty(&value).ok()
-}
-
 /// Export a new encrypted copy without changing the source key.
 pub fn encrypt_database_to(
     conn: &Connection,

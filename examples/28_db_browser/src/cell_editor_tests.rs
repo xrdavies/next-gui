@@ -1,6 +1,56 @@
 use super::*;
 
 #[test]
+fn cell_indent_toggle_keeps_clean_storage_drafts_undo_focus_and_read_only_views() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    demo.state.prefs.auto_switch_mode=true;demo.state.prefs.indent_compact=false;
+    demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
+    demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    let folder=std::env::var("NEXT_GUI_CELL_INDENT_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+            demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+            for (kind,raw,mode) in [("json","{\"n\":18446744073709551616,\"text\":\"中文\"}",EditCellMode::Json),
+                ("xml","<?xml version='1.0'?><r><item a='1'>中文</item><items><item/></items></r>",EditCellMode::Xml)] {
+                demo.state.tab=MainTab::Browse;demo.state.discard_cell_draft();demo.state.prefs.indent_compact=false;
+                demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[raw]).unwrap();
+                demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();demo.do_rebuild();
+                assert_eq!(demo.state.edit_mode,mode);assert_eq!(demo.state.edit_value,raw);
+                for readonly in [false,true] {
+                    demo.state.tab=if readonly {MainTab::Pragmas}else{MainTab::Browse};demo.do_rebuild();
+                    let revision=demo.state.edit_revision;demo.ui.set_focus(Some(demo.ids.btn_cell_indent));demo.handle_button(demo.ids.btn_cell_indent);demo.do_rebuild();
+                    assert!(demo.state.prefs.indent_compact);assert!(demo.state.edit_value.contains('\n'));assert!(!demo.state.has_cell_draft());
+                    assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_indent));assert!(demo.ui.accessible_name(demo.ids.btn_cell_indent).unwrap().ends_with("(on)"));
+                    assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(!readonly));
+                    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|r|r.get::<_,Value>(0)).unwrap(),Value::Text(raw.into()));
+                    if !readonly {
+                        assert_eq!(demo.ui.text_area_caret(demo.ids.edit_value),Some(0));assert_eq!(demo.ui.text_area_scroll_offsets(demo.ids.edit_value),Some((0.0,0.0)));
+                        assert_eq!(demo.state.edit_revision,revision);let pretty=demo.state.edit_value.clone();demo.ui.set_focus(Some(demo.ids.edit_value));
+                        assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,raw);assert!(!demo.state.has_cell_draft());
+                        assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,pretty);assert!(!demo.state.has_cell_draft());
+                    }
+                    if let Some(folder)=&folder {if width==1400 || readonly {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-indent-{kind}-{name}-{width}-{readonly}"));}}
+                    demo.ui.set_focus(Some(demo.ids.btn_cell_indent));demo.handle_button(demo.ids.btn_cell_indent);demo.do_rebuild();
+                    assert!(!demo.state.prefs.indent_compact);assert_eq!(demo.state.edit_value,raw);assert!(!demo.state.has_cell_draft());assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_indent));
+                }
+            }
+        }
+    }
+    demo.state.tab=MainTab::Browse;demo.do_rebuild();demo.ui.set_focus(Some(demo.ids.edit_value));demo.ui.key_input(UiKey::SelectAll);
+    demo.ui.paste_into_focused_text("<r><item>draft 中文</item></r>");demo.snapshot_inputs();let draft=demo.state.edit_value.clone();assert!(demo.state.has_cell_draft());
+    demo.ui.set_focus(Some(demo.ids.btn_cell_indent));demo.handle_button(demo.ids.btn_cell_indent);demo.do_rebuild();assert!(demo.state.edit_value.contains('\n'));assert!(demo.state.has_cell_draft());
+    demo.ui.set_focus(Some(demo.ids.edit_value));assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,draft);
+    assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();demo.state.apply_cell_draft().unwrap();demo.do_rebuild();
+    assert_eq!(demo.state.edit_saved,Value::Text(draft));assert!(!demo.state.has_cell_draft());
+}
+
+#[test]
 fn cell_image_preview_fits_its_pane_and_retains_zoom_focus_without_a_text_editor() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;
@@ -311,6 +361,8 @@ fn cell_modes_keep_keyboard_popups_formatting_undo_null_input_and_explicit_evalu
     assert_eq!(demo.state.edit_value,"<r><item>值</item></r>");
     assert!(demo.ui.key_input(UiKey::Redo)); demo.snapshot_inputs(); demo.do_rebuild(); assert!(demo.state.edit_value.contains('\n'));
     demo.ui.key_input(UiKey::SelectAll); demo.ui.paste_into_focused_text("<r><broken>"); demo.snapshot_inputs();
+    demo.handle_button(demo.ids.btn_cell_indent); demo.do_rebuild();
+    assert!(!demo.state.prefs.indent_compact);assert_eq!(demo.state.edit_value,"<r><broken>");
     demo.handle_button(demo.ids.btn_cell_indent); demo.do_rebuild();
     assert!(demo.state.error_msg.as_deref().unwrap().contains("Invalid XML")); assert_eq!(demo.state.edit_value,"<r><broken>");
     demo.ui.set_select_selected(demo.ids.edit_mode,Some(EditCellMode::Text as usize)); demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();

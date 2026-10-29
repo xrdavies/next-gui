@@ -98,6 +98,7 @@ fn sql_cell_dock_follows_complete_selection_and_keeps_read_only_modes_and_browse
     assert_eq!(demo.ui.text_area_value(demo.ids.edit_value), Some("1")); demo.snapshot_inputs();
     assert!(!demo.state.has_cell_draft()); assert!(demo.state.apply_cell_draft().is_err());
     capture(&mut demo, "NEXT_GUI_SQL_CELL_QA_OUT");
+    demo.state.prefs.indent_compact=true;
     for (column, mode) in [(3, crate::state::EditCellMode::Json), (2, crate::state::EditCellMode::Image)] {
         demo.ui.set_table_selected_cells(demo.ids.sql_table, Some((2999, 2999)), Some((column, column)));
         demo.snapshot_inputs(); demo.poll_selection_changes(); demo.do_rebuild();

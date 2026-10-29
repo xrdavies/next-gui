@@ -13,6 +13,7 @@ fn bounds(demo: &Demo, id: WidgetId) -> next_gui_scene::Rect {
 fn cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_draft_loss() {
     use crate::state::EditCellMode;
     let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
+    demo.state.prefs.indent_compact=true;
     demo.state.new_memory_db().unwrap();
     demo.state.conn.as_ref().unwrap().execute_batch("CREATE TABLE cells(id INTEGER PRIMARY KEY, value TEXT, n INTEGER, computed AS(n*2)); INSERT INTO cells VALUES(1,'{\"b\":2,\"a\":1}',3); CREATE VIEW cell_view AS SELECT * FROM cells; CREATE TABLE keyed(id TEXT PRIMARY KEY,value TEXT) WITHOUT ROWID; INSERT INTO keyed VALUES('k','kept');").unwrap();
     demo.state.refresh_schema().unwrap();

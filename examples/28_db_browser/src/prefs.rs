@@ -20,6 +20,7 @@ pub struct Prefs {
     pub toolbar_styles: [usize; 5],
     pub editor_word_wrap: bool,
     pub auto_switch_mode: bool,
+    pub indent_compact: bool,
 }
 
 impl Default for Prefs {
@@ -39,6 +40,7 @@ impl Default for Prefs {
             toolbar_styles: [2, 2, 0, 0, 0],
             editor_word_wrap: true,
             auto_switch_mode: true,
+            indent_compact: false,
         }
     }
 }
@@ -90,6 +92,9 @@ mod tests {
 
     #[test]
     fn old_preferences_enable_completion_and_explicit_false_round_trips() {
+        assert!(!serde_json::from_str::<Prefs>("{}").unwrap().indent_compact);
+        let indent:Prefs=serde_json::from_str(r#"{"indent_compact":true}"#).unwrap();
+        assert!(serde_json::from_str::<Prefs>(&serde_json::to_string(&indent).unwrap()).unwrap().indent_compact);
         assert!(serde_json::from_str::<Prefs>("{}").unwrap().auto_switch_mode);
         let auto:Prefs=serde_json::from_str(r#"{"auto_switch_mode":false}"#).unwrap();
         assert!(!serde_json::from_str::<Prefs>(&serde_json::to_string(&auto).unwrap()).unwrap().auto_switch_mode);

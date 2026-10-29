@@ -1366,6 +1366,7 @@ impl Demo {
                     let mode = if tab.contains("evaluation") { crate::state::EditCellMode::Evaluation } else { crate::state::EditCellMode::Xml };
                     state.set_edit_mode(mode).unwrap(); state.dock_ratio = 0.62;
                     if tab.contains("auto-") {
+                        state.prefs.indent_compact=tab.contains("indent-on");
                         let value = if tab.contains("auto-png") || tab.contains("auto-bmp") {
                             let pixels=image::RgbaImage::from_fn(320,180,|x,y|image::Rgba([(x*255/319) as u8,(y*255/179) as u8,150,if x<160 {255}else{128}]));
                             let mut bytes=std::io::Cursor::new(Vec::new());
@@ -1492,6 +1493,8 @@ impl Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
             if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
                 built.ui.set_focus(Some(built.edit_mode)); built.ui.key_input(UiKey::Space);
+            } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("indent") {
+                built.ui.set_focus(Some(built.btn_cell_indent));
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("auto-select") {
                 built.ui.set_focus(Some(built.btn_cell_auto));
             } else if state.edit_mode == crate::state::EditCellMode::Image {
@@ -2750,7 +2753,7 @@ impl Demo {
             .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export].into_iter()
+            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -3047,7 +3050,7 @@ impl Demo {
             }
         }
         if let Some(index) = cell_tool_focus {
-            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export][index];
+            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent][index];
             if id.0 != 0 {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if mode_focused && self.ids.edit_mode.0 != 0 {
@@ -4180,20 +4183,37 @@ impl Demo {
 
     fn indent_cell(&mut self) -> Result<(), String> {
         use crate::state::EditCellMode;
-        let formatted = match self.state.edit_mode {
-            EditCellMode::Json => dbmod::try_pretty_json(&self.state.edit_value).ok_or("Invalid JSON")?,
-            EditCellMode::Xml => cell_format::indent_xml(&self.state.edit_value)?,
-            _ => return Err("Choose JSON or XML to indent the cell".into()),
+        if !matches!(self.state.edit_mode,EditCellMode::Json|EditCellMode::Xml) {return Err("Choose JSON or XML to format the cell".into());}
+        let enabled=!self.state.prefs.indent_compact;
+        let clean=!self.state.has_cell_draft();
+        let formatted = if enabled && self.state.edit_type!=0 {
+            if self.state.edit_mode==EditCellMode::Json {cell_format::format_json(&self.state.edit_value,true)?}
+            else {cell_format::indent_xml(&self.state.edit_value)?}
+        } else if !enabled && clean {
+            match &self.state.edit_original {
+                rusqlite::types::Value::Text(text)=>text.clone(),
+                rusqlite::types::Value::Blob(bytes)=>String::from_utf8_lossy(bytes).into_owned(),
+                _=>self.state.edit_value.clone(),
+            }
+        } else {self.state.edit_value.clone()};
+        if self.state.edit_cell_read_only() {
+            self.state.prefs.indent_compact=enabled;
+            if let Err(error)=self.state.set_edit_mode(self.state.edit_mode) {self.state.prefs.indent_compact= !enabled;return Err(error);}
+            return Ok(());
         };
-        if self.state.edit_cell_read_only() { return self.state.set_edit_mode(self.state.edit_mode); }
         if formatted != self.state.edit_value {
             let len = self.state.edit_value.chars().count();
             if !self.ui.replace_text_area_range(self.ids.edit_value, 0..len, &formatted) {
                 return Err("Cell editor is unavailable".into());
             }
-            self.ui.set_focus(Some(self.ids.edit_value));
+            if clean {
+                self.ui.select_text_area_range(self.ids.edit_value,0..0);
+                self.ui.set_text_area_scroll_offsets(self.ids.edit_value,0.0,0.0);
+            }
             self.snapshot_inputs();
         }
+        self.state.prefs.indent_compact=enabled;
+        if clean {self.state.mark_cell_display_baseline();}
         Ok(())
     }
 
@@ -4298,26 +4318,28 @@ impl Demo {
             }
             return;
         }
-        if id.0 != 0 && [self.ids.btn_cell_auto,self.ids.btn_cell_wrap].contains(&id) {
+        if id.0 != 0 && [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.btn_cell_indent].contains(&id) {
             if id == self.ids.btn_cell_auto {
                 if let Err(error) = self.state.set_cell_auto_switch(!self.state.prefs.auto_switch_mode) {
                     self.set_error(error); self.rebuild = true; return;
                 }
+            } else if id==self.ids.btn_cell_indent {
+                if let Err(error)=self.indent_cell() {self.set_error(error);self.rebuild=true;return;}
             } else { self.state.prefs.editor_word_wrap = !self.state.prefs.editor_word_wrap; }
+            self.clear_error();
             if !cfg!(test) && std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none() {
                 if let Err(error) = self.state.prefs.save() {self.set_error(error);}
             }
             self.rebuild = true; return;
         }
-        if id.0 != 0 && [self.ids.btn_cell_import, self.ids.btn_cell_export, self.ids.btn_cell_null, self.ids.btn_cell_indent].contains(&id) {
+        if id.0 != 0 && [self.ids.btn_cell_import, self.ids.btn_cell_export, self.ids.btn_cell_null].contains(&id) {
             self.snapshot_inputs();
             let result = if id == self.ids.btn_cell_import {
                 if self.state.edit_cell_read_only() { Err("This cell is read-only".into()) }
                 else if let Some(path) = file_dlg::pick_open_cell() { self.state.import_cell_file(&path) } else { return; }
             } else if id == self.ids.btn_cell_export {
                 if let Some(path) = file_dlg::pick_save_cell() { self.state.export_cell_file(&path) } else { return; }
-            } else if id == self.ids.btn_cell_null { self.state.set_cell_null() }
-            else { self.indent_cell() };
+            } else { self.state.set_cell_null() };
             match result { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
             self.rebuild = true; return;
         }

@@ -174,6 +174,14 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   original-image export row. The preview fills its pane without reserving a text
   editor; zoom/pan and focused controls survive rebuilds. Empty previews disable
   image actions, and large fonts retain the existing outer shell scroll.
+- Edit Cell's checked Indent / Compact preference defaults off. JSON/XML keep
+  their raw view until enabled; then loads use four-space indentation and explicit
+  Apply compacts while retaining TEXT/BLOB storage. Editable toggles preserve Undo;
+  readonly views never write the database. JSON formatting preserves number/string
+  spellings, object order and duplicate keys. It is bounded to16 MiB input/32 MiB
+  output/depth128; XML retains its existing bounds and normalizes only inter-tag
+  line indentation, preserving mixed text, inline spaces, CDATA, entities and
+  xml:space. Full Qt serialization and invalid-format override workflows remain.
 - Foreign-key navigation resolves omitted parent PK columns, groups composite keys
   and filters on the stored typed values; NULL keys report no parent. Source rows
   still require an unshadowed rowid.
