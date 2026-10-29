@@ -553,10 +553,14 @@ impl Ui {
                 | UiKey::SelectDown
                 | UiKey::SelectHome
                 | UiKey::SelectEnd
+                | UiKey::SelectDocumentHome
+                | UiKey::SelectDocumentEnd
                 | UiKey::SelectPageUp
                 | UiKey::SelectPageDown
         );
         let target = match key {
+            UiKey::DocumentHome | UiKey::SelectDocumentHome => 0,
+            UiKey::DocumentEnd | UiKey::SelectDocumentEnd => len,
             UiKey::SelectAll => return self.select_text_area_range(id, 0..len),
             UiKey::Backspace | UiKey::Delete | UiKey::DeleteWordLeft | UiKey::DeleteWordRight => {
                 if range.is_empty() {
@@ -912,6 +916,19 @@ mod tests {
         assert!(points[6].1>points[0].1);
         assert!(points[6..12].iter().all(|point|point.1==points[6].1));
         assert_eq!(layout.glyphs.iter().map(|g|g.ch).collect::<String>(),"first second");
+    }
+
+    #[test]
+    fn document_navigation_selects_source_text_across_wrapped_lines_in_read_only_mode() {
+        let mut ui=Ui::new();let mut area=WidgetId(0);
+        let text="first second\n中文🙂\nlast";
+        ui.column(ColumnStyle::default(),|c|{area=c.text_area(text,"",TextAreaStyle {width:80.0,..Default::default()});});
+        ui.set_focus(Some(area));ui.set_text_area_read_only(area,true);
+        assert!(ui.key_input(UiKey::DocumentHome));assert_eq!(ui.text_area_caret(area),Some(0));
+        assert!(ui.key_input(UiKey::SelectDocumentEnd));assert_eq!(ui.focused_text_for_copy().as_deref(),Some(text));
+        assert!(ui.key_input(UiKey::DocumentEnd));assert_eq!(ui.text_area_selection(area),Some(text.chars().count()..text.chars().count()));
+        assert!(ui.key_input(UiKey::SelectDocumentHome));assert_eq!(ui.focused_text_for_copy().as_deref(),Some(text));
+        assert!(ui.key_input(UiKey::Delete));assert_eq!(ui.text_area_value(area),Some(text));
     }
 
     #[test]

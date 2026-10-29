@@ -122,6 +122,7 @@ impl Ui {
                 body_height,
                 ..
             } => (bounds, 0.0, (body_height - bounds.height).max(0.0)),
+            Kind::HexEditor { .. } => {let Some(g)=self.hex_editor_geometry(id,bounds) else {return Vec::new();};(g.view,g.max_x,g.max_y)}
             Kind::TextArea { value, style, line_numbers, edit, .. } => {
                 let (gutter,layout)=self.text_area_layout(value,*style,*line_numbers,edit.no_wrap,bounds.width);
                 let view=Rect::new(bounds.x+style.padding_x+gutter,bounds.y+style.padding_y,

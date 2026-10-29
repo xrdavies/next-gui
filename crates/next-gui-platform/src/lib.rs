@@ -132,6 +132,8 @@ pub enum KeyCode {
     Backspace,
     /// Delete (forward).
     Delete,
+    /// Insert / overwrite mode.
+    Insert,
     /// Enter / Return.
     Enter,
     /// Tab.

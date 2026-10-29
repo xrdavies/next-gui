@@ -89,6 +89,7 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
     Some(match key {
         KeyCode::Backspace => UiKey::Backspace,
         KeyCode::Delete => UiKey::Delete,
+        KeyCode::Insert => UiKey::Insert,
         KeyCode::Left => UiKey::Left,
         KeyCode::Right => UiKey::Right,
         KeyCode::Up => UiKey::Up,

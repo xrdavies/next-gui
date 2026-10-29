@@ -411,6 +411,7 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
                     Key::Named(NamedKey::Space) => KeyCode::Space,
                     Key::Named(NamedKey::Backspace) => KeyCode::Backspace,
                     Key::Named(NamedKey::Delete) => KeyCode::Delete,
+                    Key::Named(NamedKey::Insert) => KeyCode::Insert,
                     Key::Named(NamedKey::Enter) => KeyCode::Enter,
                     Key::Named(NamedKey::Tab) => KeyCode::Tab,
                     Key::Named(NamedKey::ArrowLeft) => KeyCode::Left,

@@ -32,6 +32,8 @@ mod p1_rest;
 mod office_p2;
 mod theme;
 mod text_area;
+mod hex_editor;
+pub use hex_editor::HexEditorState;
 mod text_completion;
 mod text_area_hint;
 use text_area_hint::TextAreaHint;
@@ -1800,6 +1802,11 @@ enum Kind {
         content_w: f32,
         content_h: f32,
     },
+    HexEditor {
+        state: HexEditorState,
+        read_only: bool,
+        style: TextAreaStyle,
+    },
     TextInput {
         integer_range: Option<(i64, i64)>,
         enabled: bool,
@@ -2250,6 +2257,7 @@ enum DragState {
     },
     TableSelection { table: WidgetId, bounds: Rect },
     TextArea { area: WidgetId, bounds: Rect },
+    HexEditor { area: WidgetId, bounds: Rect },
     TableColumn {
         table: WidgetId,
         column: usize,
@@ -2460,6 +2468,8 @@ pub enum UiKey {
     Backspace,
     /// Forward delete.
     Delete,
+    /// Toggle insertion/overwrite in a binary editor.
+    Insert,
     /// Left arrow.
     Left,
     /// Right arrow.
@@ -2520,6 +2530,14 @@ pub enum UiKey {
     SelectHome,
     /// Extend selection to the end of the visual line.
     SelectEnd,
+    /// Move to the start of an editable document.
+    DocumentHome,
+    /// Move to the end of an editable document.
+    DocumentEnd,
+    /// Extend selection to the document start.
+    SelectDocumentHome,
+    /// Extend selection to the document end.
+    SelectDocumentEnd,
     /// Escape (close open popup).
     Escape,
 }
@@ -3533,6 +3551,12 @@ impl Ui {
                 self.focus = None;
                 self.pointer_alert_dismiss(scene, id, x, y)
             }
+            Some(Kind::HexEditor { .. }) => {
+                self.focus=Some(id);
+                let bounds=self.widgets.get(&id).and_then(|w|w.node).and_then(|n|scene.get(n).map(|n|n.bounds)).unwrap_or_else(Rect::empty);
+                self.drag=Some(DragState::HexEditor {area:id,bounds});
+                self.pointer_hex_editor(id,bounds,x,y,false)
+            }
             Some(Kind::TextArea { .. }) => {
                 self.focus = Some(id);
                 let bounds = self.widgets.get(&id).and_then(|w| w.node).and_then(|n| scene.get(n).map(|n| n.bounds)).unwrap_or_else(Rect::empty);
@@ -3629,6 +3653,7 @@ impl Ui {
             DragState::Plot {..} => self.move_plot(x, y),
             DragState::IntegerInput { .. } => self.move_integer_repeat(x, y),
             DragState::TableSelection { table, bounds } => self.drag_table_selection(table, bounds, x, y),
+            DragState::HexEditor { area, bounds } => self.pointer_hex_editor(area,bounds,x,y,true),
             DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
             DragState::TableColumn {
                 table,
@@ -4028,6 +4053,10 @@ impl Ui {
                     Some(format!("Image {px_w}×{px_h}"))
                 }
             }
+            Kind::HexEditor { .. } => {
+                let data=self.hex_editor_bytes(id)?;let (offset,_)=self.hex_editor_caret(id)?;
+                Some(format!("Binary editor · {} bytes · offset {offset:#x}",data.len()))
+            }
             Kind::Text { content, .. } => {
                 if content.is_empty() {
                     None
@@ -4054,6 +4083,7 @@ impl Ui {
             } => primary_action.is_some() || secondary_action.is_some(),
             Kind::Button { enabled, .. } | Kind::TextInput {enabled,..} => *enabled,
             Kind::TextArea { .. }
+            | Kind::HexEditor { .. }
             | Kind::InputNumber { .. }
             | Kind::Checkbox { .. }
             | Kind::Radio { .. }
@@ -4251,7 +4281,7 @@ impl Ui {
 
     /// Text to place on the OS clipboard from the focused input or Table.
     ///
-    /// TextArea returns only its selection. TextInput / Autocomplete return their full non-secret
+    /// HexEditor returns selected byte pairs; TextArea returns only its selection. TextInput / Autocomplete return their full non-secret
     /// value. Table returns its selected cells as quoted TSV. `None` when no copyable text is selected.
     pub fn focused_text_for_copy(&self) -> Option<String> {
         let id = self.focus?;
@@ -4261,6 +4291,7 @@ impl Ui {
                 secret: false,
                 ..
             } | Kind::Autocomplete { value, .. }) if !value.is_empty() => Some(value.clone()),
+            Some(Kind::HexEditor { .. }) => self.hex_editor_selected_text(id),
             Some(Kind::TextArea { .. }) => self.text_area_selected_text(id),
             Some(Kind::Table { .. }) => self.table_selected_text(id),
             _ => None,
@@ -4275,6 +4306,7 @@ impl Ui {
         let Some(id) = self.focus else { return false; };
         if self.focused_text_for_copy().is_none() { return false; }
         match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::HexEditor { .. }) => self.cut_hex_editor(id),
             Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, ""),
             Some(Kind::TextInput { .. } | Kind::Autocomplete { .. }) => {
                 self.key_input(UiKey::SelectAll);
@@ -4284,7 +4316,7 @@ impl Ui {
         }
     }
 
-    /// Insert `text` into the focused TextInput / TextArea / Autocomplete at the caret.
+    /// Insert text at the focused input's caret; HexEditor accepts complete hexadecimal byte pairs.
     ///
     /// Replaces the TextArea selection or the whole single-line value when `select_all` is set.
     /// Clears IME preedit.
@@ -4327,6 +4359,7 @@ impl Ui {
                 self.remember_input_change(id, before);
                 true
             }
+            Some(Kind::HexEditor { .. }) => self.paste_hex_editor(id, text),
             Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, text),
             _ => false,
         }
@@ -4540,7 +4573,7 @@ impl Ui {
     fn is_data_scrollable(&self, id: WidgetId) -> bool {
         matches!(
             self.widgets.get(&id).map(|w| &w.kind),
-            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. } | Kind::PropertyGrid { .. } | Kind::TreeTable { .. } | Kind::TextArea { .. })
+            Some(Kind::List { .. } | Kind::Tree { .. } | Kind::Table { .. } | Kind::AlarmList { .. } | Kind::ScrollArea { .. } | Kind::PropertyGrid { .. } | Kind::TreeTable { .. } | Kind::TextArea { .. } | Kind::HexEditor { .. })
         )
     }
 
@@ -4550,6 +4583,7 @@ impl Ui {
             Some(Kind::ScrollArea {
                 scroll_x, scroll_y, ..
             }) => Some((*scroll_x, *scroll_y)),
+            Some(Kind::HexEditor { .. }) => self.hex_editor_scroll_offsets(id),
             Some(Kind::TextArea { scroll_y, edit, .. }) => Some((edit.scroll_x, *scroll_y)),
             Some(Kind::Modal {scroll_y,open:true,..}) => Some((0.0, *scroll_y)),
             Some(Kind::List { scroll_y, .. }) => Some((0.0, *scroll_y)),
@@ -4566,6 +4600,7 @@ impl Ui {
     fn set_any_scroll(&mut self, id: WidgetId, sx: f32, sy: f32) -> bool {
         if !sx.is_finite() || !sy.is_finite() { return false; }
         if matches!(self.widgets.get(&id).map(|w| &w.kind),Some(Kind::Modal {..})) {return self.scroll_modal(id,sy);}
+        if matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::HexEditor {..})) {return self.set_hex_editor_scroll_offsets(id,sx,sy);}
         if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextArea { .. })) {
             return self.set_text_area_scroll_offsets(id, sx, sy);
         }
@@ -5198,6 +5233,9 @@ impl Ui {
         if key==UiKey::Escape && self.escape_dialog() {return true;}
         // P6d: Tab / BackTab move focus at the top (before widget dispatch / focus
         // requirement), so text fields do not swallow Tab. Modal/Drawer absorb.
+        if matches!(key,UiKey::Tab|UiKey::BackTab) {
+            if let Some(id)=self.focus {if self.key_hex_editor(id,key) {return true;}}
+        }
         if matches!(key, UiKey::Tab | UiKey::BackTab) {
             if self.focus_trap_active() {
                 if let Some(id) = self.focus {
@@ -5217,7 +5255,7 @@ impl Ui {
         let key = if key == UiKey::Space
             && matches!(
                 self.widgets.get(&id).map(|w| &w.kind),
-                Some(Kind::TextInput { .. } | Kind::TextArea { .. } | Kind::Autocomplete { .. })
+                Some(Kind::TextInput { .. } | Kind::TextArea { .. } | Kind::HexEditor { .. } | Kind::Autocomplete { .. })
             ) {
             UiKey::Char(' ')
         } else {
@@ -5226,6 +5264,7 @@ impl Ui {
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::Chart { .. }) => self.key_plot(id,key),
             Some(Kind::TextInput { .. }) => self.key_text_input(id, key),
+            Some(Kind::HexEditor { .. }) => self.key_hex_editor(id,key),
             Some(Kind::TextArea { .. }) => self.key_text_area(id, key),
             Some(Kind::InputNumber { .. }) => self.key_input_number(id, key),
             Some(Kind::Segmented { .. }) => self.key_segmented(id, key),
@@ -9721,7 +9760,7 @@ impl Ui {
                 Some(Kind::Trend { style, .. }) => (style.bg, true),
                 Some(Kind::Chart { style, .. }) => (style.bg, true),
                 Some(Kind::Drawer { .. }) => (Color::rgba(0, 0, 0, 0), false),
-                Some(Kind::TextArea { style, .. }) => (style.bg, true),
+                Some(Kind::TextArea { style, .. } | Kind::HexEditor { style, .. }) => (style.bg, true),
                 Some(Kind::InputNumber { style, .. }) => (style.bg, true),
                 Some(Kind::Spin { .. }) => (Color::rgba(0, 0, 0, 0), false),
                 Some(Kind::Empty { style, .. }) => (style.bg, true),
@@ -10044,7 +10083,7 @@ impl Ui {
                 Some(Kind::Chart { .. }) => {
                     self.node_to_widget.insert(node, id);
                 }
-                Some(Kind::TextArea { .. }) => {
+                Some(Kind::TextArea { .. } | Kind::HexEditor { .. }) => {
                     self.node_to_widget.insert(node, id);
                     let label = scene
                         .insert(node, Rect::new(0.0, 0.0, 1.0, 1.0), Color::rgb(255, 255, 255))
@@ -10381,7 +10420,7 @@ impl Ui {
             Some(Kind::Trend { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Chart { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Drawer { .. }) => ChildMeasure::new(0.0, 0.0),
-            Some(Kind::TextArea { style, .. }) => ChildMeasure::new(style.width, style.height),
+            Some(Kind::TextArea { style, .. } | Kind::HexEditor { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::InputNumber { style, .. }) => ChildMeasure::new(style.width, style.height),
             Some(Kind::Spin { style, children, .. }) => {
                 if let Some(c) = children.first() {
@@ -10701,7 +10740,7 @@ impl Ui {
     fn rebase_data_size(&mut self, id: WidgetId, width: f32, height: f32) {
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
-                Kind::TextArea { style, .. } => {
+                Kind::TextArea { style, .. } | Kind::HexEditor { style, .. } => {
                     style.width = width;
                     style.height = height;
                 }
@@ -11600,6 +11639,7 @@ impl Ui {
             self.paint_chart(scene, id);
             return;
         }
+        if matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::HexEditor {..})) {self.paint_hex_editor(scene,id);return;}
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
             Some(Kind::TextArea { .. })
@@ -12190,6 +12230,7 @@ impl Ui {
             | Kind::Chart { .. }
             | Kind::Drawer { .. }
             | Kind::TextArea { .. }
+            | Kind::HexEditor { .. }
             | Kind::InputNumber { .. }
             | Kind::Spin { .. }
             | Kind::Empty { .. }

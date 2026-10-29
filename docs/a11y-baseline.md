@@ -278,3 +278,39 @@ text Undo/Redo, clipboard and same-document sessions. Composition/disabled input
 do not step; secret inputs reject this option. Text/candidate geometry reserves
 the step area. Draft text stays editable, so hosts must validate before applying
 it. Invalid drafts remain for repair rather than being silently replaced.
+
+
+## Binary editor
+
+`FlexBuilder::hex_editor(Arc<Vec<u8>>, TextAreaStyle)` provides an addressed,
+16-byte-per-line Hex/ASCII grid. It uses a system monospace face when available
+and the configured UI font as fallback. Only visible rows produce masks. Its
+implicit accessible name includes byte length and offset; applications can supply
+a specific accessible name and a visible selection/size caption. This is a shared
+widget contract, without a complete native screen-reader bridge.
+
+Hex arrows move by nibble; ASCII arrows move by byte. Tab switches Hex to ASCII,
+a second Tab traverses focus, and BackTab returns from ASCII to Hex. Shift arrows,
+line/page navigation and `DocumentHome` / `DocumentEnd` with their Select variants
+retain byte selections and reveal the caret. Document variants also work in
+TextArea; callers map their platform shortcuts (e28 uses Ctrl/Cmd+Home/End).
+Insert toggles insert/overwrite. ASCII typing accepts printable Latin1 codepoints;
+only printable ASCII bytes are displayed as characters. Other bytes display dots.
+Binary editing does not request IME or encode arbitrary Unicode implicitly.
+
+`hex_editor_bytes`, caret/selection/scroll/overwrite queries and
+`select_hex_editor_range` expose byte positions. `hex_editor_readable` formats a
+validated range as addressed Hex/ASCII rows; clipboard copying returns selected
+lowercase byte pairs with a newline per16 bytes. Paste requires complete ASCII
+hex pairs, permits Unicode whitespace and validates all input before mutation.
+Overwrite paste stops at the buffer end. Delete/Cut zeros selected bytes in
+Overwrite and removes them in Insert. Undo/Redo retain byte deltas (100 entries /
+8 MiB per stack, retaining one oversized edit); buffers remain in memory and may
+be copied when shared during edits. This is not a streaming file editor.
+
+`set_hex_editor_read_only` blocks all byte changes and history replay while
+allowing selection, navigation, copying and scrolling. Snapshot/restore through
+`HexEditorState` only succeeds for matching bytes and retains the destination's
+style/read-only policy. `set_hex_editor_bytes` loads a document with fresh history.
+The application scopes sessions to document identity; byte equality alone does
+not establish identity. Rust API only; no `.ngui` binary literal binding yet.

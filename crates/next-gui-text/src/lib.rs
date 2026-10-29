@@ -485,6 +485,17 @@ pub fn load_default_cjk_font() -> Result<Font, FontError> {
     )))
 }
 
+/// Load a system monospace face for byte grids and other fixed-column ASCII content.
+pub fn load_default_monospace_font() -> Result<Font, FontError> {
+    for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
+        "/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf",
+        "C:\\Windows\\Fonts\\consola.ttf", "C:\\Windows\\Fonts\\cour.ttf"] {
+        if let Ok(font)=Font::from_path(path,0) {return Ok(font);}
+    }
+    Err(FontError("No system monospace font found".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

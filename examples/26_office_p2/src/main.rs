@@ -112,6 +112,7 @@ fn map_key(key: KeyCode, modifiers: next_gui_platform::Modifiers) -> Option<UiKe
         KeyCode::Escape => UiKey::Escape,
         KeyCode::Backspace => UiKey::Backspace,
         KeyCode::Delete => UiKey::Delete,
+        KeyCode::Insert => UiKey::Insert,
         KeyCode::Char(c) => UiKey::Char(c),
         _ => return None,
     })

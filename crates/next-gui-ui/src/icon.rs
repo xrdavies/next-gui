@@ -11,6 +11,8 @@ pub enum IconName {
     Folder,
     /// Generic file.
     File,
+    /// Two overlapping pages (copy).
+    Copy,
     /// Save disk.
     Save,
     /// Open / folder-out.
@@ -60,6 +62,7 @@ impl IconName {
             "blank" | "" => Self::Blank,
             "folder" => Self::Folder,
             "file" => Self::File,
+            "copy" => Self::Copy,
             "save" => Self::Save,
             "open" => Self::Open,
             "settings" | "gear" => Self::Settings,
@@ -90,6 +93,7 @@ impl IconName {
             Self::Blank => "blank",
             Self::Folder => "folder",
             Self::File => "file",
+            Self::Copy => "copy",
             Self::Save => "save",
             Self::Open => "open",
             Self::Settings => "settings",
@@ -251,6 +255,13 @@ pub fn rasterize_icon(name: IconName, size: f32) -> AlphaMask {
             p.fill_rect(inset, top, inset + s as i32 / 3, mid, a);
             p.stroke_rect(inset, mid, m - inset, m - inset, a);
             p.fill_rect(inset + 1, mid + 1, m - inset - 1, m - inset - 1, a / 3);
+        }
+        IconName::Copy => {
+            let offset=(s as i32/5).max(1);
+            p.line(inset,inset,m-inset-offset,inset,a);
+            p.line(inset,inset,inset,m-inset-offset,a);
+            p.line(inset,m-inset-offset,inset+offset,m-inset-offset,a);
+            p.stroke_rect(inset+offset,inset+offset,m-inset,m-inset,a);
         }
         IconName::File => {
             p.stroke_rect(inset + 1, inset, m - inset, m - inset, a);
@@ -455,7 +466,7 @@ mod tests {
 
     #[test]
     fn database_action_icons_roundtrip_and_remain_distinct_at_supported_sizes() {
-        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code, IconName::Wrap];
+        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code, IconName::Wrap, IconName::Copy];
         for size in [8.0, 18.0, 32.0, 64.0] {
             let mut masks = Vec::new();
             for icon in icons {

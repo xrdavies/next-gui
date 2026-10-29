@@ -154,6 +154,8 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
             KeyCode::Char('a' | 'A') => Some(UiKey::SelectAll),
             KeyCode::Char('z' | 'Z') => Some(if modifiers.shift { UiKey::Redo } else { UiKey::Undo }),
             KeyCode::Char('y' | 'Y') => Some(UiKey::Redo),
+            KeyCode::Home => Some(if modifiers.shift {UiKey::SelectDocumentHome} else {UiKey::DocumentHome}),
+            KeyCode::End => Some(if modifiers.shift {UiKey::SelectDocumentEnd} else {UiKey::DocumentEnd}),
             _ => None,
         };
     }
@@ -180,6 +182,7 @@ fn map_key(key: KeyCode, modifiers: Modifiers) -> Option<UiKey> {
     Some(match key {
         KeyCode::Backspace => UiKey::Backspace,
         KeyCode::Delete => UiKey::Delete,
+        KeyCode::Insert => UiKey::Insert,
         KeyCode::Left => UiKey::Left,
         KeyCode::Right => UiKey::Right,
         KeyCode::Up => UiKey::Up,
