@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn cell_auto_mode_controls_keep_focus_drafts_storage_history_and_read_only_views() {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);
+    demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
+    let raw="{\"name\":\"中文\",\"steps\":[1,true,null]}";
+    demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[raw]).unwrap();
+    demo.state.prefs.auto_switch_mode=true;demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
+    demo.state.tab=MainTab::Browse;demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+    demo.state.dock_focus=DockKind::Plot;demo.state.dock_ratio=0.62;demo.state.body_ratio=0.45;
+    demo.state.sync_current_plot().unwrap();demo.state.plot.check(1,1,true);demo.state.plot.check(2,2,true);
+    let folder=std::env::var("NEXT_GUI_CELL_AUTO_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder)=&folder {std::fs::create_dir_all(folder).unwrap();}
+    for (name,theme) in [("dark",Theme::dark()),("light",Theme::light())] {
+        for (width,height,size) in [(1400,860,13.0),(800,600,18.0)] {
+            demo.win_w=width;demo.win_h=height;demo.state.prefs.font_size=size;demo.theme=ui_build::browser_theme(theme,size);
+            demo.state.set_cell_auto_switch(false).unwrap();demo.state.set_edit_mode(EditCellMode::Hex).unwrap();demo.do_rebuild();
+            for enabled in [false,true] {
+                demo.ui.set_focus(Some(demo.ids.btn_cell_auto));
+                if demo.state.prefs.auto_switch_mode!=enabled {demo.handle_button(demo.ids.btn_cell_auto);demo.do_rebuild();}
+                demo.ui.sync(&mut demo.scene);
+                assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_auto));assert_eq!(demo.state.prefs.auto_switch_mode,enabled);
+                assert_eq!(demo.state.edit_mode,if enabled {EditCellMode::Json}else{EditCellMode::Hex});
+                assert_eq!(demo.state.edited_cell_value().unwrap(),Value::Text(raw.into()));assert!(!demo.state.has_cell_draft());
+                if let Some(folder)=&folder {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-auto-{name}-{width}-{}",if enabled {"on"}else{"off"}));}
+            }
+        }
+        demo.win_w=1400;demo.win_h=860;demo.state.prefs.font_size=13.0;demo.theme=ui_build::browser_theme(theme,13.0);
+        for (format,kind) in [(image::ImageOutputFormat::Png,"png"),(image::ImageOutputFormat::Bmp,"bmp")] {
+            let pixels=image::RgbaImage::from_fn(320,180,|x,y|image::Rgba([(x*255/319) as u8,(y*255/179) as u8,150,if x<160 {255}else{128}]));
+            let mut bytes=std::io::Cursor::new(Vec::new());image::DynamicImage::ImageRgba8(pixels).write_to(&mut bytes,format).unwrap();
+            let value=Value::Blob(bytes.into_inner());
+            demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[&value]).unwrap();
+            demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();demo.do_rebuild();
+            assert_eq!(demo.state.edit_mode,EditCellMode::Image);assert_eq!(demo.state.edit_saved,value);assert!(!demo.state.has_cell_draft());
+            assert_eq!(demo.state.edit_image_kind.to_lowercase(),kind);assert!(demo.state.edit_image_rgba.is_some());
+            demo.ui.set_focus(Some(demo.ids.edit_image));demo.ui.sync(&mut demo.scene);
+            if let Some(folder)=&folder {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-auto-image-{kind}-{name}"));}
+        }
+        demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[raw]).unwrap();
+        demo.state.refresh_browse().unwrap();demo.state.goto_browse_record(1).unwrap();demo.state.browse_mut().sel_col=Some(3);demo.state.sync_edit_cell_from_selection();
+        demo.state.set_cell_auto_switch(false).unwrap();demo.state.set_edit_mode(EditCellMode::Hex).unwrap();demo.state.tab=MainTab::Pragmas;demo.do_rebuild();
+        demo.ui.set_focus(Some(demo.ids.btn_cell_auto));demo.handle_button(demo.ids.btn_cell_auto);demo.do_rebuild();
+        assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_auto));assert_eq!(demo.state.edit_mode,EditCellMode::Json);
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(false));assert!(!demo.state.has_cell_draft());
+        if let Some(folder)=&folder {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-auto-readonly-{name}"));}
+        demo.state.tab=MainTab::Browse;
+    }
+    demo.do_rebuild();demo.state.set_edit_mode(EditCellMode::Text).unwrap();demo.do_rebuild();demo.ui.set_focus(Some(demo.ids.edit_value));
+    demo.ui.key_input(UiKey::SelectAll);demo.ui.paste_into_focused_text("draft 中文");demo.snapshot_inputs();
+    let revision=demo.state.edit_revision;
+    for _ in 0..2 {demo.ui.set_focus(Some(demo.ids.btn_cell_auto));demo.handle_button(demo.ids.btn_cell_auto);demo.do_rebuild();assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_auto));}
+    assert_eq!(demo.state.edit_revision,revision,"mode={:?}, value={:?}, prefs={}, error={:?}",demo.state.edit_mode,demo.state.edit_value,demo.state.prefs.auto_switch_mode,demo.state.error_msg);assert_eq!(demo.state.edit_value,"draft 中文");assert!(demo.state.has_cell_draft());
+    demo.ui.set_focus(Some(demo.ids.edit_value));assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,raw);assert!(!demo.state.has_cell_draft());
+    assert!(demo.ui.key_input(UiKey::Redo));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,"draft 中文");
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|row|row.get::<_,String>(0)).unwrap(),raw);
+}
+
+#[test]
 fn cell_editor_sessions_survive_rebuilds_but_never_follow_another_cell_or_replacement() {
     let mut demo = Demo::new(1400, 1000, PresentBackend::Softbuffer);
     demo.state.new_memory_db().unwrap();

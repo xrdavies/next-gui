@@ -340,6 +340,7 @@ struct BuiltUiIds {
     btn_cell_null: WidgetId,
     btn_cell_indent: WidgetId,
     btn_cell_wrap: WidgetId,
+    btn_cell_auto: WidgetId,
     btn_edit_cell: WidgetId,
     chart: WidgetId,
     plot: plot::Controls,
@@ -587,6 +588,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_cell_null: b.btn_cell_null,
             btn_cell_indent: b.btn_cell_indent,
             btn_cell_wrap: b.btn_cell_wrap,
+            btn_cell_auto: b.btn_cell_auto,
             btn_edit_cell: b.btn_edit_cell,
             chart: b.chart,
             plot: b.plot,
@@ -1363,6 +1365,24 @@ impl Demo {
                     state.browse_mut().sel_col = Some(3); state.sync_edit_cell_from_selection();
                     let mode = if tab.contains("evaluation") { crate::state::EditCellMode::Evaluation } else { crate::state::EditCellMode::Xml };
                     state.set_edit_mode(mode).unwrap(); state.dock_ratio = 0.62;
+                    if tab.contains("auto-") {
+                        let value = if tab.contains("auto-png") || tab.contains("auto-bmp") {
+                            let pixels=image::RgbaImage::from_fn(320,180,|x,y|image::Rgba([(x*255/319) as u8,(y*255/179) as u8,150,if x<160 {255}else{128}]));
+                            let mut bytes=std::io::Cursor::new(Vec::new());
+                            let format=if tab.contains("auto-bmp") {image::ImageOutputFormat::Bmp} else {image::ImageOutputFormat::Png};
+                            image::DynamicImage::ImageRgba8(pixels).write_to(&mut bytes,format).unwrap();
+                            rusqlite::types::Value::Blob(bytes.into_inner())
+                        } else if tab.contains("auto-binary") {rusqlite::types::Value::Blob(vec![0,255,128,65,10,13])}
+                        else if tab.contains("auto-corrupt") {rusqlite::types::Value::Blob(b"\x89PNG\r\n\x1a\n".to_vec())}
+                        else if tab.contains("auto-xml") {rusqlite::types::Value::Text("<?xml version='1.0'?><report><name>中文</name><item value='42'/></report>".into())}
+                        else {rusqlite::types::Value::Text("{\"name\":\"中文\",\"steps\":[1,true,null]}".into())};
+                        state.prefs.auto_switch_mode = !(tab.contains("auto-off") || tab.contains("auto-select"));
+                        state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[value]).unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();
+                        if !state.prefs.auto_switch_mode {state.set_edit_mode(crate::state::EditCellMode::Hex).unwrap();}
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                        if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
+                    }
                     if tab.contains("wrapped") {
                         let line="SQL 中文🙂 value ".repeat(80);
                         let text=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
@@ -1472,6 +1492,10 @@ impl Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-mode-")) {
             if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("menu") {
                 built.ui.set_focus(Some(built.edit_mode)); built.ui.key_input(UiKey::Space);
+            } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("auto-select") {
+                built.ui.set_focus(Some(built.btn_cell_auto));
+            } else if state.edit_mode == crate::state::EditCellMode::Image {
+                built.ui.set_focus(Some(built.edit_image));
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("toggle") {
                 built.ui.set_focus(Some(built.btn_cell_wrap));
             } else if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("chart") {
@@ -2723,7 +2747,10 @@ impl Demo {
     fn do_rebuild(&mut self) {
         self.snapshot_cell_editor();
         let cell_focus = (self.last_edit_revision == self.state.edit_revision && self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.btn_cell_wrap].into_iter()
+            .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value].into_iter()
+                .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
+        let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
+            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -3005,7 +3032,7 @@ impl Demo {
         }
         if cell_revision == self.state.edit_revision {
             if let Some(index) = cell_focus {
-                let id = [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.btn_cell_wrap][index];
+                let id = [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value][index];
                 if id.0 != 0 {
                     if let Some(select) = cell_select { self.ui.restore_select_state(id, &select); }
                     self.ui.set_focus(Some(id));
@@ -3018,6 +3045,10 @@ impl Demo {
                     self.ui.sync(&mut self.scene);
                 }
             }
+        }
+        if let Some(index) = cell_tool_focus {
+            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap][index];
+            if id.0 != 0 {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if mode_focused && self.ids.edit_mode.0 != 0 {
             if cell_revision == self.state.edit_revision {
@@ -4267,8 +4298,12 @@ impl Demo {
             }
             return;
         }
-        if id == self.ids.btn_cell_wrap && id.0 != 0 {
-            self.state.prefs.editor_word_wrap = !self.state.prefs.editor_word_wrap;
+        if id.0 != 0 && [self.ids.btn_cell_auto,self.ids.btn_cell_wrap].contains(&id) {
+            if id == self.ids.btn_cell_auto {
+                if let Err(error) = self.state.set_cell_auto_switch(!self.state.prefs.auto_switch_mode) {
+                    self.set_error(error); self.rebuild = true; return;
+                }
+            } else { self.state.prefs.editor_word_wrap = !self.state.prefs.editor_word_wrap; }
             if !cfg!(test) && std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none() {
                 if let Err(error) = self.state.prefs.save() {self.set_error(error);}
             }

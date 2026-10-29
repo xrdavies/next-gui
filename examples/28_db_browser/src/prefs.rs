@@ -19,6 +19,7 @@ pub struct Prefs {
     pub frozen_cols_default: usize,
     pub toolbar_styles: [usize; 5],
     pub editor_word_wrap: bool,
+    pub auto_switch_mode: bool,
 }
 
 impl Default for Prefs {
@@ -37,6 +38,7 @@ impl Default for Prefs {
             frozen_cols_default: 0,
             toolbar_styles: [2, 2, 0, 0, 0],
             editor_word_wrap: true,
+            auto_switch_mode: true,
         }
     }
 }
@@ -88,6 +90,9 @@ mod tests {
 
     #[test]
     fn old_preferences_enable_completion_and_explicit_false_round_trips() {
+        assert!(serde_json::from_str::<Prefs>("{}").unwrap().auto_switch_mode);
+        let auto:Prefs=serde_json::from_str(r#"{"auto_switch_mode":false}"#).unwrap();
+        assert!(!serde_json::from_str::<Prefs>(&serde_json::to_string(&auto).unwrap()).unwrap().auto_switch_mode);
         assert!(serde_json::from_str::<Prefs>("{}").unwrap().editor_word_wrap);
         let wrap:Prefs=serde_json::from_str(r#"{"editor_word_wrap":false}"#).unwrap();
         assert!(!serde_json::from_str::<Prefs>(&serde_json::to_string(&wrap).unwrap()).unwrap().editor_word_wrap);

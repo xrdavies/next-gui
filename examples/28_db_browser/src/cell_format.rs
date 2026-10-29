@@ -1,5 +1,26 @@
 use roxmltree::{Document, ParsingOptions};
 
+pub fn cell_image_format(bytes: &[u8]) -> Option<(image::ImageFormat, &'static str)> {
+    use image::ImageFormat;
+    let format = image::guess_format(bytes).ok()?;
+    let name = match format { ImageFormat::Png => "PNG", ImageFormat::Jpeg => "JPEG", ImageFormat::Bmp => "BMP", _ => return None };
+    Some((format, name))
+}
+
+pub fn automatic_mode(value: &rusqlite::types::Value) -> crate::state::EditCellMode {
+    use crate::state::EditCellMode;
+    use rusqlite::types::Value;
+    let bytes = match value { Value::Text(text) => text.as_bytes(), Value::Blob(bytes) => bytes, _ => return EditCellMode::Text };
+    if cell_image_format(bytes).is_some() { return EditCellMode::Image; }
+    let Ok(text) = std::str::from_utf8(bytes) else { return EditCellMode::Hex; };
+    if text.chars().any(|ch| (ch.is_control() && !ch.is_whitespace())
+        || matches!(ch as u32, 0xfdd0..=0xfdef) || ch as u32 & 0xfffe == 0xfffe) { return EditCellMode::Hex; }
+    if text.starts_with("<?xml") { return EditCellMode::Xml; }
+    if serde_json::from_str::<serde_json::Value>(text).is_ok_and(|value| !value.is_number()) { return EditCellMode::Json; }
+    // shortcut: RTL stays in Text until shared shaping and bidirectional caret layout exist.
+    EditCellMode::Text
+}
+
 pub fn xml_document(text: &str) -> Result<Document<'_>, String> {
     // shortcut: bounded whole-cell XML; upgrade to streaming validation for larger cell editors.
     if text.len() > 16 * 1024 * 1024 { return Err("XML exceeds the 16 MiB editor limit".into()); }
@@ -66,6 +87,24 @@ pub fn evaluate(conn: &rusqlite::Connection, expression: &str) -> Result<rusqlit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_mode_distinguishes_printable_bytes_formats_numbers_and_noncharacters() {
+        use crate::state::EditCellMode::*;
+        use rusqlite::types::Value;
+        for (value, expected) in [(Value::Null,Text),(Value::Integer(i64::MAX),Text),(Value::Real(1.25),Text),
+            (Value::Text("中文\n\tvalue".into()),Text),(Value::Blob("中文".as_bytes().to_vec()),Text),
+            (Value::Blob(vec![255,0,128]),Hex),(Value::Text("a\0b".into()),Hex),
+            (Value::Text("\u{fdd0}".into()),Hex),(Value::Text("\u{10ffff}".into()),Hex),
+            (Value::Text("\u{a0}word".into()),Text),(Value::Text("العربية".into()),Text),
+            (Value::Text("42".into()),Text),(Value::Text("1e10".into()),Text),
+            (Value::Text("true".into()),Json),(Value::Text("null".into()),Json),
+            (Value::Text("\"string\"".into()),Json),(Value::Blob(b"{\"a\":1}".to_vec()),Json),
+            (Value::Text("<?xml version='1.0'?><r/>".into()),Xml),(Value::Text("<r/>".into()),Text),
+            (Value::Text("{broken".into()),Text),(Value::Text("\u{feff}text".into()),Text)] {
+            assert_eq!(automatic_mode(&value),expected,"{value:?}");
+        }
+    }
 
     #[test]
     fn evaluation_keeps_sqlite_types_reads_pending_values_and_rejects_tails_and_parameters() {

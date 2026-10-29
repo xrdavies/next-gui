@@ -3271,6 +3271,7 @@ impl AppState {
         let applied_mode = self.edit_mode;
         let evaluating = self.edit_mode == EditCellMode::Evaluation;
         let value = if evaluating { crate::cell_format::evaluate(self.conn.as_ref().unwrap(), &self.edit_value)? }
+            else if self.edit_mode == EditCellMode::Image { self.edit_original.clone() }
             else { self.edited_cell_value()? };
         db::update_cell_in(self.conn.as_ref().unwrap(), &schema, &table, rowid, &column, &value)?;
         self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
@@ -3688,11 +3689,6 @@ impl AppState {
             }
         }
         let value = rusqlite::types::Value::from(raw);
-        let mode = if matches!(value, rusqlite::types::Value::Blob(_)) {
-            EditCellMode::Hex
-        } else {
-            EditCellMode::Text
-        };
         self.edit_source = EditCellSource::Browse;
         self.edit_col = col;
         self.edit_type = match &value {
@@ -3707,8 +3703,27 @@ impl AppState {
         self.edit_saved = value.clone();
         self.edit_original = value;
         if self.browse_cell_read_only() { self.edit_source = EditCellSource::BrowseReadOnly; }
-        self.edit_mode = mode;
+        self.show_loaded_edit_value();
+        Ok(())
+    }
+
+    fn show_loaded_edit_value(&mut self) {
+        if self.prefs.auto_switch_mode { self.edit_mode = crate::cell_format::automatic_mode(&self.edit_original); }
         self.show_edit_value();
+        if self.prefs.auto_switch_mode && self.edit_mode == EditCellMode::Image && self.edit_image_rgba.is_none() {
+            self.edit_mode = EditCellMode::Hex; self.show_edit_value();
+        }
+    }
+
+    pub fn set_cell_auto_switch(&mut self, enabled: bool) -> Result<(), String> {
+        if enabled && !self.edit_col.is_empty() {
+            let value = if self.edit_cell_read_only() || self.edit_mode == EditCellMode::Image { self.edit_original.clone() }
+                else { self.cell_value(false)? };
+            let mode = crate::cell_format::automatic_mode(&value);
+            if mode != self.edit_mode { self.set_edit_mode(mode)?; }
+            if mode == EditCellMode::Image && self.edit_image_rgba.is_none() { self.set_edit_mode(EditCellMode::Hex)?; }
+        }
+        self.prefs.auto_switch_mode = enabled;
         Ok(())
     }
 
@@ -3804,6 +3819,7 @@ impl AppState {
                     if text.as_str() == String::from_utf8_lossy(bytes) {
                         return Ok(self.edit_original.clone());
                     }
+                    if std::str::from_utf8(bytes).is_ok() { return Ok(Value::Blob(text.as_bytes().to_vec())); }
                     return Err("Use Hex to edit binary data without changing its type".into());
                 }
                 Ok(Value::Blob(text.as_bytes().to_vec()))
@@ -3830,8 +3846,7 @@ impl AppState {
         if self.edit_cell_read_only() { return Err("This cell is read-only".into()); }
         self.edit_type = 0;
         self.edit_original = rusqlite::types::Value::Null;
-        self.edit_mode = EditCellMode::Text;
-        self.show_edit_value();
+        self.show_loaded_edit_value();
         Ok(())
     }
 
@@ -3856,11 +3871,10 @@ impl AppState {
             }
         };
         self.edit_type = if matches!(value, rusqlite::types::Value::Blob(_)) {4} else {3};
-        self.edit_mode = if self.edit_type == 4 {EditCellMode::Hex} else {EditCellMode::Text};
         self.edit_original = value;
         self.edit_image_view = next_gui_ui::ImageView::default();
         self.edit_image_kind.clear();
-        self.show_edit_value();
+        self.show_loaded_edit_value();
         self.status_msg = "File loaded into cell draft; Apply to update the record".into();
         Ok(())
     }
@@ -4057,24 +4071,21 @@ impl AppState {
 
     pub fn decode_edit_image(&mut self) {
         self.edit_image_rgba = None;
+        self.edit_image_kind.clear();
         let rusqlite::types::Value::Blob(bytes) = &self.edit_original else {
             return;
         };
-        if !(db::looks_like_png(bytes) || db::looks_like_jpeg(bytes)) {
-            return;
-        }
+        let Some((format, name)) = crate::cell_format::cell_image_format(bytes) else { return; };
         let decoded = (|| -> Result<_, String> {
             let reader = || {
-                image::io::Reader::new(std::io::Cursor::new(bytes))
-                    .with_guessed_format()
-                    .map_err(|e| e.to_string())
+                image::io::Reader::with_format(std::io::Cursor::new(bytes), format)
             };
-            let (w, h) = reader()?.into_dimensions().map_err(|e| e.to_string())?;
+            let (w, h) = reader().into_dimensions().map_err(|e| e.to_string())?;
             // Bound retained RGBA and decoder allocations before opening untrusted BLOBs.
             if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 16 * 1024 * 1024 {
                 return Err("Image preview is limited to 16 megapixels".into());
             }
-            let mut reader = reader()?;
+            let mut reader = reader();
             let mut limits = image::io::Limits::default();
             limits.max_image_width = Some(w);
             limits.max_image_height = Some(h);
@@ -4086,6 +4097,7 @@ impl AppState {
         match decoded {
             Ok(image) => {
                 self.edit_image_rgba = Some(image);
+                self.edit_image_kind = name.into();
                 self.edit_binary_len = bytes.len();
             }
             Err(error) => self.status_msg = format!("Image preview: {error}"),
@@ -4156,6 +4168,54 @@ mod chart_default_tests {
         state.path = ":memory:".into();
         state.checkpoint_project();
         state
+    }
+
+    #[test]
+    fn automatic_cell_modes_keep_types_manual_choices_drafts_and_image_imports_safe() {
+        use rusqlite::types::Value;
+        let mut state=test_state();state.prefs.auto_switch_mode=true;
+        state.refresh_schema().unwrap();state.switch_browse_table_in("main","t").unwrap();
+        for (value,mode) in [(Value::Null,EditCellMode::Text),(Value::Integer(i64::MAX),EditCellMode::Text),
+            (Value::Text("中文".into()),EditCellMode::Text),(Value::Blob("中文".as_bytes().to_vec()),EditCellMode::Text),
+            (Value::Text("{\"a\":1}".into()),EditCellMode::Json),(Value::Blob(b"{\"a\":1}".to_vec()),EditCellMode::Json),
+            (Value::Text("<?xml version='1.0'?><r><a/></r>".into()),EditCellMode::Xml),
+            (Value::Text("a\0b".into()),EditCellMode::Hex),(Value::Blob(vec![0,255,128]),EditCellMode::Hex)] {
+            state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[&value]).unwrap();
+            state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();
+            assert_eq!(state.edit_mode,mode);assert_eq!(state.edit_saved,value);
+            assert_eq!(state.edited_cell_value().unwrap(),value);assert!(!state.has_cell_draft());
+        }
+        state.conn.as_ref().unwrap().execute("UPDATE t SET v=?1",[Value::Blob("文字".as_bytes().to_vec())]).unwrap();
+        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.edit_value="changed 中文".into();
+        state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,Value::Blob("changed 中文".as_bytes().to_vec()));
+        let dir=tempfile::tempdir().unwrap();let path=dir.path().join("cell-image");
+        for (format,kind) in [(image::ImageOutputFormat::Png,"PNG"),(image::ImageOutputFormat::Jpeg(85),"JPEG"),(image::ImageOutputFormat::Bmp,"BMP")] {
+            state.discard_cell_draft();
+            let mut bytes=std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(4,3).write_to(&mut bytes,format).unwrap();
+            let bytes=bytes.into_inner();std::fs::write(&path,&bytes).unwrap();let saved=state.edit_saved.clone();
+            state.import_cell_file(&path).unwrap();assert_eq!(state.edit_mode,EditCellMode::Image);
+            assert_eq!(state.edit_image_kind,kind);assert_eq!(state.edit_image_rgba.as_ref().map(|(w,h,_)|(*w,*h)),Some((4,3)));
+            assert!(state.has_cell_draft());assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),saved);
+            state.edit_value="preview text must never be stored".into();state.apply_cell_draft().unwrap();
+            assert_eq!(state.edit_saved,Value::Blob(bytes.clone()));assert!(!state.has_cell_draft());
+            assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,Value>(0)).unwrap(),Value::Blob(bytes));
+        }
+        state.conn.as_ref().unwrap().execute("UPDATE t SET v=x'89504E470D0A1A0A'",[]).unwrap();
+        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();
+        assert_eq!(state.edit_mode,EditCellMode::Hex);assert!(!state.has_cell_draft());assert!(state.edit_image_rgba.is_none());
+        state.set_cell_auto_switch(false).unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();
+        state.conn.as_ref().unwrap().execute("UPDATE t SET v='next 中文'",[]).unwrap();
+        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();
+        assert_eq!(state.edit_mode,EditCellMode::Hex);assert_eq!(state.edit_value,db::to_hex("next 中文".as_bytes()));
+        state.set_cell_auto_switch(true).unwrap();assert_eq!(state.edit_mode,EditCellMode::Text);assert_eq!(state.edit_value,"next 中文");
+        let revision=state.edit_revision;state.edit_value="draft 中文".into();state.set_cell_auto_switch(false).unwrap();state.set_cell_auto_switch(true).unwrap();
+        assert_eq!(state.edit_revision,revision);assert_eq!(state.edit_value,"draft 中文");assert!(state.has_cell_draft());
+        state.discard_cell_draft();state.set_cell_auto_switch(false).unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();state.edit_value="GG".into();
+        assert!(state.set_cell_auto_switch(true).is_err());assert!(!state.prefs.auto_switch_mode);assert_eq!(state.edit_value,"GG");
+        state.discard_cell_draft();state.tab=MainTab::Pragmas;state.set_cell_auto_switch(true).unwrap();
+        assert_eq!(state.edit_mode,EditCellMode::Text);assert!(state.apply_cell_draft().is_err());assert!(!state.has_cell_draft());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,String>(0)).unwrap(),"next 中文");
     }
 
     #[test]
@@ -4280,12 +4340,12 @@ mod chart_default_tests {
         state.goto_browse_record(1).unwrap();
         state.sql_result = Some(db::execute_sql(state.conn.as_ref().unwrap(),
             "SELECT 9223372036854775807 AS exact,1.25 AS decimal,NULL AS missing,CAST(X'80FF00' AS TEXT) AS bytes,X'00FF' AS payload,'{\"a\":1}' AS json").unwrap());
-        for (column, storage, text) in [(0, 1, "9223372036854775807"), (1, 2, "1.25"), (2, 0, ""), (3, 3, "80FF00"), (4, 4, "00FF"), (5, 3, "{\"a\":1}")] {
+        for (column, storage, text) in [(0, 1, "9223372036854775807"), (1, 2, "1.25"), (2, 0, ""), (3, 3, "80FF00"), (4, 4, "00FF"), (5, 3, "{\n  \"a\": 1\n}")] {
             state.sql_selection = SqlSelection { rows: Some((0, 0)), columns: Some((column, column)) };
             assert!(state.sync_edit_cell_from_sql_selection().unwrap());
             assert_eq!(state.sql_cell_position(), Some((0, column)));
             assert_eq!(state.edit_type, storage); assert_eq!(state.edit_value, text);
-            let expected_mode = if matches!(column, 3 | 4) { EditCellMode::Hex } else { EditCellMode::Text };
+            let expected_mode = if matches!(column, 3 | 4) { EditCellMode::Hex } else if column==5 { EditCellMode::Json } else { EditCellMode::Text };
             assert_eq!(state.edit_mode, expected_mode);
             assert!(!state.has_cell_draft());
             assert!(!state.sync_edit_cell_from_sql_selection().unwrap());

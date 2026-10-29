@@ -164,6 +164,12 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   character wrapping and horizontal scrolling without changing text, storage,
   selection or Undo/Redo. Read-only views share it. Word/style-boundary wrapping
   and complete RTL shaping remain unfinished.
+- Edit Cell's checked Auto mode tool defaults on and persists its preference.
+  Printable UTF-8, non-number JSON, XML declarations and supported PNG/JPEG/BMP
+  pictures choose a view; corrupt/oversized images fall back to Binary. Turning
+  it off retains the selected mode for later cells. Storage types and raw bytes
+  remain separate from the view; image imports are drafts until Apply. RTL and
+  additional Qt image formats/codecs remain unfinished.
 - Foreign-key navigation resolves omitted parent PK columns, groups composite keys
   and filters on the stored typed values; NULL keys report no parent. Source rows
   still require an unshadowed rowid.

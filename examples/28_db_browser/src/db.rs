@@ -3454,14 +3454,6 @@ pub fn from_hex(s: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-pub fn looks_like_png(bytes: &[u8]) -> bool {
-    bytes.len() >= 8 && &bytes[..8] == b"\x89PNG\r\n\x1a\n"
-}
-
-pub fn looks_like_jpeg(bytes: &[u8]) -> bool {
-    bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
-}
-
 pub fn try_pretty_json(text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     serde_json::to_string_pretty(&value).ok()

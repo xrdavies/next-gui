@@ -77,7 +77,7 @@ fn cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_
     assert_eq!(demo.state.tab, MainTab::Browse); assert_eq!(demo.state.edit_value, "kept draft");
     assert!(demo.state.has_cell_draft()); demo.state.discard_cell_draft();
     assert_eq!(demo.state.edit_value, original);
-    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM cells", [], |row| row.get::<_,String>(0)).unwrap(), original);
+    assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT value FROM cells", [], |row| row.get::<_,rusqlite::types::Value>(0)).unwrap(), saved);
 }
 
 #[test]
