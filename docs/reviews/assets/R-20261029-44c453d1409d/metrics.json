@@ -1,0 +1,443 @@
+{
+  "target": "44c453d1409d41336d9ec5a495e02448a0d34a10",
+  "workspace": {
+    "passed": 765,
+    "failed": 0,
+    "ignored": 0,
+    "groups": 43
+  },
+  "checks": {
+    "clippy": 0,
+    "workspace": 0,
+    "build": 0,
+    "macos": 0,
+    "windows": 0
+  },
+  "render": {
+    "window-external-applied-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-external-applied-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-external-applied-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-external-applied-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-external-modal-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-external-modal-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-external-modal-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-external-modal-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-external-readonly-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-external-readonly-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-external-readonly-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-external-readonly-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 2,
+      "channels_above_2": 0
+    },
+    "window-import-menu-dark-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-import-menu-dark-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-import-menu-light-1400": {
+      "width": 1400,
+      "height": 860,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    },
+    "window-import-menu-light-800": {
+      "width": 800,
+      "height": 600,
+      "max_channel_delta": 1,
+      "channels_above_2": 0
+    }
+  },
+  "source_sha256": {
+    "Cargo.lock": "42879b49750debb0d2807e24c2dcd23554ea4a5d93ad744eadf0129e31c11aee",
+    "Cargo.toml": "a7d7fc7762a12ae8c7eceaecdc9d0f25e7c6ad865e42e4031494195264b10ebd",
+    "crates/next-gui-immediate/Cargo.toml": "e3ff5f7ed0accba027bbcecd5c71dd8591089058da3753858addf3436f6bacb4",
+    "crates/next-gui-immediate/src/lib.rs": "79628b146a65aaf79922b3f88d7ff8e9eff09fca093be715aa04cf0b5ce66d3f",
+    "crates/next-gui-layout/Cargo.toml": "520a07dddc2212eee47ea9e850da0e5da797415594dbab29fe83a6f27bb2ec42",
+    "crates/next-gui-layout/src/lib.rs": "26e8e3ae28a8dd738d92c2ec7eecec654e594705668214ca071289f3bf341423",
+    "crates/next-gui-platform/Cargo.toml": "f85bfda394370ade11670b957cc0bcbdf0ba794e4d3e623b57c438d82f23daef",
+    "crates/next-gui-platform/src/clipboard.rs": "471d704db6e7d6b67070acd4cd7674a4d2948c1125665b13caf14c97f1f3e508",
+    "crates/next-gui-platform/src/desktop.rs": "6d89a44b4834bc5e44bae26bdca30d8fe8c2c6b5003cf00aeda9db3debcbb7f8",
+    "crates/next-gui-platform/src/dpi.rs": "661204ec9f26a1e87619a141835dc8ecd739e26535a3636161e026f7e7b68767",
+    "crates/next-gui-platform/src/lib.rs": "8cb71ded0d8a4eb54bed93753e5b2cd15b4978a69d5e853099d491753ea54dc7",
+    "crates/next-gui-platform/src/linux.rs": "9d623b708faae6aec5da3e89fbae5b2da98a621e62b3c6adef075127c3079114",
+    "crates/next-gui-platform/src/macos.rs": "3db8ce70b8115937e1dcbf132c890def37e9e843acc76014040b522600488514",
+    "crates/next-gui-platform/src/number_conventions.rs": "9b2517c0116b487f6244c8c6264503eed43b5f544ff00e646021f15ac260d2a0",
+    "crates/next-gui-platform/src/redraw.rs": "10f9bf01189b96f7386d4586bcad116e9ad66ef67938f2ff67058fe024764039",
+    "crates/next-gui-platform/src/soak.rs": "0fa44714fedd06b546192a49ad067d72a0678b2b1c3c75819835d5197cee4995",
+    "crates/next-gui-platform/src/touch_synth.rs": "deea1fea7e1dfb065183d9249bc5d6955cdff140a74c6d37e543b49c445a20e3",
+    "crates/next-gui-platform/src/windows.rs": "c0136494d5ab20ff4e3c907024c5a65d36ceef9f641a1a718400895f8a070e29",
+    "crates/next-gui-platform/tests/common/mod.rs": "98b49dc426d88b6576a9c0499cb35fd25b7ad6ee91b049a24cdecd29a05ef858",
+    "crates/next-gui-platform/tests/request_exit_on_pointer.rs": "569e100fad034483e6de8f44c812fba7fc419672d8573b31c6c41b10a69ade95",
+    "crates/next-gui-platform/tests/request_exit_on_redraw.rs": "554fd22f66426151f91ed8be875035063b81cc09c469349de6f80724aacb1546",
+    "crates/next-gui-platform/tests/request_exit_on_start.rs": "257d14cdb23df7e5ed1cdb005391b1c8d46880d0bba1c5550934baaee5561c41",
+    "crates/next-gui-profile/Cargo.toml": "116c0379f72671046ce05492134db508594a07b3074124491abf6680fceec6e7",
+    "crates/next-gui-profile/src/lib.rs": "12b56ef9e679ec6a3d4a111a295b58901bce31c5ba3aa00c98fa7d007eb08260",
+    "crates/next-gui-render-gpu/Cargo.toml": "d897cb6661493959971fdf4f7f966bbd7e8be7871b6c6af46121ec9423d13424",
+    "crates/next-gui-render-gpu/src/lib.rs": "d5a98eb81fd673081964fea7af2285abba2c81076a95f82da38c00c4a440f3bb",
+    "crates/next-gui-render-soft/Cargo.toml": "51004eb5112f64dbc055cd432cf5796f5feb33e02498f10d7554c0ede9e750ac",
+    "crates/next-gui-render-soft/src/lib.rs": "b29ddc156ee8d3b4c4ae91c0703baf6348d15406c443e0a775c3fa8ab57e1249",
+    "crates/next-gui-render/Cargo.toml": "feb62f2e9964e91b2369ea85c57d4e90b5bba91d4dca11c4d3e4e0246b78ce6c",
+    "crates/next-gui-render/src/lib.rs": "3f103ca8334fb349464b6ab3132832b6b9ed26b212ed9d17b51158a7725846e0",
+    "crates/next-gui-scene/Cargo.toml": "209e720c8c3004781d0ac358be60572d75ac3eacf0bf548f2d1c86564e5fc1f2",
+    "crates/next-gui-scene/src/lib.rs": "228a4a0e9abef9bfa83a8962ba256e7631325f270ebb36425689765031ae199f",
+    "crates/next-gui-text/Cargo.toml": "d239ee17b226ad71f7659694001a6c0371fc0f8189d354be2952171e5dda3db8",
+    "crates/next-gui-text/src/lib.rs": "121599536669a63c2283aadd67147542380da27b7cf82ecd073ab21d97068a1c",
+    "crates/next-gui-ui/Cargo.toml": "50222c84bd120a9b9302d849c3ffd0240bdbfde422c003bce7c960c68db9a98d",
+    "crates/next-gui-ui/src/autocomplete.rs": "0cc690a7bb6246a5b392ea8eb813b96931ddf62ca551b23bbec45d07cf56cef7",
+    "crates/next-gui-ui/src/button_tests.rs": "fd6f2b8cfb3b2290c5feaaec68d61a10bbea397aac71990062f2903c4908b89b",
+    "crates/next-gui-ui/src/chart.rs": "939b64633b234e6d1f6094f3c397ce90365ddfe7ca85f4ab3666c08c0d272bc8",
+    "crates/next-gui-ui/src/container_render_tests.rs": "2b7b2b83626e1f356195904b00232f6096ee9aea8dd58c356aacf00b6062549e",
+    "crates/next-gui-ui/src/dialog.rs": "97b6ca25c7808f68cd439398dd9e8b726e91c7ec9cb192b01b102b7ffb73be92",
+    "crates/next-gui-ui/src/dsl/ast.rs": "72f716b8275cd2bd3d91df2ef4c16ba565637a8d0b5e3b14e7ecf49667ca7836",
+    "crates/next-gui-ui/src/dsl/build.rs": "c4f67ae6c7b67fe6707d67a14dc1df84af69cffcd195570cfb910dcd431c1b19",
+    "crates/next-gui-ui/src/dsl/lex.rs": "5ef6edf3f3fcf2341a77e3af1619bbd02bb6a3dc7350a69e3b4cb634b855d17b",
+    "crates/next-gui-ui/src/dsl/mod.rs": "78a5baa96a44fbce545e23db04773f018263947b7edb2dc91610c54ee17eeafd",
+    "crates/next-gui-ui/src/dsl/parse.rs": "b96f23616c881f4a4dee4c3ae992733bccc71632dacececf7901aa16cef0f2a2",
+    "crates/next-gui-ui/src/dsl/style.rs": "1855005675bd7c957df0aca54c47858e27d8a2683ccd8b2df581de1865db15af",
+    "crates/next-gui-ui/src/hex_editor.rs": "f04ab6438e20da76004c131d68da0a7547d81bb5084fca0de2bdf7f9b7dcc619",
+    "crates/next-gui-ui/src/icon.rs": "bcbdf2b27abd7dbf57c95899145b54c8e8db319bca9625afb82d0e836d60991e",
+    "crates/next-gui-ui/src/lib.rs": "5f830ed8740482958e035f85f0548a43b45024808d14fd05620a55b78dd04540",
+    "crates/next-gui-ui/src/modal.rs": "52005ca5cb6a451a532442c1cbc22cf8fb4a62b65390626fb693e39b2b2bfe0d",
+    "crates/next-gui-ui/src/office_p2.rs": "dcc8c474f3cc9fdbf5b55224088efc35d27826e7d5a79c538ab763a5f5bc4757",
+    "crates/next-gui-ui/src/p1_deferred.rs": "bc7c255fed3750ad91de2f89bbb8d48d230d5d21aa7fd38535460edf598d3b5f",
+    "crates/next-gui-ui/src/p1_raster.rs": "9a9133d81cf19b264bfa20632480eff1ee5796d881bd2b058efbf9644fdfc107",
+    "crates/next-gui-ui/src/p1_rest.rs": "6cfa67a03b639c062cd047b5872b20cd4b7cc1773ea0c6dc16865862a2092c22",
+    "crates/next-gui-ui/src/plot.rs": "5cf946c556e53c80fad27f7107631265d0445a4ef6344344f6c44e9dba26aca3",
+    "crates/next-gui-ui/src/plot_raster.rs": "04871e3b3dc4f08e05ea093ddc9c9b1f20def94a6a1a41899aa4324bd61ba34a",
+    "crates/next-gui-ui/src/prose.rs": "cff7e7bf77baedc030c69bb29da0803b8fe072e68c5bfe352a679e1477dae300",
+    "crates/next-gui-ui/src/scrollbars.rs": "d1ecd6716a687647c3cc8823e50b833c4783c08e8bbeedb25ffd23c17a1dd721",
+    "crates/next-gui-ui/src/table_data.rs": "5162a055980885b61e2aa18e5a7976cf6b4e7527131e93227b682c32728d320f",
+    "crates/next-gui-ui/src/table_edit.rs": "87a75e5a38196bc3efa3b8401c6afef09d81e6e6585cc1b39dd28c8b29650ea7",
+    "crates/next-gui-ui/src/table_selection_tests.rs": "81a835c0d6285a3a8dfba7f73b9749700679141b295206beaf97930a6fc96c11",
+    "crates/next-gui-ui/src/tabs.rs": "66b97ecfd5a58a48e3d73f43900ccaa1f0ae4c9da5fe4f0adc7c33b609810b95",
+    "crates/next-gui-ui/src/text_area.rs": "fdf0280514e8c1206be0ce7ee0cb8841e748f6a3d5156f3137408bc8a4e57f2a",
+    "crates/next-gui-ui/src/text_area_hint.rs": "2f1439137f5369f024c1a617ceec4600938f7bf81a34eb879a3f01a34cd17540",
+    "crates/next-gui-ui/src/text_completion.rs": "4863c1d73e4085f05023284bb3d39c6892955ddeaeaf4af4db0f7c87703a61c2",
+    "crates/next-gui-ui/src/text_input.rs": "fc5394ff80841c93f743abcbf9284969dd6d4c0dd6b95b9127f34f8f383ff797",
+    "crates/next-gui-ui/src/theme.rs": "3c6a15a51bdf6b75e8c23efe10af91d9d389cd8d6ef5b0c01ebbe1dc00d60868",
+    "examples/01_soft_window/Cargo.toml": "51f46b2ca67049d1a7a2afe27d0d1326cacf800e73322d2d8286d87426909b1f",
+    "examples/01_soft_window/src/main.rs": "7368b6ecaf0c944e4fcf2e19b5d271762457955b201ec527f675123dcddc315b",
+    "examples/02_counter/Cargo.toml": "1b6d9262fdde9b0b01c1b1287e1957544cacef970a86c5bbb24d2207d2dece6a",
+    "examples/02_counter/src/main.rs": "23414965e085a7027ebea35567c9d97b065dadb202d57d167a15ca684f043139",
+    "examples/03_ngui_counter/Cargo.toml": "0c7a60d56fcaddcc0e3c89b3dbb3c6980ab0ef4770745b9a4d5abfd56e809391",
+    "examples/03_ngui_counter/src/main.rs": "7c015014db6b5e1b5f75a7dc069e0eb19672f6be27d59a2db023d8b48db0a3c0",
+    "examples/04_cjk_text/Cargo.toml": "0268b1854377f76362fd6f1acbd09da03fcdd5e8c2faa08091a8238daecb5250",
+    "examples/04_cjk_text/src/main.rs": "a78316ee89cd013ebfc0ea5b0a8aebb035cf052da8a72be5ba6c0934f989507c",
+    "examples/05_backend_toggle/Cargo.toml": "ea419892a2cd95fe2129fd1517748c340527299b8852626138a00f011c9097df",
+    "examples/05_backend_toggle/src/main.rs": "2908b40c2eaea167540d542427a3f5cf678e4c953ff6ee1089092164aaeb23f2",
+    "examples/10_office_panel/Cargo.toml": "ebb7c7ebfbeee1a2a4e15cd07fc3ae3284133d4ba98ee331282c3d5ddb2390f3",
+    "examples/10_office_panel/src/main.rs": "73410c58cd5e1c41ff8e4ff8abf77854727b133f57351070abc91798c8bace57",
+    "examples/11_office_shell/Cargo.toml": "5890a208d85cd5ccd0d3a52ab2ad463002211cc14ae98c52b964ceb09d6c2f22",
+    "examples/11_office_shell/src/main.rs": "0f6d91dce8c87b2998df20f9ecadced1265f91faa7de92f58d477b95de0fd299",
+    "examples/12_office_inputs/Cargo.toml": "46f92ca2d82ba7bd89c640ff8ba2a136f51bfa4373341e69c2556089f2d944c0",
+    "examples/12_office_inputs/src/main.rs": "4536205f41ccb9cc81a5d1978bd4b1767611fea6e238e32317e8e45935403362",
+    "examples/13_office_data/Cargo.toml": "b1bed29e6316cf28c6ce3f9190559ec2c6d8dadc9b28f35d22e6c2cc8ac2d5d9",
+    "examples/13_office_data/src/main.rs": "bbf55434a11ba3c4bab8424c4cf3ce7ea3cdca61e420b1d14c4490849c65052e",
+    "examples/14_office_nav/Cargo.toml": "9860ea0c703fb4e1adaa4d095f1b2d0c65c4bb4ef99e97402f92c9584766983c",
+    "examples/14_office_nav/src/main.rs": "5efaaf91779567766f561153fb0064ad5c1190752858e8ce18f8ccbe856fb44d",
+    "examples/15_office_feedback/Cargo.toml": "ecc95cbbcb2bb06591cd0f3b44f04c4cb4094e82c265caa96ed1280dedfad14f",
+    "examples/15_office_feedback/src/main.rs": "eca61b260b9e21e49e67ffba309250c0952248a18e5c497f479814afa6ed4b47",
+    "examples/20_office_industrial/Cargo.toml": "1229981c6734f447c11edb31cb97db605f9001480751298f69bf76c4c49fb6f8",
+    "examples/20_office_industrial/src/main.rs": "166cf768b01d1c5a30ed1ac3746ec2e5766c9527e60c74119cc61b01b7db2c0a",
+    "examples/21_office_p1_rest/Cargo.toml": "d6dd100e479fd47c637eafc6c48958021b5536a9a260d334008e8d8d8972a176",
+    "examples/21_office_p1_rest/src/main.rs": "16083c4e7c3de2da8b05d05a1f4eecf3cc0a6783bfa619a80cad4912f34c9fb1",
+    "examples/22_office_p1_deferred/Cargo.toml": "9742d74358f5ce9c2c8f339d7c7a7034fdb6ffc1258c7b04fd15022c147d3f29",
+    "examples/22_office_p1_deferred/src/main.rs": "d12a34d994d815719eff7cdd9df5d04237cc4c8cdcb8966f91e1a1f24c95bd06",
+    "examples/23_office_charts/Cargo.toml": "5996c3582d81184398daf2c1b09f0c10c3769e4b4dad735bf749410d58d3adf1",
+    "examples/23_office_charts/src/main.rs": "6077b6799a9465cf0e6e9165971c7ceaccb39d30afd9c3a4f44d35c88cc19b5b",
+    "examples/24_profile_dual/Cargo.toml": "8f24e86dab87106e883c62f134eb16ce9c457733913aec3d689304798a3ca606",
+    "examples/24_profile_dual/src/main.rs": "efa1f1a3f2a2a301263cb346089694a7189e6b3bc3d1193b292170cbadc19a8d",
+    "examples/25_immediate_viewport/Cargo.toml": "b692b79268ffd4604b279d72bb02b2bc3fa09d88a3ca470e0f261ae34f2356a0",
+    "examples/25_immediate_viewport/src/main.rs": "ac7ca53742c759e7e3332bb53d23a1c63e0157a85e2b464f0c79bd7205f652f4",
+    "examples/26_office_p2/Cargo.toml": "0c233a9d8930cc76b9f58e1f80c066b91c1a45a9bd65d7bab493de3b7a43139d",
+    "examples/26_office_p2/src/main.rs": "b9fff5015a9cd6f757571ae318fd6627a614823712213bc4504b81f13ec79b77",
+    "examples/27_theme_tokens/Cargo.toml": "b9f1ac7c9c0c71fb95e39f7ba1c607a35f555b9447d02095b78fe19841e83336",
+    "examples/27_theme_tokens/src/main.rs": "4b0aaa46ef163feecfc81e5803b1957f73dea32394050a74e190fe24ee758327",
+    "examples/28_db_browser/Cargo.toml": "a52a77de0bf780df42d9fd004ccaf729645cfcd74eb845407e134f5dd435b0bc",
+    "examples/28_db_browser/src/browse_navigation_tests.rs": "9aa342d206f946c1f28689550e38911345e320335bc6c34fe1188a19faa8ec66",
+    "examples/28_db_browser/src/browse_sort_tests.rs": "eca9906ee5bd1d5b6736d0ed501265aa5e50ccd6b4ef5f2ecee4d51796493eae",
+    "examples/28_db_browser/src/cell_actions.rs": "6dd268090d8737c358e231c9447e2928a2e0163766d0ee95c2b34c9ed5a8919f",
+    "examples/28_db_browser/src/cell_clipboard.rs": "7a9de2736821987e3348ec8a8f6e53eab0a7c86ef4e6447f53fecc3e3bf7ea1a",
+    "examples/28_db_browser/src/cell_editor_tests.rs": "69db5ce1b6680f5abcf82e3e96cf1a3b7a2d69e9c4c7090364865a12c27e8db3",
+    "examples/28_db_browser/src/cell_format.rs": "38b67af73998122f2edc9ddfd1d5e29c5176fdfcca6f526341ab7c0023fac4c7",
+    "examples/28_db_browser/src/cell_hex_editor_tests.rs": "34e2860c5072eb8c25b996b3f32fd84465792c9114289018c169ccf82ef5f70a",
+    "examples/28_db_browser/src/cell_snapshot.rs": "39d860e50fc6cbf3ebfa80e7b5e0ba453494a91c90b400a172e737365767d75e",
+    "examples/28_db_browser/src/column_picker.rs": "6a3af59c4ee03db6d500d99efe43de7cb9076bc61a2839973fe7b6bc56ff5839",
+    "examples/28_db_browser/src/csv_encoding.rs": "a93cc828f83f4aeb6302ff3639afb59877487ff011ea95da4b6b0e0926c3ba42",
+    "examples/28_db_browser/src/csv_files.rs": "f0069aa64832cc04e66f07a5969b4f306ea0182d7de7384e7b76c83158c4d37d",
+    "examples/28_db_browser/src/csv_import.rs": "83862c6132c41504a53a9a329b0f95d91479d7885b97ec8ddd0ca8c834112215",
+    "examples/28_db_browser/src/csv_jobs.rs": "a4be0b73c5f448718d8cbcedc7963bde4b121a9a0c34c733bb3c031173a0960a",
+    "examples/28_db_browser/src/csv_numbers.rs": "5b01da7c5a90fb9831bfdbe8e7a4c2c20f161246df2d62f2d5beebc67d9c88e7",
+    "examples/28_db_browser/src/data_export.rs": "a34e3938aae360d3ee9faa28585aa215161e26c307abc62766e22d7dc4f1a78b",
+    "examples/28_db_browser/src/db.rs": "cdd3a5412fd94e49ce8fb8b89e89b4fe3f7d9dcc5f81c80091c0b21c282948ec",
+    "examples/28_db_browser/src/dock_tests.rs": "2cf72b8a3650cf6338dd9a2254fb6c2e4aa1a96380992258400d65de4d53dfe1",
+    "examples/28_db_browser/src/export_jobs.rs": "f891895712533d0b0f05e596d14e3ab752da6b49e132160f0ddcc898ac162f2d",
+    "examples/28_db_browser/src/file_dlg.rs": "695831ebb14740393c29051f37c4f601a88f3cab690f2b664e84fed51f683599",
+    "examples/28_db_browser/src/filters.rs": "92f095360e12392003dcb4dd4c30aad17376531f9b4d994ad61109b98767119b",
+    "examples/28_db_browser/src/index_sql.rs": "7db1be99fd7e9a3f5bc2a26344b41150572a42176b181d1437ac069936c0352c",
+    "examples/28_db_browser/src/main.rs": "f55433c73af846a7845cc70748a4efa1c3fd56a6a7eccc18d3ea235c1bc85deb",
+    "examples/28_db_browser/src/plot.rs": "a2b0489ff3e246e261f71115b09dcf05334d1b4d93cd688af06932ad4e3d83ed",
+    "examples/28_db_browser/src/plot_export.rs": "82efb693e956e4ac80bfbff17dc3b46080588f657e2627cd698bf80eee47b9dc",
+    "examples/28_db_browser/src/plot_load.rs": "ea0de6cf2de2e92f16e09fee2ed9e05d1ceb0cbd43138328b8e1e5b762d93d88",
+    "examples/28_db_browser/src/pragmas.rs": "ff4f737e05ff9d1d6d542f9b72159b4e0163b58b0e3d0588676d1906d1a40635",
+    "examples/28_db_browser/src/prefs.rs": "7028f33de2641791ebe4544eb483b819b10197578ebd9f37e2fb15549687ecbe",
+    "examples/28_db_browser/src/project.rs": "42a7589b075bf3ec92bc93245fa71cad2262d176c741d48edce90b97d3505695",
+    "examples/28_db_browser/src/project_xml.rs": "c88b9f2bde33468ea6c5087682c29b25598873985c04005b9043487b38c78510",
+    "examples/28_db_browser/src/reference_editor.rs": "b6eada847536d987f8eb62bb6fc4519a8a090cdc05df26b75493fd50bd9af1c6",
+    "examples/28_db_browser/src/sql_calltip.rs": "a1f4f322b3ddab44b49be8156e35d6daa5f3dc8d49a040bd3ba4f73c11cb1501",
+    "examples/28_db_browser/src/sql_completion.rs": "7dc8e5347cd782cc705bd53df2f7c30f57997e45f09cc718f0a2c2df02a51d93",
+    "examples/28_db_browser/src/sql_editor.rs": "2a0b41026d27fe5af6ec203774cc0121e16a8486e596d9ae77d265e2f2de2c48",
+    "examples/28_db_browser/src/sql_export.rs": "f3d5aaec21088353b2b596457b5e0553e51aff6df8ddcd52e6ba23d0a8067ac5",
+    "examples/28_db_browser/src/sql_function_help.rs": "5d9581a5705c322dab8c23f63a414f65255abeee54eaf653d5c5d99f5c72c643",
+    "examples/28_db_browser/src/sql_log.rs": "d444beb9cddf1b4a53d7e0a95435ad20a9d9aacee5bda12283cf536ec322b8e3",
+    "examples/28_db_browser/src/sql_result_tests.rs": "71f76c5737289b32940986875ec26736cfa2a497cd60eb8bf7f1429c35cd2842",
+    "examples/28_db_browser/src/sql_search.rs": "1fb4207ab0ea4e50b18c37f90954bbfda8f85370be3934156d2fbcdc7262e66a",
+    "examples/28_db_browser/src/sql_syntax.rs": "c874a614014e16a2cacdf3f09c9a25c3401abc31236c683bc5cf35e66fc34cca",
+    "examples/28_db_browser/src/state.rs": "50c7237d6a75d1b6088b5797fc886f9f2b46e4f8f217a9c21b0598b8afda42c9",
+    "examples/28_db_browser/src/table_migration.rs": "e3cd5fc12d8e3c825da5b395ff295b7f87548ca1da1d46b7edf4fc7e05db3055",
+    "examples/28_db_browser/src/table_sql.rs": "1bfd7b3f47996af1170efbeaaffcaf0f9baf037d0e09fc8da63555c41b30d7d0",
+    "examples/28_db_browser/src/toolbar_tests.rs": "65c34761f68df6f8eddd9ee87c52da4126d846fc96da833768d3e5d992fceb18",
+    "examples/28_db_browser/src/ui_build.rs": "22e762744544e7b501cf03b5f7ea32db31712a42ae4e3798ed3d66002e8a616a"
+  },
+  "browser_sha256": "74ce38161e8c67d0485c6ba91c91f9bb5c1bd6fb33bc3a959821bd9e82f4d3fe",
+  "native": {
+    "dark-cell-mode-actions-link": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 0
+    },
+    "dark-cell-mode-actions-import-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 0
+    },
+    "dark-cell-mode-actions-external": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 1
+    },
+    "dark-cell-mode-actions-external-hex-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 1
+    },
+    "dark-cell-mode-actions-external-readonly-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 1
+    },
+    "light-cell-mode-actions-link": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 0
+    },
+    "light-cell-mode-actions-import-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 0
+    },
+    "light-cell-mode-actions-external": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 1
+    },
+    "light-cell-mode-actions-external-hex-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 1
+    },
+    "light-cell-mode-actions-external-readonly-narrow": {
+      "driver_exit": 0,
+      "owned_exit": -2,
+      "owned_copies_removed": 1
+    }
+  },
+  "native_keys": {
+    "dark-text-apply": {
+      "captured": true,
+      "pid": 69000,
+      "window": 7275,
+      "before_sha256": "b3171cbf16dec96a68f5db5f441db82b3b1dd8e0a15d175df75ffcf990de961e",
+      "saved_sha256": "38c42af77c024dcf16b43ef1479e47bf348f6e58f8d3747a71254f4bd34322e5",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "dark-text-cancel": {
+      "captured": true,
+      "pid": 69011,
+      "window": 7277,
+      "before_sha256": "b3171cbf16dec96a68f5db5f441db82b3b1dd8e0a15d175df75ffcf990de961e",
+      "saved_sha256": "38c42af77c024dcf16b43ef1479e47bf348f6e58f8d3747a71254f4bd34322e5",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "dark-hex-apply": {
+      "captured": true,
+      "pid": 69046,
+      "window": 7281,
+      "before_sha256": "49fd534fea14753447a1931542d9d58744a75810b88718eadc4ccded926317b5",
+      "saved_sha256": "8fb2417f405b5e23f18ac4993dc89972743c1d1d34dd12342abb0445fef8831f",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "dark-readonly-close": {
+      "captured": true,
+      "pid": 69059,
+      "window": 7284,
+      "before_sha256": "b3171cbf16dec96a68f5db5f441db82b3b1dd8e0a15d175df75ffcf990de961e",
+      "saved_sha256": "38c42af77c024dcf16b43ef1479e47bf348f6e58f8d3747a71254f4bd34322e5",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "light-text-apply": {
+      "captured": true,
+      "pid": 69079,
+      "window": 7288,
+      "before_sha256": "b3171cbf16dec96a68f5db5f441db82b3b1dd8e0a15d175df75ffcf990de961e",
+      "saved_sha256": "38c42af77c024dcf16b43ef1479e47bf348f6e58f8d3747a71254f4bd34322e5",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "light-text-cancel": {
+      "captured": true,
+      "pid": 69090,
+      "window": 7292,
+      "before_sha256": "b3171cbf16dec96a68f5db5f441db82b3b1dd8e0a15d175df75ffcf990de961e",
+      "saved_sha256": "38c42af77c024dcf16b43ef1479e47bf348f6e58f8d3747a71254f4bd34322e5",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "light-hex-apply": {
+      "captured": true,
+      "pid": 69101,
+      "window": 7296,
+      "before_sha256": "49fd534fea14753447a1931542d9d58744a75810b88718eadc4ccded926317b5",
+      "saved_sha256": "8fb2417f405b5e23f18ac4993dc89972743c1d1d34dd12342abb0445fef8831f",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    },
+    "light-readonly-close": {
+      "captured": true,
+      "pid": 69114,
+      "window": 7299,
+      "before_sha256": "b3171cbf16dec96a68f5db5f441db82b3b1dd8e0a15d175df75ffcf990de961e",
+      "saved_sha256": "38c42af77c024dcf16b43ef1479e47bf348f6e58f8d3747a71254f4bd34322e5",
+      "copy_removed_by_app": true,
+      "owned_exit": -2
+    }
+  },
+  "native_pixels": {
+    "dark-hex-apply": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3611566,
+      "height": 938,
+      "width": 1446
+    },
+    "dark-readonly-close": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3611642,
+      "height": 938,
+      "width": 1446
+    },
+    "dark-text-apply": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3611560,
+      "height": 938,
+      "width": 1446
+    },
+    "dark-text-cancel": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3611644,
+      "height": 938,
+      "width": 1446
+    },
+    "light-hex-apply": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3546691,
+      "height": 938,
+      "width": 1446
+    },
+    "light-readonly-close": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3540996,
+      "height": 938,
+      "width": 1446
+    },
+    "light-text-apply": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3545338,
+      "height": 938,
+      "width": 1446
+    },
+    "light-text-cancel": {
+      "blocked_save_changed_channels": 0,
+      "dismissed_changed_channels": 3545379,
+      "height": 938,
+      "width": 1446
+    }
+  }
+}
