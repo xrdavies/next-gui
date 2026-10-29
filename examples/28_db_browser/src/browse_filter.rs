@@ -408,6 +408,7 @@ impl InputSession {
                     .split(' ')
                     .filter(|s| !s.is_empty()));
         if compatible {
+            if current != self.value { ui.set_text_input(id, &self.value); }
             ui.set_focus(Some(id));
             ui.restore_text_input_state(id, &self.state);
         }
@@ -415,6 +416,15 @@ impl InputSession {
 }
 
 impl Demo {
+    pub(crate) fn flush_browse_filter(&mut self) {
+        self.filter_session.reconcile(&self.state, &self.ui, &self.ids);
+        self.filter_session.observed = drafts(&self.ui, &self.ids);
+        self.filter_session.escape = self.state.prefs.filter_escape.clone();
+        self.filter_session.focus = focused(&self.ui, &self.ids);
+        self.filter_session.pending = true;
+        self.filter_session.deadline = Some(Instant::now());
+    }
+
     pub(crate) fn cancel_browse_filter(&mut self) {
         if self.state.browse_work.is_some() {
             self.filter_session.pending = true;
@@ -503,12 +513,12 @@ impl Demo {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{state::OverlayKind, ui_build, PresentBackend};
     use next_gui_ui::{Theme, UiKey};
 
-    fn fixture(width: u32, height: u32, theme: Theme) -> Demo {
+    pub(crate) fn fixture(width: u32, height: u32, theme: Theme) -> Demo {
         let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
         demo.theme = ui_build::browser_theme(theme, if width == 800 { 18.0 } else { 13.0 });
         demo.state.new_memory_db().unwrap();
@@ -520,7 +530,7 @@ mod tests {
         demo.do_rebuild();
         demo
     }
-    fn settle(demo: &mut Demo, now: Instant) {
+    pub(crate) fn settle(demo: &mut Demo, now: Instant) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while demo.state.browse_work.is_some() {
             assert!(
@@ -534,7 +544,7 @@ mod tests {
             demo.do_rebuild();
         }
     }
-    fn capture(demo: &mut Demo, name: &str) {
+    pub(crate) fn capture(demo: &mut Demo, name: &str) {
         use next_gui_render::{encode_scene, Renderer};
         if let Ok(out) = std::env::var("NEXT_GUI_FILTER_QA_OUT") {
             demo.ui.sync(&mut demo.scene);

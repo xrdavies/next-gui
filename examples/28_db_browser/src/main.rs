@@ -34,6 +34,7 @@ mod reference_editor;
 mod table_migration;
 mod filters;
 mod browse_filter;
+mod filter_menu;
 mod prefs;
 mod pragmas;
 mod project;
@@ -265,6 +266,7 @@ struct Demo {
     exit_requested: bool,
     reveal_browse_selection: bool,
     browse_header_column: Option<usize>,
+    filter_context: Option<WidgetId>,
     filter_session: browse_filter::Session,
 }
 
@@ -1671,7 +1673,12 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("filter-")) {built.ui.set_focus(Some(built.browse_global_filter));built.ui.sync(&mut built.scene);}
+        if let Ok(tab)=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("filter-") {
+                let input=if tab.starts_with("filter-column") {built.browse_col_filters[1]} else {built.browse_global_filter};
+                built.ui.set_focus(Some(input));built.ui.sync(&mut built.scene);
+            }
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("revert-")) && state.confirm_open {built.ui.set_focus(Some(built.modal));built.ui.sync(&mut built.scene);}
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| (tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-")) && tab.contains("apply")) {
             built.ui.set_focus(Some(built.btn_edit_cell)); built.ui.sync(&mut built.scene);
@@ -1797,6 +1804,7 @@ impl Demo {
             exit_requested: false,
             reveal_browse_selection: false,
             browse_header_column: None,
+            filter_context: None,
         }
     }
 
@@ -3126,6 +3134,7 @@ impl Demo {
         self.last_dock_ratio = built.ui.splitter_ratio(built.dock_splitter);
         self.last_plot_ratio = built.ui.splitter_ratio(built.plot_splitter);
         self.browse_header_column = None;
+        self.filter_context = None;
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
@@ -5522,11 +5531,11 @@ impl Demo {
                     if let Err(error) = ctx.clipboard_set_text(name) { self.set_error(error.to_string()); }
                 }
                 self.browse_header_column = None;
-            } else if !self.handle_cell_import_action(item) && !self.handle_plot_menu_action(item) {
+            } else if !self.handle_filter_menu_action(item, ctx) && !self.handle_cell_import_action(item) && !self.handle_plot_menu_action(item) {
                 self.handle_menu(item);
             }
         }
-        if !self.ui.has_open_popup() { self.browse_header_column = None; }
+        if !self.ui.has_open_popup() { self.browse_header_column = None; self.filter_context = None; }
         self.handle_modal();
         if !self.rebuild {
             self.snapshot_inputs();
@@ -5667,7 +5676,7 @@ impl AppCallbacks for Demo {
                 pressed: true,
                 x, y, ..
             } => {
-                if self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) {
+                if self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) {
                     self.after_ui(ctx);
                 }
             }
@@ -5755,7 +5764,7 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
-                if self.handle_plot_context_key(key,modifiers) {
+                if self.handle_filter_context_key(key,modifiers) || self.handle_plot_context_key(key,modifiers) {
                     self.after_ui(ctx);return;
                 }
                 if self.handle_sql_completion_key(key, modifiers) {

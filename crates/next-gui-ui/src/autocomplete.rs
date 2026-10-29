@@ -254,7 +254,7 @@ impl Ui {
         let chrome = widget.chrome_node;
         let style = *style;
         let focused = self.focus == Some(id);
-        let select_all = focused && *select_all && !value.is_empty();
+        let select_all = focused && (*select_all || self.text_input_selection(id).is_some_and(|r|r.start==0 && r.end==value.chars().count())) && !value.is_empty();
         let cursor_visible = preedit_cursor.is_some();
         let placeholder = placeholder.replace(['\r','\n','\t']," ");
         let (text, caret, composition) = self.single_line_input_display(id).unwrap();
@@ -348,6 +348,7 @@ impl Ui {
                 scene.set_mask(chrome, Some(AlphaMask::new(width, height, pixels)));
             }
         }
+        self.paint_input_selection(scene,id,style.size,(lx,ly),bounds,(style.selected_bg,style.selected_fg));
     }
 }
 

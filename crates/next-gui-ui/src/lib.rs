@@ -50,6 +50,7 @@ use table_data::TableRows;
 pub use table_edit::TableCellEditEvent;
 use table_edit::TableCellEditor;
 mod text_input;
+mod menu_popup;
 pub use text_input::TextInputState;
 use text_input::InputEdit;
 pub use tabs::TabsState;
@@ -826,6 +827,8 @@ pub struct MenuItem {
     pub enabled: bool,
     /// Optional controlled check state; activation still emits the item's id.
     pub checked: Option<bool>,
+    /// Nested entries. A parent opens its submenu instead of emitting an action.
+    pub children: Vec<MenuItem>,
 }
 
 impl MenuItem {
@@ -836,6 +839,7 @@ impl MenuItem {
             label: label.into(),
             enabled: true,
             checked: None,
+            children: Vec::new(),
         }
     }
 
@@ -846,6 +850,7 @@ impl MenuItem {
             label: label.into(),
             enabled: false,
             checked: None,
+            children: Vec::new(),
         }
     }
 
@@ -853,6 +858,16 @@ impl MenuItem {
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked=Some(checked);
         self
+    }
+
+    /// A nested menu, navigable with pointer hover or the arrow keys.
+    pub fn submenu(id: u64, label: impl Into<String>, children: Vec<MenuItem>) -> Self {
+        Self { enabled: !children.is_empty(), children, ..Self::new(id, label) }
+    }
+
+    /// A noninteractive separator between groups of entries.
+    pub fn separator() -> Self {
+        Self::disabled(0, "")
     }
 }
 
@@ -2257,6 +2272,7 @@ enum DragState {
     },
     TableSelection { table: WidgetId, bounds: Rect },
     TextArea { area: WidgetId, bounds: Rect },
+    SingleLine { input: WidgetId, bounds: Rect },
     HexEditor { area: WidgetId, bounds: Rect },
     TableColumn {
         table: WidgetId,
@@ -2369,6 +2385,7 @@ pub struct Ui {
     roots: Vec<WidgetId>,
     /// scene node → widget (buttons, splitter sashes, inputs).
     node_to_widget: HashMap<NodeId, WidgetId>,
+    input_selection_nodes: HashMap<WidgetId, (NodeId, NodeId)>,
     table_filters: HashMap<WidgetId, TableFilterRow>,
     scrollbars: HashMap<WidgetId, [NodeId; 4]>,
     revealed_scroll_focus: Option<WidgetId>,
@@ -2383,6 +2400,8 @@ pub struct Ui {
     list_activation: HashMap<WidgetId, Option<(usize, std::time::Instant)>>,
     pending_list_activate: Option<(WidgetId, usize)>,
     popup_menu_row: Option<usize>,
+    popup_menu_path: Vec<usize>,
+    menu_panels: Vec<(Rect, Vec<usize>)>,
     text_completion: Option<TextAreaCompletion>,
     text_area_hint: Option<TextAreaHint>,
     /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
@@ -2558,6 +2577,7 @@ impl Ui {
             widgets: HashMap::new(),
             roots: Vec::new(),
             node_to_widget: HashMap::new(),
+            input_selection_nodes: HashMap::new(),
             table_filters: HashMap::new(),
             scrollbars: HashMap::new(),
             revealed_scroll_focus: None,
@@ -2570,6 +2590,8 @@ impl Ui {
             list_activation: HashMap::new(),
             pending_list_activate: None,
             popup_menu_row: None,
+            popup_menu_path: Vec::new(),
+            menu_panels: Vec::new(),
             text_completion: None,
             text_area_hint: None,
             pending_menu_action: None,
@@ -3439,21 +3461,11 @@ impl Ui {
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::Chart { .. }) => self.pointer_plot(id, x, y, extend),
             Some(Kind::TextInput { .. }) => {
-                self.focus = Some(id);
-                if self.pointer_integer_input(scene, id, x, y) { return true; }
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::TextInput {
-                        value,
-                        caret,
-                        select_all,
-                        ..
-                    } = &mut w.kind
-                    {
-                        *select_all = false;
-                        *caret = value.chars().count();
-                    }
-                }
-                true
+                if self.pointer_integer_input(scene, id, x, y) { self.focus=Some(id);return true; }
+                let bounds=self.widgets[&id].node.and_then(|n|scene.get(n).map(|n|n.bounds)).unwrap_or_else(Rect::empty);
+                let handled=self.pointer_single_line(id,bounds,x,false);
+                self.focus=Some(id);self.drag=Some(DragState::SingleLine {input:id,bounds});
+                handled
             }
             Some(Kind::Checkbox { .. }) => {
                 self.focus = Some(id);
@@ -3508,7 +3520,10 @@ impl Ui {
                 self.pointer_select_toggle(scene, id)
             }
             Some(Kind::Autocomplete { .. }) => {
-                self.focus = Some(id);
+                let bounds=self.widgets[&id].node.and_then(|n|scene.get(n).map(|n|n.bounds)).unwrap_or_else(Rect::empty);
+                self.pointer_single_line(id,bounds,x,false);
+                self.focus=Some(id);
+                self.drag=Some(DragState::SingleLine {input:id,bounds});
                 self.pointer_autocomplete_focus(scene, id)
             }
             Some(Kind::Upload { .. }) => {
@@ -3655,6 +3670,7 @@ impl Ui {
             DragState::TableSelection { table, bounds } => self.drag_table_selection(table, bounds, x, y),
             DragState::HexEditor { area, bounds } => self.pointer_hex_editor(area,bounds,x,y,true),
             DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
+            DragState::SingleLine {input,bounds} => self.pointer_single_line(input,bounds,x,true),
             DragState::TableColumn {
                 table,
                 column,
@@ -4281,8 +4297,8 @@ impl Ui {
 
     /// Text to place on the OS clipboard from the focused input or Table.
     ///
-    /// HexEditor returns selected byte pairs; TextArea returns only its selection. TextInput / Autocomplete return their full non-secret
-    /// value. Table returns its selected cells as quoted TSV. `None` when no copyable text is selected.
+    /// HexEditor returns selected byte pairs; TextArea returns only its selection.
+    /// TextInput / Autocomplete return selected non-secret text, or their full value when no range is selected. Table returns its selected cells as quoted TSV. `None` when no copyable text is selected.
     pub fn focused_text_for_copy(&self) -> Option<String> {
         let id = self.focus?;
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -4290,7 +4306,7 @@ impl Ui {
                 value,
                 secret: false,
                 ..
-            } | Kind::Autocomplete { value, .. }) if !value.is_empty() => Some(value.clone()),
+            } | Kind::Autocomplete { value, .. }) if !value.is_empty() => Some(self.text_input_selection(id).map_or_else(||value.clone(),|range|value.chars().skip(range.start).take(range.len()).collect())),
             Some(Kind::HexEditor { .. }) => self.hex_editor_selected_text(id),
             Some(Kind::TextArea { .. }) => self.text_area_selected_text(id),
             Some(Kind::Table { .. }) => self.table_selected_text(id),
@@ -4301,7 +4317,7 @@ impl Ui {
     /// Delete the text returned by `focused_text_for_copy`, after a successful clipboard write.
     ///
     /// TextArea deletes only its selection and honors read-only mode. Single-line
-    /// TextInput / Autocomplete delete their full value, matching their copy behavior.
+    /// TextInput / Autocomplete delete the selected range, or the full value when no range is selected.
     pub fn delete_focused_text_selection(&mut self) -> bool {
         let Some(id) = self.focus else { return false; };
         if self.focused_text_for_copy().is_none() { return false; }
@@ -4309,7 +4325,7 @@ impl Ui {
             Some(Kind::HexEditor { .. }) => self.cut_hex_editor(id),
             Some(Kind::TextArea { .. }) => self.replace_text_area_selection(id, ""),
             Some(Kind::TextInput { .. } | Kind::Autocomplete { .. }) => {
-                self.key_input(UiKey::SelectAll);
+                if self.text_input_selection(id).is_none() {self.key_input(UiKey::SelectAll);}
                 self.key_input(UiKey::Backspace)
             }
             _ => false,
@@ -4318,7 +4334,7 @@ impl Ui {
 
     /// Insert text at the focused input's caret; HexEditor accepts complete hexadecimal byte pairs.
     ///
-    /// Replaces the TextArea selection or the whole single-line value when `select_all` is set.
+    /// Replaces any selected range, otherwise inserts at the caret.
     /// Clears IME preedit.
     pub fn paste_into_focused_text(&mut self, text: &str) -> bool {
         self.cancel_pointer_repeat();
@@ -4328,19 +4344,27 @@ impl Ui {
         if text.is_empty() {
             return false;
         }
+        if self.text_input_enabled(id)==Some(false) {return false;}
         let before = self.input_snapshot(id);
+        let selection = self.text_input_selection(id);
         match self.widgets.get_mut(&id).map(|w| &mut w.kind) {
             Some(Kind::TextInput {
                 value,
                 caret,
                 select_all,
+                edit,
                 preedit,
                 preedit_cursor,
                 ..
-            } | Kind::Autocomplete { value, caret, select_all, preedit, preedit_cursor, .. }) => {
+            } | Kind::Autocomplete { value, caret, select_all, edit, preedit, preedit_cursor, .. }) => {
                 preedit.clear();
                 *preedit_cursor = None;
-                if *select_all {
+                if let Some(range) = selection {
+                    let mut chars:Vec<char>=value.chars().collect();
+                    chars.splice(range.clone(),text.chars());
+                    *value=chars.into_iter().collect();*caret=range.start+text.chars().count();
+                    *select_all=false;edit.anchor=None;
+                } else if *select_all {
                     *value = text.to_owned();
                     *caret = value.chars().count();
                     *select_all = false;
@@ -4353,6 +4377,8 @@ impl Ui {
                     *caret += text.chars().count();
                     *value = chars.into_iter().collect();
                 }
+                *select_all = false;
+                edit.anchor = None;
                 if matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::Autocomplete { .. })) {
                     self.refresh_autocomplete_popup(id);
                 }
@@ -5209,6 +5235,10 @@ impl Ui {
         if let Some(handled) = self.key_text_completion(key) { return handled; }
         if key == UiKey::Escape && self.dismiss_text_area_hint() { return true; }
         if matches!(key, UiKey::Escape) && self.open_popup.is_some() {
+            if !self.popup_menu_path.is_empty() {
+                self.popup_menu_row = self.popup_menu_path.pop();
+                return true;
+            }
             if let Some(id) = self.open_popup {
                 match self.widgets.get(&id).map(|w| &w.kind) {
                     Some(Kind::Modal { .. }) => {
@@ -5333,6 +5363,8 @@ impl Ui {
                 }
                 self.open_popup = Some(id);
                 self.popup_menu_row = None;
+                self.popup_menu_path.clear();
+                self.menu_panels.clear();
                 self.key_menu_popup(id, UiKey::Home)
             }
             Some(Kind::Autocomplete { .. }) => self.key_autocomplete(id, key),
@@ -5508,10 +5540,11 @@ impl Ui {
             value,
             caret,
             select_all,
+            edit,
             preedit,
             preedit_cursor,
             ..
-        } | Kind::Autocomplete { value, caret, select_all, preedit, preedit_cursor, .. }) = &mut w.kind
+        } | Kind::Autocomplete { value, caret, select_all, edit, preedit, preedit_cursor, .. }) = &mut w.kind
         else {
             return false;
         };
@@ -5533,94 +5566,29 @@ impl Ui {
             }
         }
         let mut chars: Vec<char> = value.chars().collect();
-        let len = chars.len();
-        *caret = (*caret).min(len);
+        let len=chars.len();*caret=(*caret).min(len);
+        let selection=if *select_all {Some(0..len)} else {edit.anchor.map(|a|a.min(*caret)..a.max(*caret).min(len)).filter(|r|!r.is_empty())};
         match key {
-            UiKey::SelectAll => {
-                *select_all = !chars.is_empty();
-                true
+            UiKey::SelectAll => {*select_all = !chars.is_empty();edit.anchor=None;*caret=len;true}
+            UiKey::SelectLeft | UiKey::SelectRight | UiKey::SelectHome | UiKey::SelectEnd => {
+                let anchor=if *select_all {0} else {edit.anchor.unwrap_or(*caret)};
+                *select_all=false;edit.anchor=Some(anchor);
+                *caret=match key {UiKey::SelectLeft=>caret.saturating_sub(1),UiKey::SelectRight=>(*caret+1).min(len),UiKey::SelectHome=>0,_=>len};true
             }
-            UiKey::Char(c) => {
-                if *select_all {
-                    chars.clear();
-                    *caret = 0;
-                    *select_all = false;
-                }
-                chars.insert(*caret, c);
-                *caret += 1;
-                *value = chars.into_iter().collect();
-                true
+            UiKey::Char(_) | UiKey::Backspace | UiKey::Delete => {
+                if let Some(range)=selection {chars.drain(range.clone());*caret=range.start;}
+                else if key==UiKey::Backspace && *caret>0 {chars.remove(*caret-1);*caret-=1;}
+                else if key==UiKey::Delete && *caret<len {chars.remove(*caret);}
+                else if !matches!(key,UiKey::Char(_)) {return false;}
+                if let UiKey::Char(c)=key {chars.insert(*caret,c);*caret+=1;}
+                *value=chars.into_iter().collect();*select_all=false;edit.anchor=None;true
             }
-            UiKey::Backspace => {
-                if *select_all {
-                    chars.clear();
-                    *caret = 0;
-                    *select_all = false;
-                    *value = String::new();
-                    return true;
-                }
-                if *caret > 0 {
-                    chars.remove(*caret - 1);
-                    *caret -= 1;
-                    *value = chars.into_iter().collect();
-                    true
-                } else {
-                    false
-                }
+            UiKey::Left | UiKey::Right | UiKey::Home | UiKey::End => {
+                let previous=*caret;
+                *caret=match key {UiKey::Left=>selection.as_ref().map_or(caret.saturating_sub(1),|r|r.start),UiKey::Right=>selection.as_ref().map_or((*caret+1).min(len),|r|r.end),UiKey::Home=>0,_=>len};
+                *select_all=false;edit.anchor=None;previous!=*caret || selection.is_some()
             }
-            UiKey::Delete => {
-                if *select_all {
-                    chars.clear();
-                    *caret = 0;
-                    *select_all = false;
-                    *value = String::new();
-                    return true;
-                }
-                if *caret < chars.len() {
-                    chars.remove(*caret);
-                    *value = chars.into_iter().collect();
-                    true
-                } else {
-                    false
-                }
-            }
-            UiKey::Left => {
-                *select_all = false;
-                if *caret > 0 {
-                    *caret -= 1;
-                    true
-                } else {
-                    false
-                }
-            }
-            UiKey::Right => {
-                *select_all = false;
-                if *caret < len {
-                    *caret += 1;
-                    true
-                } else {
-                    false
-                }
-            }
-            UiKey::Home => {
-                *select_all = false;
-                if *caret != 0 {
-                    *caret = 0;
-                    true
-                } else {
-                    false
-                }
-            }
-            UiKey::End => {
-                *select_all = false;
-                if *caret != len {
-                    *caret = len;
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
+            _=>false,
         }
     }
 
@@ -6554,6 +6522,8 @@ impl Ui {
             return false;
         };
         self.popup_menu_row = None;
+        self.popup_menu_path.clear();
+        self.menu_panels.clear();
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
                 Kind::Menu { open, .. }
@@ -8541,6 +8511,8 @@ impl Ui {
 
     fn open_context_menu_at(&mut self, id: WidgetId, x: f32, y: f32) {
         self.popup_menu_row = None;
+        self.popup_menu_path.clear();
+        self.menu_panels.clear();
         if self.open_popup != Some(id) {
             self.close_popup_internal();
         }
@@ -8558,54 +8530,6 @@ impl Ui {
             }
         }
         self.open_popup = Some(id);
-    }
-
-    fn key_menu_popup(&mut self, id: WidgetId, key: UiKey) -> bool {
-        let items = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Menu { items, .. } | Kind::ContextMenu { items, .. }) => items,
-            _ => return false,
-        };
-        let enabled: Vec<_> = items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| item.enabled)
-            .map(|(i, _)| i)
-            .collect();
-        let current = self
-            .popup_menu_row
-            .and_then(|row| enabled.iter().position(|i| *i == row));
-        match key {
-            UiKey::Up | UiKey::Down | UiKey::Home | UiKey::End if !enabled.is_empty() => {
-                let next = match key {
-                    UiKey::Home => 0,
-                    UiKey::End => enabled.len() - 1,
-                    UiKey::Up => current.map_or(enabled.len() - 1, |i| {
-                        (i + enabled.len() - 1) % enabled.len()
-                    }),
-                    _ => current.map_or(0, |i| (i + 1) % enabled.len()),
-                };
-                self.popup_menu_row = Some(enabled[next]);
-            }
-            UiKey::Enter | UiKey::Space => {
-                if let Some(row) = current
-                    .map(|i| enabled[i])
-                    .or_else(|| enabled.first().copied())
-                {
-                    self.pending_menu_action = Some((id, items[row].id));
-                    self.close_popup_internal();
-                }
-            }
-            UiKey::Tab | UiKey::BackTab => {
-                self.close_popup_internal();
-                if key == UiKey::Tab {
-                    self.focus_next();
-                } else {
-                    self.focus_prev();
-                }
-            }
-            _ => {}
-        }
-        true
     }
 
     fn pointer_menu_title(&mut self, scene: &mut Scene, id: WidgetId) -> bool {
@@ -8969,8 +8893,8 @@ impl Ui {
     fn commit_autocomplete(&mut self, id: WidgetId, value: String) {
         let before = self.input_snapshot(id);
         let Some(widget) = self.widgets.get_mut(&id) else { return; };
-        let Kind::Autocomplete { value: current, caret, select_all, preedit, preedit_cursor, .. } = &mut widget.kind else { return; };
-        *current = value.clone(); *caret = value.chars().count(); *select_all = false;
+        let Kind::Autocomplete { value: current, caret, select_all, edit, preedit, preedit_cursor, .. } = &mut widget.kind else { return; };
+        *current = value.clone(); *caret = value.chars().count(); *select_all = false;edit.anchor=None;
         preedit.clear(); *preedit_cursor = None;
         self.close_popup_internal();
         self.remember_input_change(id, before);
@@ -9225,6 +9149,7 @@ impl Ui {
             let (vw, vh) = self.viewport;
             return x >= 0.0 && y >= 0.0 && x < vw && y < vh;
         }
+        if matches!(w.kind, Kind::Menu { .. } | Kind::ContextMenu { .. }) && self.menu_panels.iter().any(|(panel,_)|panel.contains(x,y)) {return true;}
         // First aux node is the popup panel background when open.
         if let Some(&panel) = w.aux.first() {
             if let Some(n) = scene.get(panel) {
@@ -9306,99 +9231,21 @@ impl Ui {
             }
         }
 
-        let (items_len, item_h, panel_bounds, kind_menu) = match self.widgets.get(&id) {
-            Some(Widget {
-                kind: Kind::Menu { items, style, .. },
-                aux,
-                ..
-            }) => {
-                let panel = aux.first().and_then(|n| scene.get(*n)).map(|n| n.bounds);
-                (
-                    items.len(),
-                    style.item_height,
-                    panel.unwrap_or_else(Rect::empty),
-                    0u8,
-                )
-            }
-            Some(Widget {
-                kind: Kind::ContextMenu { items, style, .. },
-                aux,
-                ..
-            }) => {
-                let panel = aux.first().and_then(|n| scene.get(*n)).map(|n| n.bounds);
-                (
-                    items.len(),
-                    style.item_height,
-                    panel.unwrap_or_else(Rect::empty),
-                    1u8,
-                )
-            }
-            Some(Widget {
-                kind: Kind::Select {
-                    options, style, ..
-                },
-                ..
-            }) => {
-                let panel = self.select_popup_window(scene,id).map(|(panel,_)|panel);
-                (
-                    options.len(),
-                    style.item_height,
-                    panel.unwrap_or_else(Rect::empty),
-                    2u8,
-                )
-            }
-            _ => return false,
-        };
-
-        if items_len == 0 || panel_bounds.is_empty() {
-            self.close_popup_internal();
-            return true;
+        if matches!(self.widgets.get(&id).map(|w| &w.kind),Some(Kind::Menu {..}|Kind::ContextMenu {..})) {
+            return self.pointer_menu_popup(id,x,y);
         }
-        let local_y = y - panel_bounds.y;
-        let idx = if item_h > 0.0 {
-            (local_y / item_h).floor() as isize
-        } else {
-            -1
-        };
-        if idx < 0 || (idx as usize) >= items_len {
-            return true;
+        let Some((panel,visible))=self.select_popup_window(scene,id) else {return false;};
+        let item_h=match &self.widgets[&id].kind {Kind::Select{style,..}=>style.item_height,_=>return false};
+        if !panel.contains(x,y) || item_h<=0.0 {return false;}
+        let i=((y-panel.y)/item_h) as usize;
+        if i>=visible.len() {return false;}
+        let i=visible.start+i;
+        if let Some(Widget {kind:Kind::Select {selected,open,..},..})=self.widgets.get_mut(&id) {
+            *selected=Some(i);*open=false;
         }
-        let i = idx as usize;
-        match kind_menu {
-            0 | 1 => {
-                let (item_id, enabled) = match self.widgets.get(&id).map(|w| &w.kind) {
-                    Some(Kind::Menu { items, .. }) | Some(Kind::ContextMenu { items, .. }) => {
-                        (items[i].id, items[i].enabled)
-                    }
-                    _ => return false,
-                };
-                if enabled {
-                    if self.text_completion_popup() == Some(id) {
-                        self.commit_text_completion(item_id as usize);
-                    } else {
-                        self.pending_menu_action = Some((id, item_id));
-                    }
-                }
-                self.hide_popup_aux_mut(scene, id);
-                self.close_popup_internal();
-                true
-            }
-            2 => {
-                let Some((panel,visible))=self.select_popup_window(scene,id) else {return false;};
-                if !panel.contains(x,y) || i>=visible.len() {return false;}
-                let i=visible.start+i;
-                if let Some(w) = self.widgets.get_mut(&id) {
-                    if let Kind::Select { selected, open, .. } = &mut w.kind {
-                        *selected = Some(i);
-                        *open = false;
-                    }
-                }
-                self.hide_popup_aux_mut(scene, id);
-                self.open_popup = None;
-                true
-            }
-            _ => false,
-        }
+        self.hide_popup_aux_mut(scene,id);
+        self.open_popup=None;
+        true
     }
 
     fn pointer_slider(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
@@ -9486,22 +9333,10 @@ impl Ui {
         let moved = self.last_pointer != Some((x, y));
         self.last_pointer = Some((x, y));
         let previous_row = self.popup_menu_row;
+        let previous_path=self.popup_menu_path.clone();
         let completion_open = self.text_completion_popup().is_some();
-        if let Some(Widget { kind, aux, .. }) = self.open_popup.and_then(|id| self.widgets.get(&id))
-        {
-            let data = match kind {
-                Kind::Menu { items, style, .. } => Some((items, style.item_height)),
-                Kind::ContextMenu { items, style, .. } => Some((items, style.item_height)),
-                _ => None,
-            };
-            if let Some((items, height)) = data {
-                self.popup_menu_row = aux
-                    .first()
-                    .and_then(|node| scene.get(*node))
-                    .filter(|panel| panel.bounds.contains(x, y) && height > 0.0)
-                    .map(|panel| ((y - panel.bounds.y) / height) as usize)
-                    .filter(|row| items.get(*row).is_some_and(|item| item.enabled));
-            }
+        if let Some(id)=self.open_popup.filter(|id|matches!(self.widgets.get(id).map(|w|&w.kind),Some(Kind::Menu{..}|Kind::ContextMenu{..}))) {
+            self.hover_menu_popup(id,x,y);
         }
         if completion_open && self.popup_menu_row.is_none() { self.popup_menu_row = previous_row; }
         let tip = self
@@ -9509,7 +9344,7 @@ impl Ui {
             .and_then(|id| self.find_tooltip_ancestor(id));
         let coordinates = tip.is_some_and(|id| matches!(self.widgets[&id].kind,
             Kind::Tooltip { content_owner: Some(owner), .. } if self.is_chart(owner)));
-        let changed = tip != self.tooltip_hover || previous_row != self.popup_menu_row || (moved && coordinates);
+        let changed = tip != self.tooltip_hover || previous_row != self.popup_menu_row || previous_path != self.popup_menu_path || (moved && coordinates);
         self.tooltip_hover = tip;
         changed
     }
@@ -11981,7 +11816,7 @@ impl Ui {
                 let focused=self.focus==Some(id);
                 let (text,caret_chars,composition)=self.single_line_input_display(id).unwrap();
                 let composing=!composition.is_empty();
-                let selected=focused && select_all && !text.is_empty() && !composing;
+                let selected=focused && (select_all || self.text_input_selection(id).is_some_and(|r|r.start==0 && r.end==text.chars().count())) && !text.is_empty() && !composing;
                 let before:String=text.chars().take(composition.start).collect();
                 let preedit:String=text.chars().skip(composition.start).take(composition.end-composition.start).collect();
                 let (display,fg)=if text.is_empty() {(placeholder,style.placeholder_fg)} else {(text,style.fg)};
@@ -12044,6 +11879,7 @@ impl Ui {
                     }
                 }
                 self.paint_integer_input_steps(scene, id, bounds);
+                self.paint_input_selection(scene,id,style.size,(lx,ly),Rect::new(bounds.x,bounds.y,(bounds.width-step_width).max(0.0),bounds.height),(style.focus_border,Color::rgb(255,255,255)));
                 scene.set_visible(node, true);
             }
             Kind::Checkbox {
@@ -16294,10 +16130,11 @@ impl Ui {
         let popup_w = style
             .popup_width
             .max(host_bounds.width)
-            .max(label_w + 28.0 + if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0})
+            .max(label_w + 28.0 + if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0} + if items.iter().any(|item|!item.children.is_empty()) {20.0} else {0.0})
             .max(style.min_width);
-        let popup_h = style.item_height * items.len().max(1) as f32;
-        let panel = Rect::new(host_bounds.x, host_bounds.y + host_bounds.height, popup_w, popup_h);
+        let popup_h = Self::menu_height(&items,style.item_height);
+        let popup_w=popup_w.min(self.viewport.0);
+        let panel = Rect::new(host_bounds.x.clamp(0.0,(self.viewport.0-popup_w).max(0.0)), (host_bounds.y + host_bounds.height).min((self.viewport.1-popup_h).max(0.0)), popup_w, popup_h);
         self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg, style.hover_fg);
     }
 
@@ -16317,10 +16154,10 @@ impl Ui {
             }) if *open => (items.clone(), *style, *anchor_x, *anchor_y),
             _ => return,
         };
-        let popup_h = style.item_height * items.len().max(1) as f32;
+        let popup_h = Self::menu_height(&items,style.item_height);
         let check_space=if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0};
         let label_width=items.iter().map(|item|self.font.measure_line(&item.label,style.size).0).fold(0.0f32,f32::max);
-        let width = style.popup_width.max(label_width+20.0+check_space).min(self.viewport.0);
+        let width = style.popup_width.max(label_width+20.0+check_space+if items.iter().any(|item|!item.children.is_empty()) {20.0} else {0.0}).min(self.viewport.0);
         let panel = Rect::new(
             ax.clamp(0.0, (self.viewport.0 - width).max(0.0)),
             ay.clamp(0.0, (self.viewport.1 - popup_h).max(0.0)),
@@ -16965,65 +16802,6 @@ impl Ui {
 
         if let Some(h) = self.overlay_host {
             scene.raise(h);
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn paint_item_popup(
-        &mut self,
-        scene: &mut Scene,
-        id: WidgetId,
-        panel: Rect,
-        items: &[MenuItem],
-        item_height: f32,
-        size: f32,
-        popup_bg: Color,
-        fg: Color,
-        disabled_fg: Color,
-        hover_bg: Color,
-        hover_fg: Color,
-    ) {
-        let check_space=if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0};
-        self.ensure_overlay_aux(scene, id, 1 + items.len() * if check_space>0.0 {3} else {2});
-        let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
-        if let Some(&bg) = aux.first() {
-            scene.set_bounds(bg, panel);
-            scene.set_fill(bg, popup_bg);
-            scene.set_mask(bg, None);
-            scene.set_visible(bg, true);
-            self.apply_corner_radius(scene, bg, true);
-            self.node_to_widget.insert(bg, id);
-        }
-        for (i, item) in items.iter().enumerate() {
-            let y = panel.y + i as f32 * item_height;
-            let row = Rect::new(panel.x, y, panel.width, item_height);
-            if let Some(&rbg) = aux.get(1 + i * 2) {
-                scene.set_bounds(rbg, row);
-                scene.set_fill(rbg, if self.popup_menu_row == Some(i) && item.enabled { hover_bg } else { popup_bg });
-                scene.set_mask(rbg, None);
-                scene.set_visible(rbg, true);
-                self.node_to_widget.insert(rbg, id);
-            }
-            let (_, mask) = self.font.rasterize_text(&item.label, size, None);
-            if let Some(&lab) = aux.get(1 + i * 2 + 1) {
-                let lx = row.x + 10.0 + check_space;
-                let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
-                scene.set_bounds(lab, Rect::new(lx, ly, mask.width as f32, mask.height as f32));
-                scene.set_clip(lab, Some(Rect::new(lx, row.y, (row.width - 20.0 - check_space).max(0.0), row.height)));
-                scene.set_fill(lab, if !item.enabled { disabled_fg } else if self.popup_menu_row == Some(i) { hover_fg } else { fg });
-                scene.set_mask(lab, Some(AlphaMask::new(mask.width, mask.height, mask.pixels)));
-                scene.set_visible(lab, true);
-            }
-            if let Some(&mark)=aux.get(1+items.len()*2+i) {
-                scene.set_visible(mark,item.checked==Some(true));
-                if item.checked==Some(true) {
-                    let mask=icon::rasterize_icon(IconName::Check,(size+1.0).min(item_height-8.0).max(1.0));
-                    scene.set_bounds(mark,Rect::new(row.x+8.0,row.y+(row.height-mask.height as f32)*0.5,mask.width as f32,mask.height as f32));
-                    scene.set_clip(mark,Some(row));scene.set_corner_radius(mark,0.0);
-                    scene.set_fill(mark,if !item.enabled {disabled_fg} else if self.popup_menu_row==Some(i) {hover_fg} else {fg});
-                    scene.set_mask(mark,Some(mask));self.node_to_widget.insert(mark,id);
-                }
-            }
         }
     }
 

@@ -10,12 +10,14 @@ pub(super) struct InputSnapshot {
     value: String,
     caret: usize,
     select_all: bool,
+    anchor: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct InputEdit {
     undo: Vec<InputSnapshot>,
     redo: Vec<InputSnapshot>,
+    pub(super) anchor: Option<usize>,
 }
 
 fn remember(stack: &mut Vec<InputSnapshot>, snapshot: InputSnapshot) {
@@ -39,6 +41,83 @@ pub struct TextInputState {
 }
 
 impl Ui {
+    /// Whether a TextInput or Autocomplete has an edit to undo.
+    pub fn text_input_can_undo(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { edit, .. } | Kind::Autocomplete { edit, .. }) if !edit.undo.is_empty())
+    }
+
+    /// Whether a TextInput or Autocomplete has an undone edit to redo.
+    pub fn text_input_can_redo(&self, id: WidgetId) -> bool {
+        matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput { edit, .. } | Kind::Autocomplete { edit, .. }) if !edit.redo.is_empty())
+    }
+
+    /// Selected character range in a TextInput or Autocomplete; None means no selection.
+    pub fn text_input_selection(&self, id: WidgetId) -> Option<std::ops::Range<usize>> {
+        let (Kind::TextInput {value,caret,select_all,edit,..} | Kind::Autocomplete {value,caret,select_all,edit,..}) = &self.widgets.get(&id)?.kind else {return None;};
+        let len=value.chars().count();
+        let range=if *select_all {0..len} else {let anchor=edit.anchor?.min(len);anchor.min(*caret)..anchor.max(*caret).min(len)};
+        (!range.is_empty()).then_some(range)
+    }
+
+    /// Select a character range, retaining direction and history; invalid ranges are rejected.
+    /// Does not focus the field. Clears active composition.
+    pub fn select_text_input_range(&mut self, id: WidgetId, range: std::ops::Range<usize>) -> bool {
+        let Some(widget)=self.widgets.get_mut(&id) else {return false;};
+        let (Kind::TextInput {value,caret,select_all,edit,preedit,preedit_cursor,..} | Kind::Autocomplete {value,caret,select_all,edit,preedit,preedit_cursor,..})=&mut widget.kind else {return false;};
+        let len=value.chars().count();
+        if range.start>len || range.end>len {return false;}
+        *caret=range.end;edit.anchor=(range.start!=range.end).then_some(range.start);*select_all=false;
+        preedit.clear();*preedit_cursor=None;
+        true
+    }
+
+    pub(super) fn paint_input_selection(&mut self, scene: &mut crate::Scene, id: WidgetId, size: f32, origin: (f32,f32), clip: crate::Rect, colors: (crate::Color,crate::Color)) {
+        let range=self.text_input_selection(id).filter(|_|self.focus==Some(id) && !self.ime_is_composing());
+        let partial=range.filter(|r|r.len()!=self.text_input_value(id).or_else(||self.autocomplete_value(id)).unwrap_or_default().chars().count());
+        let Some(range)=partial else {
+            if let Some((bg,fg))=self.input_selection_nodes.get(&id) {scene.set_visible(*bg,false);scene.set_visible(*fg,false);}
+            return;
+        };
+        let host=self.widgets[&id].node.unwrap();
+        let (background,label)=*self.input_selection_nodes.entry(id).or_insert_with(|| {
+            (scene.insert(host,crate::Rect::empty(),colors.0).unwrap(),scene.insert(host,crate::Rect::empty(),colors.1).unwrap())
+        });
+        let text=self.single_line_input_display(id).unwrap().0;
+        let prefix:String=text.chars().take(range.start).collect();
+        let selected:String=text.chars().skip(range.start).take(range.len()).collect();
+        let start=self.font.measure_line(&prefix,size).0;
+        let width=self.font.measure_line(&selected,size).0;
+        let (_,mask)=self.font.rasterize_text(&text,size,None);
+        let area=crate::Rect::new(origin.0+start,clip.y+2.0,width,(clip.height-4.0).max(0.0)).intersect(&clip);
+        scene.set_bounds(background,area);scene.set_clip(background,Some(clip));scene.set_fill(background,colors.0);scene.set_visible(background,true);
+        scene.set_bounds(label,crate::Rect::new(origin.0,origin.1,mask.width as f32,mask.height as f32));scene.set_clip(label,Some(area));scene.set_fill(label,colors.1);
+        scene.set_mask(label,Some(crate::AlphaMask::new(mask.width,mask.height,mask.pixels)));scene.set_visible(label,true);
+        if let Some(caret)=self.widgets[&id].chrome_node {scene.raise(caret);}
+    }
+
+    pub(super) fn pointer_single_line(&mut self, id: WidgetId, bounds: crate::Rect, x: f32, extend: bool) -> bool {
+        let (size,padding)=match self.widgets.get(&id).map(|w|&w.kind) {
+            Some(Kind::TextInput {style,..})=>(style.size,style.padding_x),
+            Some(Kind::Autocomplete {style,..})=>(style.size,style.padding),
+            _=>return false,
+        };
+        let (text,caret,_)=self.single_line_input_display(id).unwrap();
+        let viewport=(bounds.width-self.integer_input_step_width(id,bounds.width)-2.0*padding-2.0).max(0.0);
+        let prefix:String=text.chars().take(caret).collect();
+        let scroll=if self.focus==Some(id) {(self.font.measure_line(&prefix,size).0-viewport).max(0.0)} else {0.0};
+        let target=x-bounds.x-padding+scroll;
+        let mut position=0;let mut previous=0.0;
+        for ch in text.chars() {
+            let width=previous+self.font.measure_line(ch.encode_utf8(&mut [0;4]),size).0;
+            if target<(previous+width)*0.5 {break;}
+            position+=1;previous=width;
+        }
+        let (Kind::TextInput {caret,select_all,edit,preedit,preedit_cursor,..} | Kind::Autocomplete {caret,select_all,edit,preedit,preedit_cursor,..})=&mut self.widgets.get_mut(&id).unwrap().kind else {return false;};
+        let anchor=if extend {edit.anchor.unwrap_or(*caret)} else {position};
+        *caret=position;*select_all=false;edit.anchor=Some(anchor);preedit.clear();*preedit_cursor=None;
+        true
+    }
+
     /// Add exact signed integer steppers to a TextInput, or remove them with None.
     /// Up/Down step by one, PageUp/PageDown by ten; changes share Undo/Redo.
     /// Draft text remains editable; hosts validate it before applying it.
@@ -65,13 +144,14 @@ impl Ui {
     pub(super) fn step_integer_input(&mut self, id: WidgetId, delta: i64) -> bool {
         let Some((min, max)) = self.text_input_integer_range(id) else { return false; };
         let before = self.input_snapshot(id);
-        let Kind::TextInput { value, enabled, preedit, caret, select_all, .. } = &mut self.widgets.get_mut(&id).unwrap().kind else { return false; };
+        let Kind::TextInput { value, enabled, preedit, caret, select_all, edit, .. } = &mut self.widgets.get_mut(&id).unwrap().kind else { return false; };
         if !*enabled || !preedit.is_empty() { return false; }
         let Ok(current) = value.trim().parse::<i64>() else { return true; };
         if !(min..=max).contains(&current) { return true; }
         *value = current.saturating_add(delta).clamp(min, max).to_string();
         *caret = value.len();
         *select_all = false;
+        edit.anchor = None;
         self.remember_input_change(id, before);
         true
     }
@@ -236,15 +316,16 @@ impl Ui {
     }
 
     pub(super) fn single_line_input_display(&self, id: WidgetId) -> Option<(String, usize, std::ops::Range<usize>)> {
-        let (value,caret,select_all,preedit,preedit_cursor,secret)=match &self.widgets.get(&id)?.kind {
-            Kind::TextInput {value,caret,select_all,preedit,preedit_cursor,secret,..} => (value,caret,select_all,preedit,preedit_cursor,*secret),
-            Kind::Autocomplete {value,caret,select_all,preedit,preedit_cursor,..} => (value,caret,select_all,preedit,preedit_cursor,false),
+        let (value,caret,preedit,preedit_cursor,secret)=match &self.widgets.get(&id)?.kind {
+            Kind::TextInput {value,caret,preedit,preedit_cursor,secret,..} => (value,caret,preedit,preedit_cursor,*secret),
+            Kind::Autocomplete {value,caret,preedit,preedit_cursor,..} => (value,caret,preedit,preedit_cursor,false),
             _ => return None,
         };
+        let selection=self.text_input_selection(id).unwrap_or(*caret..*caret);
         let composing=self.focus==Some(id) && !preedit.is_empty();
         let (text,cursor,composition)=if composing {
-            let before:String=value.chars().take(if *select_all {0} else {*caret}).collect();
-            let after:String=if *select_all {String::new()} else {value.chars().skip(*caret).collect()};
+            let before:String=value.chars().take(selection.start).collect();
+            let after:String=value.chars().skip(selection.end).collect();
             let start=before.chars().count();let end=start+preedit.chars().count();
             let cursor=preedit_cursor.and_then(|(byte,_)|preedit.get(..byte)).map_or(end,|prefix|start+prefix.chars().count());
             (format!("{before}{preedit}{after}"),cursor,start..end)
@@ -259,12 +340,14 @@ impl Ui {
             value,
             caret,
             select_all,
+            edit,
             ..
         }
         | Kind::Autocomplete {
             value,
             caret,
             select_all,
+            edit,
             ..
         }) = &self.widgets.get(&id)?.kind
         else {
@@ -274,6 +357,7 @@ impl Ui {
             value: value.clone(),
             caret: *caret,
             select_all: *select_all,
+            anchor: edit.anchor,
         })
     }
 
@@ -337,10 +421,12 @@ impl Ui {
                 value: std::mem::replace(value, snapshot.value),
                 caret: *caret,
                 select_all: *select_all,
+            anchor: edit.anchor,
             },
         );
         *caret = snapshot.caret.min(value.chars().count());
         *select_all = snapshot.select_all;
+        edit.anchor = snapshot.anchor.map(|a| a.min(value.chars().count()));
         *preedit_cursor = None;
         true
     }
@@ -400,6 +486,87 @@ impl Ui {
 mod tests {
     use super::*;
     use crate::{AutocompleteStyle, ColumnStyle, Scene, TextInputStyle};
+
+    #[test]
+    fn partial_ranges_replace_copy_cut_history_and_restore_unicode_in_both_field_kinds() {
+        for autocomplete in [false,true] {
+            let (mut ui,id)=field(autocomplete,"ab中文🙂cd");
+            assert!(ui.select_text_input_range(id,2..5));
+            assert_eq!(ui.text_input_selection(id),Some(2..5));
+            assert_eq!(ui.focused_text_for_copy().as_deref(),Some("中文🙂"));
+            let saved=ui.text_input_state(id);
+            let accepted=ui.autocomplete_state(id);
+            assert!(!ui.select_text_input_range(id,0..99));
+            assert!(ui.paste_into_focused_text("新"));
+            assert_eq!(value(&ui,id),"ab新cd");
+            assert_eq!(ui.text_input_selection(id),None);
+            assert!(ui.key_input(UiKey::Undo));
+            assert_eq!(value(&ui,id),"ab中文🙂cd");
+            assert_eq!(ui.text_input_selection(id),Some(2..5));
+            assert!(ui.key_input(UiKey::Redo));
+            assert_eq!(value(&ui,id),"ab新cd");
+            ui.key_input(UiKey::Undo);
+            if let Some(saved)=saved {assert!(ui.restore_text_input_state(id,&saved));}
+            if let Some(saved)=accepted {assert!(ui.set_autocomplete_state(id,&saved));}
+            assert_eq!(ui.text_input_selection(id),Some(2..5));
+            assert!(ui.delete_focused_text_selection());assert_eq!(value(&ui,id),"abcd");
+            ui.key_input(UiKey::Undo);
+            assert!(ui.ime_preedit("仮",Some((3,3))));
+            assert_eq!(ui.single_line_input_display(id).unwrap().0,"ab仮cd");
+            assert!(ui.ime_commit("日本"));assert_eq!(value(&ui,id),"ab日本cd");
+            ui.key_input(UiKey::Undo);assert_eq!(value(&ui,id),"ab中文🙂cd");
+            assert_eq!(ui.text_input_selection(id),Some(2..5));
+            ui.key_input(UiKey::Char('X'));assert_eq!(value(&ui,id),"abXcd");
+            ui.key_input(UiKey::Undo);ui.key_input(UiKey::Delete);assert_eq!(value(&ui,id),"abcd");
+        }
+    }
+
+    #[test]
+    fn partial_ranges_shift_direction_paint_clip_secret_and_disabled_fields() {
+        for autocomplete in [false,true] {
+            let (mut ui,id)=field(autocomplete,"ab中文cd");
+            ui.key_input(UiKey::Home);ui.key_input(UiKey::Right);
+            ui.key_input(UiKey::SelectRight);ui.key_input(UiKey::SelectRight);
+            assert_eq!(ui.text_input_selection(id),Some(1..3));
+            ui.key_input(UiKey::SelectLeft);assert_eq!(ui.text_input_selection(id),Some(1..2));
+            ui.key_input(UiKey::Left);assert_eq!(ui.text_input_selection(id),None);
+            ui.key_input(UiKey::SelectEnd);assert_eq!(ui.text_input_selection(id),Some(1..6));
+            ui.key_input(UiKey::End);ui.key_input(UiKey::SelectHome);assert_eq!(ui.text_input_selection(id),Some(0..6));
+            ui.set_viewport(640.0,480.0);let mut scene=Scene::new();ui.sync(&mut scene);
+            assert!(ui.select_text_input_range(id,2..4));ui.sync(&mut scene);
+            let (bg,fg)=ui.input_selection_nodes[&id];
+            assert!(scene.get(bg).unwrap().visible && scene.get(fg).unwrap().visible);
+            assert!(scene.get(bg).unwrap().bounds.width>10.0);
+            assert_eq!(ui.hit_widget(&scene,scene.get(bg).unwrap().bounds.x+1.0,scene.get(bg).unwrap().bounds.y+1.0),Some(id));
+            ui.set_focus(None);ui.sync(&mut scene);assert!(!scene.get(bg).unwrap().visible);
+            ui.set_focus(Some(id));
+            if !autocomplete {
+                ui.set_text_input_secret(id,true);ui.sync(&mut scene);assert!(!scene.get(fg).unwrap().visible);
+                ui.select_text_input_range(id,2..4);ui.sync(&mut scene);assert_eq!(ui.focused_text_for_copy(),None);
+                let mask=scene.get(fg).unwrap().mask.as_ref().unwrap();let expected=ui.font.rasterize_text("******",ui.text_input_style().size,None).1;
+                assert_eq!((mask.width,mask.height),(expected.width,expected.height));assert_eq!(mask.pixels,expected.pixels);
+                ui.set_text_input_enabled(id,false);ui.set_focus(Some(id));assert!(!ui.paste_into_focused_text("blocked"));assert_eq!(value(&ui,id),"ab中文cd");
+            }
+        }
+    }
+
+    #[test]
+    fn pointer_ranges_follow_character_geometry_and_keep_replacement_undo() {
+        for autocomplete in [false,true] {
+            let (mut ui,id)=field(autocomplete,"abcdef");ui.set_viewport(640.0,480.0);let mut scene=Scene::new();ui.sync(&mut scene);
+            let bounds=scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+            let (size,padding)=match &ui.widgets[&id].kind {Kind::TextInput {style,..}=>(style.size,style.padding_x),Kind::Autocomplete {style,..}=>(style.size,style.padding),_=>unreachable!()};
+            let start=bounds.x+padding+ui.font.measure_line("a",size).0;
+            let end=bounds.x+padding+ui.font.measure_line("abcd",size).0;
+            ui.set_focus(None);assert!(ui.pointer_pressed(&mut scene,start,bounds.y+10.0));
+            assert!(ui.pointer_moved(end,bounds.y+10.0));ui.pointer_released();
+            assert_eq!(ui.text_input_selection(id),Some(1..4));assert_eq!(ui.focused_text_for_copy().as_deref(),Some("bcd"));
+            ui.key_input(UiKey::Char('X'));assert_eq!(value(&ui,id),"aXef");ui.key_input(UiKey::Undo);assert_eq!(value(&ui,id),"abcdef");assert_eq!(ui.text_input_selection(id),Some(1..4));
+            ui.sync(&mut scene);assert!(ui.pointer_pressed(&mut scene,start,bounds.y+10.0));ui.pointer_released();
+            assert!(ui.paste_into_focused_text("Q"));assert_eq!(value(&ui,id),"aQbcdef");assert_eq!(ui.text_input_selection(id),None);
+            ui.key_input(UiKey::Undo);assert_eq!(value(&ui,id),"abcdef");assert_eq!(ui.text_input_selection(id),None);
+        }
+    }
 
     #[test]
     fn integer_input_pointer_press_arms_repeat_until_release() {
