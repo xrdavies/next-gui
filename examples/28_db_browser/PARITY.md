@@ -927,3 +927,8 @@ Automatic any-column and column filters run on the live connection in the existi
 ## 2026-10-30 conditional format rule management
 
 [Review](../../docs/reviews/R-20261030-8e6bd3601ca7.md):810 tests,17 Soft/Metal pairs and8 native Save/Cancel workflows pass. Existing qualified table background rules support editing, adding, removal and priority movement in a validated draft; Cancel retains current rules and Save changes matching order. Same-rule input sessions survive rebuilds. Full original filter syntax, foreground/fonts/alignment, canonical conditional-format XML and original dialog layout remain. F02 stays **in_progress**; native frontmost input and system IME/a11y/Print/pickers remain unaccepted.
+
+
+## 2026-10-30 original conditional expressions (d06fea875bb6)
+
+Status remains **in_progress**. [Review](../../docs/reviews/R-20261030-d06fea875bb6.md) verifies original filter-expression conditions,13 reusable helpers, typed content classification and cached first-match results on the live SQLite connection, including worker ownership and retained input history.815 tests,12 Metal pairs and8 native Save/Cancel workflows pass. Foreground/fonts/alignment, Browse context actions, canonical XML, original dialog layout, whole-result Browse and full original visual/native/platform parity remain.

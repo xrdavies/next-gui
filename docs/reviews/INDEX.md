@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [conditional format rule management](R-20261030-8e6bd3601ca7.md) —810 tests,17 Soft/Metal pairs and8 native Save/Cancel workflows verified; full F02 remains in progress.
+Latest scoped review: [original conditional format expressions](R-20261030-d06fea875bb6.md) —815 tests,12 Soft/Metal pairs and8 native expression workflows verified; full F02 remains in progress.
 
 ## Findings
 
