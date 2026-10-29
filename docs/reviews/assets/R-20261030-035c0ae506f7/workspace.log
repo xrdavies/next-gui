@@ -1,0 +1,1085 @@
+   Compiling next-gui-ui v0.1.0 (/Users/m4002/Projects/next-gui/crates/next-gui-ui)
+   Compiling e03_ngui_counter v0.1.0 (/Users/m4002/Projects/next-gui/examples/03_ngui_counter)
+   Compiling e02_counter v0.1.0 (/Users/m4002/Projects/next-gui/examples/02_counter)
+   Compiling e23_office_charts v0.1.0 (/Users/m4002/Projects/next-gui/examples/23_office_charts)
+   Compiling e28_db_browser v0.1.0 (/Users/m4002/Projects/next-gui/examples/28_db_browser)
+   Compiling e27_theme_tokens v0.1.0 (/Users/m4002/Projects/next-gui/examples/27_theme_tokens)
+   Compiling e26_office_p2 v0.1.0 (/Users/m4002/Projects/next-gui/examples/26_office_p2)
+   Compiling e10_office_panel v0.1.0 (/Users/m4002/Projects/next-gui/examples/10_office_panel)
+   Compiling e12_office_inputs v0.1.0 (/Users/m4002/Projects/next-gui/examples/12_office_inputs)
+   Compiling e05_backend_toggle v0.1.0 (/Users/m4002/Projects/next-gui/examples/05_backend_toggle)
+   Compiling e04_cjk_text v0.1.0 (/Users/m4002/Projects/next-gui/examples/04_cjk_text)
+   Compiling e11_office_shell v0.1.0 (/Users/m4002/Projects/next-gui/examples/11_office_shell)
+   Compiling e24_profile_dual v0.1.0 (/Users/m4002/Projects/next-gui/examples/24_profile_dual)
+   Compiling e25_immediate_viewport v0.1.0 (/Users/m4002/Projects/next-gui/examples/25_immediate_viewport)
+   Compiling e20_office_industrial v0.1.0 (/Users/m4002/Projects/next-gui/examples/20_office_industrial)
+   Compiling e14_office_nav v0.1.0 (/Users/m4002/Projects/next-gui/examples/14_office_nav)
+   Compiling e15_office_feedback v0.1.0 (/Users/m4002/Projects/next-gui/examples/15_office_feedback)
+   Compiling e21_office_p1_rest v0.1.0 (/Users/m4002/Projects/next-gui/examples/21_office_p1_rest)
+   Compiling e22_office_p1_deferred v0.1.0 (/Users/m4002/Projects/next-gui/examples/22_office_p1_deferred)
+   Compiling e13_office_data v0.1.0 (/Users/m4002/Projects/next-gui/examples/13_office_data)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.52s
+     Running unittests src/main.rs (target/debug/deps/e01_soft_window-5bf2f8283d352a2b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e02_counter-d3d60a47de21b94e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e03_ngui_counter-dc33ef1bd9b7c418)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e04_cjk_text-1babdb496cc4f07b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e05_backend_toggle-fbf8785906d40d26)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e10_office_panel-fa021bcb772bff6e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e11_office_shell-a527b74a0ce7f6fa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e12_office_inputs-b3565d3202886b76)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e13_office_data-79fccb44f0cc20c5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e14_office_nav-0e5a2f20978f399e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e15_office_feedback-2e299dc5e0bc9077)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e20_office_industrial-b5360531d30925a3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e21_office_p1_rest-11bc63d3b817d56c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e22_office_p1_deferred-b3567998dff1b56a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e23_office_charts-77e96b3efb6a467e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e24_profile_dual-ddeb05196bb95325)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e25_immediate_viewport-dc7276e513c1e5ec)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e26_office_p2-f5e9b4e69d4cc19c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e27_theme_tokens-879a00a0aac4b3f5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/e28_db_browser-1cc57af43ba1120b)
+
+running 511 tests
+test browse_filter::tests::expensive_filter_cancellation_restores_the_pending_connection ... ok
+test browse_navigation_tests::frozen_overrides_roundtrip_per_tab_and_legacy_projects_keep_the_global_count ... ok
+test browse_filter::tests::automatic_filters_suspend_composition_drafts_modals_and_cancel_stale_workers ... ok
+test browse_navigation_tests::header_context_keeps_drafts_and_refuses_obscured_busy_or_stale_targets ... ok
+test browse_navigation_tests::header_context_uses_the_clicked_column_and_supports_keyboard_selection ... ok
+test browse_navigation_tests::command_page_shortcuts_cycle_tables_and_views_in_both_directions ... ok
+test browse_navigation_tests::controls_normalize_numbers_report_invalid_input_and_reveal_the_target_cell ... ok
+test browse_navigation_tests::invalid_saved_table_options_do_not_replace_the_current_result ... ok
+test browse_navigation_tests::jump_uses_filtered_sorted_record_numbers_and_preserves_the_column ... ok
+test browse_navigation_tests::jump_guards_drafts_busy_queries_and_restores_selection_on_query_failure ... ok
+test browse_navigation_tests::freeze_uses_selected_column_and_keeps_frozen_cells_and_filters_stationary ... ok
+test browse_navigation_tests::native_frozen_counts_are_validated_and_clamped_to_the_table_columns ... ok
+test browse_navigation_tests::narrow_window_reveals_the_navigation_input_when_focused ... ok
+test browse_navigation_tests::selected_and_highlighted_labels_have_readable_contrast_in_both_themes ... ok
+test browse_navigation_tests::native_xml_restores_and_writes_options_for_tables_that_are_not_active ... ok
+test browse_navigation_tests::opening_a_project_preflights_saved_tables_before_replacing_the_database ... ok
+test browse_navigation_tests::per_table_filters_sort_and_widths_restore_in_each_tab_and_project_roundtrip ... ok
+test browse_rowid::tests::implicit_rowid_projection_uses_real_qualified_aliases_and_exact_values ... ok
+test browse_rowid::tests::rowid_full_plot_export_projects_and_source_settings_keep_column_identity ... ok
+test browse_navigation_tests::page_shortcuts_cross_cache_and_command_home_end_reach_the_complete_result ... ok
+test browse_rowid::tests::rowid_rectangle_failure_rolls_back_every_cell_and_retains_prior_pending_changes ... ok
+test browse_rowid::tests::rowid_settings_follow_implicit_alias_changes_without_becoming_shadow_field_filters ... ok
+test browse_rowid::tests::rowid_toggle_retains_named_settings_and_selection_and_guards_mutations ... ok
+test browse_navigation_tests::previous_next_keep_drafts_and_failed_query_selection_intact ... ok
+test browse_navigation_tests::shrinking_results_and_empty_views_clamp_navigation_without_a_stale_editor ... ok
+test browse_navigation_tests::selecting_an_unqueryable_view_restores_the_previous_table_result_and_editor ... ok
+test browse_sort_tests::query_sort_quotes_literal_identifiers_and_rejects_missing_columns ... ok
+test browse_navigation_tests::previous_next_step_by_the_live_viewport_and_cross_cache_boundaries ... ok
+test cell_clipboard::tests::html_is_escaped_and_internal_cells_keep_all_sqlite_storage_types ... ok
+test cell_clipboard::tests::sql_copy_quotes_identifiers_and_preserves_blob_null_and_invalid_text ... ok
+test browse_navigation_tests::table_switch_apply_guards_drafts_and_busy_queries_without_mutating_the_tab ... ok
+test browse_sort_tests::project_multi_sort_roundtrip_keeps_native_priority_and_legacy_primary ... ok
+test browse_sort_tests::complete_exports_follow_multi_sort_and_keep_the_destination_on_error ... ok
+test browse_sort_tests::sorting_guards_drafts_and_restores_tab_on_query_error ... ok
+test browse_sort_tests::multi_sort_keeps_priority_toggles_columns_and_clears_explicitly ... ok
+test browse_filter::tests::filter_preferences_validate_atomically_cancel_and_save_escape ... ok
+test browse_filter::tests::automatic_filters_debounce_preserve_undo_and_retain_failed_results ... ok
+test cell_editor_tests::cell_auto_mode_controls_keep_focus_drafts_storage_history_and_read_only_views ... ok
+test cell_editor_tests::cell_invalid_format_save_all_keeps_destinations_and_defers_document_actions ... ok
+test cell_editor_tests::cell_bom_and_infinity_views_keep_typed_sources_history_and_apply_focus ... ok
+test cell_editor_tests::cell_indent_toggle_keeps_clean_storage_drafts_undo_focus_and_read_only_views ... ok
+test cell_editor_tests::cell_image_preview_fits_its_pane_and_retains_zoom_focus_without_a_text_editor ... ok
+test browse_rowid::tests::rowid_header_keyboard_toggle_filter_apply_and_rebuild_are_coherent ... ok
+test cell_format::tests::automatic_mode_distinguishes_printable_bytes_formats_numbers_and_noncharacters ... ok
+test cell_format::tests::evaluation_keeps_sqlite_types_reads_pending_values_and_rejects_tails_and_parameters ... ok
+test cell_format::tests::format_diagnostics_locate_unicode_tokens_and_eof_without_bypassing_limits ... ok
+test cell_format::tests::json_formatting_uses_four_spaces_and_preserves_large_numbers_and_null ... ok
+test cell_format::tests::utf8_bom_json_keeps_source_tokens_and_positions_and_numeric_auto_mode ... ok
+test cell_format::tests::xml_compaction_normalizes_only_line_indentation_and_keeps_content_and_tokens ... ok
+test cell_format::tests::xml_indentation_preserves_raw_tokens_mixed_content_spaces_entities_and_is_idempotent ... ok
+test cell_format::tests::xml_validation_rejects_malformed_namespaces_duplicates_entities_and_external_resolution ... ok
+test cell_editor_tests::cell_editor_sessions_survive_rebuilds_but_never_follow_another_cell_or_replacement ... ok
+test cell_snapshot::tests::empty_preview_has_no_cells_to_project ... ok
+test cell_snapshot::tests::executed_rows_are_indexed_once_and_keep_raw_values_and_shared_offsets ... ok
+test cell_snapshot::tests::full_file_rows_stream_project_and_cancel_without_copying_the_payload ... ok
+test cell_editor_tests::cell_metadata_updates_with_input_and_history_without_rebuilding_the_editor ... ok
+test cell_editor_tests::cell_invalid_format_modal_keeps_drafts_history_focus_and_explicit_apply ... ok
+test cell_snapshot::tests::large_preview_spills_and_clone_keeps_bytes_and_column_projection ... ok
+test column_picker::tests::invalid_key_and_foreign_key_changes_preserve_all_drafts_and_database ... ok
+test column_picker::tests::ordered_columns_keep_duplicate_operands_collations_comments_and_real_data ... ok
+test column_picker::tests::reordered_foreign_columns_keep_actions_deferral_and_enforce_the_complete_key ... ok
+test column_picker::tests::resizing_inline_primary_key_desc_keeps_non_alias_rowids_and_name ... ok
+test csv_encoding::tests::invalid_sequences_and_unknown_codecs_reject_without_replacement ... ok
+test csv_encoding::tests::legacy_code_pages_and_latin1_are_distinct_and_lossless ... ok
+test csv_encoding::tests::unicode_boms_override_the_selected_encoding_and_endianness ... ok
+test cell_snapshot::tests::hidden_source_column_can_return_without_rewriting_memory_or_file_payloads ... ok
+test cell_hex_editor_tests::cell_binary_editor_preserves_bytes_sessions_types_and_explicit_apply ... ok
+test cell_editor_tests::cell_wrap_toggle_preserves_drafts_selection_history_and_read_only_views ... ok
+test browse_navigation_tests::revert_modal_cancel_and_accept_reconcile_sources_and_rebuild ... ok
+test column_picker::tests::column_dialog_grid_buttons_cancel_resize_scroll_and_real_save ... ok
+test csv_files::tests::file_selection_preserves_individual_targets_shared_target_and_pending_files ... ok
+test csv_files::tests::header_matching_checks_names_not_affinities_and_reports_unreadable_files ... ok
+test csv_import::tests::chunk_boundaries_preserve_boms_quotes_crlf_unicode_and_trim ... ok
+test csv_import::tests::csv_local_numbers_freeze_conventions_for_inference_and_typed_sqlite_binding ... ok
+test csv_import::tests::csv_local_numbers_keep_invalid_text_and_match_non_finite_sqlite_values ... ok
+test csv_import::tests::csv_original_quotes_and_variable_width_rows_match_preview_and_snapshot ... ok
+test csv_import::tests::csv_stream_rejects_invalid_tail_and_rolls_back_snapshot_read_failures ... ok
+test csv_import::tests::csv_stream_snapshot_keeps_only_sample_reopens_exact_rows_and_imports_large_files ... ok
+test csv_import::tests::preview_stops_before_invalid_tail_and_types_promote_without_losing_real_affinity ... ok
+test csv_jobs::tests::csv_preparation_cancel_checks_both_sides_of_blocking_reads ... ok
+test csv_jobs::tests::csv_worker_cancel_during_a_row_keeps_the_outer_transaction_and_returns_connection ... ok
+test csv_jobs::tests::csv_workers_prepare_native_paths_and_unicode_clipboard_and_report_progress ... ok
+test csv_numbers::tests::csv_numbers_accept_native_digits_signs_and_explicit_non_finite_values ... ok
+test csv_numbers::tests::csv_numbers_validate_grouping_decimal_exponents_and_full_integer_range ... ok
+test data_export::tests::csv_real_values_match_sqlite_column_text_including_rounding_and_exponents ... ok
+test cell_editor_tests::cell_raw_source_errors_and_unchanged_apply_preserve_bytes_drafts_and_focus ... ok
+test cell_editor_tests::cell_dock_actions_and_content_fit_font_toolbar_and_window_changes ... ok
+test data_export::tests::export_streams_all_rows_and_rejects_invalid_options_before_touching_files ... ok
+test data_export::tests::multi_export_stages_queries_and_guards_all_outputs_before_replacement ... ok
+test data_export::tests::original_export_options_preserve_types_binary_and_custom_unicode_csv ... ok
+test data_export::tests::query_export_errors_preserve_existing_files_and_live_databases ... ok
+test data_export::tests::query_formats_use_raw_snapshot_types_and_original_csv_json_options ... ok
+test cell_editor_tests::applied_cells_reveal_both_axes_and_keep_fresh_editor_focus ... ok
+test db::row_key::tests::composite_keys_keep_raw_types_order_affinity_and_quoted_namespaces ... ok
+test db::row_key::tests::record_mutations_handle_virtual_tables_ignored_updates_and_trigger_moves ... ok
+test db::row_key::tests::shadowed_aliases_and_nullable_keys_never_target_multiple_rows ... ok
+test db::tests::browse_filter_cannot_execute_a_second_statement ... ok
+test db::tests::browse_rejects_tail_without_preparing_pragma_side_effects ... ok
+test db::tests::complete_table_exports_keep_more_than_preview_limit ... ok
+test db::tests::csv_abort_import_overrides_rollback_constraints_and_keeps_earlier_pending_changes ... ok
+test db::tests::csv_decoder_rejects_invalid_utf16_and_accepts_utf32_boms ... ok
+test db::tests::csv_import_options_preserve_types_defaults_constraints_conflicts_and_transactions ... ok
+test db::tests::csv_multiline_and_atomic_import ... ok
+test db::tests::csv_original_missing_fields_bind_null_without_taking_explicit_empty_defaults ... ok
+test db::tests::csv_roundtrip ... ok
+test db::tests::data_helpers_target_quoted_attached_and_temp_namespaces ... ok
+test db::tests::dump_roundtrip_preserves_all_rows_types_triggers_and_sequence ... ok
+test db::tests::encrypted_export_preserves_source_and_custom_settings ... ok
+test db::tests::exports_reject_open_database_and_journal_destinations ... ok
+test db::tests::foreign_key_metadata_resolves_the_parent_in_the_same_database ... ok
+test db::tests::generated_column_creation_metadata_and_legacy_alter_keep_visible_and_writable_columns ... ok
+test db::tests::generated_columns_are_exported_as_values_and_restored_by_sql_dump ... ok
+test db::tests::generated_rowid_is_not_used_as_an_edit_or_dump_identity ... ok
+test db::tests::generated_schema_statements_keep_literal_semicolons_and_reject_tails ... ok
+test db::tests::hex_draft_size_and_decoding_share_strict_digits_and_whitespace_rules ... ok
+test db::tests::main_browse_helpers_ignore_same_named_temp_tables ... ok
+test db::tests::mapped_column_rename_rolls_back_earlier_steps_when_a_view_becomes_ambiguous ... ok
+test db::tests::mapped_column_renames_preserve_qualified_dependencies_and_rollback_every_step ... ok
+test db::tests::save_as_copies_wal_and_memory_without_overwriting ... ok
+test db::tests::schema_reads_and_drops_keep_namespace_identity ... ok
+test db::tests::schema_wizard_helpers_preserve_quoted_namespace_and_atomic_alter ... ok
+test db::tests::seed_and_browse ... ok
+test db::tests::sql_batch_handles_quotes_comments_triggers_and_returning ... ok
+test db::tests::sql_dump_and_pragma ... ok
+test db::tests::sql_import_is_atomic_and_does_not_commit_pending_edits ... ok
+test db::tests::sql_result_export_keeps_full_typed_snapshot_without_reexecuting ... ok
+test db::tests::sqlcipher_key_roundtrip ... ok
+test db::tests::sqlcipher_linked ... ok
+test db::tests::table_alter_keeps_constraints_triggers_and_foreign_keys ... ok
+test db::tests::table_wizard_creates_and_adds_columns_without_inventing_types ... ok
+test db::tests::virtual_data_only_appends_visible_fts_and_rtree_rows_without_shadow_writes ... ok
+test db::tests::virtual_data_only_handles_readonly_vocab_and_rejects_unstored_fts ... ok
+test db::tests::virtual_dump_preserves_pending_contentless_index_and_rtree ... ok
+test db::tests::virtual_dump_schema_only_and_failure_keep_destination_and_transaction ... ok
+test db::tests::virtual_dump_selection_formats_and_existing_target_safety ... ok
+test cell_editor_tests::cell_modes_keep_keyboard_popups_formatting_undo_null_input_and_explicit_evaluation ... ok
+test csv_files::interaction_tests::csv_original_preview_and_worker_import_keep_missing_cells_and_expanded_headers ... ok
+test export_jobs::tests::cancel_during_later_table_preserves_every_destination_and_pending_changes ... ok
+test export_jobs::tests::worker_errors_survive_cancel_and_publication_has_a_final_cancellation_boundary ... ok
+test csv_files::interaction_tests::csv_local_switch_keeps_focus_updates_preview_and_types_real_worker_values ... ok
+test dock_tests::independent_cell_and_plot_docks_keep_drafts_scrolls_ratios_and_project_layout ... ok
+test dock_tests::cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_draft_loss ... ok
+test filters::tests::configured_like_escape_is_quoted_and_matches_literal_wildcards ... ok
+test filters::tests::original_filter_syntax_and_sql_quoting ... ok
+test filters::tests::sqlite_regexp_supports_unicode_lookaround_backreferences_and_errors ... ok
+test index_sql::tests::key_rows_preserve_nested_quoted_and_commented_sql ... ok
+test index_sql::tests::key_sort_suffix_uses_sqlite_operand_rules_without_executing_sql ... ok
+test index_sql::tests::stored_index_fragments_keep_nested_expressions_quotes_and_comments ... ok
+test csv_files::interaction_tests::csv_preview_is_a_modal_dialog_with_fixed_actions_and_parent_recovery ... ok
+test filter_menu::tests::all_original_expression_helpers_select_the_placeholder_and_preserve_undo ... ok
+test filter_menu::tests::filter_menu_guards_drafts_and_keeps_raw_global_whitespace_history_and_selection ... ok
+test interaction_tests::backwards_browse_selection_keeps_anchor_through_every_rebuild ... ok
+test data_export::tests::export_progress_modal_cancel_keeps_workspace_transaction_and_allows_retry ... ok
+test interaction_tests::browse_drag_commits_selection_after_release_and_keeps_the_editor_value ... ok
+test interaction_tests::browse_buttons_follow_page_record_and_write_boundaries ... ok
+test csv_files::interaction_tests::csv_progress_cancel_is_modal_and_keeps_completed_files_and_pending_edits ... ok
+test data_export::tests::export_dialog_keeps_multi_selection_options_focus_and_safe_replace_decision ... ok
+test interaction_tests::command_shortcuts_do_not_insert_literal_letters ... ok
+test csv_files::interaction_tests::csv_batch_file_controls_keep_targets_sessions_and_four_choice_confirmation ... ok
+test interaction_tests::browse_filter_actions_apply_all_inputs_clear_together_and_preserve_sort ... ok
+test interaction_tests::browse_namespace_selector_shortcuts_and_delete_keep_identity ... ok
+test interaction_tests::browse_rebuild_preserves_resized_columns_and_viewport ... ok
+test interaction_tests::browse_shift_selection_copies_selected_rows_as_tsv ... ok
+test interaction_tests::closing_sql_tab_preserves_other_drafts_and_pending_database_edits ... ok
+test interaction_tests::browse_tab_buttons_restore_directional_selection_and_reject_busy_switches ... ok
+test data_export::tests::sql_result_buttons_share_compact_options_and_capture_the_executed_snapshot ... ok
+test interaction_tests::direct_inline_check_previews_and_saves_resolve_swapped_owners_and_expressions ... ok
+test interaction_tests::direct_inline_foreign_key_previews_and_saves_resolve_owner_and_self_key_renames ... ok
+test interaction_tests::compact_find_keeps_editor_and_single_toolbar_visible ... ok
+test filter_menu::tests::expression_queries_flush_then_placeholder_edits_debounce_across_themes_and_sizes ... ok
+test interaction_tests::edited_index_constraint_previews_and_saves_follow_direct_column_swaps ... ok
+test interaction_tests::edited_table_check_preview_and_save_resolve_direct_qualified_identity_changes ... ok
+test interaction_tests::edited_table_foreign_key_previews_and_saves_resolve_direct_local_swaps_and_self_targets ... ok
+test interaction_tests::desktop_layout_adapts_to_narrow_window_and_keeps_splitter_preferences ... ok
+test interaction_tests::document_transitions_cancel_keep_drafts_and_discard_rolls_back_before_close ... ok
+test interaction_tests::dock_tab_overflow_preserves_scroll_across_rebuild_and_reveals_selected_panels ... ok
+test interaction_tests::current_plot_controls_link_rows_preserve_drafts_and_follow_browse_and_sql_results ... ok
+test interaction_tests::field_endpoint_moves_preserve_qualified_identities_and_reject_inconsistent_bindings ... ok
+test interaction_tests::exit_prompts_for_clean_database_sql_drafts_and_cell_navigation_is_guarded ... ok
+test interaction_tests::constraint_and_reference_select_popups_survive_resize_and_keep_escape_local ... ok
+test interaction_tests::field_check_cells_preserve_previous_row_validate_keys_and_save_qualified_data ... ok
+test interaction_tests::constraint_text_cells_keep_drafts_history_cancel_scope_and_database_semantics ... ok
+test interaction_tests::constraint_grids_keep_drafts_focus_viewports_sql_copy_and_real_save ... ok
+test interaction_tests::field_grid_keeps_live_properties_selection_widths_scroll_and_endpoint_move_sessions ... ok
+test interaction_tests::field_check_text_cells_preserve_named_checks_cancel_history_and_qualified_data ... ok
+test interaction_tests::field_removal_confirms_and_updates_keys_without_losing_qualified_rows_or_dependencies ... ok
+test interaction_tests::hidden_docks_reclaim_main_width_and_keep_preferred_splitter_ratio ... ok
+test interaction_tests::field_removal_keeps_ordered_composite_metadata_and_invalid_drafts_atomic ... ok
+test interaction_tests::csv_encoding_controls_keep_sessions_repair_errors_and_import_file_and_clipboard_text ... ok
+test interaction_tests::csv_preview_options_refresh_focus_scroll_and_existing_table_confirmation ... ok
+test interaction_tests::foreign_key_column_editor_keeps_sessions_and_saves_real_reference_semantics ... ok
+test interaction_tests::foreign_key_page_preserves_sql_sessions_validates_saves_and_follows_local_and_self_identities ... ok
+test interaction_tests::imported_plot_styles_survive_selection_polling_and_rebuild ... ok
+test interaction_tests::icon_toolbars_fit_narrow_pages_keep_help_and_retain_actions_and_drafts ... ok
+test interaction_tests::generated_column_controls_preserve_sessions_validate_save_and_disable_cell_writes ... ok
+test interaction_tests::field_dropdowns_open_on_first_click_keep_custom_types_and_save_collation ... ok
+test interaction_tests::index_key_order_selector_preserves_operands_comments_and_other_keys ... ok
+test interaction_tests::index_key_rows_share_sql_undo_preview_and_qualified_columns ... ok
+test interaction_tests::field_text_cells_edit_cancel_tab_restore_history_and_save_real_constraints ... ok
+test interaction_tests::log_dock_keeps_full_read_only_text_selection_filters_and_clear_scope ... ok
+test interaction_tests::narrow_shell_and_image_view_survive_ui_rebuilds ... ok
+test interaction_tests::index_constraint_page_keeps_sessions_syncs_fields_and_saves_real_keys ... ok
+test interaction_tests::global_table_header_disclosure_reaches_every_page_and_saves_hidden_options_in_small_windows ... ok
+test interaction_tests::inline_check_page_edits_all_named_checks_and_syncs_fields_and_column_removal ... ok
+test interaction_tests::normal_sql_page_fits_with_visible_or_hidden_toolbar ... ok
+test interaction_tests::qualified_check_previews_match_native_rename_and_both_rebuild_paths ... ok
+test interaction_tests::modify_table_controls_save_custom_types_constraints_and_reordering_atomically ... ok
+test interaction_tests::inline_foreign_key_page_edits_every_reference_and_syncs_named_fields ... ok
+test interaction_tests::rgba_images_preserve_pixels_alpha_clips_and_soft_gpu_agreement ... ok
+test interaction_tests::modify_table_tracks_column_identity_through_buttons_rebuild_and_save ... ok
+test interaction_tests::numbered_sql_editor_retains_search_selection_and_undo_through_find_overlay ... ok
+test interaction_tests::preferences_cancel_keeps_frozen_columns_and_pragma_save_is_visible ... ok
+test interaction_tests::plot_namespace_selector_reads_the_selected_database_and_reports_errors ... ok
+test interaction_tests::key_type_cells_validate_atomically_cancel_autoincrement_and_preserve_ordered_key_migrations ... ok
+test interaction_tests::record_dialog_buttons_fit_and_drop_preference_is_applied ... ok
+test interaction_tests::rollback_conflict_in_record_dialog_restores_unwritten_edit_transaction ... ok
+test interaction_tests::schema_namespace_selection_restores_identity_and_guards_main_actions ... ok
+test interaction_tests::schema_selection_keeps_edited_ddl_until_a_decision ... ok
+test interaction_tests::selected_text_area_matches_soft_and_gpu_readback ... ok
+test interaction_tests::schema_tree_navigation_retains_focus_and_viewport_after_rebuild ... ok
+test interaction_tests::schema_wizard_selectors_keep_qualified_targets_types_and_scroll ... ok
+test interaction_tests::primary_key_conflict_control_saves_reopens_and_tracks_key_removal ... ok
+test interaction_tests::sql_buttons_rebuild_and_close_keep_user_state ... ok
+test interaction_tests::sql_calltip_escape_rebuild_find_ime_and_undo_keep_the_editor_session ... ok
+test interaction_tests::sql_calltip_long_signature_scrolls_with_keyboard_without_editing ... ok
+test interaction_tests::sql_calltip_many_overloads_are_individually_readable_without_editing ... ok
+test interaction_tests::single_line_wizard_undo_updates_constraint_identity_preview_and_survives_focused_rebuild ... ok
+test interaction_tests::sql_comment_changes_selected_lines_as_one_undoable_edit ... ok
+test interaction_tests::sql_and_index_editors_keep_active_composition_through_form_rebuilds ... ok
+test interaction_tests::sql_completion_auto_threshold_manual_keys_and_session_undo_do_not_execute_sql ... ok
+test interaction_tests::sql_comment_shortcut_keeps_file_drafts_and_tab_histories_separate ... ok
+test interaction_tests::sql_calltip_dark_light_and_metal_readback ... ok
+test interaction_tests::sql_completion_refreshes_metadata_and_works_from_cache_while_worker_owns_connection ... ok
+test interaction_tests::sql_editor_page_navigation_and_selection_survive_rebuild ... ok
+test interaction_tests::sql_editor_word_shortcuts_move_to_identifier_boundaries ... ok
+test interaction_tests::sql_long_document_viewport_restores_and_find_reveals_after_resize ... ok
+test interaction_tests::sql_search_options_all_highlights_scope_undo_errors_and_function_shortcuts ... ok
+test interaction_tests::status_encoding_follows_database_sql_worker_readonly_and_close ... ok
+test interaction_tests::sql_selection_find_replace_and_undo_survive_tabs_and_rebuild ... ok
+test interaction_tests::structure_toolbar_has_no_vertical_overflow_at_normal_or_narrow_width ... ok
+test interaction_tests::sql_completion_popup_dark_light_and_metal_readback ... ok
+test interaction_tests::tab_switch_pixels_match_fresh_page_without_stale_descendants ... ok
+test interaction_tests::table_check_reference_names_follow_swaps_reorders_and_reject_invalid_sql_renames ... ok
+test interaction_tests::table_sql_preview_updates_live_keeps_read_only_sessions_and_fits_bounded_windows ... ok
+test interaction_tests::table_wizard_accepts_custom_and_empty_types_with_rebuild_safe_ime ... ok
+test interaction_tests::table_move_schema_selector_preview_failure_and_save_keep_the_draft_and_rows ... ok
+test interaction_tests::table_check_page_retains_independent_sessions_and_validates_actual_save_and_create ... ok
+test plot::tests::category_duplicates_nulls_blobs_and_duplicate_headers_stay_distinct ... ok
+test plot::tests::current_result_keeps_types_gaps_row_order_dual_axes_and_cached_buffers ... ok
+test plot::tests::full_plot_uses_the_executed_snapshot_and_rebuilds_without_replaying_returning ... ok
+test plot::tests::native_series_styles_and_current_source_style_changes_remain_independent ... ok
+test plot::tests::returning_is_a_snapshot_and_replaced_results_invalidate_plot_sessions ... ok
+test plot::tests::settings_follow_column_moves_renames_namespaces_and_sql_tab_lifecycle ... ok
+test plot_export::tests::formats_roundtrip_case_suffixes_and_pdf_cross_references ... ok
+test interaction_tests::table_options_controls_validate_create_and_modify_and_reopen_actual_flags ... ok
+test interaction_tests::table_wizard_selection_keeps_each_columns_definition ... ok
+test interaction_tests::table_wizard_autoincrement_controls_match_type_and_key_rules_and_save ... ok
+test interaction_tests::table_wizard_collation_controls_keep_sessions_and_save_comparison_rules ... ok
+test interaction_tests::write_buttons_are_disabled_when_disconnected_read_only_or_busy ... ok
+test plot_export::tests::staged_save_preserves_destinations_databases_and_pending_edits ... ok
+test plot_load::tests::cancelled_browse_load_preserves_the_previous_plot_connection_and_pending_transaction ... ok
+test plot_load::tests::external_writes_and_commit_boundaries_invalidate_full_browse_page_linkage ... ok
+test plot_load::tests::full_browse_keeps_namespaces_filter_order_pages_and_invalidates_after_refresh ... ok
+test plot_load::tests::full_sql_plot_reads_returning_once_and_reuses_the_snapshot_for_style_changes ... ok
+test interaction_tests::table_wizard_check_editor_keeps_column_sessions_and_saves_validated_constraints ... ok
+test interaction_tests::table_wizard_primary_key_controls_save_and_remove_composite_keys ... ok
+test plot_export::tests::grouped_and_stacked_plot_menu_keeps_view_source_and_project_settings ... ok
+test pragmas::tests::original_fields_validate_without_losing_fast_mode_or_numeric_limits ... ok
+test plot_export::tests::plot_controls_and_chart_stay_reachable_after_focus_and_resize ... ok
+test plot_export::tests::plot_context_menu_preserves_full_data_view_and_project_format_settings ... ok
+test pragmas::tests::saved_page_size_vacuum_and_extended_settings_survive_reopening ... ok
+test pragmas::tests::validation_precedes_all_writes_and_unchanged_like_extension_is_retained ... ok
+test prefs::tests::browse_filter_defaults_and_disabled_settings_roundtrip_without_user_preferences ... ok
+test prefs::tests::old_preferences_enable_completion_and_explicit_false_round_trips ... ok
+test project::tests::project_roundtrips_unicode_and_rejects_invalid_files ... ok
+test project_xml::tests::connection_preflight_and_failure_restore_existing_settings ... ok
+test project_xml::tests::legacy_gui_viewports_override_the_old_native_index_encoding ... ok
+test project_xml::tests::named_native_browse_settings_survive_removed_columns_with_or_without_extension ... ok
+test project_xml::tests::native_plot_settings_roundtrip_without_extension_and_keep_unknown_metadata ... ok
+test project_xml::tests::native_plots_include_unopened_tables_and_validate_known_attributes ... ok
+test project_xml::tests::native_rowid_only_freeze_and_width_metadata_survive_saving ... ok
+test project_xml::tests::native_viewport_indices_include_rowid_but_sort_and_filter_indices_do_not ... ok
+test project_xml::tests::readonly_project_attaches_existing_unicode_path_readonly ... ok
+test project_xml::tests::relative_database_path_survives_parent_directory_aliases ... ok
+test project_xml::tests::rowid_native_indices_and_per_tab_json_xml_settings_roundtrip ... ok
+test project_xml::tests::view_keys_roundtrip_native_json_per_tab_overrides_and_locked_sentinel ... ok
+test project_xml::tests::xml_rejects_malformed_entities_identifiers_and_unrepresentable_text ... ok
+test project_xml::tests::xml_roundtrip_keeps_unicode_sql_unknown_settings_and_attribute_whitespace ... ok
+test plot_export::tests::plot_hover_keeps_source_and_selection_with_bounded_dual_axis_tooltips ... ok
+test plot_load::tests::plot_load_controls_cancel_keep_full_rows_link_pages_and_restore_rejected_styles ... ok
+test plot_export::tests::plot_export_uses_current_view_selection_palette_and_no_query_replay ... ok
+test interaction_tests::long_object_confirmation_retains_scroll_action_and_cancel_across_rebuild_and_resize ... ok
+test reference_editor::tests::fields_reference_candidates_use_renamed_self_drafts_and_keep_missing_targets ... ok
+test reference_editor::tests::fields_reference_raw_repair_cancel_retains_the_named_constraint ... ok
+test reference_editor::tests::reference_cell_invalid_sql_keeps_the_database_and_draft_until_repaired ... ok
+test sql_calltip::tests::nested_calls_groups_quotes_and_comments_count_only_current_arguments ... ok
+test sql_completion::tests::cached_calltips_include_overloads_variadic_zero_and_connection_specific_functions ... ok
+test sql_completion::tests::completion_catalog_reads_all_schemas_columns_and_live_functions_without_changes ... ok
+test sql_completion::tests::completion_context_suppresses_literals_comments_parameters_and_replaces_the_whole_identifier ... ok
+test sql_completion::tests::descriptive_calltips_follow_fixed_variadic_date_and_window_argument_roles ... ok
+test sql_completion::tests::descriptive_calltips_name_parameters_and_respect_custom_overrides ... ok
+test sql_completion::tests::keyword_case_preference_preserves_function_and_object_names ... ok
+test sql_completion::tests::math_help_follows_engine_availability_and_sqlite_argument_order ... ok
+test sql_completion::tests::original_extra_editor_words_are_completion_candidates_and_syntax_keywords ... ok
+test sql_completion::tests::user_tables_cannot_shadow_column_metadata_in_any_schema ... ok
+test sql_completion::tests::user_tables_cannot_shadow_function_metadata ... ok
+test sql_editor::tests::current_line_and_selected_lines_keep_unicode_and_line_endings ... ok
+test sql_editor::tests::empty_and_trailing_lines_and_document_bounds_are_supported ... ok
+test sql_editor::tests::first_selected_line_decides_mode_and_only_two_hyphens_are_removed ... ok
+test sql_export::tests::create_options_keep_quoted_names_comments_and_deferred_constraints ... ok
+test sql_export::tests::dump_modes_preserve_original_create_and_merge_or_replace_selected_schema ... ok
+test sql_export::tests::invalid_selection_and_late_query_errors_preserve_destinations_and_pending_edits ... ok
+test sql_export::tests::merging_autoincrement_keeps_both_source_and_destination_high_water_marks ... ok
+test sql_export::tests::selected_dump_restores_batches_generated_values_and_only_selected_sequences ... ok
+test interaction_tests::table_preview_splitter_drags_live_preserves_sessions_and_fits_small_windows ... ok
+test reference_editor::tests::reference_reset_removes_only_its_constraint_and_keeps_named_deferrals_on_cancel ... ok
+test reference_editor::tests::reference_reset_then_pointer_row_change_keeps_the_clicked_constraint_identity ... ok
+test sql_log::tests::cipher_keys_never_enter_history ... ok
+test sql_log::tests::retained_history_is_complete_categorized_and_eviction_is_visible ... ok
+test sql_log::tests::trace_is_connection_scoped_and_survives_worker_moves ... ok
+test reference_editor::tests::fields_reference_cells_create_cancel_reset_and_preserve_multiple_named_constraints ... ok
+test reference_editor::tests::reference_cells_keep_schema_identity_composites_reset_cancel_and_real_cascades ... ok
+test sql_search::tests::caret_search_can_start_inside_overlapping_matches ... ok
+test sql_search::tests::direction_wrap_and_reverse_do_not_change_document_or_options ... ok
+test sql_search::tests::greedy_forward_navigation_does_not_enumerate_every_overlapping_suffix ... ok
+test sql_search::tests::invalid_patterns_limits_and_split_unicode_never_return_an_edit ... ok
+test sql_search::tests::literal_case_word_and_metacharacters_keep_unicode_ranges ... ok
+test sql_search::tests::regex_captures_replacements_and_multiline_anchors_are_atomic ... ok
+test sql_search::tests::selection_scope_survives_matches_and_own_edits_but_rejects_external_changes ... ok
+test sql_search::tests::selection_word_boundaries_use_neighbors_outside_the_scope ... ok
+test sql_search::tests::zero_width_unicode_matches_advance_and_replace_without_loops ... ok
+test sql_syntax::tests::sqlite_tokens_distinguish_literals_identifiers_parameters_and_comments ... ok
+test sql_syntax::tests::unfinished_tokens_and_escaped_quotes_do_not_leak_keywords ... ok
+test pragmas::tests::numeric_controls_step_save_exact_integers_and_align_in_the_original_form ... ok
+test sql_result_tests::complete_sql_grid_navigates_copies_links_plots_and_retains_tab_selections ... ok
+test pragmas::tests::original_pragma_controls_keep_focus_custom_values_and_scroll_across_rebuilds ... ok
+test pragmas::tests::pragma_save_confirmation_defaults_to_cancel_and_only_commits_after_accepting ... ok
+test pragmas::tests::held_numeric_arrow_updates_only_the_draft_and_stops_across_release_and_rebuild ... ok
+test state::chart_default_tests::applying_cells_restores_visible_row_identity_after_sort_and_clears_filtered_records ... ok
+test state::chart_default_tests::async_sql_shares_pending_edits_and_revert ... ok
+test state::chart_default_tests::attached_project_roundtrip_keeps_active_and_saved_namespace_options ... ok
+test state::chart_default_tests::automatic_cell_modes_keep_types_manual_choices_drafts_and_image_imports_safe ... ok
+test state::chart_default_tests::binary_cell_edit_and_image_use_original_bytes ... ok
+test state::chart_default_tests::browse_and_complete_export_share_original_filter_operators ... ok
+test state::chart_default_tests::browse_namespaces_isolate_data_options_formats_and_clipboard_sql ... ok
+test state::chart_default_tests::browse_navigation_rejects_drafts_and_query_errors_without_losing_the_current_tab ... ok
+test state::chart_default_tests::browse_pages_preserve_row_identity_and_clear_stale_edits ... ok
+test state::chart_default_tests::browse_schema_refresh_remaps_column_filters_order_and_widths_by_name ... ok
+test state::chart_default_tests::browse_tab_navigation_rejects_worker_owned_connection_without_mutation ... ok
+test state::chart_default_tests::browse_tab_selection_tracks_rowids_and_clears_invalid_rectangles ... ok
+test state::chart_default_tests::browse_tab_selection_uses_primary_keys_and_requires_unchanged_unkeyed_rows ... ok
+test state::chart_default_tests::browse_tab_switch_restores_selection_and_editor ... ok
+test state::chart_default_tests::browse_tsv_paste_updates_a_matrix_atomically ... ok
+test state::chart_default_tests::canceled_or_invalid_save_destinations_leave_unwritten_data_and_drafts ... ok
+test state::chart_default_tests::cell_apply_preserves_quoted_column_names_and_generated_guards ... ok
+test state::chart_default_tests::cell_apply_skips_unchanged_typed_values_and_rolls_back_ignored_trigger_effects ... ok
+test state::chart_default_tests::cell_bom_structured_formats_keep_bytes_through_indent_compact_and_confirmed_repair ... ok
+test state::chart_default_tests::cell_editor_caption_tracks_visible_drafts_without_converting_or_evaluating_them ... ok
+test state::chart_default_tests::cell_files_preserve_drafts_types_raw_bytes_destinations_and_database_files ... ok
+test state::chart_default_tests::cell_format_confirmation_is_typed_source_bound_and_never_bypasses_write_guards ... ok
+test state::chart_default_tests::cell_indent_preferences_keep_raw_views_and_compact_only_explicit_typed_apply ... ok
+test state::chart_default_tests::cell_raw_utf8_diagnostics_preserve_original_blobs_until_explicit_repair ... ok
+test state::chart_default_tests::cell_stored_infinities_are_clean_and_preserved_without_allowing_new_nonfinite_reals ... ok
+test state::chart_default_tests::cell_types_and_invalid_utf8_hex_drafts_are_preserved ... ok
+test state::chart_default_tests::cell_utf8_bom_survives_text_edits_modes_export_and_typed_apply_once ... ok
+test state::chart_default_tests::cell_xml_and_evaluation_preserve_types_drafts_and_read_only_sources ... ok
+test state::chart_default_tests::closing_browse_tabs_keeps_one_empty_tab ... ok
+test state::chart_default_tests::column_rename_reports_saved_schema_when_a_raw_filter_needs_manual_update ... ok
+test state::chart_default_tests::composite_implicit_and_blob_foreign_keys_navigate_stored_values ... ok
+test state::chart_default_tests::create_table_ddl_smoke ... ok
+test state::chart_default_tests::csv_batch_cancel_and_retry_keep_unselected_files_and_never_duplicate_completed_files ... ok
+test state::chart_default_tests::csv_batch_confirmation_uses_snapshot_and_cancel_keeps_current_unfinished_file ... ok
+test state::chart_default_tests::csv_batch_failed_file_is_retryable_without_reimporting_successful_files ... ok
+test state::chart_default_tests::csv_batch_no_and_yes_all_import_only_accepted_files_and_preserve_pending_changes ... ok
+test state::chart_default_tests::csv_batch_retains_native_file_paths_without_lossy_roundtrip ... ok
+test state::chart_default_tests::csv_batch_trigger_rollback_clears_progress_and_requires_explicit_reselection ... ok
+test state::chart_default_tests::csv_cancel_does_not_hide_simultaneous_sqlite_errors_or_transaction_rollback ... ok
+test state::chart_default_tests::csv_encoding_imports_real_files_and_preserves_pending_changes_on_decode_failure ... ok
+test state::chart_default_tests::csv_import_resets_old_browse_state_and_plot_rejects_bad_samples ... ok
+test state::chart_default_tests::csv_import_settings_roundtrip_custom_characters_and_upgrade_old_preferences ... ok
+test state::chart_default_tests::cut_clears_nullable_and_required_cells_and_rolls_back_on_constraints ... ok
+test state::chart_default_tests::db4s_xml_project_restores_relative_sql_readonly_and_connection_settings ... ok
+test state::chart_default_tests::demo_test_sessions_keep_independent_pending_database_writes ... ok
+test state::chart_default_tests::dirty_database_cannot_be_replaced_and_bad_open_keeps_connection ... ok
+test state::chart_default_tests::ended_transaction_guard_invalidates_browse_identities_and_preserves_cell_draft ... ok
+test state::chart_default_tests::execute_line_uses_caret_and_preserves_entire_editor ... ok
+test state::chart_default_tests::foreign_key_navigation_preserves_non_utf8_text_keys ... ok
+test state::chart_default_tests::form_navigation_preserves_column_reports_page_errors_and_clamps_shrunken_pages ... ok
+test state::chart_default_tests::generated_browse_cells_are_read_only_but_copy_export_and_insert_remain_usable ... ok
+test state::chart_default_tests::image_preview_preserves_source_resolution_alpha_and_reports_corruption ... ok
+test state::chart_default_tests::index_modify_keeps_sort_collation_and_rolls_back_failure ... ok
+test state::chart_default_tests::invalid_attached_browse_project_preserves_the_existing_session ... ok
+test state::chart_default_tests::invalid_project_browse_queries_preserve_current_session ... ok
+test state::chart_default_tests::invalid_xml_project_keeps_current_database_tabs_and_connection ... ok
+test state::chart_default_tests::main_tab_count_is_four ... ok
+test state::chart_default_tests::missing_paste_record_rolls_back_trigger_effects_and_other_rows ... ok
+test state::chart_default_tests::modify_table_rebuilds_type_constraints_and_column_order_without_losing_rows ... ok
+test state::chart_default_tests::moved_view_settings_follow_actual_output_names_and_keep_explicit_aliases ... ok
+test state::chart_default_tests::namespace_fk_navigation_and_save_as_keep_connection_identity ... ok
+test sql_result_tests::sql_cell_dock_follows_complete_selection_and_keeps_read_only_modes_and_browse_identity ... ok
+test state::chart_default_tests::namespace_index_wizards_read_real_pragmas_and_keep_original_on_failure ... ok
+test state::chart_default_tests::new_record_form_supports_required_values_defaults_null_and_revert ... ok
+test state::chart_default_tests::original_pragma_catalog_is_complete_and_auto_vacuum_applies_to_existing_tables ... ok
+test state::chart_default_tests::namespace_table_wizards_keep_data_options_drafts_and_identity ... ok
+test state::chart_default_tests::paste_updates_primary_key_and_constrained_columns_together_and_rolls_back_on_failure ... ok
+test state::chart_default_tests::partial_expression_index_edit_reads_live_sql_and_preserves_semantics ... ok
+test state::chart_default_tests::plot_namespaces_keep_quoted_identity_and_clear_failed_samples ... ok
+test state::chart_default_tests::pick_chart_prefers_products_price ... ok
+test state::chart_default_tests::pragmas_apply_outside_transaction_and_refuse_dirty_edits ... ok
+test state::chart_default_tests::pragma_reports_actual_value_instead_of_false_success ... ok
+test state::chart_default_tests::quoted_tsv_and_single_cell_fill_preserve_text_and_empty_cells ... ok
+test state::chart_default_tests::project_resolves_relative_database_and_requires_memory_save_as ... ok
+test state::chart_default_tests::reopening_a_temporary_browse_project_does_not_read_main_shadow ... ok
+test state::chart_default_tests::revert_reconciles_all_qualified_browse_tabs_and_keeps_independent_drafts ... ok
+test state::chart_default_tests::save_as_flushes_pending_memory_data ... ok
+test state::chart_default_tests::revert_restores_dropped_and_renamed_sources_and_reports_invalid_filters_after_rollback ... ok
+test state::chart_default_tests::save_documents_preserves_typed_cell_and_drafts_in_database_and_project ... ok
+test state::chart_default_tests::sql_and_project_drafts_survive_rollback_and_are_checkpointed_on_save ... ok
+test state::chart_default_tests::sql_cell_snapshots_keep_storage_bytes_and_cannot_write_browse_records ... ok
+test state::chart_default_tests::sql_dirty_markers_follow_moved_and_closed_unbound_tabs ... ok
+test state::chart_default_tests::schema_wizard_fields_reject_sql_tails_before_mutation ... ok
+test state::chart_default_tests::sql_files_save_to_their_source_and_reject_external_changes ... ok
+test state::chart_default_tests::sql_results_and_view_source_belong_to_their_tab ... ok
+test state::chart_default_tests::sql_dirty_state_tracks_pragmas_attached_ddl_and_transaction_end ... ok
+test state::chart_default_tests::sql_stop_recovers_live_connection ... ok
+test state::chart_default_tests::sql_tab_move_and_close_keep_results_files_and_editor_sessions_together ... ok
+test state::chart_default_tests::sql_trace_covers_workers_replaced_connections_errors_and_safe_export ... ok
+test state::chart_default_tests::structure_catalog_includes_attached_and_temp_objects ... ok
+test state::chart_default_tests::table_preview_retains_constraints_without_database_queries_or_mutating_pending_edits ... ok
+test state::chart_default_tests::table_wizard_column_swaps_follow_qualified_browse_plot_and_format_identities ... ok
+test state::chart_default_tests::table_wizard_renames_a_column_without_replacing_its_data ... ok
+test state::chart_default_tests::typed_clipboard_roundtrip_preserves_null_empty_blob_numbers_and_raw_text ... ok
+test state::chart_default_tests::table_moves_follow_qualified_browse_plot_format_and_project_identities ... ok
+test state::row_identity_tests::without_rowid_apply_tracks_changed_primary_keys_external_sources_and_foreign_keys ... ok
+test state::row_identity_tests::without_rowid_rectangles_keep_types_and_rollback_stale_targets_and_constraints ... ok
+test table_migration::tests::autoincrement_edits_preserve_ids_assign_nulls_and_track_sequence_in_every_schema ... ok
+test table_migration::tests::collation_conflicts_foreign_keys_and_unknown_names_roll_back ... ok
+test table_migration::tests::collation_edits_preserve_constraints_and_actual_comparison_semantics ... ok
+test state::cell_actions::tests::cell_links_store_paths_without_reading_data_and_resolve_against_database ... ok
+test table_migration::tests::column_checks_edit_first_named_constraint_and_keep_other_constraints_and_dependencies ... ok
+test table_migration::tests::composite_primary_key_edits_keep_names_order_conflicts_and_implicit_not_null ... ok
+test table_migration::tests::composite_foreign_key_fields_reject_invalid_lists_clauses_and_sql_tails_without_mutation ... ok
+test table_migration::tests::create_and_add_inline_foreign_keys_keep_actions_and_enforce_references ... ok
+test table_migration::tests::duplicate_copy_aborts_even_for_rollback_ignore_or_replace_primary_keys ... ok
+test table_migration::tests::existing_without_rowid_violations_cannot_hide_new_invalid_foreign_keys ... ok
+test table_migration::tests::first_column_self_reference_uses_the_existing_table_during_a_renamed_rebuild ... ok
+test table_migration::tests::dependent_view_moves_reject_collisions_and_missing_dependencies_without_partial_changes ... ok
+test table_migration::tests::generated_columns_recompute_and_freeze_with_qualified_dependencies_and_rowids ... ok
+test table_migration::tests::incompatible_table_options_roll_back_types_null_keys_autoincrement_and_pending_violations ... ok
+test table_migration::tests::inline_foreign_key_deferral_survives_separated_constraints_and_keeps_other_references ... ok
+test table_migration::tests::invalid_autoincrement_types_values_and_key_combinations_roll_back ... ok
+test table_migration::tests::invalid_column_checks_roll_back_pending_data_and_create_add_enforce_checks ... ok
+test table_migration::tests::inline_foreign_key_edits_preserve_names_other_keys_and_qualified_dependencies ... ok
+test table_migration::tests::invalid_inline_foreign_keys_cannot_mutate_data_or_other_constraints ... ok
+test table_migration::tests::invalid_primary_key_changes_leave_data_and_pending_edits_intact ... ok
+test table_migration::tests::invalid_generated_definitions_preserve_schema_rows_and_pending_transaction ... ok
+test table_migration::tests::named_inline_foreign_key_deferrals_survive_other_edits_and_pending_violations ... ok
+test table_migration::tests::named_composite_foreign_keys_edit_clear_and_create_with_actions_and_atomic_validation ... ok
+test table_migration::tests::primary_key_conflict_actions_match_sqlite_statement_and_transaction_semantics ... ok
+test table_migration::tests::named_table_checks_edit_clear_and_create_without_losing_other_constraints_or_pending_data ... ok
+test table_migration::tests::primary_key_edits_preserve_new_column_rowids_and_remove_obsolete_sequences ... ok
+test table_migration::tests::primary_key_membership_changes_preserve_rows_and_other_constraints ... ok
+test table_migration::tests::primary_key_conflict_edits_keep_names_key_details_and_other_policies_across_schemas ... ok
+test table_migration::tests::rebuild_checks_new_foreign_key_violations_but_preserves_pending_deferred_violations ... ok
+test table_migration::tests::qualified_local_checks_survive_temporary_rebuild_and_final_table_renames ... ok
+test table_migration::tests::rebuild_never_silently_ignores_conflicts_and_restores_connection_flags_on_failure ... ok
+test table_migration::tests::rebuild_preserves_strict_without_rowid_composite_constraints_and_removes_single_unique_only ... ok
+test table_migration::tests::rebuild_preserves_qualified_dependencies_generated_values_sequence_and_pending_edits ... ok
+test table_migration::tests::rebuild_rejects_unavailable_rowids_and_nulls_in_new_integer_primary_keys ... ok
+test table_migration::tests::removed_generated_fields_do_not_validate_values_after_retained_type_changes ... ok
+test table_migration::tests::table_check_fields_reject_constraint_and_statement_injection_atomically ... ok
+test table_migration::tests::removed_key_columns_keep_native_dependency_checks_and_rollback_staged_renames ... ok
+test table_migration::tests::table_moves_keep_qualified_data_self_links_indexes_triggers_sequence_and_pending_rollback ... ok
+test table_migration::tests::table_moves_combine_renamed_inherited_constraints_generated_fields_and_deletions ... ok
+test table_migration::tests::table_moves_keep_sparse_rowids_and_without_rowid_composite_keys ... ok
+test table_migration::tests::table_moves_preserve_pending_deferred_foreign_keys_until_the_destination_is_repaired ... ok
+test state::cell_actions::tests::desktop_open_errors_only_affect_the_current_external_copy ... ok
+test table_migration::tests::table_moves_to_readonly_attachments_preserve_source_and_pending_edits ... ok
+test table_migration::tests::table_moves_relocate_chained_views_and_their_ordinary_and_temporary_triggers ... ok
+test table_migration::tests::table_options_preserve_data_keys_dependencies_and_pending_rollback ... ok
+test table_migration::tests::table_rename_updates_dependencies_even_when_the_session_uses_legacy_alter ... ok
+test table_sql::reference_parts_preserve_composites_named_deferrals_and_reject_other_sql ... ok
+test table_sql::tests::all_inline_checks_preserve_named_scopes_dependencies_and_pending_transactions ... ok
+test table_sql::tests::check_identity_rewrites_preserve_literals_functions_types_and_unrelated_sessions ... ok
+test table_sql::tests::constraint_grid_sql_fragments_keep_inline_semantics_names_and_deferrals ... ok
+test table_sql::tests::all_inline_foreign_keys_preserve_named_deferrals_dependencies_and_pending_violations ... ok
+test table_sql::tests::index_constraint_removal_retains_implicit_not_null_and_insert_conflict_policies ... ok
+test table_sql::tests::index_constraints_preserve_inline_semantics_dependencies_and_sequences ... ok
+test table_sql::tests::inline_check_overrides_reject_invalid_owners_expressions_and_scope_atomically ... ok
+test table_sql::tests::index_constraints_validate_boundaries_and_never_drop_duplicate_rows ... ok
+test table_sql::tests::inline_foreign_key_overrides_reject_other_constraints_owners_and_statement_tails ... ok
+test table_sql::tests::sqlite_schema_roundtrips_preserve_advanced_constraints_and_table_options ... ok
+test table_sql::tests::view_relocation_follows_qualified_queries_without_rewriting_literals_or_other_names ... ok
+test table_migration::tests::table_moves_reject_collisions_broken_dependencies_and_invalid_rows_atomically ... ok
+test table_sql::tests::table_preview_matches_saved_renames_without_rewriting_literals_functions_or_other_tables ... ok
+test view_keys::tests::applied_cell_reveal_clears_on_source_change_failure_and_filtered_out_record ... ok
+test view_keys::tests::view_insert_ignored_or_failed_retains_values_and_pending_transaction ... ok
+test state::cell_actions::tests::external_cells_reject_symlinks_and_keep_reloaded_drafts_on_database_errors ... ok
+test toolbar_tests::toolbar_preferences_scroll_restore_open_choices_and_cancel_without_saving ... ok
+test view_keys::tests::view_keys_reject_ambiguous_ignored_and_missing_trigger_mutations ... ok
+test view_keys::tests::view_trigger_keys_use_exact_values_qualified_sources_and_atomic_writes ... ok
+test view_keys::tests::view_unlock_apply_reload_insert_relock_and_stale_drafts ... ok
+test sql_export::tests::sql_export_progress_cancel_preserves_destination_and_pending_edits_then_retries ... ok
+test sql_export::tests::sql_export_dialog_retains_selection_options_keyboard_focus_and_cancel ... ok
+test sql_export::tests::virtual_export_dialog_hides_internal_tables_and_preserves_failed_draft ... ok
+test state::cell_actions::tests::cell_external_modals_and_import_menu_retain_drafts_history_and_explicit_apply ... ok
+test view_keys::tests::view_key_dialog_long_columns_rebuild_resize_and_stale_source_error ... ok
+test view_keys::tests::view_key_dialog_context_keyboard_cancel_relock_and_trigger_apply ... ok
+test state::row_identity_tests::typed_key_ui_apply_delete_and_readonly_geometry ... ok
+test state::cell_actions::tests::external_cell_suffixes_bytes_readonly_and_failure_guards_are_lossless ... ok
+test toolbar_tests::toolbar_styles_reach_all_groups_reveal_actions_and_keep_cell_drafts_and_query_sources ... ok
+
+test result: ok. 511 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 182.44s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_immediate-e706f0ff2aad79d0)
+
+running 6 tests
+test tests::mark_dirty_is_viewport_local ... ok
+test tests::escape_clears_focus_only_when_focused ... ok
+test tests::disabled_viewport_ignores_hits ... ok
+test tests::mount_sets_clip_on_host ... ok
+test tests::contains_and_clip_hit ... ok
+test tests::outside_pointer_does_not_focus_or_click ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_layout-d4f8e40272913d04)
+
+running 4 tests
+test tests::column_cross_align_end ... ok
+test tests::column_stacks_with_gap ... ok
+test tests::row_cross_align_center ... ok
+test tests::row_places_left_to_right ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_platform-380cfb17b117eb85)
+
+running 25 tests
+test clipboard::tests::owned_clipboard_image_roundtrip ... ok
+test dpi::tests::round_trip_2x ... ok
+test dpi::tests::zero_scale_is_defensive ... ok
+test redraw::tests::redraw_deadlines_coalesce_do_not_fire_early_and_return_to_idle ... ok
+test dpi::tests::identity_at_1x ... ok
+test dpi::tests::scale_2x ... ok
+test clipboard::tests::image_dimensions_reject_invalid_overflow_and_oversized_buffers ... ok
+test soak::tests::linux_vm_rss_readable_on_linux ... ok
+test soak::tests::soak_driver_from_env_respects_disabled_default ... ok
+test soak::tests::soak_env_defaults_off ... ok
+test soak::tests::soak_env_truthy ... ok
+test tests::clipboard_roundtrip_smoke ... ok
+test tests::function_keys_keep_their_numbers_without_becoming_text ... ok
+test tests::scale_factor_changed_constructs ... ok
+test tests::touch_event_stub_constructs ... ok
+test touch_synth::tests::cancelled_releases_press ... ok
+test touch_synth::tests::moved_without_primary_is_ignored ... ok
+test touch_synth::tests::new_primary_after_release ... ok
+test touch_synth::tests::primary_started_moved_ended_order ... ok
+test touch_synth::tests::secondary_finger_does_not_synthesize ... ok
+test touch_synth::tests::touch_pointer_preserves_modifiers_at_each_sample ... ok
+test soak::tests::soak_interval_defaults_and_caps ... ok
+test desktop::tests::uris_and_launcher_arguments_cannot_become_options_or_shell_commands ... ok
+test number_conventions::native::tests::native_number_conventions_cover_comma_indian_groups_and_arabic_digits ... ok
+test number_conventions::tests::system_number_conventions_are_owned_and_have_numeric_symbols ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/request_exit_on_pointer.rs (target/debug/deps/request_exit_on_pointer-32e33fc77fad545a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_exit_on_redraw.rs (target/debug/deps/request_exit_on_redraw-f3e5c8e850be1d57)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_exit_on_start.rs (target/debug/deps/request_exit_on_start-8bf56d4694789c71)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_profile-dc800bbc25d3d989)
+
+running 7 tests
+test tests::from_env_default_office_when_unset ... ok
+test tests::field_forces_soft_and_disallows_gpu ... ok
+test tests::toggle_swaps_presets ... ok
+test tests::degrade_disables_gpu ... ok
+test tests::office_allows_gpu_and_prefers_surface ... ok
+test tests::intervals_are_positive ... ok
+test tests::parse_profile_names ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_render-dcbbc91d7caf4049)
+
+running 4 tests
+test tests::rgba_validation_clipping_and_dirty_keep_source_geometry ... ok
+test tests::encode_skips_clean_nodes ... ok
+test tests::encode_mask_node ... ok
+test tests::encode_rounded_rect_when_radius_set ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_render_gpu-cfebdccb2fa2ffc7)
+
+running 8 tests
+test tests::try_new_or_skip ... ok
+test tests::blit_alpha_or_skip ... ok
+test tests::rgba_image_tiles_beyond_adapter_texture_limit ... ok
+test tests::rounded_rect_aa_fringe_or_skip ... ok
+test tests::rounded_rect_skips_far_corner_or_skip ... ok
+test tests::alpha_masks_tile_beyond_adapter_limit_on_both_axes_and_dirty_patches ... ok
+test tests::rounded_scene_clips_keep_original_geometry_or_skip ... ok
+test tests::fractional_primitives_match_soft_coverage_and_dirty_clips ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_render_soft-b2b7e470cd36995e)
+
+running 5 tests
+test tests::dirty_fill_writes_pixels ... ok
+test tests::blit_alpha_tints ... ok
+test tests::fractional_primitives_sample_centers_and_blend_edges ... ok
+test tests::rounded_rect_skips_far_corner ... ok
+test tests::rounded_scene_clips_keep_original_geometry ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_scene-3de243f4e59d5573)
+
+running 2 tests
+test tests::dirty_on_fill_change ... ok
+test tests::hit_test_topmost ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_text-773bc5520d0e6425)
+
+running 13 tests
+test tests::caret_follows_wrapped_layout ... ok
+test tests::metrics_positive ... ok
+test tests::glyph_bitmap_fits_inside_mask ... ok
+test tests::latin_and_cjk_measure ... ok
+test tests::rasterize_places_glyphs_on_baseline_not_clipped ... ok
+test tests::rasterize_cjk_not_torn ... ok
+test tests::missing_cjk_symbols_use_the_fallback_for_measure_layout_and_pixels ... ok
+test tests::word_layout_preserves_words_punctuation_clusters_and_exact_source_carets ... ok
+test tests::fallback_keeps_primary_metrics_and_glyphs ... ok
+test tests::clipped_raster_matches_crop_and_bounds_long_offscreen_lines ... ok
+test tests::wrap_reduces_width ... ok
+test tests::wrapped_caret_starts_at_next_glyph_and_keeps_empty_lines ... ok
+test tests::write_qa_ppm_samples ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.87s
+
+     Running unittests src/lib.rs (target/debug/deps/next_gui_ui-bc4640c2c82839bd)
+
+running 221 tests
+test autocomplete::tests::popup_stays_in_viewport_and_pointer_selects_the_scrolled_suggestion ... ok
+test chart::tests::tile_rects_two_by_two ... ok
+test button_tests::disabled_button_consumes_pointer_without_stealing_focus ... ok
+test button_tests::disabled_buttons_skip_focus_and_cancel_pending_keyboard_activation ... ok
+test button_tests::icon_label_layouts_fit_cjk_large_fonts_keep_live_names_and_restore_plain_buttons ... ok
+test autocomplete::tests::select_popup_fits_viewport_reveals_selection_and_hits_the_visible_option ... ok
+test container_render_tests::transparent_nested_containers_preserve_the_surface_behind_rounded_tables ... ok
+test dialog::tests::dialog_body_scroll_reveals_focus_keeps_footer_hits_and_cell_escape_stays_local ... ok
+test chart::tests::title_wraps_and_bounds_ellipsis_without_splitting_graphemes ... ok
+test dialog::tests::dialog_text_completions_follow_the_owner_scope_and_resized_caret ... ok
+test button_tests::disabled_button_theme_colors_restore_authored_colors_and_geometry ... ok
+test autocomplete::tests::all_options_dropdown_keeps_value_history_session_and_resumes_filtering ... ok
+test autocomplete::tests::select_sessions_keep_popup_by_value_without_reopening_changed_values_or_emitting ... ok
+test autocomplete::tests::session_restores_named_suggestion_selection_and_composition_geometry ... ok
+test dsl::tests::explicit_background_overrides_theme_surface ... ok
+test dialog::tests::list_activation_is_opt_in_and_checks_rows_timing_scope_and_keyboard ... ok
+test dialog::tests::nested_dialogs_restore_focus_and_respect_close_backdrop_and_legacy_decisions ... ok
+test dsl::tests::reject_unknown_theme_name ... ok
+test dsl::tests::parse_counter_ngui ... ok
+test dsl::tests::load_all_widgets_fixture ... ok
+test dsl::tests::parse_row_toolbar ... ok
+test dsl::tests::reject_unknown_color_token ... ok
+test dsl::tests::reject_unknown_prop ... ok
+test dialog::tests::dialogs_trap_focus_block_background_and_keep_child_popups_above_reused_content ... ok
+test dsl::tests::theme_color_token_button_bg_accent ... ok
+test hex_editor::tests::byte_edits_keep_nibbles_selections_modes_and_delta_history ... ok
+test hex_editor::tests::nibble_selection_and_history_are_bounded_without_copying_whole_snapshots ... ok
+test hex_editor::tests::paste_validates_before_changes_and_overwrite_never_grows_the_buffer ... ok
+test hex_editor::tests::unchanged_overwrites_still_report_cursor_and_selection_changes_without_history ... ok
+test dsl::tests::theme_root_column_prop_overrides_directive ... ok
+test icon::tests::database_action_icons_roundtrip_and_remain_distinct_at_supported_sizes ... ok
+test icon::tests::from_name_roundtrip ... ok
+test icon::tests::save_icon_not_empty ... ok
+test dsl::tests::chart_coordinate_property_uses_boolean_validation ... ok
+test hex_editor::tests::widget_virtualizes_rows_and_keeps_pointer_clipboard_scroll_and_read_only_sessions ... ok
+test dsl::tests::theme_color_token_name_surface_light_vs_dark ... ok
+test p1_raster::tests::gauge_not_empty ... ok
+test p1_raster::tests::trend_not_empty ... ok
+test plot::tests::auto_ranges_are_finite_for_missing_extreme_and_constant_data ... ok
+test dsl::tests::theme_document_directive_light_vs_dark ... ok
+test plot::tests::calendar_axes_validate_and_roundtrip_centuries_and_negative_epochs ... ok
+test button_tests::icon_buttons_keep_live_help_focus_activation_disabled_colors_and_reversible_text_sizing ... ok
+test dsl::tests::text_area_line_numbers_property_uses_boolean_validation ... ok
+test plot::tests::dense_duplicate_bar_keys_use_range_extrema_without_changing_stack_heights ... ok
+test plot::tests::grouped_and_stacked_bars_keep_signed_duplicate_keys_axes_and_source_order ... ok
+test plot::tests::navigation_preserves_anchors_axes_and_sparse_source_selection ... ok
+test dsl::tests::tabs_strip_properties_use_boolean_validation ... ok
+test menu_popup::tests::nested_menus_keep_owner_focus_skip_disabled_and_return_from_each_level ... ok
+test plot_raster::tests::dense_line_sampling_preserves_single_sample_spikes_gaps_and_source_order ... ok
+test plot::tests::coordinate_hover_formats_dates_categories_and_extreme_ranges_after_model_changes ... ok
+test plot_raster::tests::fixed_ticks_follow_visible_range_precision_without_changing_dates_or_categories ... ok
+test menu_popup::tests::nested_pointer_hover_clamps_flips_left_and_reuses_nodes_without_ghosts ... ok
+test dsl::tests::text_area_wrap_property_defaults_on_and_validates_booleans ... ok
+test plot::tests::retained_plot_selects_on_release_cancels_drags_and_keeps_only_matching_sessions ... ok
+test plot_raster::tests::ticks_remain_distinct_after_deep_zoom_and_extreme_ranges ... ok
+test plot_raster::tests::categorical_bars_keep_duplicate_labels_and_negative_values ... ok
+test plot::tests::bar_interiors_select_the_rendered_source_row_in_grouped_and_stacked_modes ... ok
+test plot_raster::tests::markers_alpha_and_plot_image_bounds_are_observable ... ok
+test plot_raster::tests::fixed_format_changes_all_three_axis_labels_and_preserves_the_plot_pixels ... ok
+test plot_raster::tests::hiding_legend_releases_axis_space_and_removes_only_legend_ink ... ok
+test plot::tests::coordinate_hover_uses_cached_pixels_survives_navigation_and_does_not_steal_hits ... ok
+test plot_raster::tests::rendered_step_heights_follow_the_left_and_right_samples ... ok
+test prose::tests::prose_preserves_paragraphs_nonbreaking_spaces_and_oversized_tokens ... ok
+test scrollbars::tests::inactive_tab_bars_hide_and_restore_without_stale_hit_targets ... ok
+test scrollbars::tests::keyboard_focus_reveals_nested_scroll_children_without_undoing_wheel_scroll ... ok
+test scrollbars::tests::scroll_area_bar_takes_priority_over_children_and_text_bar_keeps_caret ... ok
+test scrollbars::tests::table_bars_drag_both_axes_page_without_selecting_and_follow_frozen_columns ... ok
+test table_data::tests::failed_row_reads_are_visible_and_never_copy_partial_results ... ok
+test table_data::tests::million_row_source_only_reads_visible_rows_and_navigates_copies_global_ranges ... ok
+test table_edit::tests::autocomplete_cell_accepts_suggestions_before_ending_and_hides_with_its_tab ... ok
+test table_edit::tests::cell_editor_is_a_clipped_table_child_with_history_ime_and_tab_requests ... ok
+test table_edit::tests::select_cell_keeps_popup_focus_and_routes_commit_cancel_and_tab_before_grid_navigation ... ok
+test table_selection_tests::default_table_body_drag_still_pans_without_extending_the_selection ... ok
+test table_selection_tests::copy_quotes_tabs_line_breaks_and_quotes ... ok
+test table_selection_tests::drag_selection_respects_scrolled_frozen_columns_and_keeps_its_anchor ... ok
+test table_selection_tests::keyboard_reveals_the_active_column_without_resetting_horizontal_scroll ... ok
+test modal::tests::modal_scrolls_by_wheel_keys_and_drag_keeps_actions_and_restores_matching_sessions ... ok
+test table_edit::tests::composite_cell_rows_layout_clip_and_navigate_controls_before_neighboring_cells ... ok
+test table_edit::tests::disabled_input_blocks_focus_pointer_clipboard_ime_and_preserves_undo ... ok
+test table_selection_tests::programmatic_reveal_keeps_the_range_anchor_focus_and_frozen_column ... ok
+test table_edit::tests::dropdown_columns_activate_on_first_click_clip_and_keep_virtual_rows_bounded ... ok
+test table_selection_tests::page_keys_keep_the_column_and_selection_anchor_when_reversing ... ok
+test table_selection_tests::replacing_rows_clamps_both_endpoints_and_clears_empty_selection ... ok
+test table_selection_tests::shift_selection_keeps_its_anchor_when_extending_and_reversing ... ok
+test table_selection_tests::visible_rows_counts_half_rows_and_uses_the_current_viewport ... ok
+test tabs::tests::scrollable_tabs_keep_title_widths_and_reveal_keyboard_selection ... ok
+test tests::accessible_name_override_and_button_fallback ... ok
+test tests::autocomplete_replaces_selection_with_clipboard_and_ime ... ok
+test tests::build_column_and_hit_button ... ok
+test tests::button_tab_reach_and_keyboard_activate ... ok
+test tests::changing_tooltip_help_retains_hover_children_and_keyboard_focus ... ok
+test tabs::tests::bottom_strips_place_pages_above_labels_and_route_only_strip_pointer_input ... ok
+test tests::exact_fit_splitter_minimums_tolerate_ratio_rounding ... ok
+test tests::chart_captions_stay_in_their_cells_and_keep_full_accessible_titles ... ok
+test tests::cjk_text_gets_mask ... ok
+test tests::clipboard_deletion_matches_copy_scope_and_preserves_protected_fields ... ok
+test tests::detached_context_menu_clamps_highlights_skips_disabled_items_and_retains_focus ... ok
+test dsl::tests::button_icon_keeps_label_and_validates_named_glyphs ... ok
+test tests::focusable_order_and_tab_wrap ... ok
+test tests::focused_menu_opens_with_enter_and_activates_an_enabled_item ... ok
+test tabs::tests::legacy_equal_tabs_empty_strips_and_oversized_titles_remain_usable ... ok
+test tests::image_view_preserves_scale_clips_pans_and_rejects_invalid_geometry ... ok
+test tests::color_picker_hex_ink_is_visible_and_pointer_editable_with_or_without_swatches ... ok
+test tests::headless_counter_text_not_vertically_clipped ... ok
+test tests::key_input_tab_absorbed_by_modal_trap ... ok
+test tests::inactive_tab_descendants_stay_hidden_after_repeated_sync ... ok
+test tests::key_input_tab_moves_focus_without_prior_focus ... ok
+test tests::list_viewport_restores_reveals_and_rejects_invalid_offsets ... ok
+test tests::long_modal_body_clips_above_fixed_actions ... ok
+test tabs::tests::strip_sessions_retain_manual_scroll_but_reject_different_pages_and_layouts ... ok
+test tests::modal_body_keeps_fitting_words_on_one_line ... ok
+test tests::modal_three_actions_wrap_body_and_support_pointer_and_keyboard ... ok
+test tests::office_charts_multi_tile_gauge_trend ... ok
+test tests::office_data_list_tree_table ... ok
+test tests::office_charts_soft_raster_qa_ppm ... ok
+test tests::office_feedback_tag_badge_tooltip_modal_progress_alert ... ok
+test tests::office_inputs_scroll_text_toggles ... ok
+test tests::office_nav_menu_tabs_select_slider ... ok
+test tests::office_p1_deferred_datetime_transfer_property_tree_table ... ok
+test tests::checked_menu_items_use_house_icons_keep_label_alignment_and_controlled_state ... ok
+test tests::modal_themes_keep_context_and_both_action_states_readable ... ok
+test tests::office_p1_rest_drawer_virtual_list_and_structure ... ok
+test tests::office_p1_tree_select_form_alarm_gauge_trend ... ok
+test tests::office_p2a_button_group_pointer_selects ... ok
+test tests::office_p2a_button_group_select_and_keyboard ... ok
+test tests::office_p2a_link_focus_and_activate ... ok
+test tests::office_p2b_result_action_keyboard_and_pointer ... ok
+test tests::office_p1_deferred_soft_raster_qa_ppm ... ok
+test tests::office_p2b_statistic_mount_not_focusable ... ok
+test tests::office_p2a_space_sugar_row_column ... ok
+test tests::office_p1_rest_soft_raster_qa_ppm ... ok
+test tests::office_p2b_steps_change_keyboard_and_pointer ... ok
+test tests::office_p2c_popconfirm_confirm_cancel_dismiss ... ok
+test tests::office_p2c_popover_toggle_escape_and_outside ... ok
+test tests::office_p2d_autocomplete_filter_pick_and_escape ... ok
+test tests::office_p2d_color_picker_swatch_and_hex ... ok
+test tests::office_p2d_upload_browse_clear_and_keyboard ... ok
+test tests::office_p2e_grid_lays_out_children ... ok
+test tests::office_p2e_calendar_day_and_arrows ... ok
+test tests::office_p2e_config_provider_bag ... ok
+test tests::office_p2e_image_rgba_and_placeholder ... ok
+test tests::office_p2e_timeline_select ... ok
+test tests::office_shell_panel_toolbar_splitter_statusbar ... ok
+test tests::pointer_on_button_sets_focus_but_returns_false ... ok
+test tests::row_toolbar_lays_out_buttons ... ok
+test tests::scroll_pages_fill_a_resized_splitter_and_keep_sash_hits_and_hidden_pages_separate ... ok
+test tests::scroll_rows_route_to_nearest_viewport_and_bubble_at_limits ... ok
+test tests::secret_input_masks_value_and_excludes_copy_and_accessible_name ... ok
+test tests::switching_context_menus_hides_the_previous_overlay ... ok
+test tests::switching_tooltip_hosts_hides_the_previous_overlay ... ok
+test tests::table_active_cell_preserves_the_rectangle_and_rejects_outside_targets ... ok
+test tests::table_filter_inputs_follow_resize_scroll_freeze_and_keyboard_focus ... ok
+test tests::table_header_hit_uses_the_same_frozen_scroll_and_resize_geometry_as_sorting ... ok
+test tests::table_paints_all_body_rows_with_cell_bg_aux_stride ... ok
+test tests::table_scroll_freeze_resize_and_clipping_share_geometry ... ok
+test tests::splitter_minimums_constrain_both_axes_during_drag_resize_and_programmatic_layout ... ok
+test tests::text_input_ime_preedit_paints_cjk_and_underline ... ok
+test tests::text_area_ime_previews_commits_and_cancels_without_changing_draft ... ok
+test tests::text_widgets_accept_named_space_keys ... ok
+test tests::table_check_cells_share_pointer_keyboard_and_frozen_scroll_geometry ... ok
+test tests::theme_defaults_follow_set_theme ... ok
+test tests::tooltip_body_uses_word_boundaries_and_clips_long_help ... ok
+test tests::table_multiline_cells_stay_inside_their_row_and_copy_original_text ... ok
+test tests::tree_reveal_expands_only_ancestors_and_keeps_focus ... ok
+test tests::tree_table_hosts_get_theme_panel_radius ... ok
+test tests::unstyled_text_and_button_use_theme ... ok
+test text_area::tests::document_navigation_selects_source_text_across_wrapped_lines_in_read_only_mode ... ok
+test text_area::tests::line_number_gutter_shares_wrap_hit_selection_scroll_and_ime_geometry ... ok
+test text_area::tests::page_keys_follow_wrapped_visual_lines_and_handle_tiny_or_empty_viewports ... ok
+test text_area::tests::literal_find_selects_unicode_match_and_replace_undoes_exact_match ... ok
+test text_area::tests::physical_line_numbers_handle_wrapping_empty_lines_digit_growth_and_session_modes ... ok
+test text_area::tests::active_composition_survives_same_document_rebuild_and_respects_read_only ... ok
+test text_area::tests::pointer_drag_wrap_navigation_scroll_and_clip_use_same_layout ... ok
+test text_area::tests::desired_column_survives_rebuild_and_resets_after_explicit_placement_or_font_changes ... ok
+test text_area::tests::read_only_keeps_selection_copy_scroll_and_blocks_all_user_edits ... ok
+test text_area::tests::search_highlights_are_disjoint_unicode_clipped_and_session_bound ... ok
+test text_area::tests::text_foregrounds_clip_visible_rows_and_suspend_during_ime_preedit ... ok
+test text_area::tests::text_foregrounds_reused_nodes_keep_gutter_numbers_above_the_background ... ok
+test text_area::tests::page_keys_move_and_extend_selection_in_long_read_only_documents ... ok
+test text_area::tests::range_replacement_preserves_selection_direction_for_undo_and_rejects_invalid_edits ... ok
+test text_area::tests::word_deletion_respects_read_only_and_new_word_keys_defer_to_composition ... ok
+test text_area::tests::text_foregrounds_validate_atomically_and_keep_document_selection_and_history ... ok
+test text_area::tests::word_wrapped_pointer_keys_ime_marks_and_history_share_source_positions ... ok
+test text_area::tests::unicode_selection_clipboard_ime_and_history_survive_rebuild ... ok
+test text_area::tests::wrapped_text_keeps_fitting_words_and_source_indices_on_the_same_visual_line ... ok
+test text_area::tests::unwrapped_text_shares_horizontal_scroll_hits_selection_ime_history_and_sessions ... ok
+test text_area::tests::vertical_keys_keep_the_desired_column_across_shorter_lines ... ok
+test text_area::tests::word_deletions_preserve_other_text_and_restore_their_editing_session ... ok
+test text_area::tests::word_navigation_groups_identifiers_punctuation_and_complete_graphemes ... ok
+test text_area_hint::tests::hint_arrow_hits_preserve_the_caret_and_disappear_for_single_or_hidden_hints ... ok
+test text_area_hint::tests::hint_anchor_uses_line_number_gutter_and_hides_when_scrolled_offscreen ... ok
+test text_area_hint::tests::hints_defer_to_popups_and_hide_stale_selection_composition_and_read_only_state ... ok
+test text_area::tests::fractional_line_heights_do_not_skip_rows_during_keyboard_navigation ... ok
+test text_area_hint::tests::hints_wrap_clip_flip_and_pass_pointer_input_to_the_editor ... ok
+test text_completion::tests::text_completions_page_accept_once_and_keep_editor_history_and_focus ... ok
+test text_completion::tests::text_completions_clip_long_labels_inside_a_narrow_window ... ok
+test text_area_hint::tests::clipped_hint_text_scrolls_to_the_end_without_scrolling_or_editing_its_owner ... ok
+test text_completion::tests::text_completions_reject_stale_document_selection_composition_and_other_popups ... ok
+test text_completion::tests::text_completions_pointer_wheel_and_typing_share_the_visible_candidates ... ok
+test text_area_hint::tests::hint_escape_stays_dismissed_during_argument_edits_and_preserves_undo ... ok
+test text_area_hint::tests::hint_pages_keep_manual_choice_through_refresh_and_editor_sessions ... ok
+test text_input::tests::integer_input_pointer_press_arms_repeat_until_release ... ok
+test text_input::tests::integer_repeat_waits_pauses_stops_and_preserves_exact_values_and_undo ... ok
+test theme::tests::alarm_severity_maps_theme_tokens ... ok
+test theme::tests::all_styles_from_theme_smoke ... ok
+test theme::tests::calendar_and_link_from_theme ... ok
+test theme::tests::column_style_tracks_theme_surface ... ok
+test theme::tests::dark_and_light_presets_differ ... ok
+test theme::tests::default_theme_is_dark ... ok
+test theme::tests::density_scales_padding ... ok
+test theme::tests::panel_and_input_from_theme ... ok
+test theme::tests::result_status_colors_follow_theme ... ok
+test text_input::tests::input_history_covers_native_edit_routes_and_invalidates_redo_only_for_changes ... ok
+test text_input::tests::input_selection_contrasts_in_both_themes_and_long_carets_and_ime_stay_visible ... ok
+test text_input::tests::integer_input_pointer_steps_keep_editor_focus_and_reserve_text_space ... ok
+test text_input::tests::integer_input_steps_exact_bounds_history_clipboard_and_composition ... ok
+test text_input::tests::partial_ranges_replace_copy_cut_history_and_restore_unicode_in_both_field_kinds ... ok
+test text_input::tests::partial_ranges_shift_direction_paint_clip_secret_and_disabled_fields ... ok
+test text_input::tests::pointer_ranges_follow_character_geometry_and_keep_replacement_undo ... ok
+test text_input::tests::single_line_paint_keeps_multiline_documents_and_matches_ime_scroll_and_secret_geometry ... ok
+test text_input::tests::input_sessions_and_autocomplete_acceptance_keep_bounded_history_and_composition ... ok
+
+test result: ok. 221 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 104.97s
+
+   Doc-tests next_gui_immediate
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_layout
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_platform
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_profile
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_render
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_render_gpu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_render_soft
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_scene
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests next_gui_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

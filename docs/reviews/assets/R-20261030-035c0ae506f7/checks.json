@@ -1,0 +1,22 @@
+{
+  "clippy": {
+    "exit": 0,
+    "log": "/tmp/next-gui-filter-menu-v1-clippy-final.log"
+  },
+  "workspace": {
+    "exit": 0,
+    "log": "/tmp/next-gui-filter-menu-v1-workspace-final.log"
+  },
+  "build": {
+    "exit": 0,
+    "log": "/tmp/next-gui-filter-menu-v1-build-final.log"
+  },
+  "macos": {
+    "exit": 0,
+    "log": "/tmp/next-gui-filter-menu-v1-macos-final.log"
+  },
+  "windows": {
+    "exit": 0,
+    "log": "/tmp/next-gui-filter-menu-v1-windows-final.log"
+  }
+}
