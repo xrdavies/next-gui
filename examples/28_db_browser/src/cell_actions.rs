@@ -383,7 +383,7 @@ impl Demo {
                 Some(Ok(())) => {}
                 Some(Err(error)) => {
                     if let Some(path) = external {
-                        if !self.state.external_cell.as_ref().is_some_and(|cell| path == cell.path.to_path_buf()) {
+                        if self.state.external_cell.as_ref().is_none_or(|cell| path != cell.path.to_path_buf()) {
                             continue;
                         }
                         self.state.cancel_external_cell();

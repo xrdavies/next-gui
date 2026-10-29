@@ -1625,7 +1625,7 @@ impl crate::Demo {
             self.state.chart_state = next_gui_ui::PlotState::default();
             for tab in &mut self.state.browse_tabs {
                 tab.result = None;
-                tab.rowids.clear();
+                tab.row_keys.clear();
                 tab.total_rows = None;
                 tab.clear_selection();
             }

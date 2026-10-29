@@ -226,7 +226,7 @@ pub struct BrowseTabState {
     #[serde(skip)]
     pub result: Option<QueryResult>,
     #[serde(skip)]
-    pub rowids: Vec<i64>,
+    pub row_keys: Vec<db::RowKey>,
     #[serde(skip)]
     pub sel_row: Option<usize>,
     #[serde(skip)]
@@ -313,9 +313,9 @@ impl BrowseTabState {
         let last = row.max(anchor).max(end);
         if last >= old.rows.len() || [previous.sel_col, previous.sel_col_start, previous.sel_col_end]
             .into_iter().flatten().any(|col| col >= new.columns.len()) { return; }
-        let start = if previous.rowids.len() == old.rows.len() && self.rowids.len() == new.rows.len() {
-            let Some(start) = self.rowids.iter().position(|id| *id == previous.rowids[first]) else { return; };
-            if self.rowids.get(start..start + last - first + 1) != Some(&previous.rowids[first..=last]) { return; }
+        let start = if previous.row_keys.len() == old.rows.len() && self.row_keys.len() == new.rows.len() {
+            let Some(start) = self.row_keys.iter().position(|id| *id == previous.row_keys[first]) else { return; };
+            if self.row_keys.get(start..start + last - first + 1) != Some(&previous.row_keys[first..=last]) { return; }
             start
         } else {
             // Without a stable row key, retain only unchanged typed rows at the same positions.
@@ -362,7 +362,7 @@ impl BrowseTabState {
             table_options: BTreeMap::new(),
             schema_table_options: BTreeMap::new(),
             result: None,
-            rowids: Vec::new(),
+            row_keys: Vec::new(),
             sel_row: None,
             sel_row_start: None,
             sel_row_end: None,
@@ -665,7 +665,7 @@ struct CellApplyConfirmation {
     revision: u64,
     path: String,
     browse: usize,
-    target: (String, String, i64, String),
+    target: (String, String, db::RowKey, String),
     mode: EditCellMode,
     storage: usize,
     text: String,
@@ -1379,7 +1379,7 @@ impl AppState {
         if self.conn.is_none() {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
                 t.result = None;
-                t.rowids.clear();
+                t.row_keys.clear();
                 t.total_rows = None;
                 t.clear_selection();
             }
@@ -1390,7 +1390,7 @@ impl AppState {
         let Some(table) = table else {
             let t = self.browse_mut();
             t.result = None;
-            t.rowids.clear();
+            t.row_keys.clear();
             t.total_rows = None;
             t.clear_selection();
             self.clear_browse_editor();
@@ -1412,7 +1412,7 @@ impl AppState {
         let total_rows = db::count_browse_rows_in(self.conn.as_ref().unwrap(), &schema, &table, where_sql.as_deref())?;
         let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
         let offset = self.browse().offset.min(last_page);
-        let (total_rows, result, rowids) = {
+        let (total_rows, result, row_keys) = {
             let conn = self.conn.as_ref().unwrap();
             if is_view {
                 (
@@ -1429,7 +1429,7 @@ impl AppState {
                     Vec::new(),
                 )
             } else {
-                match db::browse_with_rowid_in(
+                match db::browse_with_keys_in(
                     conn,
                     &schema,
                     &table,
@@ -1438,23 +1438,7 @@ impl AppState {
                     db::DEFAULT_LIMIT,
                     offset,
                 ) {
-                    Ok(mut q) => {
-                        let mut rowids = Vec::new();
-                        if let Some(idx) = q.columns.iter().position(|c| c == "__rowid__") {
-                            for row in &q.rows {
-                                let id = row.get(idx).and_then(|s| s.parse().ok()).unwrap_or(-1);
-                                rowids.push(id);
-                            }
-                            q.columns.remove(idx);
-                            for row in &mut q.rows {
-                                if idx < row.len() {
-                                    row.remove(idx);
-                                }
-                            }
-                            q.values.remove_column(idx);
-                        }
-                        (total_rows, q, rowids)
-                    }
+                    Ok((q, row_keys)) => (total_rows, q, row_keys),
                     Err(_) => (
                         total_rows,
                         db::browse_table_in(
@@ -1483,7 +1467,7 @@ impl AppState {
             t.set_options(candidate.options());
             t.offset = offset;
             t.title = if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) };
-            t.rowids = rowids;
+            t.row_keys = row_keys;
             t.total_rows = Some(total_rows);
             t.result = Some(result);
             t.clear_selection();
@@ -2232,7 +2216,7 @@ impl AppState {
                     options.rename_columns(&renames);
                     tab.set_options(options);
                     tab.result = None;
-                    tab.rowids.clear();
+                    tab.row_keys.clear();
                     tab.total_rows = None;
                     tab.clear_selection();
                 }
@@ -2249,7 +2233,7 @@ impl AppState {
             for tab in &mut self.browse_tabs {
                 if let Some(mut options)=tab.stored_options(&schema,view).cloned() {options.rename_columns(&changes);options.remap_columns(&columns);tab.store_options(&schema,view,options);}
                 if tab.schema==schema && tab.table.as_deref()==Some(view) {
-                    let mut options=tab.options();options.rename_columns(&changes);options.remap_columns(&columns);tab.set_options(options);tab.result=None;tab.rowids.clear();tab.total_rows=None;tab.clear_selection();
+                    let mut options=tab.options();options.rename_columns(&changes);options.remap_columns(&columns);tab.set_options(options);tab.result=None;tab.row_keys.clear();tab.total_rows=None;tab.clear_selection();
                 }
             }
             for rule in &mut self.cond_rules {if rule.schema==schema && rule.table.as_deref()==Some(view) {rename_column(&mut rule.column,&changes);}}
@@ -2264,7 +2248,7 @@ impl AppState {
             if self.browse().schema == schema && self.browse().table.as_deref() == Some(&name) {
                 let tab = self.browse_mut();
                 tab.result = None;
-                tab.rowids.clear();
+                tab.row_keys.clear();
                 tab.total_rows = None;
                 tab.clear_selection();
                 self.clear_browse_editor();
@@ -2690,7 +2674,7 @@ impl AppState {
         // ROLLBACK conflicts and triggers can invalidate every cached row identity.
         for tab in &mut self.browse_tabs {
             tab.result = None;
-            tab.rowids.clear();
+            tab.row_keys.clear();
             tab.total_rows = None;
             tab.clear_selection();
         }
@@ -2874,7 +2858,7 @@ impl AppState {
         for log in logs { self.log_sql(log); }
         if pairs.iter().any(|(key, _)| matches!(key.as_str(), "page_size" | "auto_vacuum")) {
             for tab in &mut self.browse_tabs {
-                tab.result = None; tab.rowids.clear(); tab.total_rows = None; tab.clear_selection();
+                tab.result = None; tab.row_keys.clear(); tab.total_rows = None; tab.clear_selection();
             }
             self.clear_browse_editor();
             self.refresh_browse()?;
@@ -3291,7 +3275,7 @@ impl AppState {
             .map_or_else(||self.edit_col.trim(),String::as_str)
     }
 
-    fn cell_apply_target(&mut self) -> Result<(String, String, i64, String), String> {
+    fn cell_apply_target(&mut self) -> Result<(String, String, db::RowKey, String), String> {
         if self.sql_cell_read_only() { return Err("SQL result cells are read-only".into()); }
         if self.tab != MainTab::Browse || matches!(self.edit_source, EditCellSource::BrowseReadOnly) {
             return Err("This cell is read-only; select an editable Browse cell".into());
@@ -3301,11 +3285,11 @@ impl AppState {
         let tab = self.browse();
         let table = tab.table.clone().ok_or("No browse table")?;
         let row = tab.sel_row.ok_or("Select a browse row first")?;
-        let rowid = *tab.rowids.get(row).ok_or("No usable rowid for selection")?;
+        let key = tab.row_keys.get(row).cloned().ok_or("No usable record key for selection")?;
         let column = self.edit_column_name().to_string();
         if column.is_empty() { return Err("Select a column first".into()); }
         if self.edit_cell_generated() { return Err("Generated columns are read-only; edit their source columns".into()); }
-        Ok((schema, table, rowid, column))
+        Ok((schema, table, key, column))
     }
 
     fn cell_apply_confirmation(&mut self) -> Result<CellApplyConfirmation, String> {
@@ -3368,7 +3352,7 @@ impl AppState {
     pub fn apply_cell_draft(&mut self) -> Result<(), String> {self.apply_cell_draft_inner(true)}
 
     fn apply_cell_draft_inner(&mut self, validate_format: bool) -> Result<(), String> {
-        let (schema,table,rowid,column)=self.cell_apply_target()?;
+        let (schema,table,key,column)=self.cell_apply_target()?;
         let applied_mode = self.edit_mode;
         let evaluating = self.edit_mode == EditCellMode::Evaluation;
         let compacting = validate_format && self.prefs.indent_compact && matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml);
@@ -3384,16 +3368,14 @@ impl AppState {
             }
         }
         let conn=self.conn.as_ref().unwrap();
-        let changed=db::with_savepoint(conn,|| {
-            let sql=format!("SELECT cell.{} FROM {} AS cell WHERE cell.rowid=?1",db::quote_ident(&column),db::qualified_name(&schema,&table));
-            let same=conn.query_row(&sql,[rowid],|row|Ok(row.get_ref(0)?==rusqlite::types::ValueRef::from(&value)))
-                .map_err(|error|if matches!(error,rusqlite::Error::QueryReturnedNoRows) {"The selected record no longer exists; refresh Browse".into()} else {error.to_string()})?;
-            if same {return Ok(false);}
-            if db::update_cell_in(conn,&schema,&table,rowid,&column,&value)?==0 {return Err("The cell update was ignored; draft retained".into());}
-            Ok(true)
+        let (changed, updated_key)=db::with_savepoint(conn,|| {
+            let current=db::read_keyed_cell_in(conn,&schema,&table,&key,&column)?;
+            if current.as_ref()==rusqlite::types::ValueRef::from(&value) {return Ok((false,Some(key.clone())));}
+            let updated=db::update_cell_in(conn,&schema,&table,&key,&column,&value)?;
+            Ok((true,updated))
         })?;
         if changed {
-            self.log_sql(format!("UPDATE {} SET {}=… WHERE rowid={rowid}", db::qualified_name(&schema, &table), db::quote_ident(&column)));
+            self.log_sql(format!("UPDATE {} SET {}=… -- selected record", db::qualified_name(&schema, &table), db::quote_ident(&column)));
             self.mark_dirty();
         }
         self.edit_saved = value;
@@ -3406,7 +3388,7 @@ impl AppState {
         }
         self.refresh_browse()?;
         // Refresh clears the editor; recover the updated record by identity, not its old row index.
-        if let Some(row) = self.browse().rowids.iter().position(|id| *id == rowid) {
+        if let Some(row) = updated_key.as_ref().and_then(|key| self.browse().row_keys.iter().position(|id| id == key)) {
             let col = self.browse().result.as_ref().and_then(|result| result.columns.iter().position(|name| name.eq_ignore_ascii_case(&column)));
             let tab = self.browse_mut();
             tab.sel_row = Some(row); tab.sel_col = col;
@@ -3469,7 +3451,7 @@ impl AppState {
             let anchor = tab.sel_col_start.unwrap_or(col);
             (col.min(anchor), col.max(anchor))
         } else { (0, result.columns.len().saturating_sub(1)) };
-        if last >= tab.rowids.len() || result.columns.is_empty() || last_col >= result.columns.len() {
+        if last >= tab.row_keys.len() || result.columns.is_empty() || last_col >= result.columns.len() {
             return Err("Selected cells are not editable; refresh and retry".into());
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
@@ -3479,7 +3461,7 @@ impl AppState {
             let column = info.iter().find(|info| info.name == *col).ok_or("Selected column is not editable")?;
             Ok(if column.notnull { db::CellValue::Text(Vec::new()) } else { db::CellValue::Null })
         }).collect::<Result<Vec<_>, String>>()?;
-        let updates = tab.rowids[first..=last].iter().map(|id| (*id, values.clone())).collect::<Vec<_>>();
+        let updates = tab.row_keys[first..=last].iter().map(|id| (id.clone(), values.clone())).collect::<Vec<_>>();
         db::update_cells_in(conn, &schema, &table, columns, &updates)?;
         self.log_sql(format!("-- cut {}x{} from {}", updates.len(), columns.len(), db::qualified_name(&schema, &table)));
         self.mark_dirty();
@@ -3534,8 +3516,8 @@ impl AppState {
         let height = rows.len();
         let columns = result.columns[start_col..start_col + width].to_vec();
         let updates = rows.into_iter().enumerate().map(|(i, values)| {
-            let rowid = *tab.rowids.get(start_row + i).ok_or("Selected rows are not editable")?;
-            Ok((rowid, values))
+            let key = tab.row_keys.get(start_row + i).cloned().ok_or("Selected rows are not editable")?;
+            Ok((key, values))
         }).collect::<Result<Vec<_>, String>>()?;
         db::update_cells_in(self.conn.as_ref().ok_or("No database open")?, &schema, &table, &columns, &updates)?;
         self.log_sql(format!("-- paste {height}x{width} into {}", db::qualified_name(&schema, &table)));
@@ -3745,7 +3727,7 @@ impl AppState {
     }
 
     fn browse_cell_read_only(&self) -> bool {
-        self.read_only || self.browse().sel_row.and_then(|row| self.browse().rowids.get(row)).is_none()
+        self.read_only || self.browse().sel_row.and_then(|row| self.browse().row_keys.get(row)).is_none()
             || self.edit_cell_generated()
     }
 
@@ -4100,24 +4082,14 @@ impl AppState {
             return Err(format!("Column {col} has no foreign key"));
         };
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let rowid = self
+        let row_key = self
             .browse()
             .sel_row
-            .and_then(|i| self.browse().rowids.get(i))
-            .ok_or("Select a stored row with a rowid")?;
+            .and_then(|i| self.browse().row_keys.get(i))
+            .ok_or("Select a stored row with a record key")?;
         let mut parts = Vec::new();
         for key in fks.iter().filter(|key| key.id == fk.id) {
-            let value = conn
-                .query_row(
-                    &format!(
-                        "SELECT {} FROM {} WHERE rowid=?1",
-                        db::quote_ident(&key.from_col),
-                        db::qualified_name(&schema, &table)
-                    ),
-                    [rowid],
-                    |row| row.get_ref(0).map(db::CellValue::from),
-                )
-                .map_err(|e| e.to_string())?;
+            let value = db::read_keyed_cell_in(conn, &schema, &table, row_key, &key.from_col)?;
             if value == db::CellValue::Null {
                 return Err("NULL foreign key has no parent row".into());
             }
@@ -4545,8 +4517,8 @@ mod chart_default_tests {
                 assert!(state.apply_confirmed_cell_format().unwrap_err().contains("changed"));state.edit_value=bad.into();
                 assert!(state.prepare_cell_format_confirmation().unwrap());state.edit_col="other".into();
                 assert!(state.apply_confirmed_cell_format().is_err());state.edit_col="v".into();
-                assert!(state.prepare_cell_format_confirmation().unwrap());let rowid=state.browse().rowids[0];state.browse_mut().rowids[0]=rowid+1;
-                assert!(state.apply_confirmed_cell_format().unwrap_err().contains("changed"));state.browse_mut().rowids[0]=rowid;
+                assert!(state.prepare_cell_format_confirmation().unwrap());let rowid=state.browse().row_keys[0].clone();state.browse_mut().row_keys[0].values[0]=db::CellValue::Integer(999);
+                assert!(state.apply_confirmed_cell_format().unwrap_err().contains("changed"));state.browse_mut().row_keys[0]=rowid;
                 assert!(state.prepare_cell_format_confirmation().unwrap());state.read_only=true;
                 assert!(state.apply_confirmed_cell_format().unwrap_err().contains("read-only"));state.read_only=false;
                 assert!(state.prepare_cell_format_confirmation().unwrap());state.apply_confirmed_cell_format().unwrap();
@@ -4712,9 +4684,9 @@ mod chart_default_tests {
         state.conn.as_ref().unwrap().execute_batch("UPDATE t SET v=2; INSERT INTO t VALUES(1),(3)").unwrap();
         state.refresh_schema().unwrap(); state.switch_browse_table_in("main","t").unwrap();
         state.set_browse_ordering(vec![db::OrderBy {column:"v".into(),descending:false}]).unwrap();
-        state.goto_browse_record(2).unwrap(); assert_eq!(state.browse().rowids[1],1);
+        state.goto_browse_record(2).unwrap(); assert_eq!(state.browse().row_keys[1].values,[db::CellValue::Integer(1)]);
         state.edit_value = "5".into(); state.apply_cell_draft().unwrap();
-        assert_eq!(state.browse().sel_row,Some(2)); assert_eq!(state.browse().rowids[2],1);
+        assert_eq!(state.browse().sel_row,Some(2)); assert_eq!(state.browse().row_keys[2].values,[db::CellValue::Integer(1)]);
         assert_eq!(state.edit_saved,rusqlite::types::Value::Integer(5)); assert_eq!(state.edit_value,"5");
         state.browse_mut().filter = "v > 0".into(); state.refresh_browse().unwrap(); state.goto_browse_record(3).unwrap();
         state.edit_value = "-1".into(); state.apply_cell_draft().unwrap();
@@ -4898,7 +4870,7 @@ mod chart_default_tests {
         assert!(!state.conn.as_ref().unwrap().is_autocommit());
         assert!(!state.dirty);
         assert!(!state.schema.iter().any(|o|o.name=="pending_schema"));
-        assert!(state.browse_tabs.iter().all(|t|t.result.is_none() && t.rowids.is_empty() && t.total_rows.is_none() && t.sel_row.is_none()));
+        assert!(state.browse_tabs.iter().all(|t|t.result.is_none() && t.row_keys.is_empty() && t.total_rows.is_none() && t.sel_row.is_none()));
         assert_eq!(state.edit_value,"rejected");
         assert!(state.has_cell_draft());
         assert!(state.apply_cell_draft().unwrap_err().contains("Select a browse row"));
@@ -5199,7 +5171,7 @@ mod chart_default_tests {
         assert_eq!(state.browse().filter, "v = 'saved'");
         assert_eq!(state.browse().column_names, ["renamed"]);
         assert!(state.browse().result.is_none());
-        assert!(state.browse().rowids.is_empty());
+        assert!(state.browse().row_keys.is_empty());
         assert!(state.browse().total_rows.is_none());
         assert!(state.browse().sel_row.is_none());
         assert!(!state.has_cell_draft());
@@ -5457,7 +5429,7 @@ mod chart_default_tests {
         assert!(state.chart_table.is_none() && state.chart_points.is_empty());
         assert_eq!(state.schema_names, ["main"]);
         assert!(state.browse_tabs.iter().all(|tab| tab.schema == "main" && tab.schema_table_options.is_empty()));
-        assert!(state.browse().table.is_none() && state.browse().result.is_none() && state.browse().rowids.is_empty());
+        assert!(state.browse().table.is_none() && state.browse().result.is_none() && state.browse().row_keys.is_empty());
         assert!(state.edit_col.is_empty());
         state.switch_browse_table("parent").unwrap();
         assert_eq!(state.browse().result.as_ref().unwrap().rows[0][1], "main");
@@ -6214,10 +6186,10 @@ mod chart_default_tests {
         assert_eq!(state.edit_bytes.as_slice(), [0,255,39]);
         state.edit_bytes = Arc::new(vec![255,0]);
         let value = state.edited_cell_value().unwrap();
-        db::update_cell(
+        db::update_cell_in(
             state.conn.as_ref().unwrap(),
-            "t",
-            state.browse().rowids[0],
+            "main", "t",
+            &state.browse().row_keys[0],
             "v",
             &value,
         )
@@ -6367,7 +6339,7 @@ mod chart_default_tests {
         let tab = state.browse();
         assert_eq!(tab.result.as_ref().unwrap().rows.len(), 101);
         assert_eq!(tab.result.as_ref().unwrap().rows[0][0], "501");
-        assert_eq!(tab.rowids[0], 501);
+        assert_eq!(tab.row_keys[0].values, [db::CellValue::Integer(501)]);
         assert_eq!(tab.total_rows, Some(601));
         assert!(tab.sel_row.is_none());
         assert!(state.edit_col.is_empty());
@@ -6456,7 +6428,7 @@ mod chart_default_tests {
     }
 
     #[test]
-    fn browse_tab_selection_without_rowids_requires_unchanged_typed_rows() {
+    fn browse_tab_selection_uses_primary_keys_and_requires_unchanged_unkeyed_rows() {
         for table in ["wr", "vw"] {
             let mut state = test_state();
             state.conn.as_ref().unwrap().execute_batch("CREATE TABLE wr(k TEXT PRIMARY KEY, v) WITHOUT ROWID;
@@ -6464,7 +6436,7 @@ mod chart_default_tests {
             state.refresh_schema().unwrap();
             state.browse_mut().table = Some(table.into());
             state.refresh_browse().unwrap();
-            assert!(state.browse().rowids.is_empty());
+            assert_eq!(state.browse().row_keys.is_empty(), table == "vw");
             state.browse_mut().sel_row = Some(0);
             state.browse_mut().sel_col = Some(1);
             state.sync_edit_cell_from_selection();
@@ -6475,8 +6447,13 @@ mod chart_default_tests {
             state.switch_browse_tab(1).unwrap();
             state.conn.as_ref().unwrap().execute_batch("UPDATE wr SET v=X'0304' WHERE k='a';").unwrap();
             state.switch_browse_tab(0).unwrap();
-            assert!(state.browse().sel_row.is_none(), "same-length BLOB display labels are not identity");
-            assert!(state.edit_col.is_empty());
+            if table == "vw" {
+                assert!(state.browse().sel_row.is_none(), "same-length BLOB labels are not identity");
+                assert!(state.edit_col.is_empty());
+            } else {
+                assert_eq!(state.browse().sel_row, Some(0));
+                assert_eq!(state.edit_bytes.as_slice(), [3,4]);
+            }
         }
     }
 
@@ -7200,3 +7177,7 @@ mod chart_default_tests {
         assert!(ddl.contains("PRIMARY KEY"));
     }
 }
+
+#[cfg(test)]
+#[path = "row_identity_tests.rs"]
+mod row_identity_tests;

@@ -54,7 +54,7 @@ fn cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_
             }
         }
     }
-    for table in ["cells", "cell_view", "keyed"] {
+    for table in ["cells", "cell_view"] {
         demo.state.switch_browse_table_in("main", table).unwrap(); demo.state.goto_browse_record(1).unwrap();
         demo.state.browse_mut().sel_col = Some(if table == "cells" {3} else {1}); demo.state.sync_edit_cell_from_selection();
         demo.do_rebuild(); assert!(demo.state.edit_cell_read_only());
@@ -62,6 +62,9 @@ fn cell_editor_page_policy_preserves_previews_and_blocks_unwritable_sources_and_
         demo.state.edit_col = "value".into(); demo.state.edit_value = "unsafe".into();
         assert!(demo.state.apply_cell_draft().unwrap_err().contains("read-only")); demo.state.discard_cell_draft();
     }
+    demo.state.switch_browse_table_in("main", "keyed").unwrap();demo.state.goto_browse_record(1).unwrap();
+    demo.state.browse_mut().sel_col=Some(1);demo.state.sync_edit_cell_from_selection();demo.do_rebuild();
+    assert!(!demo.state.edit_cell_read_only());assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell),Some(true));
     demo.state.switch_browse_table_in("main", "cells").unwrap(); demo.state.goto_browse_record(1).unwrap();
     demo.state.browse_mut().sel_col = Some(1); demo.state.read_only = true; demo.state.sync_edit_cell_from_selection();
     demo.do_rebuild(); assert_eq!(demo.ui.button_enabled(demo.ids.btn_edit_cell), Some(false));

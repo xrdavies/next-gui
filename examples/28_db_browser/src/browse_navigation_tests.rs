@@ -71,7 +71,7 @@ fn jump_guards_drafts_busy_queries_and_restores_selection_on_query_failure() {
     let mut demo = demo();
     demo.state.goto_browse_record(510).unwrap();
     let old_rows = demo.state.browse().result.as_ref().unwrap().rows.clone();
-    let old_rowids = demo.state.browse().rowids.clone();
+    let old_rowids = demo.state.browse().row_keys.clone();
     demo.state.edit_value = "keep this draft".into();
     assert!(demo
         .state
@@ -93,7 +93,7 @@ fn jump_guards_drafts_busy_queries_and_restores_selection_on_query_failure() {
     assert!(demo.state.goto_browse_record(1).is_err());
     assert_eq!(selected(&demo), (500, 9, "187"));
     assert_eq!(demo.state.browse().result.as_ref().unwrap().rows, old_rows);
-    assert_eq!(demo.state.browse().rowids, old_rowids);
+    assert_eq!(demo.state.browse().row_keys, old_rowids);
     assert_eq!(demo.state.edit_value, old_editor);
     assert_eq!(demo.state.browse().goto_record, "510");
     assert!(!demo.state.dirty);
@@ -206,7 +206,7 @@ fn shrinking_results_and_empty_views_clamp_navigation_without_a_stale_editor() {
     demo.state.read_only = true;
     demo.state.goto_browse_record(2).unwrap();
     assert_eq!(selected(&demo), (0, 1, "3"));
-    assert!(demo.state.browse().rowids.is_empty());
+    assert!(demo.state.browse().row_keys.is_empty());
     demo.state
         .conn
         .as_ref()

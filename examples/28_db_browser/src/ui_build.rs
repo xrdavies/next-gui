@@ -2592,7 +2592,7 @@ pub fn build_ui(
         ),
         ConfirmKind::DeleteRow => (
             "Delete Record",
-            "Delete the selected browse row (by rowid)?".into(),
+            "Delete the selected browse record?".into(),
             "Delete",
         ),
         ConfirmKind::Documents => (

@@ -127,7 +127,7 @@ fn sorting_guards_drafts_and_restores_tab_on_query_error() {
     assert!(demo.state.sort_browse_column("id".into(), true).is_err());
     assert_eq!(demo.state.browse().ordering(), previous.ordering());
     assert_eq!(demo.state.browse().offset, 500);
-    assert_eq!(demo.state.browse().rowids, previous.rowids);
+    assert_eq!(demo.state.browse().row_keys, previous.row_keys);
     assert_eq!(demo.state.browse().sel_row, previous.sel_row);
     assert_eq!(demo.state.browse().sel_col, previous.sel_col);
     assert_eq!(
@@ -242,13 +242,12 @@ fn query_sort_quotes_literal_identifiers_and_rejects_missing_columns() {
         },
     ];
     for rowid in [false, true] {
-        let query = if rowid {
-            dbmod::browse_with_rowid
-        } else {
-            dbmod::browse_table
+        let query = |conn: &rusqlite::Connection, table: &str, order: &[OrderBy], filter: Option<&str>, limit, offset| {
+            if rowid { dbmod::browse_with_keys_in(conn,"main",table,order,filter,limit,offset).map(|(result,_)|result) }
+            else { dbmod::browse_table(conn,table,order,filter,limit,offset) }
         };
         let result = query(&conn, "t", &ordering, None, 2, 1).unwrap();
-        let column = usize::from(rowid);
+        let column = 0;
         assert_eq!(
             result
                 .rows

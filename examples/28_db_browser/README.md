@@ -216,13 +216,15 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   xml:space. Full Qt serialization and cross-mode history details remain.
 - Foreign-key navigation resolves omitted parent PK columns, groups composite keys
   and filters on the stored typed values; NULL keys report no parent. Source rows
-  still require an unshadowed rowid.
+  use typed row keys: an unshadowed rowid alias, or every ordered primary-key
+  component for WITHOUT ROWID and fully shadowed tables. Ambiguous or stale keys
+  reject the entire operation; views still need an explicit custom-key workflow.
 - SQL tabs own results, export snapshots, messages, widths and scroll positions.
   Save as VIEW takes an editable name and the executed result statement, so editing
   the script after execution does not change the view source.
 - PRAGMA writes are read back; settings that do not take effect report the actual
   value and possible earlier partial application. NONE→auto_vacuum requires an
-  explicit VACUUM. Plot now shows numeric axes for the first 500 source rows, keeps f64 values and source row positions, and reports query errors. Wheel zoom, drag pan, point selection, Ctrl/Cmd-click range selection, Home fit, +/- zoom, arrow pan and X/Y/R axis constraints work on the chart. Matching UI rebuilds retain its viewport and highlights. Full Browse/SQL source binding, multi-column controls, table-selection linkage, Load All and plot file export remain unfinished.
+  explicit VACUUM. Plot binds typed Browse/SQL sources, exposes X/Y1/Y2 columns and retained series styles, and can load complete sources through cancellable workers. Zoom/pan, point selection, named hover information, fixed number formats and signed grouped/stacked bars retain source row identities. Current-view image clipboard and staged PNG/JPEG/BMP/raster-PDF saves are implemented. Table-to-Plot highlighting, Print/vector PDF, remaining conversion/style details and original native/platform acceptance remain.
 - CSV import resets the old table's filter/order/page/selection. Conditional formats
   are scoped to a table and saved with plot source, read-only mode and DDL text in
   JSON projects. Canceling Preferences does not change frozen columns.

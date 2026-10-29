@@ -80,6 +80,12 @@ const FULL_PLOT_QA_SQL: &str = "CREATE TABLE telemetry(sequence INTEGER,measured
 WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3000)
 INSERT INTO telemetry SELECT x,CASE WHEN x%97=0 THEN NULL ELSE 1200+(x*73)%1100+(x%7)*70 END,520+(x%101)*30,CASE WHEN x%2=0 THEN 'APAC' ELSE 'EMEA' END FROM n;";
 
+const ROW_KEY_QA_SQL: &str = "CREATE TABLE regions(code TEXT PRIMARY KEY) WITHOUT ROWID;
+INSERT INTO regions VALUES('APAC'),('EMEA');
+CREATE TABLE warehouse_ledger(tenant TEXT COLLATE NOCASE REFERENCES regions(code), record INTEGER, \"raw key\" BLOB, note TEXT, amount REAL, PRIMARY KEY(tenant,record,\"raw key\")) WITHOUT ROWID;
+WITH RECURSIVE n(i) AS(VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<18)
+INSERT INTO warehouse_ledger SELECT CASE WHEN i%2=1 THEN 'APAC' ELSE 'EMEA' END,9007199254740992+i,X'00FF','Shipment '||i,1200+i*175 FROM n;";
+
 const SCHEMA_NAMESPACE_QA_SQL: &str = "CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
     INSERT INTO main.customers VALUES(1, 'Main customer');
     CREATE TEMP TABLE customers(temp_value TEXT);
@@ -1561,7 +1567,26 @@ impl Demo {
                 });
             }
         }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("row-keys") {
+                state.new_memory_db().unwrap();
+                state.conn.as_ref().unwrap().execute_batch(ROW_KEY_QA_SQL).unwrap();
+                state.write_changes().unwrap(); state.refresh_schema().unwrap();
+                state.tab=MainTab::Browse; state.switch_browse_table_in("main","warehouse_ledger").unwrap();
+                state.goto_browse_record(1).unwrap();
+                state.browse_mut().sel_col=Some(if tab.contains("pk") {1} else {3});
+                state.prefs.auto_switch_mode=false; state.sync_edit_cell_from_selection();
+                state.dock_focus=DockKind::Plot; state.body_ratio=0.45; state.dock_ratio=0.62;
+                if tab.contains("apply") {state.edit_value=if tab.contains("pk") {"42"} else {"Saved composite key 中文"}.into();}
+                if tab.contains("delete") {state.confirm_kind=ConfirmKind::DeleteRow;state.confirm_open=true;}
+                if tab.contains("readonly") {state.read_only=true;}
+                if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+            }
+        }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("row-keys")) {
+            state.plot.check(4,1,true);state.sync_current_plot().unwrap();
+        }
         if state.dock_edit {
             if let Err(error) = state.sync_edit_cell_for_page() { state.error_msg = Some(error); }
         }
@@ -1570,6 +1595,9 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("row-keys") && tab.contains("apply")) {
+            built.ui.set_focus(Some(built.btn_edit_cell)); built.ui.sync(&mut built.scene);
+        }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("cell-session")) {
             built.ui.set_focus(Some(built.edit_value)); built.ui.select_text_area_range(built.edit_value, 2..6);
             built.ui.paste_into_focused_text("编辑"); built.ui.sync(&mut built.scene);
@@ -2869,7 +2897,7 @@ impl Demo {
             .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external].into_iter()
+            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external,self.ids.btn_edit_cell,self.ids.btn_edit_discard,self.ids.btn_cell_import,self.ids.btn_cell_export,self.ids.btn_cell_null].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -3166,7 +3194,7 @@ impl Demo {
             }
         }
         if let Some(index) = cell_tool_focus {
-            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external][index];
+            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external,self.ids.btn_edit_cell,self.ids.btn_edit_discard,self.ids.btn_cell_import,self.ids.btn_cell_export,self.ids.btn_cell_null][index];
             if id.0 != 0 {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if mode_focused && self.ids.edit_mode.0 != 0 {
@@ -5193,12 +5221,12 @@ impl Demo {
                         .sel_row
                         .or_else(|| self.ui.table_selected_row(self.ids.browse_table));
                     if let (Some(table), Some(row)) = (table, row) {
-                        if let Some(&rowid) = self.state.browse().rowids.get(row) {
+                        if let Some(rowid) = self.state.browse().row_keys.get(row) {
                             if let Some(conn) = self.state.conn.as_ref() {
-                                match dbmod::delete_row_by_rowid_in(conn, &self.state.browse().schema, &table, rowid) {
+                                match dbmod::delete_row_in(conn, &self.state.browse().schema, &table, rowid) {
                                     Ok(_) => {
                                         self.state.log_sql(format!(
-                                            "DELETE FROM {} WHERE rowid={rowid}", dbmod::qualified_name(&self.state.browse().schema, &table)
+                                            "DELETE FROM {} -- selected record", dbmod::qualified_name(&self.state.browse().schema, &table)
                                         ));
                                         self.state.mark_dirty();
                                         let _ = self.state.refresh_browse();
@@ -5209,7 +5237,7 @@ impl Demo {
                                 }
                             }
                         } else {
-                            self.set_error("No rowid");
+                            self.set_error("No usable record key");
                         }
                     }
                 }
@@ -5918,7 +5946,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
@@ -6875,7 +6903,7 @@ mod interaction_tests {
         demo.do_rebuild();
         assert_eq!(demo.state.browse().schema, "analytics");
         assert_eq!(demo.state.browse().table.as_deref(), Some("customer_summary"));
-        assert!(demo.state.browse().rowids.is_empty());
+        assert!(demo.state.browse().row_keys.is_empty());
         demo.ui.set_focus(Some(demo.ids.browse_table));
         assert!(demo.handle_browse_navigation_key(KeyCode::PageUp, command));
         demo.do_rebuild();

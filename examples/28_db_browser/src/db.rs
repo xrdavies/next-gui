@@ -752,123 +752,9 @@ pub fn insert_row(
     Ok(conn.changes())
 }
 
-pub fn delete_row_by_rowid(conn: &Connection, table: &str, rowid: i64) -> Result<u64, String> {
-    delete_row_by_rowid_in(conn, "main", table, rowid)
-}
-
-pub fn delete_row_by_rowid_in(conn: &Connection, schema: &str, table: &str, rowid: i64) -> Result<u64, String> {
-    let sql = format!("DELETE FROM {} WHERE rowid = ?1", qualified_name(schema, table));
-    conn.execute(&sql, [rowid]).map_err(|e| e.to_string())?;
-    Ok(conn.changes())
-}
-
-pub fn update_cell(
-    conn: &Connection,
-    table: &str,
-    rowid: i64,
-    column: &str,
-    value: &rusqlite::types::Value,
-) -> Result<u64, String> {
-    update_cell_in(conn, "main", table, rowid, column, value)
-}
-
-pub fn update_cell_in(
-    conn: &Connection, schema: &str,
-    table: &str,
-    rowid: i64,
-    column: &str,
-    value: &rusqlite::types::Value,
-) -> Result<u64, String> {
-    let sql = format!(
-        "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
-        qualified_name(schema, table),
-        quote_ident(column)
-    );
-    conn.execute(&sql, rusqlite::params![value, rowid])
-        .map_err(|e| e.to_string())?;
-    Ok(conn.changes())
-}
-
-/// Update a rectangular set of existing records as one undoable operation.
-pub fn update_cells(
-    conn: &Connection,
-    table: &str,
-    columns: &[String],
-    updates: &[(i64, Vec<CellValue>)],
-) -> Result<(), String> {
-    update_cells_in(conn, "main", table, columns, updates)
-}
-
-pub fn update_cells_in(
-    conn: &Connection, schema: &str,
-    table: &str,
-    columns: &[String],
-    updates: &[(i64, Vec<CellValue>)],
-) -> Result<(), String> {
-    if columns.is_empty() || updates.is_empty()
-        || updates.iter().any(|(_, row)| row.len() != columns.len())
-    {
-        return Err("Cell update dimensions do not match".into());
-    }
-    let assignments = columns.iter().enumerate()
-        .map(|(i, col)| format!("{} = ?{}", quote_ident(col), i + 1))
-        .collect::<Vec<_>>().join(", ");
-    let sql = format!("UPDATE {} SET {assignments} WHERE rowid = ?{}", qualified_name(schema, table), columns.len() + 1);
-    with_savepoint(conn, || {
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        for (rowid, values) in updates {
-            let key = CellValue::Integer(*rowid);
-            let changed = stmt.execute(params_from_iter(values.iter().chain(std::iter::once(&key))))
-                .map_err(|e| e.to_string())?;
-            if changed != 1 {
-                return Err(format!("Record {rowid} changed or no longer exists; refresh and retry"));
-            }
-        }
-        Ok(())
-    })
-}
-
-pub fn browse_with_rowid(
-    conn: &Connection,
-    table: &str,
-    ordering: &[OrderBy],
-    filter: Option<&str>,
-    limit: usize,
-    offset: usize,
-) -> Result<QueryResult, String> {
-    browse_with_rowid_in(conn, "main", table, ordering, filter, limit, offset)
-}
-
-pub fn browse_with_rowid_in(
-    conn: &Connection, schema: &str,
-    table: &str,
-    ordering: &[OrderBy],
-    filter: Option<&str>,
-    limit: usize,
-    offset: usize,
-) -> Result<QueryResult, String> {
-    if conn
-        .prepare(&format!("SELECT * FROM {}", qualified_name(schema, table)))
-        .map_err(|e| e.to_string())?
-        .column_names()
-        .iter()
-        .any(|c| c.eq_ignore_ascii_case("rowid") || c.eq_ignore_ascii_case("__rowid__"))
-    {
-        return Err("Grid editing requires an unshadowed rowid".into());
-    }
-    let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
-    let mut sql = format!("SELECT rowid AS __rowid__, * FROM {}", qualified_name(schema, table));
-    if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
-        sql.push_str(" WHERE ");
-        sql.push_str(f);
-    }
-    append_order_by(conn, schema, table, &mut sql, ordering)?;
-    sql.push_str(&format!(
-        " LIMIT {} OFFSET {offset}",
-        limit.saturating_add(1)
-    ));
-    query_preview(conn, &sql, limit)
-}
+#[path = "row_key.rs"]
+mod row_key;
+pub use row_key::*;
 
 pub fn drop_object(conn: &Connection, kind: ObjectKind, schema: &str, name: &str) -> Result<(), String> {
     let kw = match kind {
@@ -1889,16 +1775,17 @@ mod tests {
             let rows = browse_table_in(&conn, schema, table, &order, Some("id>0"), 1, 0).unwrap();
             assert_eq!(rows.rows[0][0], "2");
             assert!(rows.truncated);
-            let rows = browse_with_rowid_in(&conn, schema, table, &[], None, 500, 0).unwrap();
-            assert_eq!(rows.columns[0], "__rowid__");
-            update_cell_in(&conn, schema, table, 1, "v", &rusqlite::types::Value::Text(schema.into())).unwrap();
-            let values = [(1, vec![CellValue::Text(b"atomic".to_vec())]), (999, vec![CellValue::Null])];
+            let (rows, keys) = browse_with_keys_in(&conn, schema, table, &[], None, 500, 0).unwrap();
+            assert_eq!(rows.columns, ["id", "v"]);
+            update_cell_in(&conn, schema, table, &keys[0], "v", &rusqlite::types::Value::Text(schema.into())).unwrap();
+            let mut missing = keys[0].clone(); missing.values[0] = CellValue::Integer(999);
+            let values = [(keys[0].clone(), vec![CellValue::Text(b"atomic".to_vec())]), (missing, vec![CellValue::Null])];
             assert!(update_cells_in(&conn, schema, table, &["v".into()], &values).is_err());
             let out = dir.path().join(if schema == "temp" { "temp.json" } else { "attached.json" });
             export_table_in(&conn, schema, table, &[], Some("id=1"), &out, true).unwrap();
             let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
             assert_eq!(json[0]["v"], schema);
-            assert_eq!(delete_row_by_rowid_in(&conn, schema, table, 2).unwrap(), 1);
+            assert_eq!(delete_row_in(&conn, schema, table, &keys[1]).unwrap(), 1);
             assert_eq!(count_browse_rows_in(&conn, schema, table, None).unwrap(), 1);
         }
         assert_eq!(count_rows(&conn, "same.\"table").unwrap(), 2);
@@ -2099,13 +1986,13 @@ mod tests {
             CREATE TEMP TABLE t(v, temp_only); INSERT INTO temp.t(v) VALUES(99);").unwrap();
         let result = browse_table(&conn, "t", &[], None, 500, 0).unwrap();
         assert_eq!(result.rows[0][0], "1");
-        update_cell(&conn, "t", 1, "v", &rusqlite::types::Value::Integer(2)).unwrap();
+        update_cell_in(&conn, "main", "t", &browse_with_keys_in(&conn,"main","t",&[],None,500,0).unwrap().1[0], "v", &rusqlite::types::Value::Integer(2)).unwrap();
         assert_eq!(conn.query_row("SELECT v FROM main.t", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
         assert_eq!(conn.query_row("SELECT v FROM temp.t", [], |r| r.get::<_, i64>(0)).unwrap(), 99);
         assert_eq!(table_columns(&conn, "t").unwrap().len(), 1);
         insert_row(&conn, "t", &["v".into()], &["3".into()]).unwrap();
         assert_eq!(count_rows(&conn, "t").unwrap(), 2);
-        delete_row_by_rowid(&conn, "t", 2).unwrap();
+        delete_row_in(&conn,"main","t", &browse_with_keys_in(&conn,"main","t",&[],None,500,0).unwrap().1[1]).unwrap();
         recreate_table(&conn, "t", "t", &[ColDef::new("v", ""), ColDef::new("added", "TEXT")]).unwrap();
         assert_eq!(table_column_names(&conn, "t").unwrap(), ["v", "added"]);
         assert!(conn.prepare("SELECT temp_only FROM temp.t").is_ok());
@@ -2429,7 +2316,9 @@ mod tests {
     fn generated_rowid_is_not_used_as_an_edit_or_dump_identity() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE t(v, rowid GENERATED ALWAYS AS (1)); INSERT INTO t(_rowid_,v) VALUES(7,'first'),(9,'second');").unwrap();
-        assert!(browse_with_rowid(&conn, "t", &[], None, 500, 0).is_err());
+        let (_, keys) = browse_with_keys_in(&conn, "main", "t", &[], None, 500, 0).unwrap();
+        assert_eq!(keys[1].columns.as_ref(), ["_rowid_"]);
+        assert_eq!(keys[1].values, [CellValue::Integer(9)]);
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("dump.sql");
         export_sql_dump(&conn, &dump).unwrap();
@@ -2454,7 +2343,7 @@ mod tests {
         let filter = Some("1; DELETE FROM t; --");
         assert!(browse_table(&conn, "t", &[], filter, 500, 0).is_err());
         assert!(browse_snapshot_in(&conn, "main", "t", &[], filter).is_err());
-        assert!(browse_with_rowid(&conn, "t", &[], filter, 500, 0).is_err());
+        assert!(browse_with_keys_in(&conn, "main", "t", &[], filter, 500, 0).is_err());
         assert!(count_browse_rows(&conn, "t", filter).is_err());
         assert_eq!(count_browse_rows(&conn, "t", Some("v = 1")).unwrap(), 1);
         assert_eq!(count_rows(&conn, "t").unwrap(), 1);
@@ -2466,7 +2355,10 @@ mod tests {
             for filter in ["1; PRAGMA foreign_keys=ON; --", "1; PRAGMA key='fixture-key'; --"] {
                 let conn = Connection::open_in_memory().unwrap();
                 conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES ('; literal'); PRAGMA foreign_keys=OFF;").unwrap();
-                let browse = if rowids { browse_with_rowid } else { browse_table };
+                let browse = |conn: &Connection, table: &str, order: &[OrderBy], filter: Option<&str>, limit, offset| {
+                    if rowids { browse_with_keys_in(conn,"main",table,order,filter,limit,offset).map(|(result,_)|result) }
+                    else { browse_table(conn,table,order,filter,limit,offset) }
+                };
                 assert!(browse(&conn, "t", &[], Some(filter), 500, 0).is_err());
                 assert!(browse_snapshot_in(&conn, "main", "t", &[], Some(filter)).is_err());
                 assert_eq!(read_pragma(&conn, "foreign_keys").unwrap(), "0");
