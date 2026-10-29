@@ -23,6 +23,8 @@ mod dock_tests;
 mod toolbar_tests;
 #[cfg(test)]
 mod cell_editor_tests;
+#[cfg(test)]
+mod cell_hex_editor_tests;
 mod file_dlg;
 mod index_sql;
 mod table_sql;
@@ -341,6 +343,9 @@ struct BuiltUiIds {
     btn_edit_discard: WidgetId,
     btn_cell_import: WidgetId,
     btn_cell_export: WidgetId,
+    hex_copy: WidgetId,
+    hex_export: WidgetId,
+    hex_insert: WidgetId,
     btn_cell_null: WidgetId,
     btn_cell_indent: WidgetId,
     btn_cell_wrap: WidgetId,
@@ -590,6 +595,9 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_edit_discard: b.btn_edit_discard,
             btn_cell_import: b.btn_cell_import,
             btn_cell_export: b.btn_cell_export,
+            hex_copy: b.hex_copy,
+            hex_export: b.hex_export,
+            hex_insert: b.hex_insert,
             btn_cell_null: b.btn_cell_null,
             btn_cell_indent: b.btn_cell_indent,
             btn_cell_wrap: b.btn_cell_wrap,
@@ -1426,6 +1434,14 @@ impl Demo {
                         }
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     }
+                    if tab.contains("hex-editor") {
+                        let bytes=if tab.contains("empty") {Vec::new()} else {(0..(if tab.contains("million") {1_048_579}else{259})).map(|index|(index%256) as u8).collect()};
+                        state.prefs.auto_switch_mode=false;
+                        state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[rusqlite::types::Value::Blob(bytes)]).unwrap();state.write_changes().unwrap();
+                        state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();state.set_edit_mode(crate::state::EditCellMode::Hex).unwrap();
+                        if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
+                        if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    }
                     if tab.contains("info-") {
                         let mode=if tab.contains("info-hex") || tab.contains("info-badhex") {crate::state::EditCellMode::Hex}else{crate::state::EditCellMode::Text};
                         let value=if tab.contains("info-null") {rusqlite::types::Value::Null}
@@ -1434,7 +1450,6 @@ impl Demo {
                         state.prefs.auto_switch_mode=false;
                         state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[value]).unwrap();state.write_changes().unwrap();
                         state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();state.set_edit_mode(mode).unwrap();
-                        if tab.contains("info-badhex") {state.edit_value="00 FF 4".into();}
                         if tab.contains("readonly") {state.tab=MainTab::Pragmas;}
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     }
@@ -1565,6 +1580,8 @@ impl Demo {
             if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("wrapped") {
                 let end=state.edit_value.chars().count();built.ui.select_text_area_range(built.edit_value,end..end);
             }
+            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("hex-editor-selected") {built.ui.select_hex_editor_range(built.edit_value,32..51);}
+            if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").unwrap().contains("hex-editor-end") {built.ui.key_input(UiKey::DocumentEnd);}
             built.ui.sync(&mut built.scene);
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").as_deref()==Ok("long-confirm-bottom") {
@@ -1739,7 +1756,15 @@ impl Demo {
             let null_selected = self.ui.select_selected(self.ids.edit_type) == Some(0) && self.state.edit_type != 0;
             if let Some(t) = self.ui.select_selected(self.ids.edit_type) {changed |= self.state.edit_type!=t;self.state.edit_type = t;}
             if self.ids.edit_value.0 != 0 {
-                if let Some(v) = self.ui.text_area_value(self.ids.edit_value).map(str::to_owned) {
+                if let Some(bytes)=self.ui.hex_editor_bytes(self.ids.edit_value) {
+                    let edited=!std::sync::Arc::ptr_eq(&bytes,&self.state.edit_bytes);
+                    if self.state.edit_type==0 && edited && !bytes.is_empty() && !null_selected {
+                        self.state.edit_type=4;
+                        self.ui.set_select_selected(self.ids.edit_type,Some(4));
+                    }
+                    changed|=edited;
+                    self.state.edit_bytes=bytes;
+                } else if let Some(v) = self.ui.text_area_value(self.ids.edit_value).map(str::to_owned) {
                     if self.state.edit_type == 0 && !v.is_empty() && v != self.state.edit_value && !null_selected
                         && self.state.edit_mode != crate::state::EditCellMode::Evaluation {
                         self.state.edit_type = if self.state.edit_mode == crate::state::EditCellMode::Hex {4} else {3};
@@ -1759,7 +1784,9 @@ impl Demo {
                 self.rebuild = true;
             }
         }
+        if let Some(error)=self.ui.take_hex_editor_error(self.ids.edit_value) {self.set_error(error);}
         self.snapshot_cell_editor();
+        self.ui.set_button_enabled(self.ids.hex_copy,self.ui.hex_editor_selection(self.ids.edit_value).is_some_and(|range|!range.is_empty()));
         if self.ids.sql_area.0 != 0 {
             if let Some(v) = self.ui.text_area_value(self.ids.sql_area) {
                 *self.state.sql_editor_mut() = v.to_string();
@@ -2808,6 +2835,9 @@ impl Demo {
         if self.ui.text_area_value(self.ids.edit_value) == Some(self.state.edit_value.as_str()) {
             self.state.edit_view = self.ui.text_area_state(self.ids.edit_value);
         }
+        if self.ui.hex_editor_bytes(self.ids.edit_value).is_some_and(|bytes|std::sync::Arc::ptr_eq(&bytes,&self.state.edit_bytes)) {
+            self.state.edit_hex_view=self.ui.hex_editor_state(self.ids.edit_value);
+        }
         if self.ui.text_input_value(self.ids.edit_col) == Some(self.state.edit_col.as_str()) {
             self.state.edit_col_view = self.ui.text_input_state(self.ids.edit_col);
         }
@@ -2819,7 +2849,7 @@ impl Demo {
             .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
-            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent].into_iter()
+            .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
         let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
@@ -3116,7 +3146,7 @@ impl Demo {
             }
         }
         if let Some(index) = cell_tool_focus {
-            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent][index];
+            let id = [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export][index];
             if id.0 != 0 {self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);}
         }
         if mode_focused && self.ids.edit_mode.0 != 0 {
@@ -4405,6 +4435,17 @@ impl Demo {
             }
             self.rebuild = true; return;
         }
+        if id.0!=0 && id==self.ids.hex_insert {
+            self.ui.set_focus(Some(self.ids.edit_value));self.ui.key_input(UiKey::Insert);return;
+        }
+        if id.0!=0 && id==self.ids.hex_export {
+            if let Some(path)=file_dlg::pick_save_readable_cell() {
+                if let Some(text)=self.ui.hex_editor_readable(self.ids.edit_value,0..self.state.edit_bytes.len()) {
+                    match self.state.export_readable_cell(&path,&text) {Ok(())=>self.clear_error(),Err(error)=>self.set_error(error)}
+                }
+            }
+            return;
+        }
         if id.0 != 0 && [self.ids.btn_cell_import, self.ids.btn_cell_export, self.ids.btn_cell_null].contains(&id) {
             self.snapshot_inputs();
             let result = if id == self.ids.btn_cell_import {
@@ -5261,6 +5302,14 @@ impl Demo {
         self.handle_table_cell_edit();
         while let Some(id) = self.ui.take_button_activate() {
             self.snapshot_inputs();
+            if id.0 != 0 && id == self.ids.hex_copy {
+                if let Some(range)=self.ui.hex_editor_selection(self.ids.edit_value) {
+                    if !range.is_empty() {if let Some(text)=self.ui.hex_editor_readable(self.ids.edit_value,range) {
+                        if let Err(error)=ctx.clipboard_set_text(&text) {self.set_error(error.to_string());}
+                    }}
+                }
+                continue;
+            }
             if id.0 != 0 && id == self.ids.plot.copy { self.copy_plot(ctx); continue; }
             self.handle_button(id);
         }
@@ -5323,6 +5372,7 @@ impl AppCallbacks for Demo {
                 .ui
                 .text_area_value(self.ids.edit_value)
                 .is_none_or(|text| text == self.state.edit_value)
+            && self.ui.hex_editor_bytes(self.ids.edit_value).is_none_or(|bytes| *bytes==*self.state.edit_bytes)
             && self
                 .ui
                 .text_area_value(self.ids.ddl_area)

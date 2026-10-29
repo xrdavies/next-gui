@@ -176,6 +176,9 @@ pub struct BuiltUi {
     pub btn_edit_discard: WidgetId,
     pub btn_cell_import: WidgetId,
     pub btn_cell_export: WidgetId,
+    pub hex_copy: WidgetId,
+    pub hex_export: WidgetId,
+    pub hex_insert: WidgetId,
     pub btn_cell_null: WidgetId,
     pub btn_cell_indent: WidgetId,
     pub btn_cell_wrap: WidgetId,
@@ -620,6 +623,7 @@ pub fn build_ui(
     let mut btn_edit_discard = z;
     let mut btn_cell_import = z;
     let mut btn_cell_export = z;
+    let mut hex_copy=z;let mut hex_export=z;let mut hex_insert=z;
     let mut btn_cell_null = z;
     let mut btn_cell_indent = z;
     let mut btn_cell_wrap = z;
@@ -2242,6 +2246,11 @@ pub fn build_ui(
                             btn_cell_indent = if state.prefs.indent_compact {
                                 r.tool_icon_button_styled(IconName::Code,"Indent / Compact",theme.colors.selected_bg,theme.colors.text_primary)
                             } else {r.tool_icon_button(IconName::Code,"Indent / Compact")};
+                            if state.edit_mode==crate::state::EditCellMode::Hex {
+                                hex_insert=r.tool_button("Insert / Overwrite");
+                                hex_copy=r.tool_icon_button(IconName::Copy,"Copy Hex + ASCII");
+                                hex_export=r.tool_icon_button(IconName::Save,"Export Hex + ASCII…");
+                            }
                         });
                         if image_mode {
                             let mut istyle = ImageStyle::from_theme(&theme);
@@ -2262,7 +2271,9 @@ pub fn build_ui(
                             cell_style.width = edit_val_style.width;
                             cell_style.size = theme.typography.input;
                             cell_style.height = (edit_scroll_style.height - cell_field_height - cell_tools_height - 16.0).max(64.0);
-                            edit_value = c.text_area(&state.edit_value, "value", cell_style);
+                            edit_value = if state.edit_mode==crate::state::EditCellMode::Hex {
+                                c.hex_editor(state.edit_bytes.clone(),cell_style)
+                            } else {c.text_area(&state.edit_value, "value", cell_style)};
                         }
                     });
                     p.column(ColumnStyle { width: dock_w, height: cell_footer_height, padding: 4.0, gap: 2.0, ..edit_pane_style }, |p| {
@@ -2431,7 +2442,7 @@ pub fn build_ui(
         vec![btn_struct_new_table, btn_struct_new_index, btn_struct_modify, btn_struct_delete, btn_struct_refresh],
         vec![btn_add_row, btn_del_row, btn_form_view, btn_freeze, btn_cond_fmt, btn_fk_nav],
         vec![btn_sql_new_tab, btn_sql_open, btn_sql_save, btn_sql_save_as, btn_sql_run, btn_sql_line, btn_sql_stop, btn_sql_find, btn_sql_comment],
-        vec![btn_cell_auto, btn_cell_wrap, btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent],
+        vec![btn_cell_auto, btn_cell_wrap, btn_cell_import, btn_cell_export, btn_cell_null, btn_cell_indent,hex_copy,hex_export],
     ].into_iter().enumerate() {
         for button in buttons { ui.set_button_icon_layout(button, toolbar_layouts[index]); }
     }
@@ -2683,6 +2694,7 @@ pub fn build_ui(
     ui.set_text_area_read_only(ov_generated, state.wizard_cols.get(state.wizard_col_sel).is_none_or(|column| column.generated.is_none()));
     ui.set_text_input_enabled(edit_col, !cell_read_only);
     ui.set_text_area_read_only(edit_value, cell_read_only || state.edit_mode == crate::state::EditCellMode::Image);
+    ui.set_hex_editor_read_only(edit_value,cell_read_only);
     ui.set_text_area_wrap(edit_value,state.prefs.editor_word_wrap);
     ui.set_accessible_name(btn_cell_wrap,if state.prefs.editor_word_wrap {"Word wrap cell lines (on)"} else {"Word wrap cell lines (off)"});
     ui.set_accessible_name(btn_cell_auto,if state.prefs.auto_switch_mode {"Automatically choose cell editor mode (on)"} else {"Automatically choose cell editor mode (off)"});
@@ -2809,9 +2821,11 @@ pub fn build_ui(
     update_cell_caption(&mut ui,state,edit_meta,edit_meta_label);
     ui.set_accessible_name(edit_col,"Selected cell column");
     ui.set_accessible_name(edit_type,"Cell storage type");
-    ui.set_accessible_name(edit_value,"Cell value");
+    ui.set_accessible_name(edit_value,if state.edit_mode==crate::state::EditCellMode::Hex {"Cell binary value · Hex and ASCII"} else {"Cell value"});
     ui.set_accessible_name(edit_mode,"Cell editor mode");
     if let Some(view) = &state.edit_view { ui.restore_text_area_state(edit_value, view); }
+    if let Some(view) = &state.edit_hex_view {ui.restore_hex_editor_state(edit_value,view);}
+    ui.set_button_enabled(hex_copy,ui.hex_editor_selection(edit_value).is_some_and(|range|!range.is_empty()));
     highlight_cell_format(&mut ui,state,edit_value,&theme);
     if let Some(view) = &state.edit_col_view { ui.restore_text_input_state(edit_col, view); }
     ui.set_accessible_name(btn_dock_close,"Close selected dock page");
@@ -2941,6 +2955,7 @@ pub fn build_ui(
         btn_edit_discard,
         btn_cell_import,
         btn_cell_export,
+        hex_copy,hex_export,hex_insert,
         btn_cell_null,
         btn_cell_indent,
         btn_cell_wrap,
@@ -3118,6 +3133,9 @@ fn visible_docks_index(state: &AppState) -> usize {
 
 /// Existing scalar-range marks retain selection and history, including EOF errors.
 pub fn highlight_cell_format(ui: &mut Ui, state: &AppState, area: WidgetId, theme: &Theme) {
+    if state.edit_mode==crate::state::EditCellMode::Hex {
+        ui.set_accessible_name(area,"Cell binary value · Hex and ASCII");return;
+    }
     let ranges=state.edit_format_issue.as_ref().and_then(|issue|issue.position).map(|at|at..at.saturating_add(1).min(state.edit_value.chars().count())).into_iter().collect();
     ui.set_text_area_highlights(area,ranges,theme.colors.danger);
     ui.set_accessible_name(area,state.edit_format_issue.as_ref().map_or("Cell value".into(),|issue|format!("Cell value — {}",issue.message)));

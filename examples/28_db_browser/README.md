@@ -156,9 +156,10 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   writes; Cancel keeps the session, and confirmed Exit discards it. Save SQL or
   Save Project explicitly to retain drafts. New/Open/Close/Exit now share Save/Discard/Cancel. Closing one SQL tab applies
   Save/Discard only to that document and keeps other drafts/database edits.
-- Edit Cell uses the shared multiline TextArea and an explicit NULL/INTEGER/REAL/
-  TEXT/BLOB selector. Numeric edits preserve their type; invalid Hex/JSON is retained
-  with an error. Apply or Discard Draft before changing the browse target. SQLite
+- Edit Cell uses TextArea for text and a dedicated address/Hex/ASCII byte editor
+  for Binary, with an explicit NULL/INTEGER/REAL/TEXT/BLOB selector. Numeric edits
+  preserve their type; invalid JSON remains a draft, while invalid/odd Hex paste
+  is rejected before changing any bytes. Apply or Discard Draft before changing the browse target. SQLite
   column affinity still determines the stored value, as with explicit SQL writes.
 - Edit Cell's checked Word wrap tool persists its preference and switches between
   Unicode line opportunities and horizontal scrolling without changing text,
@@ -168,9 +169,22 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   discretionary hyphens and Scintilla style-specific wrapping remain unfinished.
 - Cell size follows the current visible draft through typing and Undo/Redo.
   Text/JSON/XML/expressions use the original Qt UTF-16 character count; Hex shows
-  validated byte counts or an invalid-data notice. Image captions include format,
+  the current byte count; rejected Hex paste reports an error without changing it. Image captions include format,
   pixel dimensions and source bytes. Record/result position and full hover text
   update together without rebuilding the editor or evaluating SQL expressions.
+- Binary mode displays 16 bytes per addressed row in system monospace, with
+  hexadecimal nibble editing and a synchronized printable ASCII view. Tab switches
+  Hex to ASCII; a second Tab leaves the editor, and Shift+Tab returns to Hex.
+  Insert / Overwrite is available on the tool row and via Insert where supported;
+  Delete/Cut removes bytes in Insert and zeros them in Overwrite. Selection,
+  two-axis scrolling, caret, mode and Undo/Redo survive same-source rebuilds and
+  read-only returns. Copy returns byte pairs; Copy/Export Hex + ASCII produces
+  addressed readable rows, while ordinary Export retains the raw cell bytes.
+  Only visible rows are rasterized, including million-byte buffers. Bytes remain
+  in memory; editing may copy the shared buffer. History retains 100 byte deltas /
+  8 MiB per stack, with one oversized edit retained. File import remains 16 MiB.
+  Custom binary search/display settings, complete original context menus and
+  cross-mode history remain unfinished.
 - Edit Cell's checked Auto mode tool defaults on and persists its preference.
   Printable UTF-8, non-number JSON, XML declarations and supported PNG/JPEG/BMP
   pictures choose a view; corrupt/oversized images fall back to Binary. Turning

@@ -79,3 +79,7 @@ pub fn pick_save_plot() -> Option<PathBuf> {
         .add_filter("PDF", &["pdf"]).add_filter("BMP", &["bmp"])
         .add_filter("All files", &["*"]).save_file()
 }
+
+pub fn pick_save_readable_cell() -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title("Export Cell as Hex + ASCII").add_filter("Text", &["txt"]).save_file()
+}

@@ -573,6 +573,8 @@ pub struct AppState {
     pub edit_saved: rusqlite::types::Value,
     pub edit_revision: u64,
     pub edit_view: Option<next_gui_ui::TextAreaState>,
+    pub edit_hex_view: Option<next_gui_ui::HexEditorState>,
+    pub edit_bytes: Arc<Vec<u8>>,
     pub edit_col_view: Option<next_gui_ui::TextInputState>,
     edit_display_baseline: Option<(usize, String)>,
     pub prefs: crate::prefs::Prefs,
@@ -931,6 +933,8 @@ impl AppState {
             edit_saved: rusqlite::types::Value::Null,
             edit_revision: 0,
             edit_view: None,
+            edit_hex_view: None,
+            edit_bytes: Arc::new(Vec::new()),
             edit_col_view: None,
             edit_display_baseline: None,
             prefs: crate::prefs::Prefs::load(),
@@ -1497,6 +1501,7 @@ impl AppState {
         self.edit_source = EditCellSource::Browse;
         self.edit_col.clear();
         self.edit_value.clear();
+        self.edit_bytes = Arc::new(Vec::new());
         self.edit_type = 0;
         self.edit_original = rusqlite::types::Value::Null;
         self.edit_saved = rusqlite::types::Value::Null;
@@ -3847,6 +3852,7 @@ impl AppState {
         self.invalidate_cell_format();
         self.edit_revision = self.edit_revision.wrapping_add(1);
         self.edit_view = None;
+        self.edit_hex_view = None;
         self.edit_col_view = None;
         self.edit_display_baseline = None;
     }
@@ -3864,7 +3870,7 @@ impl AppState {
         self.edit_binary_len = bytes.len();
         self.edit_image_rgba = None;
         self.edit_value = match self.edit_mode {
-            EditCellMode::Hex => db::to_hex(&bytes),
+            EditCellMode::Hex => String::new(),
             EditCellMode::Image => format!("[{} bytes — read-only image preview]", bytes.len()),
             EditCellMode::Json if self.prefs.indent_compact && std::str::from_utf8(&bytes).is_ok() => crate::cell_format::format_json(&String::from_utf8_lossy(&bytes),true)
                 .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned()),
@@ -3880,6 +3886,7 @@ impl AppState {
         if self.edit_mode == EditCellMode::Image {
             self.decode_edit_image();
         }
+        self.edit_bytes = Arc::new(if self.edit_mode==EditCellMode::Hex {bytes} else {Vec::new()});
         self.refresh_cell_format_issue();
     }
 
@@ -3898,9 +3905,9 @@ impl AppState {
         let mut caption = if self.edit_type == 0 && self.edit_mode != EditCellMode::Evaluation {
             "NULL · 0 bytes".into()
         } else { match self.edit_mode {
-            EditCellMode::Hex => match db::hex_len(&self.edit_value) {
-                Ok(count) => format!("Hex · {count} byte{}", if count==1 {""} else {"s"}),
-                Err(_) => "Hex · Invalid hexadecimal data".into(),
+            EditCellMode::Hex => {
+                let count=self.edit_bytes.len();
+                format!("Hex · {count} byte{}",if count==1 {""} else {"s"})
             },
             EditCellMode::Image => {
                 let image = self.edit_image_rgba.as_ref().map(|(width,height,_)|
@@ -3934,13 +3941,12 @@ impl AppState {
         }
         let decoded;
         let text = if self.edit_mode == EditCellMode::Hex {
-            let bytes = db::from_hex(&self.edit_value)?;
             if self.edit_type == 4 {
-                return Ok(Value::Blob(bytes));
+                return Ok(Value::Blob(self.edit_bytes.as_ref().clone()));
             }
-            decoded = String::from_utf8(bytes)
+            decoded = std::str::from_utf8(&self.edit_bytes)
                 .map_err(|_| "Invalid UTF-8; select BLOB for arbitrary bytes")?;
-            &decoded
+            decoded
         } else {
             &self.edit_value
         };
@@ -3969,7 +3975,7 @@ impl AppState {
             4 => {
                 if matches!(self.edit_mode, EditCellMode::Json | EditCellMode::Xml) { return Ok(Value::Blob(text.as_bytes().to_vec())); }
                 if let Value::Blob(bytes) = &self.edit_original {
-                    if text.as_str() == String::from_utf8_lossy(bytes) {
+                    if text == String::from_utf8_lossy(bytes) {
                         return Ok(self.edit_original.clone());
                     }
                     if std::str::from_utf8(bytes).is_ok() { return Ok(Value::Blob(text.as_bytes().to_vec())); }
@@ -4033,7 +4039,6 @@ impl AppState {
     }
 
     pub fn export_cell_file(&mut self, path: &Path) -> Result<(), String> {
-        use std::io::Write;
         self.guard_background_idle()?;
         let conn = self.conn.as_ref().ok_or("No database open")?;
         db::guard_output_path(conn, path)?;
@@ -4050,9 +4055,22 @@ impl AppState {
             rusqlite::types::Value::Text(value) => value.into_bytes(),
             rusqlite::types::Value::Blob(value) => value,
         };
+        self.write_cell_export(path,&bytes)
+    }
+
+    pub fn export_readable_cell(&mut self,path:&Path,text:&str)->Result<(),String> {
+        self.guard_background_idle()?;
+        if self.edit_col.is_empty() {return Err("Select a cell first".into());}
+        self.write_cell_export(path,text.as_bytes())
+    }
+
+    fn write_cell_export(&mut self,path:&Path,bytes:&[u8])->Result<(),String> {
+        use std::io::Write;
+        let conn=self.conn.as_ref().ok_or("No database open")?;
+        db::guard_output_path(conn,path)?;
         let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
         let mut staged = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        staged.write_all(&bytes).map_err(|e| e.to_string())?;
+        staged.write_all(bytes).map_err(|e| e.to_string())?;
         staged.as_file_mut().sync_all().map_err(|e| e.to_string())?;
         db::guard_output_path(conn, path)?;
         staged.persist(path).map_err(|e| e.to_string())?;
@@ -4335,8 +4353,8 @@ mod chart_default_tests {
             assert_eq!(state.cell_editor_caption(),format!("Text · {count} character{} · Record 1 of 1",if count==1 {""} else {"s"}));
         }
         state.edit_mode=EditCellMode::Hex;state.edit_type=4;
-        for (text,info) in [("","0 bytes"),(" 00\n","1 byte"),("00\u{2003}Ff e4 b8 ad","5 bytes"),("0","Invalid hexadecimal data"),("0z","Invalid hexadecimal data"),("中0","Invalid hexadecimal data")] {
-            state.edit_value=text.into();assert_eq!(state.cell_editor_caption(),format!("Hex · {info} · Record 1 of 1"));
+        for (bytes,info) in [(vec![],"0 bytes"),(vec![0],"1 byte"),(vec![0,255,228,184,173],"5 bytes")] {
+            state.edit_bytes=Arc::new(bytes);assert_eq!(state.cell_editor_caption(),format!("Hex · {info} · Record 1 of 1"));
         }
         state.edit_mode=EditCellMode::Json;state.edit_value="{bad".into();
         assert_eq!(state.cell_editor_caption(),"JSON · 4 characters · Record 1 of 1");
@@ -4395,9 +4413,9 @@ mod chart_default_tests {
             state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(&output).unwrap(),"\u{feff}中文\noriginal".as_bytes());
             state.edit_value="改动\nnew".into();assert!(state.has_cell_draft());let changed=typed("\u{feff}改动\nnew");assert_eq!(state.edited_cell_value().unwrap(),changed);
             state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(&output).unwrap(),"\u{feff}改动\nnew".as_bytes());
-            state.set_edit_mode(EditCellMode::Hex).unwrap();assert_eq!(state.edit_value,db::to_hex("\u{feff}改动\nnew".as_bytes()));
+            state.set_edit_mode(EditCellMode::Hex).unwrap();assert_eq!(state.edit_bytes.as_slice(),"\u{feff}改动\nnew".as_bytes());
             state.set_edit_mode(EditCellMode::Text).unwrap();assert_eq!(state.edit_value,"改动\nnew");state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,changed);assert!(!state.has_cell_draft());
-            state.write_changes().unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();state.edit_value=db::to_hex(b"without BOM");state.set_edit_mode(EditCellMode::Text).unwrap();
+            state.write_changes().unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();state.edit_bytes=Arc::new(b"without BOM".to_vec());state.set_edit_mode(EditCellMode::Text).unwrap();
             assert_eq!(state.edit_value,"without BOM");assert_eq!(state.edited_cell_value().unwrap(),typed("without BOM"));state.discard_cell_draft();
             state.edit_type=1;state.edit_value="42".into();assert_eq!(state.edited_cell_value().unwrap(),Value::Integer(42));state.edit_type=2;assert_eq!(state.edited_cell_value().unwrap(),Value::Real(42.0));
             state.edit_type=if blob {3}else{4};state.edit_value="converted".into();let converted=if blob {Value::Text("\u{feff}converted".into())}else{Value::Blob("\u{feff}converted".as_bytes().to_vec())};assert_eq!(state.edited_cell_value().unwrap(),converted);
@@ -4445,7 +4463,7 @@ mod chart_default_tests {
                 assert!(state.edit_format_issue.is_none());assert!(!state.has_cell_draft());assert!(state.edit_value.starts_with('\u{feff}'));
                 state.export_cell_file(&output).unwrap();assert_eq!(std::fs::read(&output).unwrap(),state.edit_value.as_bytes());
                 state.apply_cell_draft().unwrap();assert_eq!(state.edit_saved,typed(if indent {compact}else{raw}));assert_eq!(state.dirty,indent);assert!(!state.has_cell_draft());
-                state.set_edit_mode(EditCellMode::Text).unwrap();assert!(!state.edit_value.starts_with('\u{feff}'));state.set_edit_mode(EditCellMode::Hex).unwrap();assert!(state.edit_value.starts_with(&db::to_hex(b"\xef\xbb\xbf")));
+                state.set_edit_mode(EditCellMode::Text).unwrap();assert!(!state.edit_value.starts_with('\u{feff}'));state.set_edit_mode(EditCellMode::Hex).unwrap();assert!(state.edit_bytes.starts_with(b"\xef\xbb\xbf"));
                 state.set_edit_mode(mode).unwrap();assert!(state.edit_value.starts_with('\u{feff}'));assert!(!state.has_cell_draft());
             }}
         }
@@ -4613,12 +4631,12 @@ mod chart_default_tests {
         state.set_cell_auto_switch(false).unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();
         state.conn.as_ref().unwrap().execute("UPDATE t SET v='next 中文'",[]).unwrap();
         state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();
-        assert_eq!(state.edit_mode,EditCellMode::Hex);assert_eq!(state.edit_value,db::to_hex("next 中文".as_bytes()));
+        assert_eq!(state.edit_mode,EditCellMode::Hex);assert_eq!(state.edit_bytes.as_slice(),"next 中文".as_bytes());
         state.set_cell_auto_switch(true).unwrap();assert_eq!(state.edit_mode,EditCellMode::Text);assert_eq!(state.edit_value,"next 中文");
         let revision=state.edit_revision;state.edit_value="draft 中文".into();state.set_cell_auto_switch(false).unwrap();state.set_cell_auto_switch(true).unwrap();
         assert_eq!(state.edit_revision,revision);assert_eq!(state.edit_value,"draft 中文");assert!(state.has_cell_draft());
-        state.discard_cell_draft();state.set_cell_auto_switch(false).unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();state.edit_value="GG".into();
-        assert!(state.set_cell_auto_switch(true).is_err());assert!(!state.prefs.auto_switch_mode);assert_eq!(state.edit_value,"GG");
+        state.discard_cell_draft();state.set_cell_auto_switch(false).unwrap();state.set_edit_mode(EditCellMode::Hex).unwrap();state.edit_type=3;state.edit_bytes=Arc::new(vec![255]);
+        assert!(state.set_cell_auto_switch(true).is_err());assert!(!state.prefs.auto_switch_mode);assert_eq!(state.edit_bytes.as_slice(),[255]);
         state.discard_cell_draft();state.tab=MainTab::Pragmas;state.set_cell_auto_switch(true).unwrap();
         assert_eq!(state.edit_mode,EditCellMode::Text);assert!(state.apply_cell_draft().is_err());assert!(!state.has_cell_draft());
         assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT v FROM t",[],|r|r.get::<_,String>(0)).unwrap(),"next 中文");
@@ -4638,7 +4656,7 @@ mod chart_default_tests {
             assert!(state.edit_value.contains('\n')); assert!(!state.has_cell_draft());
             assert_eq!(state.edited_cell_value().unwrap(), value);
             state.set_edit_mode(EditCellMode::Hex).unwrap();
-            assert_eq!(state.edit_value, db::to_hex(raw.as_bytes())); assert!(!state.has_cell_draft());
+            assert_eq!(state.edit_bytes.as_slice(), raw.as_bytes()); assert!(!state.has_cell_draft());
             state.set_edit_mode(EditCellMode::Xml).unwrap(); state.edit_value = "<r><broken>".into();
             assert!(state.has_cell_draft()); assert!(state.apply_cell_draft().unwrap_err().contains("Invalid XML"));
             assert_eq!(state.edit_value, "<r><broken>");
@@ -4721,7 +4739,7 @@ mod chart_default_tests {
         std::fs::write(&input, [0, 255, 1, 128]).unwrap(); state.import_cell_file(&input).unwrap();
         assert_eq!(state.edited_cell_value().unwrap(), Value::Blob(vec![0,255,1,128]));
         state.export_cell_file(&output).unwrap(); assert_eq!(std::fs::read(&output).unwrap(), [0,255,1,128]);
-        state.edit_value = "GG".into(); assert!(state.export_cell_file(&output).is_err());
+        state.edit_type=3; assert!(state.export_cell_file(&output).is_err());
         assert_eq!(std::fs::read(&output).unwrap(), [0,255,1,128]);
         state.discard_cell_draft(); state.set_cell_null().unwrap(); assert!(state.has_cell_draft());
         state.export_cell_file(&output).unwrap(); assert!(std::fs::read(&output).unwrap().is_empty());
@@ -4750,14 +4768,18 @@ mod chart_default_tests {
             state.sql_selection = SqlSelection { rows: Some((0, 0)), columns: Some((column, column)) };
             assert!(state.sync_edit_cell_from_sql_selection().unwrap());
             assert_eq!(state.sql_cell_position(), Some((0, column)));
-            assert_eq!(state.edit_type, storage); assert_eq!(state.edit_value, text);
+            assert_eq!(state.edit_type, storage);
+            if matches!(column,3|4) {assert_eq!(state.edit_bytes.as_slice(),db::from_hex(text).unwrap());}
+            else {assert_eq!(state.edit_value, text);}
             let expected_mode = if matches!(column, 3 | 4) { EditCellMode::Hex } else if column==5 { EditCellMode::Json } else { EditCellMode::Text };
             assert_eq!(state.edit_mode, expected_mode);
             assert!(!state.has_cell_draft());
             assert!(!state.sync_edit_cell_from_sql_selection().unwrap());
             state.edit_col = "v".into(); state.edit_value = "wrong target".into();
             assert!(state.apply_cell_draft().unwrap_err().contains("read-only"));
-            state.discard_cell_draft(); assert_eq!(state.edit_value, text);
+            state.discard_cell_draft();
+            if matches!(column,3|4) {assert_eq!(state.edit_bytes.as_slice(),db::from_hex(text).unwrap());}
+            else {assert_eq!(state.edit_value, text);}
         }
         state.prefs.indent_compact=true;state.set_edit_mode(EditCellMode::Json).unwrap();
         assert!(state.edit_value.contains("\n")); assert!(!state.has_cell_draft());
@@ -5652,7 +5674,7 @@ mod chart_default_tests {
     }
 
     #[test]
-    fn cell_types_and_invalid_hex_drafts_are_preserved() {
+    fn cell_types_and_invalid_utf8_hex_drafts_are_preserved() {
         use rusqlite::types::Value;
         let mut state = test_state();
         state
@@ -5678,11 +5700,11 @@ mod chart_default_tests {
         state.edit_type = 0;
         assert_eq!(state.edited_cell_value().unwrap(), Value::Null);
         state.set_edit_mode(EditCellMode::Hex).unwrap();
-        state.edit_type = 4;
-        state.edit_value = "ZZ".into();
+        state.edit_type = 3;
+        state.edit_bytes = Arc::new(vec![255]);
         assert!(state.set_edit_mode(EditCellMode::Text).is_err());
         assert_eq!(state.edit_mode, EditCellMode::Hex);
-        assert_eq!(state.edit_value, "ZZ");
+        assert_eq!(state.edit_bytes.as_slice(), [255]);
         assert!(state.refresh_browse().is_err());
         state.discard_cell_draft();
         assert_eq!(state.edit_value, "7");
@@ -6187,8 +6209,8 @@ mod chart_default_tests {
         state.browse_mut().sel_row = Some(0);
         state.browse_mut().sel_col = Some(0);
         state.sync_edit_cell_from_selection();
-        assert_eq!(state.edit_value, "00FF27");
-        state.edit_value = "ff00".into();
+        assert_eq!(state.edit_bytes.as_slice(), [0,255,39]);
+        state.edit_bytes = Arc::new(vec![255,0]);
         let value = state.edited_cell_value().unwrap();
         db::update_cell(
             state.conn.as_ref().unwrap(),
@@ -6447,7 +6469,7 @@ mod chart_default_tests {
             state.add_browse_tab().unwrap();
             state.switch_browse_tab(0).unwrap();
             assert_eq!(state.browse().sel_row, Some(0));
-            assert_eq!(state.edit_value, "0102");
+            assert_eq!(state.edit_bytes.as_slice(), [1,2]);
             state.switch_browse_tab(1).unwrap();
             state.conn.as_ref().unwrap().execute_batch("UPDATE wr SET v=X'0304' WHERE k='a';").unwrap();
             state.switch_browse_tab(0).unwrap();

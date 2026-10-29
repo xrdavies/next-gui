@@ -27,9 +27,9 @@ fn cell_metadata_updates_with_input_and_history_without_rebuilding_the_editor() 
             let (editor,label,host,revision)=(demo.ids.edit_value,demo.ids.edit_meta_label,demo.ids.edit_meta,demo.state.edit_revision);
             demo.ui.set_focus(Some(editor));assert!(demo.ui.key_input(UiKey::SelectAll));assert!(demo.ui.paste_into_focused_text(draft));demo.snapshot_inputs();
             let changed=demo.state.cell_editor_caption();assert_ne!(changed,before,"{kind}");
-            assert_eq!(demo.state.edit_value,draft);assert_eq!(demo.ui.text_content(label),Some(changed.as_str()));assert_eq!(demo.ui.accessible_name(label).as_deref(),Some(changed.as_str()));
+            if mode==EditCellMode::Hex {assert_eq!(demo.state.edit_bytes.as_slice(),crate::db::from_hex(draft).unwrap());} else {assert_eq!(demo.state.edit_value,draft);}assert_eq!(demo.ui.text_content(label),Some(changed.as_str()));assert_eq!(demo.ui.accessible_name(label).as_deref(),Some(changed.as_str()));
             assert_eq!((demo.ids.edit_value,demo.ids.edit_meta_label,demo.ids.edit_meta,demo.state.edit_revision),(editor,label,host,revision));
-            assert_eq!(demo.ui.focused(),Some(editor));assert_eq!(demo.ui.text_area_caret(editor),Some(draft.chars().count()));assert!(!demo.rebuild);
+            assert_eq!(demo.ui.focused(),Some(editor));if mode==EditCellMode::Hex {assert_eq!(demo.ui.hex_editor_caret(editor),Some((4,false)));} else {assert_eq!(demo.ui.text_area_caret(editor),Some(draft.chars().count()));}assert!(!demo.rebuild);
             assert!(demo.ui.key_input(UiKey::Undo));demo.snapshot_inputs();
             let undone=if kind=="null" {before.replace("NULL · 0 bytes","Text · 0 characters")} else {before.clone()};
             assert_eq!(demo.ui.text_content(label),Some(undone.as_str()));
@@ -37,7 +37,7 @@ fn cell_metadata_updates_with_input_and_history_without_rebuilding_the_editor() 
             assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT region FROM quarterly_revenue WHERE observed='2026-10-01'",[],|r|r.get::<_,Value>(0)).unwrap(),raw);assert!(!demo.state.dirty);
             if let Some(folder)=&folder {if matches!(mode,EditCellMode::Text|EditCellMode::Hex) && kind!="null" {demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);crate::plot_export::capture(&mut demo,folder,&format!("cell-info-{kind}-{name}-{width}"));}}
             demo.state.tab=MainTab::Pragmas;demo.do_rebuild();assert_eq!(demo.ui.text_content(demo.ids.edit_meta_label),Some(changed.as_str()));
-            demo.ui.set_focus(Some(demo.ids.edit_value));assert!(!demo.ui.paste_into_focused_text("blocked"));demo.snapshot_inputs();assert_eq!(demo.state.edit_value,draft);
+            demo.ui.set_focus(Some(demo.ids.edit_value));assert!(!demo.ui.paste_into_focused_text("blocked"));demo.snapshot_inputs();if mode==EditCellMode::Hex {assert_eq!(demo.state.edit_bytes.as_slice(),crate::db::from_hex(draft).unwrap());} else {assert_eq!(demo.state.edit_value,draft);}
         }
     }}
 }
