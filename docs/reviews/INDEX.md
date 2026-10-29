@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [conditional text styles](R-20261030-5cf0d804d6cc.md) — 821 tests, 16 Soft/Metal pairs, 8 native style workflows and 14 Office windows verified; full F02 remains in progress.
+Latest scoped review: [conditional style checkboxes](R-20261030-d0db5c12cb29.md) — 822 tests, 20 Soft/Metal pairs and 8 native cross-rule workflows verified; full F02 remains in progress.
 
 ## Findings
 
@@ -100,6 +100,7 @@ Latest scoped review: [conditional text styles](R-20261030-5cf0d804d6cc.md) — 
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-30 | `d33e7b4..d0db5c12cb29` | Codex | issues — 822 tests/strict checks, 20 Metal pairs and 8 native workflows; real B/I/U table edits retain rule identity and Save/Cancel, full parity pending | [Report](R-20261030-d0db5c12cb29.md) |
 | 2026-10-30 | `57f7162..5cf0d804d6cc` | Codex | issues — 821 tests/strict checks, 16 Metal pairs, 8 native style workflows and 14 Office windows; conditional typography verified, B/I/U list polish and full parity pending | [Report](R-20261030-5cf0d804d6cc.md) |
 | 2026-10-30 | `ac7df3b..8e6bd3601ca7` | Codex | issues —810 tests/strict checks,17 Metal pairs and8 native Save/Cancel flows; existing background rules now editable/removable/reorderable with atomic drafts; full parity pending | [Report](R-20261030-8e6bd3601ca7.md) |
 | 2026-10-29 | `52e3b19..b23ae67bf985` | Codex | issues —781 tests/strict checks,24 Metal pairs and four native wide/narrow Apply workflows; viewport F01 verified with retained editor focus/fresh history; full parity pending | [Report](R-20261029-b23ae67bf985.md) |
