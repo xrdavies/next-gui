@@ -26,6 +26,9 @@
 
 use std::fmt;
 
+/// Open files and URLs with the desktop's registered default application.
+pub mod desktop;
+
 #[cfg(any(feature = "linux", feature = "macos", feature = "windows"))]
 mod redraw;
 

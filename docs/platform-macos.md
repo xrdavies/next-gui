@@ -188,3 +188,16 @@ UI repeat timers stop on release and do not run continuously while idle.
 A real macOS event-loop probe verified three delayed redraws, earlier/later
 coalescing, no idle spin, callback exit and coexistence with20ms soak wakes.
 Actual Windows/Linux runtime acceptance remains unavailable on this Mac.
+
+
+## Desktop file / URL requests
+
+`next_gui_platform::desktop::OpenRequest::{path,url}` launches the registered
+default application on a worker and reports completion/error through `poll`.
+Poll from redraw callbacks and request a short delayed redraw while pending.
+Relative paths become absolute, URI schemes/control characters are checked and
+no command shell is used. macOS uses `/usr/bin/open --`, Linux `xdg-open`, and
+Windows uses Unicode ShellExecuteW with a thread-owned COM apartment. Completion
+means the launcher returned; Linux handlers can remain active until their app
+exits. This is an explicit application action, not automatic link navigation.
+Host feature checks do not verify Windows/Linux runtime behavior.
