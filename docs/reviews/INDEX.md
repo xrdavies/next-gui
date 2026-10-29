@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [conditional style checkboxes](R-20261030-d0db5c12cb29.md) — 822 tests, 20 Soft/Metal pairs and 8 native cross-rule workflows verified; full F02 remains in progress.
+Latest scoped review: [native conditional format projects](R-20261030-7b8c844f8bd3.md) — 827 tests, 20 Soft/Metal pairs, 8 native workflows, 14 Office windows and actual original DB4S export opening verified; full F02 remains in progress.
 
 ## Findings
 
