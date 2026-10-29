@@ -2931,14 +2931,15 @@ impl Demo {
 
     fn do_rebuild(&mut self) {
         self.snapshot_cell_editor();
-        let cell_focus = (self.last_edit_revision == self.state.edit_revision && self.state.overlay.is_none() && !self.state.confirm_open)
+        let reveal_applied_cell = std::mem::take(&mut self.state.reveal_applied_cell);
+        let cell_focus = ((self.last_edit_revision == self.state.edit_revision || reveal_applied_cell) && self.state.overlay.is_none() && !self.state.confirm_open)
             .then(|| [self.ids.edit_col,self.ids.edit_type,self.ids.edit_value,self.ids.edit_image].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_tool_focus = (self.state.overlay.is_none() && !self.state.confirm_open)
             .then(|| [self.ids.btn_cell_auto,self.ids.btn_cell_wrap,self.ids.image_fit,self.ids.image_actual,self.ids.image_in,self.ids.image_out,self.ids.image_export,self.ids.btn_cell_indent,self.ids.hex_insert,self.ids.hex_copy,self.ids.hex_export,self.ids.btn_cell_open,self.ids.btn_cell_external,self.ids.btn_edit_cell,self.ids.btn_edit_discard,self.ids.btn_cell_import,self.ids.btn_cell_export,self.ids.btn_cell_null].into_iter()
                 .position(|id| id.0 != 0 && self.ui.focused() == Some(id))).flatten();
         let cell_revision = self.state.edit_revision;
-        let cell_select = (cell_focus == Some(1)).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
+        let cell_select = (cell_focus == Some(1) && self.last_edit_revision == self.state.edit_revision).then(|| self.ui.select_state(self.ids.edit_type)).flatten();
         let mode_focused = self.ids.edit_mode.0 != 0 && self.ui.focused() == Some(self.ids.edit_mode)
             && self.state.overlay.is_none() && !self.state.confirm_open;
         let mode_session = (mode_focused && self.last_edit_revision == self.state.edit_revision)
@@ -3210,9 +3211,10 @@ impl Demo {
             let id = [self.ids.tabs,self.ids.dock_tabs][index];
             if id.0 != 0 { self.ui.set_focus(Some(id)); self.ui.sync(&mut self.scene); }
         }
-        if std::mem::take(&mut self.reveal_browse_selection) && self.ids.browse_table.0 != 0 {
+        let reveal_browse_selection = std::mem::take(&mut self.reveal_browse_selection);
+        if (reveal_browse_selection || reveal_applied_cell) && self.ids.browse_table.0 != 0 {
             self.ui.reveal_table_selection(self.ids.browse_table);
-            self.ui.set_focus(Some(self.ids.browse_table));
+            if reveal_browse_selection { self.ui.set_focus(Some(self.ids.browse_table)); }
             self.ui.sync(&mut self.scene);
             if let Some(scroll) = self.ui.table_scroll_offset(self.ids.browse_table) {
                 self.state.browse_mut().scroll = scroll;

@@ -649,6 +649,34 @@ mod tests {
         assert_eq!(state.insert_values, values);
     }
 
+    #[test]
+    fn applied_cell_reveal_clears_on_source_change_failure_and_filtered_out_record() {
+        let mut state = fixture();
+        state.set_view_key(Some("Shipment ID".into())).unwrap();
+        select(&mut state, 0, 2);
+        state.set_edit_mode(crate::state::EditCellMode::Json).unwrap();
+        state.edit_value = "{\"bad\":]}".into();
+        assert!(state.prepare_cell_format_confirmation().unwrap());
+        assert!(!state.reveal_applied_cell);
+        state.apply_confirmed_cell_format().unwrap();
+        assert!(state.reveal_applied_cell);
+        select(&mut state, 0, 0);
+        assert!(!state.reveal_applied_cell);
+        state.edit_value = "2".into();
+        assert!(state.apply_cell_draft().is_err());
+        assert!(!state.reveal_applied_cell);
+        assert!(state.has_cell_draft());
+        state.discard_cell_draft();
+        state.browse_mut().filter = "\"Shipment ID\"<100".into();
+        state.refresh_browse().unwrap();
+        select(&mut state, 0, 0);
+        state.edit_value = "200".into();
+        state.apply_cell_draft().unwrap();
+        assert!(!state.reveal_applied_cell);
+        assert!(state.browse().sel_row.is_none());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT COUNT(*) FROM shipments WHERE id=200", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
+
     fn finish(demo: &mut Demo) {
         demo.handle_column_list_activate();
         demo.snapshot_inputs();

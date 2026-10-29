@@ -1,6 +1,110 @@
 use super::*;
 
 #[test]
+fn applied_cells_reveal_both_axes_and_keep_fresh_editor_focus() {
+    fn visible(demo: &Demo) {
+        let table = demo.ids.browse_table;
+        let bounds = demo.scene.iter_paint_order().into_iter()
+            .find(|node| demo.ui.widget_from_node(node.id) == Some(table)).unwrap().bounds;
+        let style = next_gui_ui::TableStyle::from_theme(&demo.theme);
+        let (x, y) = demo.ui.table_scroll_offset(table).unwrap();
+        let row = demo.state.browse().sel_row.unwrap();
+        let col = demo.state.browse().sel_col.unwrap();
+        let widths = demo.ui.table_column_widths(table).unwrap();
+        let left: f32 = widths[..col].iter().sum();
+        assert!(row as f32 * style.row_height >= y - 0.1);
+        assert!((row + 1) as f32 * style.row_height <= y + bounds.height - style.header_height + 0.1);
+        assert!(left >= x - 0.1);
+        assert!(left + widths[col] <= x + bounds.width - 2.0 * style.padding + 0.1);
+        assert_eq!(demo.state.browse().scroll, (x, y));
+        assert!(!demo.state.reveal_applied_cell);
+    }
+    let folder = std::env::var("NEXT_GUI_APPLY_REVEAL_QA_OUT").ok().map(PathBuf::from);
+    if let Some(folder) = &folder { std::fs::create_dir_all(folder).unwrap(); }
+    for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+        for (width, height, font) in [(1400, 860, 13.0), (800, 600, 18.0)] {
+            for source in ["shipments", "shipment_view"] {
+                let mut demo = Demo::new(width, height, PresentBackend::Softbuffer);
+                demo.state.new_memory_db().unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch(crate::view_keys::QA_SQL).unwrap();
+                demo.state.write_changes().unwrap();
+                demo.state.refresh_schema().unwrap();
+                demo.state.switch_browse_table(source).unwrap();
+                if source == "shipment_view" { demo.state.set_view_key(Some("Shipment ID".into())).unwrap(); }
+                demo.state.tab = MainTab::Browse;
+                demo.state.prefs.auto_switch_mode = false;
+                demo.state.prefs.font_size = font;
+                demo.theme = ui_build::browser_theme(theme, font);
+                demo.state.dock_focus = DockKind::Plot;
+                demo.state.dock_ratio = 0.62;
+                demo.state.body_ratio = 0.45;
+                let key = if source == "shipments" { "id" } else { "Shipment ID" };
+                demo.state.set_browse_ordering(vec![db::OrderBy { column: key.into(), descending: false }]).unwrap();
+                demo.state.browse_mut().column_widths = vec![240.0; 4];
+                demo.state.browse_mut().sel_row = Some(0);
+                demo.state.browse_mut().sel_col = Some(0);
+                demo.state.sync_edit_cell_from_selection();
+                demo.do_rebuild();
+                let capture = |demo: &mut Demo, stage: &str| {
+                    if let Some(folder) = &folder {
+                        crate::plot_export::capture(demo, folder, &format!("apply-reveal-{source}-{stage}-{name}-{width}"));
+                    }
+                };
+                demo.ui.set_table_scroll_offset(demo.ids.browse_table, 400.0, 0.0);
+                demo.state.browse_mut().scroll = demo.ui.table_scroll_offset(demo.ids.browse_table).unwrap();
+                demo.ui.set_focus(Some(demo.ids.edit_value));
+                demo.ui.key_input(UiKey::SelectAll);
+                demo.ui.paste_into_focused_text("42");
+                demo.snapshot_inputs();
+                demo.ui.set_focus(Some(demo.ids.btn_edit_cell));
+                demo.ui.key_input(UiKey::Enter);
+                let button = demo.ui.take_button_activate().unwrap();
+                demo.handle_button(button);
+                demo.do_rebuild();
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert_eq!(demo.state.browse().sel_row, Some(17));
+                assert_eq!(demo.state.edit_value, "42");
+                assert_eq!(demo.ui.focused(), Some(demo.ids.btn_edit_cell));
+                visible(&demo);
+                capture(&mut demo, "key");
+
+                demo.state.set_edit_mode(state::EditCellMode::Evaluation).unwrap();
+                demo.do_rebuild();
+                demo.ui.set_focus(Some(demo.ids.edit_value));
+                demo.ui.key_input(UiKey::SelectAll);
+                demo.ui.paste_into_focused_text("40-40");
+                demo.snapshot_inputs();
+                // Exercise the shared Apply path without the shortcut's explicit focus restoration.
+                demo.state.apply_cell_draft().unwrap();
+                demo.do_rebuild();
+                assert_eq!(demo.state.browse().sel_row, Some(0));
+                assert_eq!(demo.state.edit_mode, state::EditCellMode::Text);
+                assert_eq!(demo.ui.text_area_value(demo.ids.edit_value), Some("0"));
+                assert_eq!(demo.ui.focused(), Some(demo.ids.edit_value));
+                demo.ui.key_input(UiKey::Undo);
+                assert_eq!(demo.ui.text_area_value(demo.ids.edit_value), Some("0"));
+                assert!(!demo.state.has_cell_draft());
+                visible(&demo);
+                capture(&mut demo, "evaluation");
+
+                demo.state.browse_mut().sel_col = Some(3);
+                demo.state.sync_edit_cell_from_selection();
+                demo.do_rebuild();
+                demo.ui.set_focus(Some(demo.ids.edit_value));
+                demo.ui.key_input(UiKey::SelectAll);
+                demo.ui.paste_into_focused_text("7.25");
+                demo.snapshot_inputs();
+                assert!(demo.handle_cell_apply_key(KeyCode::Enter, Modifiers { meta: true, ..Modifiers::default() }));
+                assert_eq!(demo.state.edit_value, "7.25");
+                assert_eq!(demo.ui.focused(), Some(demo.ids.edit_value));
+                visible(&demo);
+                capture(&mut demo, "horizontal");
+            }
+        }
+    }
+}
+
+#[test]
 fn cell_metadata_updates_with_input_and_history_without_rebuilding_the_editor() {
     use crate::state::EditCellMode;
     use rusqlite::types::Value;

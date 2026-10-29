@@ -586,6 +586,7 @@ pub struct AppState {
     saved_project: serde_json::Value,
     pub edit_saved: rusqlite::types::Value,
     pub edit_revision: u64,
+    pub reveal_applied_cell: bool,
     pub edit_view: Option<next_gui_ui::TextAreaState>,
     pub edit_hex_view: Option<next_gui_ui::HexEditorState>,
     pub edit_bytes: Arc<Vec<u8>>,
@@ -950,6 +951,7 @@ impl AppState {
             saved_project: serde_json::Value::Null,
             edit_saved: rusqlite::types::Value::Null,
             edit_revision: 0,
+            reveal_applied_cell: false,
             edit_view: None,
             edit_hex_view: None,
             edit_bytes: Arc::new(Vec::new()),
@@ -3389,6 +3391,7 @@ impl AppState {
     pub fn apply_cell_draft(&mut self) -> Result<(), String> {self.apply_cell_draft_inner(true)}
 
     fn apply_cell_draft_inner(&mut self, validate_format: bool) -> Result<(), String> {
+        self.reveal_applied_cell = false;
         let (schema,table,key,column)=self.cell_apply_target()?;
         let applied_mode = self.edit_mode;
         let evaluating = self.edit_mode == EditCellMode::Evaluation;
@@ -3432,6 +3435,7 @@ impl AppState {
             tab.goto_record = (tab.offset + row + 1).to_string();
             self.sync_edit_cell_from_selection();
             if !evaluating && self.edit_mode != applied_mode { self.set_edit_mode(applied_mode)?; }
+            self.reveal_applied_cell = col.is_some();
         }
         self.status_msg = if changed {"Cell updated (unwritten)"} else {"Cell unchanged"}.into();
         Ok(())
@@ -3875,6 +3879,7 @@ impl AppState {
     }
 
     fn reset_cell_editor_session(&mut self) {
+        self.reveal_applied_cell = false;
         self.cancel_external_cell();
         // Equal text in another cell must not inherit this cell's undo history.
         self.invalidate_cell_format();
