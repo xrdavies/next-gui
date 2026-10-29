@@ -9,6 +9,9 @@ use rusqlite::Connection;
 
 use crate::{db, plot, project::ProjectFile, state::BrowseTabState};
 
+#[path = "project_cond.rs"]
+mod conditional;
+
 #[derive(Clone, Debug)]
 enum Content {
     Element(Element),
@@ -696,6 +699,7 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
             global.push(filter);
         }
     }
+    conditional::capture(project, conn, &mut root)?;
     project.db4s_xml = Some(render(&root)?);
     Ok(())
 }
@@ -801,6 +805,7 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
     };
     let root = parse(source)?;
     restore_plots(&root, &mut project.plot_settings)?;
+    conditional::restore(project, conn, &root)?;
     let Some(settings) = root
         .child("tab_browse")
         .and_then(|e| e.child("browse_table_settings"))
@@ -906,7 +911,6 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
             for table in settings.children().filter(|e| e.name == "table") {
                 if [
                     "hidden_columns",
-                    "conditional_formats",
                     "row_id_formats",
                     "display_formats",
                 ]
@@ -915,7 +919,7 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
                     table
                         .child(key)
                         .is_some_and(|e| e.children().next().is_some())
-                })
+                }) || conditional::unapplied(project, table, &root)
                 {
                     notes.push("advanced browse filters/formatting");
                     break;

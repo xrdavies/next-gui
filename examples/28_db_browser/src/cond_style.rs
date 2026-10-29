@@ -15,6 +15,7 @@ pub struct Style {
     pub italic: bool,
     pub underline: bool,
     pub alignment: usize,
+    pub qfont: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -26,6 +27,7 @@ pub(crate) struct Draft {
     pub italic: bool,
     pub underline: bool,
     pub alignment: usize,
+    pub qfont: Option<String>,
 }
 
 pub(crate) fn rgb(value: u32) -> Color {
@@ -41,13 +43,21 @@ impl From<&Style> for Draft {
                 .unwrap_or_default(),
             family: style.family.clone(),
             size: style
-                .size
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
+                .qfont
+                .as_deref()
+                .and_then(crate::cond_font::Description::parse)
+                .map(|font| font.size_text())
+                .unwrap_or_else(|| {
+                    style
+                        .size
+                        .map(|value| value.to_string())
+                        .unwrap_or_default()
+                }),
             bold: style.bold,
             italic: style.italic,
             underline: style.underline,
             alignment: style.alignment,
+            qfont: style.qfont.clone(),
         }
     }
 }
@@ -66,7 +76,14 @@ impl Draft {
             }
             Some(u32::from_str_radix(text, 16).unwrap())
         };
-        let size = if self.size.is_empty() {
+        let native = self
+            .qfont
+            .as_deref()
+            .and_then(crate::cond_font::Description::parse);
+        let size = if let Some(font) = native.as_ref().filter(|font| self.size == font.size_text())
+        {
+            font.size()
+        } else if self.size.is_empty() {
             None
         } else {
             Some(
@@ -91,6 +108,15 @@ impl Draft {
             italic: self.italic,
             underline: self.underline,
             alignment: self.alignment,
+            qfont: native.map(|font| font.update(self, size)).or_else(|| {
+                (self.family.is_empty()
+                    && size.is_none()
+                    && !self.bold
+                    && !self.italic
+                    && !self.underline)
+                    .then(|| self.qfont.clone())
+                    .flatten()
+            }),
         })
     }
 
@@ -106,6 +132,10 @@ impl Draft {
 
 impl Style {
     pub(crate) fn cell(&self, background: u32, fallback: &Font) -> TableCellStyle {
+        let native = self
+            .qfont
+            .as_deref()
+            .and_then(crate::cond_font::Description::parse);
         let font = if !self.family.is_empty() {
             Some(
                 load_system_font(&self.family, self.bold, self.italic)
@@ -136,18 +166,17 @@ impl Style {
             foreground: self.foreground_rgb.map(rgb),
             font,
             // Qt's base logical DPI is72 on macOS and96 on Windows/X11.
-            size: self
-                .size
-                .filter(|size| (1..=99).contains(size))
-                .map(|size| {
-                    size as f32
-                        * if cfg!(target_os = "macos") {
-                            1.0
-                        } else {
-                            96.0 / 72.0
-                        }
+            size: native
+                .as_ref()
+                .and_then(|font| font.pixels())
+                .map(|pixels| pixels.clamp(1.0, 4096.0))
+                .or_else(|| {
+                    self.size
+                        .filter(|size| (1..=99).contains(size))
+                        .map(|size| size as f32 * crate::cond_font::POINT_SCALE)
                 }),
             underline: self.underline,
+            strikeout: native.as_ref().is_some_and(|font| font.strikeout()),
             alignment: match self.alignment {
                 1 => TableTextAlign::Right,
                 2 => TableTextAlign::Center,
@@ -181,6 +210,7 @@ pub(crate) fn prepare_qa(state: &mut crate::state::AppState) {
         italic: true,
         underline: true,
         alignment: 1,
+        qfont: None,
     };
     state.cond_rules[1].style = Style {
         foreground_rgb: Some(0xEAF4FF),

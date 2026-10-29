@@ -280,6 +280,7 @@ mod tests {
             value: String::new(),
             color_rgb: 0xABCDEF,
             style: Default::default(),
+            native_format: None,
         }];
         state
     }

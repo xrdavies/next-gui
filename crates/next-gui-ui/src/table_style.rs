@@ -28,6 +28,8 @@ pub struct TableCellStyle {
     pub size: Option<f32>,
     /// Draw an underline over the text's advance width.
     pub underline: bool,
+    /// Draw a strikeout through the text.
+    pub strikeout: bool,
     /// Horizontal text placement.
     pub alignment: TableTextAlign,
 }
@@ -96,14 +98,23 @@ pub(super) fn text_mask(
     }
     let mut mask =
         font.rasterize_layout_clipped(&layout, size, width.ceil() as u32, height.ceil() as u32);
-    if style.underline && !mask.is_empty() {
+    if (style.underline || style.strikeout) && !mask.is_empty() {
         let start = x.max(0.0).ceil() as u32;
         let end = (x + layout.width).min(width).max(0.0).ceil() as u32;
-        let top = (y + font.metrics(size).ascent + (size * 0.08).max(1.0)).round() as i32;
+        let baseline = y + font.metrics(size).ascent;
         let pixels = Arc::make_mut(&mut mask.pixels);
-        for row in top.max(0)..(top + (size / 18.0).ceil() as i32).min(mask.height as i32) {
-            for col in start..end.min(mask.width) {
-                pixels[row as usize * mask.width as usize + col as usize] = 255;
+        for top in [
+            style.underline.then_some(baseline + (size * 0.08).max(1.0)),
+            style.strikeout.then_some(baseline - size * 0.3),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let top = top.round() as i32;
+            for row in top.max(0)..(top + (size / 18.0).ceil() as i32).min(mask.height as i32) {
+                for col in start..end.min(mask.width) {
+                    pixels[row as usize * mask.width as usize + col as usize] = 255;
+                }
             }
         }
     }
@@ -158,6 +169,14 @@ mod tests {
             .filter(|value| **value == 255)
             .count()
             >= font.measure_line("Ab", 20.0).0.floor() as usize - 1));
+        style.underline = false;
+        style.strikeout = true;
+        let struck = text_mask(font, "Ab", &style, 13.0, 140.0, 40.0);
+        assert_ne!(struck.pixels, underlined.pixels);
+        assert!(
+            struck.pixels.iter().map(|value| *value as u64).sum::<u64>()
+                > left.pixels.iter().map(|value| *value as u64).sum()
+        );
         for alignment in [
             TableTextAlign::Left,
             TableTextAlign::Center,
@@ -203,6 +222,7 @@ mod tests {
                 background: Some(background),
                 size: Some(20.0),
                 underline: true,
+                strikeout: true,
                 font: Some(ui.font().clone().with_synthetic_style(true, true)),
                 alignment: TableTextAlign::Right,
             };

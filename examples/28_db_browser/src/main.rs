@@ -36,6 +36,7 @@ mod filters;
 mod browse_filter;
 mod filter_menu;
 mod cond_format;
+mod cond_font;
 mod cond_match;
 mod cond_style;
 mod prefs;
@@ -1202,6 +1203,11 @@ impl Demo {
                 "condformat-styles" | "condformat-styles-narrow" => {
                     cond_style::prepare_qa(&mut state);
                     if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                    MainTab::Browse
+                }
+                "condformat-native-fonts" | "condformat-native-fonts-narrow" => {
+                    cond_font::prepare_qa(&mut state);
+                    if tab.ends_with("narrow") { state.prefs.font_size = 18.0; }
                     MainTab::Browse
                 }
                 "form" => {

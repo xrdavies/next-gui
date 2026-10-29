@@ -23,6 +23,7 @@ pub(crate) struct Rule {
     pub value: String,
     pub color: String,
     pub style: crate::cond_style::Draft,
+    native_format: Option<crate::state::NativeCondFormat>,
 }
 
 #[derive(Clone, Debug)]
@@ -115,6 +116,7 @@ impl AppState {
                 value: rule.value.clone(),
                 color: format!("#{:06X}", rule.color_rgb),
                 style: (&rule.style).into(),
+                native_format: rule.native_format.clone(),
             })
             .collect();
         let selected = rules
@@ -247,6 +249,7 @@ impl AppState {
                     },
                     color_rgb: u32::from_str_radix(color, 16).unwrap(),
                     style: rule.style.validate().map_err(|message| error(&message))?,
+                    native_format: rule.native_format.clone(),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -473,6 +476,7 @@ impl Demo {
                 value: String::new(),
                 color: "#E67E22".into(),
                 style: Default::default(),
+                native_format: None,
             });
             draft.next_id += 1;
             draft.selected = draft.rules.len().checked_sub(1);
@@ -520,6 +524,7 @@ pub(crate) fn prepare_qa(state: &mut AppState) {
         value: value.into(),
         color_rgb,
         style: Default::default(),
+        native_format: None,
     })
     .collect();
     state.edit_col = "amount".into();
