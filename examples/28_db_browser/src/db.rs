@@ -480,7 +480,8 @@ pub struct OrderBy {
 
 fn append_order_by(conn: &Connection, schema: &str, table: &str, sql: &mut String, ordering: &[OrderBy]) -> Result<(), String> {
     if ordering.is_empty() { return Ok(()); }
-    let columns = table_column_names_in(conn, schema, table)?;
+    let mut columns = table_column_names_in(conn, schema, table)?;
+    if let Some(alias) = implicit_rowid_column_in(conn, schema, table)? { columns.push(alias); }
     if let Some(order) = ordering.iter().find(|order| !columns.iter().any(|column| column.eq_ignore_ascii_case(&order.column))) {
         return Err(format!("Sort column does not exist: {}", order.column));
     }
@@ -513,7 +514,7 @@ pub fn browse_table_in(
     offset: usize,
 ) -> Result<QueryResult, String> {
     let limit = if limit == 0 { DEFAULT_LIMIT } else { limit };
-    let mut sql = browse_select_in(conn, schema, table, ordering, filter)?;
+    let mut sql = browse_select_in(conn, schema, table, ordering, filter, false)?;
     sql.push_str(&format!(
         " LIMIT {} OFFSET {offset}",
         limit.saturating_add(1)
@@ -521,8 +522,12 @@ pub fn browse_table_in(
     query_preview(conn, &sql, limit)
 }
 
-fn browse_select_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>) -> Result<String, String> {
-    let mut sql = format!("SELECT * FROM {}", qualified_name(schema, table));
+fn browse_select_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>, show_row_id: bool) -> Result<String, String> {
+    let projection = if show_row_id {
+        let alias = quote_ident(&implicit_rowid_column_in(conn, schema, table)?.ok_or("This source has no accessible rowid")?);
+        format!("{alias} AS {alias}, *")
+    } else { "*".into() };
+    let mut sql = format!("SELECT {projection} FROM {}", qualified_name(schema, table));
     if let Some(f) = filter.map(str::trim).filter(|s| !s.is_empty()) {
         sql.push_str(" WHERE ");
         sql.push_str(f);
@@ -531,8 +536,8 @@ fn browse_select_in(conn: &Connection, schema: &str, table: &str, ordering: &[Or
     Ok(sql)
 }
 
-pub fn browse_snapshot_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>) -> Result<QueryResult, String> {
-    let sql = browse_select_in(conn, schema, table, ordering, filter)?;
+pub fn browse_snapshot_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>, show_row_id: bool) -> Result<QueryResult, String> {
+    let sql = browse_select_in(conn, schema, table, ordering, filter, show_row_id)?;
     // Validate before the batch executor can prepare or execute any statement tail.
     drop(prepare_browse(conn, &sql)?);
     execute_sql(conn, &sql)
@@ -2342,7 +2347,7 @@ mod tests {
             .unwrap();
         let filter = Some("1; DELETE FROM t; --");
         assert!(browse_table(&conn, "t", &[], filter, 500, 0).is_err());
-        assert!(browse_snapshot_in(&conn, "main", "t", &[], filter).is_err());
+        assert!(browse_snapshot_in(&conn, "main", "t", &[], filter, false).is_err());
         assert!(browse_with_keys_in(&conn, "main", "t", &[], filter, 500, 0).is_err());
         assert!(count_browse_rows(&conn, "t", filter).is_err());
         assert_eq!(count_browse_rows(&conn, "t", Some("v = 1")).unwrap(), 1);
@@ -2360,7 +2365,7 @@ mod tests {
                     else { browse_table(conn,table,order,filter,limit,offset) }
                 };
                 assert!(browse(&conn, "t", &[], Some(filter), 500, 0).is_err());
-                assert!(browse_snapshot_in(&conn, "main", "t", &[], Some(filter)).is_err());
+                assert!(browse_snapshot_in(&conn, "main", "t", &[], Some(filter), false).is_err());
                 assert_eq!(read_pragma(&conn, "foreign_keys").unwrap(), "0");
                 let dir = tempfile::tempdir().unwrap();
                 let output = dir.path().join("keep.json");

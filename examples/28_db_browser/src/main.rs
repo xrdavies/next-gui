@@ -46,6 +46,7 @@ mod sql_completion;
 mod sql_calltip;
 mod sql_function_help;
 mod state;
+mod browse_rowid;
 mod ui_build;
 
 use std::{path::PathBuf, time::Instant};
@@ -1614,6 +1615,17 @@ impl Demo {
                 if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
             }
         }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("rowid-") {
+                state.new_memory_db().unwrap();state.conn.as_ref().unwrap().execute_batch(browse_rowid::QA_SQL).unwrap();
+                state.write_changes().unwrap();state.refresh_schema().unwrap();state.tab=MainTab::Browse;state.switch_browse_table_in("main","measurements").unwrap();
+                state.set_show_rowid(!tab.contains("menu")).unwrap();state.goto_browse_record(1).unwrap();state.browse_mut().sel_col=Some(0);state.prefs.auto_switch_mode=false;state.sync_edit_cell_from_selection();
+                state.dock_focus=DockKind::Plot;state.body_ratio=0.45;state.dock_ratio=0.62;
+                if tab.contains("apply") {state.edit_value="9007199254740993".into();}
+                if tab.contains("readonly") {state.read_only=true;}
+                if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+            }
+        }
         if let Err(error) = state.sync_current_plot() { state.error_msg = Some(error); }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("view-keys")) {
             state.plot.check(3,1,true);state.sync_current_plot().unwrap();
@@ -1621,6 +1633,7 @@ impl Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("row-keys")) {
             state.plot.check(4,1,true);state.sync_current_plot().unwrap();
         }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("rowid-")) { let shown=usize::from(state.browse().show_row_id);state.plot.check(1,1,true);state.plot.check(2+shown,2,true);state.sync_current_plot().unwrap(); }
         if state.dock_edit {
             if let Err(error) = state.sync_edit_cell_for_page() { state.error_msg = Some(error); }
         }
@@ -1629,7 +1642,7 @@ impl Demo {
         }
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| (tab.starts_with("row-keys") || tab.starts_with("view-keys")) && tab.contains("apply")) {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| (tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-")) && tab.contains("apply")) {
             built.ui.set_focus(Some(built.btn_edit_cell)); built.ui.sync(&mut built.scene);
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("view-keys") && tab.contains("insert")) {
@@ -3727,6 +3740,10 @@ impl Demo {
             let action = if enabled { next_gui_ui::MenuItem::new(mid::BROWSE_UNLOCK_VIEW, "Unlock View Editing…") }
                 else { next_gui_ui::MenuItem::disabled(mid::BROWSE_UNLOCK_VIEW, "Unlock View Editing…") };
             items.push(action.checked(self.state.browse().unlock_view_pk.is_some()));
+        } else if self.state.browse().rowid_column.is_some() {
+            let action = if self.state.has_cell_draft() { next_gui_ui::MenuItem::disabled(mid::BROWSE_SHOW_ROWID, "Show Rowid Column") }
+                else { next_gui_ui::MenuItem::new(mid::BROWSE_SHOW_ROWID, "Show Rowid Column") };
+            items.push(action.checked(self.state.browse().show_row_id));
         }
         self.ui.open_context_menu(self.ids.context_menu, items, x, y)
     }
@@ -3742,6 +3759,16 @@ impl Demo {
     }
 
     fn handle_browse_header_action(&mut self, item: u64) -> bool {
+        if item == mid::BROWSE_SHOW_ROWID {
+            self.browse_header_column = None;
+            self.ui.close_popup();
+            match self.state.set_show_rowid(!self.state.browse().show_row_id) {
+                Ok(()) => { self.clear_error(); self.reveal_browse_selection = true; }
+                Err(error) => self.set_error(error),
+            }
+            self.rebuild = true;
+            return true;
+        }
         if item == mid::BROWSE_UNLOCK_VIEW {
             self.browse_header_column = None;
             self.ui.close_popup();
@@ -4746,6 +4773,7 @@ impl Demo {
                 tab.filter.clear();
                 tab.global_filters.clear();
                 tab.col_filters.clear();
+                tab.rowid_filter.clear();
             }
             self.state.browse_mut().offset = 0;
             match self.state.refresh_browse() {
@@ -5982,7 +6010,7 @@ impl AppCallbacks for Demo {
             if self.ui.is_select(self.ids.ov_field_editor) {self.ui.key_input(UiKey::Space);} else {self.ui.open_autocomplete_options(self.ids.ov_field_editor);}
             self.ui.sync(&mut self.scene);self.needs_paint=true;
         }
-        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab=="header-menu" || tab.starts_with("view-keys-menu")) && !self.ui.has_open_popup() {
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab=="header-menu" || tab.starts_with("view-keys-menu") || tab.starts_with("rowid-menu")) && !self.ui.has_open_popup() {
             let bounds = self.scene.iter_paint_order().into_iter().find(
                 |node| self.ui.widget_from_node(node.id) == Some(self.ids.browse_table)
             ).map(|node| node.bounds);
@@ -6025,7 +6053,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

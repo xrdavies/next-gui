@@ -49,7 +49,7 @@ impl AppState {
             let name = tab.table.as_ref().ok_or("Select a table first")?;
             let result = tab.result.as_ref().ok_or("No Browse result")?.clone();
             let filter = Self::composed_where(tab, &result.columns)?;
-            (plot::Source::Table { schema: tab.schema.clone(), table: name.clone() }, result, tab.offset, tab.total_rows, Some((tab.ordering(), filter)))
+            (plot::Source::Table { schema: tab.schema.clone(), table: name.clone() }, result, tab.offset, tab.total_rows, Some((tab.ordering(), filter, tab.show_row_id)))
         };
         let cached = self.plot.full_matches(&source, &preview);
         if !cached { self.plot.sync(source.clone(), &preview, offset, total)?; }
@@ -63,8 +63,8 @@ impl AppState {
             let result = (|| {
                 worker_progress.check(0)?;
                 let versions = if browse.is_some() && !cached { Some(db::data_versions(conn)?) } else { None };
-                let input = if let (plot::Source::Table { schema, table }, Some((ordering, filter))) = (&source, browse) {
-                    if cached { preview.clone() } else { db::browse_snapshot_in(conn, schema, table, &ordering, filter.as_deref())? }
+                let input = if let (plot::Source::Table { schema, table }, Some((ordering, filter, show_row_id))) = (&source, browse) {
+                    if cached { preview.clone() } else { db::browse_snapshot_in(conn, schema, table, &ordering, filter.as_deref(), show_row_id)? }
                 } else { preview.clone() };
                 model.load_all(source, &preview, &input, |rows| worker_progress.check(rows))?;
                 if let Some(versions) = versions {

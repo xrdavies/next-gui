@@ -601,6 +601,8 @@ fn per_table_filters_sort_and_widths_restore_in_each_tab_and_project_roundtrip()
         column_widths: vec![147.0, 231.0],
         frozen_cols: Some(0),
         unlock_view_pk: None,
+        show_row_id: false,
+        rowid_filter: String::new(),
     };
     demo.state.browse_mut().set_options(options.clone());
     demo.state.refresh_browse().unwrap();
@@ -1023,6 +1025,7 @@ fn header_context_uses_the_clicked_column_and_supports_keyboard_selection() {
     assert!(!demo.state.dirty);
     assert!(demo.open_browse_header_menu(bounds.x + 270.0, bounds.y + 10.0));
     demo.ui.key_input(UiKey::End);
+    demo.ui.key_input(UiKey::Up);
     demo.ui.sync(&mut demo.scene);
     assert_eq!(demo.browse_header_name(), Some("姓 名"));
     if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {

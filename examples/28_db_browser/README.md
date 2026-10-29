@@ -223,6 +223,13 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   insertion and deletion. Relock with the checked header action; locked and
   readonly views reject writes. Failed writes retain drafts and earlier pending
   edits. Key settings follow tabs/tables and JSON/native XML projects.
+- The Browse header's Show Rowid Column action exposes the accessible SQLite
+  rowid alias with exact 64-bit values, sorting, filtering and guarded editing.
+  Hiding it retains its filter and ordering; Clear Filters also clears its hidden
+  filter. Views, WITHOUT ROWID tables and fully shadowed aliases omit this action.
+  Column widths and frozen prefixes map across display changes and project saves.
+  Native project width/freeze indices are compatible; next-gui extensions retain
+  implicit-rowid filter/order terms that the original XML cannot represent safely.
 - SQL tabs own results, export snapshots, messages, widths and scroll positions.
   Save as VIEW takes an editable name and the executed result statement, so editing
   the script after execution does not change the view source.

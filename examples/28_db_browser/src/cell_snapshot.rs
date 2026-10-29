@@ -164,6 +164,14 @@ impl CellSnapshot {
         }
     }
 
+    pub fn prepend_source_column(&mut self, column: usize) -> Result<(), String> {
+        if self.is_empty() { return Ok(()); }
+        if column >= self.width { return Err("Snapshot source column is out of bounds".into()); }
+        self.columns.insert(0, column);
+        self.identity = Arc::new(());
+        Ok(())
+    }
+
     pub fn identity(&self) -> Arc<()> {
         self.identity.clone()
     }
@@ -299,6 +307,25 @@ mod tests {
         output.push(&[CellValue::Integer(9)]).unwrap();
         assert_eq!(output.finish().unwrap().cell(0,0).unwrap(), CellValue::Integer(9));
         assert_eq!(SnapshotWriter::new(0).unwrap().finish().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn hidden_source_column_can_return_without_rewriting_memory_or_file_payloads() {
+        for spilled in [false, true] {
+            let cells = vec![CellValue::Integer(9_007_199_254_740_993), CellValue::Blob(vec![0xff; if spilled { INLINE_BYTES + 1 } else { 3 }])];
+            let mut snapshot = CellSnapshot::default();
+            snapshot.push(cells.clone()).unwrap();
+            assert_eq!(snapshot.file().is_some(), spilled);
+            let original = snapshot.clone();
+            snapshot.remove_column(0);
+            assert_eq!(snapshot.cell(0, 0).unwrap(), cells[1]);
+            assert!(snapshot.prepend_source_column(2).is_err());
+            snapshot.prepend_source_column(0).unwrap();
+            assert_eq!(snapshot.rectangle(0..=0, 0..=1).unwrap(), vec![cells]);
+            assert_eq!(original.cell(0, 0).unwrap(), CellValue::Integer(9_007_199_254_740_993));
+            if spilled { assert!(Arc::ptr_eq(&snapshot.file().unwrap(), &original.file().unwrap())); }
+        }
+        CellSnapshot::default().prepend_source_column(0).unwrap();
     }
 
     #[test]

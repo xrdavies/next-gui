@@ -71,6 +71,7 @@ pub mod mid {
     pub const BROWSE_SELECT_COLUMN: u64 = 71;
     pub const BROWSE_COPY_COLUMN: u64 = 72;
     pub const BROWSE_UNLOCK_VIEW: u64 = 73;
+    pub const BROWSE_SHOW_ROWID: u64 = 74;
     pub const PLOT_COPY: u64 = 80;
     pub const PLOT_SAVE: u64 = 81;
     pub const PLOT_FIT: u64 = 82;

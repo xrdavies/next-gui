@@ -505,6 +505,9 @@ pub fn encode(project: &ProjectFile, path: &Path) -> Result<String, String> {
         tab.set("title", &b.title);
         tab.set("custom_title", u8::from(b.title != name));
         tab.set("next_gui_unlock_view_pk", serde_json::to_string(&b.unlock_view_pk).map_err(|e| e.to_string())?);
+        tab.set("next_gui_show_row_id", serde_json::to_string(&b.show_row_id).map_err(|e| e.to_string())?);
+        tab.set("next_gui_rowid_filter", serde_json::to_string(&if b.show_row_id { b.col_filters.first().cloned().unwrap_or_default() } else { b.rowid_filter.clone() }).map_err(|e| e.to_string())?);
+        tab.set("next_gui_rowid_order", serde_json::to_string(&b.ordering()).map_err(|e| e.to_string())?);
         if tab.attr("dock_id").is_none() {
             tab.set("dock_id", next_dock + index);
         }
@@ -598,9 +601,9 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
     }
     for ((schema, name), mut options) in table_options {
         if schema == "temp" && db::table_columns_in(conn, &schema, &name)?.is_empty() { continue; }
-        let columns = db::table_column_names_in(conn, &schema, &name)?;
+        let actual_columns = db::table_column_names_in(conn, &schema, &name)?;
+        let columns = options.remap_source(conn, &schema, &name, options.show_row_id)?;
         if columns.is_empty() { continue; }
-        options.remap_columns(&columns);
         let index = settings.content.iter().position(|c| matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == schema && e.attr("name") == Some(name.as_str()))).unwrap_or_else(|| {
             let mut table = Element::new("table");
             table.set("schema", &schema); table.set("name", &name);
@@ -613,27 +616,33 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         table.set("unlock_view_pk", options.unlock_view_pk.as_deref().unwrap_or("_rowid_"));
         // Preserve an actual column named _rowid_, which DB4S reserves as its locked sentinel.
         table.set("next_gui_unlock_view_pk", serde_json::to_string(&options.unlock_view_pk).map_err(|e| e.to_string())?);
+        table.set("show_row_id", u8::from(options.show_row_id));
+        // DB4S field indices cannot represent the implicit rowid safely.
+        table.set("next_gui_rowid_filter", serde_json::to_string(&options.rowid_filter).map_err(|e| e.to_string())?);
+        table.attrs.retain(|(name, _)| name != "next_gui_rowid_order");
+        if options.ordering.iter().any(|order| !actual_columns.contains(&order.column)) {
+            table.set("next_gui_rowid_order", serde_json::to_string(&options.ordering).map_err(|e| e.to_string())?);
+        }
         // DB4S viewport settings include the leading row-id column; sort/filter fields do not.
         let frozen = options.frozen_cols.or_else(|| project.browse_tabs.iter()
             .any(|tab| tab.schema == schema && tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
         if let Some(count) = frozen {
             let count = count.min(columns.len());
             table.set("next_gui_frozen_names", serde_json::to_string(&columns[..count]).map_err(|e| e.to_string())?);
-            // Keep a row-id-only prefix while that column remains unapplied in e28.
-            if count > 0 || table.attr("freeze_columns") != Some("1") {
-                table.set("freeze_columns", if count == 0 { 0 } else { count + 1 });
+            if options.show_row_id || count > 0 || table.attr("freeze_columns") != Some("1") {
+                table.set("freeze_columns", count + usize::from(count > 0 && !options.show_row_id));
             }
         }
         let sort = table.ensure("sort");
         let old_ordering = sort.children().filter(|e| e.name == "column").filter_map(|column| {
-            setting_column_index(column, &columns, false).and_then(|i| columns.get(i))
+            setting_column_index(column, &actual_columns, 0).and_then(|i| actual_columns.get(i))
                 .map(|name| db::OrderBy { column: name.clone(), descending: column.attr("mode") == Some("1") })
         }).collect::<Vec<_>>();
-        let ordering = options.ordering;
+        let ordering = options.ordering.iter().filter(|order| actual_columns.contains(&order.column)).cloned().collect::<Vec<_>>();
         if old_ordering != ordering || sort.children().filter(|e| e.name == "column").count() != ordering.len() {
             sort.retain_elements(|e| e.name != "column");
             for order in &ordering {
-                if let Some(index) = columns.iter().position(|c| c == &order.column) {
+                if let Some(index) = actual_columns.iter().position(|c| c == &order.column) {
                     let mut column = Element::new("column");
                     column.set("index", index);
                     column.set("mode", u8::from(order.descending));
@@ -645,9 +654,9 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         for content in &mut sort.content {
             if let Content::Element(column) = content {
                 if column.name == "column" {
-                    if let Some(index) = setting_column_index(column, &columns, false) {
+                    if let Some(index) = setting_column_index(column, &actual_columns, 0) {
                         column.set("index", index);
-                        column.set("next_gui_name", &columns[index]);
+                        column.set("next_gui_name", &actual_columns[index]);
                     }
                 }
             }
@@ -655,8 +664,16 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let widths = table.ensure("column_widths");
         widths.retain_elements(|e| e.name != "column" || e.attr("index").and_then(|index| index.parse::<usize>().ok()) == Some(0));
         for (index, width) in options.column_widths.iter().enumerate().take(columns.len()) {
+            let native_index = index + usize::from(!options.show_row_id);
+            if native_index == 0 {
+                if let Some(Content::Element(column)) = widths.content.iter_mut().find(|content| matches!(content, Content::Element(column) if column.name=="column" && column.attr("index")==Some("0"))) {
+                    column.set("next_gui_name", &columns[index]);
+                    column.set("value", width.round().max(32.0) as u32);
+                    continue;
+                }
+            }
             let mut column = Element::new("column");
-            column.set("index", index + 1);
+            column.set("index", native_index);
             column.set("next_gui_name", &columns[index]);
             column.set("value", width.round().max(32.0) as u32);
             widths.push(column);
@@ -664,8 +681,9 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let filters = table.ensure("filter_values");
         filters.retain_elements(|e| e.name != "column");
         for (index, value) in options.col_filters.iter().enumerate().take(columns.len()).filter(|(_, value)| !value.is_empty()) {
+            let Some(native_index) = actual_columns.iter().position(|name| name==&columns[index]) else { continue; };
             let mut column = Element::new("column");
-            column.set("index", index);
+            column.set("index", native_index);
             column.set("next_gui_name", &columns[index]);
             column.set("value", value);
             filters.push(column);
@@ -683,12 +701,12 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
 }
 
 /// Map column indices only after the database schema is available.
-fn setting_column_index(column: &Element, columns: &[String], row_id: bool) -> Option<usize> {
+fn setting_column_index(column: &Element, columns: &[String], offset: isize) -> Option<usize> {
     if let Some(name) = column.attr("next_gui_name") {
         columns.iter().position(|c| c.eq_ignore_ascii_case(name))
     } else {
         let index = column.attr("index")?.parse::<usize>().ok()?;
-        let index = if row_id { index.checked_sub(1)? } else { index };
+        let index = index.checked_add_signed(offset)?;
         (index < columns.len()).then_some(index)
     }
 }
@@ -707,7 +725,7 @@ fn restore_table_options(
         tab.frozen_cols = Some(
             count.parse::<usize>()
                 .map_err(|_| "Invalid project frozen column count")?
-                .saturating_sub(1)
+                .saturating_sub(usize::from(!tab.show_row_id))
                 .min(columns.len()),
         );
     }
@@ -720,7 +738,7 @@ fn restore_table_options(
             sort.children()
                 .filter(|e| e.name == "column")
                 .filter_map(|column| {
-                    setting_column_index(column, columns, false).and_then(|i| columns.get(i))
+                    setting_column_index(column, columns, isize::from(tab.show_row_id)).and_then(|i| columns.get(i))
                         .map(|name| db::OrderBy {
                             column: name.clone(),
                             descending: column.attr("mode") == Some("1"),
@@ -732,7 +750,7 @@ fn restore_table_options(
     if let Some(widths) = table.child("column_widths") {
         tab.column_widths.resize(columns.len(), 140.0);
         for column in widths.children().filter(|e| e.name == "column") {
-            if let Some(index) = setting_column_index(column, columns, true)
+            if let Some(index) = setting_column_index(column, columns, if tab.show_row_id { 0 } else { -1 })
             {
                 let width = column
                     .attr("value")
@@ -749,12 +767,23 @@ fn restore_table_options(
     if let Some(filters) = table.child("filter_values") {
         tab.col_filters = vec![String::new(); columns.len()];
         for column in filters.children().filter(|e| e.name == "column") {
-            let Some(index) = setting_column_index(column, columns, false) else {
+            let Some(index) = setting_column_index(column, columns, isize::from(tab.show_row_id)) else {
                 if column.attr("next_gui_name").is_some() { continue; }
                 return Err("Invalid project filter column index".into());
             };
             tab.col_filters[index] = column.attr("value").unwrap_or("").into();
         }
+    }
+    if let Some(filter) = table.attr("next_gui_rowid_filter") {
+        tab.rowid_filter = serde_json::from_str::<String>(filter).map_err(|e| format!("Invalid project rowid filter: {e}"))?;
+        if tab.show_row_id {
+            tab.col_filters.resize(columns.len(), String::new());
+            tab.col_filters[0] = tab.rowid_filter.clone();
+        }
+    }
+    if let Some(ordering) = table.attr("next_gui_rowid_order") {
+        let ordering: Vec<db::OrderBy> = serde_json::from_str(ordering).map_err(|e| format!("Invalid project rowid order: {e}"))?;
+        tab.set_ordering(ordering.into_iter().filter(|order| columns.iter().chain(tab.rowid_column.iter()).any(|name| name.eq_ignore_ascii_case(&order.column))).collect());
     }
     if let Some(global) = table.child("global_filter") {
         tab.global_filters = global
@@ -790,8 +819,7 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             };
             let schema = table.attr("schema").unwrap_or("main");
             if schema == "temp" && db::table_columns_in(conn, schema, name)?.is_empty() { continue; }
-            let columns = db::table_column_names_in(conn, schema, name)?;
-            if columns.is_empty() {
+            if db::table_column_names_in(conn, schema, name)?.is_empty() {
                 continue;
             }
             let active = tab.schema == schema && tab.table.as_deref() == Some(name);
@@ -801,9 +829,6 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
             } else if let Some(options) = tab.stored_options(schema, name) {
                 stored.set_options(options.clone());
             }
-            let mut options = stored.options();
-            options.remap_columns(&columns);
-            stored.set_options(options);
             // Per-tab overrides take precedence over DB4S's shared table setting.
             let key_override = if active {
                 native_tabs.get(tab_index).and_then(|tab| tab.attr("next_gui_unlock_view_pk"))
@@ -814,14 +839,42 @@ pub fn restore_browse(project: &mut ProjectFile, conn: &Connection) -> Result<()
                 extended_tab.and_then(|tab| tab.get("table_options")).and_then(|tables| tables.get(name))
             } else { extended_tab.and_then(|tab| tab.get("schema_table_options")).and_then(|schemas| schemas.get(schema)).and_then(|tables| tables.get(name)) };
             let key_override = key_override.or_else(|| extended_options.and_then(|options| options.get("unlock_view_pk")).map(|_| stored.unlock_view_pk.clone()));
-            let frozen_override = stored.frozen_cols;
-            let widths_override = (!stored.column_widths.is_empty()).then(|| stored.column_widths.clone());
+            let rowid_override = if active {
+                native_tabs.get(tab_index).and_then(|tab| tab.attr("next_gui_show_row_id"))
+                    .map(|show| serde_json::from_str::<bool>(show).map_err(|e| format!("Invalid project rowid visibility: {e}"))).transpose()?
+            } else { None }.or_else(|| extended_options.and_then(|options| options.get("show_row_id")).map(|_| stored.show_row_id));
+            let native_show = table.attr("show_row_id").filter(|show| !show.is_empty()).map(str::parse::<u8>).transpose().map_err(|_| "Invalid project rowid visibility")?.unwrap_or(0) != 0;
+            let previous = stored.options();
+            let mut options = stored.options();
+            let columns = options.remap_source(conn, schema, name, rowid_override.unwrap_or(native_show))?;
+            stored.set_options(options);
+            stored.rowid_column = db::implicit_rowid_column_in(conn, schema, name)?;
+            let frozen_override = (previous.show_row_id == stored.show_row_id).then_some(stored.frozen_cols).flatten();
+            let rowid_filter_override = if active {
+                native_tabs.get(tab_index).and_then(|tab| tab.attr("next_gui_rowid_filter")).map(|filter| serde_json::from_str::<String>(filter).map_err(|e| format!("Invalid project rowid filter: {e}"))).transpose()?
+            } else { None }.or_else(|| rowid_override.map(|_| if previous.show_row_id { previous.col_filters.first().cloned().unwrap_or_default() } else { previous.rowid_filter.clone() }));
+            let rowid_order_override = if active {
+                native_tabs.get(tab_index).and_then(|tab| tab.attr("next_gui_rowid_order")).map(|order| serde_json::from_str::<Vec<db::OrderBy>>(order).map_err(|e| format!("Invalid project rowid order: {e}"))).transpose()?
+            } else { None }.or_else(|| (rowid_override.is_some() && previous.ordering.iter().any(|order| !previous.column_names.iter().skip(usize::from(previous.show_row_id)).any(|name| name.eq_ignore_ascii_case(&order.column)))).then(|| previous.ordering.clone()));
+            let widths_override = (!previous.column_widths.is_empty()).then_some(previous);
             restore_table_options(&mut stored, table, &columns)?;
+            if let Some(filter) = rowid_filter_override {
+                stored.rowid_filter = filter;
+                if stored.show_row_id { stored.col_filters.resize(columns.len(), String::new()); stored.col_filters[0] = stored.rowid_filter.clone(); }
+            }
+            if let Some(ordering) = rowid_order_override { stored.set_ordering(ordering.into_iter().filter(|order| columns.iter().chain(stored.rowid_column.iter()).any(|name| name.eq_ignore_ascii_case(&order.column))).collect()); }
             if let Some(key) = key_override { stored.unlock_view_pk = key.and_then(|key| columns.iter().find(|name| name.eq_ignore_ascii_case(&key))).cloned(); }
             if frozen_override.is_some() {
                 stored.frozen_cols = frozen_override;
             }
-            if let Some(widths) = widths_override { stored.column_widths = widths; }
+            if let Some(previous) = widths_override {
+                stored.column_widths.resize(columns.len(), 140.0);
+                for (index, name) in columns.iter().enumerate() {
+                    let old = if previous.column_names.is_empty() && previous.column_widths.len()==columns.len() { Some(index) }
+                        else { previous.column_names.iter().position(|column| column.eq_ignore_ascii_case(name)) };
+                    if let Some(width) = old.and_then(|index| previous.column_widths.get(index)) { stored.column_widths[index] = *width; }
+                }
+            }
             if active {
                 tab.set_options(stored.options());
                 project.frozen_cols = tab.frozen_cols.unwrap_or(project.frozen_cols).min(columns.len());
@@ -850,9 +903,6 @@ pub fn unapplied_settings(project: &ProjectFile) -> Result<Vec<&'static str>, St
             notes.push("Qt dock layout");
         }
         if let Some(settings) = browse.child("browse_table_settings") {
-            if settings.children().any(|table| table.name == "table" && table.attr("show_row_id").is_some_and(|value| !value.is_empty() && value != "0")) {
-                notes.push("row-id column visibility");
-            }
             for table in settings.children().filter(|e| e.name == "table") {
                 if [
                     "hidden_columns",
@@ -1019,6 +1069,35 @@ pub fn restore_connection(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rowid_native_indices_and_per_tab_json_xml_settings_roundtrip() {
+        use super::*;
+        let conn=Connection::open_in_memory().unwrap();conn.execute_batch("CREATE TABLE t(a,b); INSERT INTO t VALUES('Paris',2);").unwrap();
+        let xml="<sqlb_project><db path=':memory:'/><tab_browse><table table='4,1:maint'/><browse_table_settings><table name='t' show_row_id='1' freeze_columns='2' future='keep'><sort><column index='1' mode='1'/></sort><filter_values><column index='0' value='=Paris'/></filter_values><column_widths><column index='0' value='55' future='rowid'/><column index='1' value='211'/><column index='2' value='222'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>";
+        let mut project=decode(xml).unwrap();restore_browse(&mut project,&conn).unwrap();
+        let tab=&mut project.browse_tabs[0];assert!(tab.show_row_id);assert_eq!(tab.column_names,["rowid","a","b"]);assert_eq!(tab.col_filters,["","=Paris",""]);assert_eq!(tab.column_widths,[55.0,211.0,222.0]);assert_eq!(tab.frozen_cols,Some(2));assert_eq!(tab.order_col.as_deref(),Some("b"));
+        tab.col_filters[0]=">=2".into();tab.set_ordering(vec![db::OrderBy{column:"rowid".into(),descending:true},db::OrderBy{column:"b".into(),descending:false}]);
+        let shown=tab.options();let mut hidden=BrowseTabState::new(Some("t".into()));hidden.column_names=vec!["a".into(),"b".into()];hidden.column_widths=vec![321.0,322.0];hidden.frozen_cols=Some(1);hidden.rowid_filter=">=1".into();hidden.set_ordering(vec![db::OrderBy{column:"rowid".into(),descending:true}]);
+        hidden.store_options("main","t",hidden.options());project.browse_tabs.push(hidden);
+        capture_connection(&mut project,&conn).unwrap();let path=Path::new("rowid-roundtrip.sqbpro");let text=encode(&project,path).unwrap();
+        for native_only in [false,true] {
+            let mut root=parse(&text).unwrap();if native_only {root.retain_elements(|element|element.name!="next_gui");}
+            let settings=root.child("tab_browse").unwrap().child("browse_table_settings").unwrap().child("table").unwrap();assert_eq!(settings.attr("future"),Some("keep"));
+            for column in settings.child("filter_values").unwrap().children() {assert_ne!(column.attr("index"),Some("-1"));}
+            let mut restored=decode(&render(&root).unwrap()).unwrap();restore_browse(&mut restored,&conn).unwrap();
+            assert!(restored.browse_tabs[0].show_row_id);assert!(!restored.browse_tabs[1].show_row_id);assert_eq!(restored.browse_tabs[0].col_filters[0],">=2");assert_eq!(restored.browse_tabs[0].ordering(),shown.ordering);
+            assert_eq!(restored.browse_tabs[1].rowid_filter,">=1");assert_eq!(restored.browse_tabs[1].ordering(),[db::OrderBy{column:"rowid".into(),descending:true}]);
+            if !native_only {assert_eq!(restored.browse_tabs[0].column_widths,shown.column_widths);assert_eq!(restored.browse_tabs[0].frozen_cols,shown.frozen_cols);assert_eq!(restored.browse_tabs[1].column_widths,[321.0,322.0]);assert_eq!(restored.browse_tabs[1].stored_options("main","t").unwrap().rowid_filter,">=1");}
+            capture_connection(&mut restored,&conn).unwrap();
+        }
+        for (from,to) in [("show_row_id='1'","show_row_id='bad'"),("show_row_id='1'","show_row_id='1' next_gui_rowid_filter='42'"),("show_row_id='1'","show_row_id='1' next_gui_rowid_order='42'")] {
+            let mut project=decode(&xml.replace(from,to)).unwrap();assert!(restore_browse(&mut project,&conn).is_err());
+        }
+        for sql in ["CREATE VIEW invalid AS SELECT a,b FROM t", "CREATE TABLE invalid(a PRIMARY KEY,b) WITHOUT ROWID"] {
+            conn.execute_batch(sql).unwrap();let text=xml.replace("4,1:maint","4,7:maininvalid").replace("name='t'","name='invalid'");let mut project=decode(&text).unwrap();restore_browse(&mut project,&conn).unwrap();assert!(!project.browse_tabs[0].show_row_id);conn.execute_batch(if sql.starts_with("CREATE VIEW") {"DROP VIEW invalid"} else {"DROP TABLE invalid"}).unwrap();
+        }
+    }
+
     #[test]
     fn view_keys_roundtrip_native_json_per_tab_overrides_and_locked_sentinel() {
         use super::*;
@@ -1229,9 +1308,10 @@ SELECT ']]&gt;';]]></sql><current_tab id="0"/></tab_sql>
         let xml = "<sqlb_project><db path=':memory:'/><tab_browse><table table='4,1:maint'/><browse_table_settings><table name='t' schema='main' freeze_columns='1' show_row_id='1'><column_widths><column index='0' value='55' future='rowid'/></column_widths></table></browse_table_settings></tab_browse></sqlb_project>";
         let mut project = decode(xml).unwrap();
         restore_browse(&mut project, &conn).unwrap();
-        assert_eq!(project.browse_tabs[0].frozen_cols, Some(0));
-        assert!(unapplied_settings(&project).unwrap().contains(&"row-id column visibility"));
-        assert_eq!(project.browse_tabs[0].column_widths, [140.0, 140.0]);
+        assert_eq!(project.browse_tabs[0].frozen_cols, Some(1));
+        assert!(project.browse_tabs[0].show_row_id);
+        assert!(!unapplied_settings(&project).unwrap().contains(&"row-id column visibility"));
+        assert_eq!(project.browse_tabs[0].column_widths, [55.0, 140.0, 140.0]);
         capture_connection(&mut project, &conn).unwrap();
         let root = parse(&encode(&project, Path::new("rowid.sqbpro")).unwrap()).unwrap();
         let table = root

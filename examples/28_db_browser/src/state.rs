@@ -159,9 +159,50 @@ pub struct BrowseTableOptions {
     pub column_widths: Vec<f32>,
     pub frozen_cols: Option<usize>,
     pub unlock_view_pk: Option<String>,
+    pub show_row_id: bool,
+    pub rowid_filter: String,
 }
 
 impl BrowseTableOptions {
+    pub fn remap_source(&mut self, conn: &Connection, schema: &str, table: &str, show_row_id: bool) -> Result<Vec<String>, String> {
+        let mut columns = db::table_column_names_in(conn, schema, table)?;
+        let alias = db::implicit_rowid_column_in(conn, schema, table)?;
+        let ordering = self.ordering.iter().map(|order| {
+            let implicit = ["rowid", "_rowid_", "oid"].contains(&order.column.as_str())
+                && !self.column_names.iter().skip(usize::from(self.show_row_id)).any(|name| name.eq_ignore_ascii_case(&order.column))
+                && (!self.column_names.is_empty() || !columns.iter().any(|name| name.eq_ignore_ascii_case(&order.column)));
+            (order.clone(), implicit)
+        }).collect::<Vec<_>>();
+        if self.show_row_id {
+            self.rowid_filter = self.col_filters.first().cloned().unwrap_or_default();
+            if let Some(old) = self.column_names.first().cloned().filter(|name| ["rowid", "_rowid_", "oid"].contains(&name.as_str())) {
+                if let Some(alias) = &alias {
+                    self.column_names[0] = alias.clone();
+                    for order in &mut self.ordering { if order.column == old { order.column = alias.clone(); } }
+                } else {
+                    self.column_names.remove(0);
+                    if !self.col_filters.is_empty() { self.col_filters.remove(0); }
+                    if !self.column_widths.is_empty() { self.column_widths.remove(0); }
+                    self.ordering.retain(|order| order.column != old);
+                    self.frozen_cols = self.frozen_cols.map(|count| count.saturating_sub(1));
+                }
+            }
+        }
+        self.show_row_id = show_row_id && alias.is_some();
+        if self.show_row_id { columns.insert(0, alias.clone().unwrap()); }
+        if alias.is_none() { self.rowid_filter.clear(); }
+        let columns_unchanged = self.column_names.is_empty() || self.column_names == columns;
+        self.remap_columns(&columns);
+        self.ordering = ordering.into_iter().filter_map(|(mut order, implicit)| {
+            if implicit { order.column = alias.clone()?; }
+            else if let Some(name) = columns.iter().find(|name| name.eq_ignore_ascii_case(&order.column)) { order.column = name.clone(); }
+            else if !columns_unchanged { return None; }
+            Some(order)
+        }).collect();
+        if self.show_row_id { self.col_filters.resize(columns.len(), String::new()); self.col_filters[0] = self.rowid_filter.clone(); }
+        Ok(columns)
+    }
+
     fn rename_columns(&mut self, renames: &[(String, String)]) {
         for name in &mut self.column_names { rename_column(name, renames); }
         for order in &mut self.ordering { rename_column(&mut order.column, renames); }
@@ -223,6 +264,12 @@ pub struct BrowseTabState {
     #[serde(default)]
     pub unlock_view_pk: Option<String>,
     #[serde(default)]
+    pub show_row_id: bool,
+    #[serde(default)]
+    pub rowid_filter: String,
+    #[serde(skip)]
+    pub rowid_column: Option<String>,
+    #[serde(default)]
     pub scroll: (f32, f32),
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub table_options: BTreeMap<String, BrowseTableOptions>,
@@ -275,6 +322,8 @@ impl BrowseTabState {
             column_widths: self.column_widths.clone(),
             frozen_cols: self.frozen_cols,
             unlock_view_pk: self.unlock_view_pk.clone(),
+            show_row_id: self.show_row_id,
+            rowid_filter: self.rowid_filter.clone(),
         }
     }
 
@@ -287,6 +336,8 @@ impl BrowseTabState {
         self.column_widths = options.column_widths;
         self.frozen_cols = options.frozen_cols;
         self.unlock_view_pk = options.unlock_view_pk;
+        self.show_row_id = options.show_row_id;
+        self.rowid_filter = options.rowid_filter;
     }
 
     pub fn ordering(&self) -> Vec<db::OrderBy> {
@@ -366,6 +417,9 @@ impl BrowseTabState {
             column_widths: Vec::new(),
             frozen_cols: None,
             unlock_view_pk: None,
+            show_row_id: false,
+            rowid_filter: String::new(),
+            rowid_column: None,
             scroll: (0.0, 0.0),
             table_options: BTreeMap::new(),
             schema_table_options: BTreeMap::new(),
@@ -1340,6 +1394,12 @@ impl AppState {
 
     pub(crate) fn composed_where(tab: &BrowseTabState, columns: &[String]) -> Result<Option<String>, String> {
         let mut parts = Vec::new();
+        if !tab.show_row_id && !tab.rowid_filter.is_empty() {
+            crate::filters::validate(&tab.rowid_filter)?;
+            if let Some(condition) = crate::filters::condition(&tab.rowid_filter) {
+                parts.push(format!("{} {condition}", db::quote_ident(tab.rowid_column.as_deref().ok_or("Refresh Browse before applying its rowid filter")?)));
+            }
+        }
         if !tab.filter.trim().is_empty() {
             parts.push(format!("({})", tab.filter.trim()));
         }
@@ -1370,11 +1430,11 @@ impl AppState {
         let conn = self.conn.as_ref().ok_or("No database open")?;
         let tab = self.browse();
         let table = tab.table.as_ref().ok_or("Select a table to export")?;
-        let columns = db::table_column_names_in(conn, &schema, table)?;
         let mut options = tab.options();
-        options.remap_columns(&columns);
+        let columns = options.remap_source(conn, &schema, table, options.show_row_id)?;
         let mut candidate = tab.clone();
         candidate.set_options(options);
+        candidate.rowid_column = db::implicit_rowid_column_in(conn, &schema, table)?;
         db::export_table_in(
             conn,
             &schema,
@@ -1394,6 +1454,7 @@ impl AppState {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
                 t.result = None;
                 t.row_keys.clear();
+                t.rowid_column = None;
                 t.total_rows = None;
                 t.clear_selection();
             }
@@ -1405,16 +1466,18 @@ impl AppState {
             let t = self.browse_mut();
             t.result = None;
             t.row_keys.clear();
+            t.rowid_column = None;
             t.total_rows = None;
             t.clear_selection();
             self.clear_browse_editor();
             return Ok(());
         };
-        let columns = db::table_column_names_in(self.conn.as_ref().unwrap(), &schema, &table)?;
         let mut options = self.browse().options();
-        options.remap_columns(&columns);
+        let columns = options.remap_source(self.conn.as_ref().unwrap(), &schema, &table, options.show_row_id)?;
+        let rowid_column = db::implicit_rowid_column_in(self.conn.as_ref().unwrap(), &schema, &table)?;
         let mut candidate = self.browse().clone();
         candidate.set_options(options);
+        candidate.rowid_column = rowid_column.clone();
         let ordering = candidate.ordering();
         let is_view = self
             .schema
@@ -1426,7 +1489,7 @@ impl AppState {
         let total_rows = db::count_browse_rows_in(self.conn.as_ref().unwrap(), &schema, &table, where_sql.as_deref())?;
         let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
         let offset = self.browse().offset.min(last_page);
-        let (total_rows, result, row_keys) = {
+        let (total_rows, mut result, row_keys) = {
             let conn = self.conn.as_ref().unwrap();
             if is_view && candidate.unlock_view_pk.is_some() {
                 let (result, keys) = db::browse_view_with_key_in(conn, &schema, &table, candidate.unlock_view_pk.as_deref().unwrap(), &ordering, where_sql.as_deref(), (db::DEFAULT_LIMIT, offset))?;
@@ -1473,6 +1536,10 @@ impl AppState {
             }
         };
 
+        if candidate.show_row_id {
+            db::show_rowid_column(&mut result, &row_keys, rowid_column.as_deref().ok_or("This source has no accessible rowid")?)?;
+        }
+
         candidate.col_filters.resize(result.columns.len(), String::new());
         let nrows = result.rows.len();
         let truncated = result.truncated;
@@ -1485,6 +1552,7 @@ impl AppState {
             t.offset = offset;
             t.title = if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) };
             t.row_keys = row_keys;
+            t.rowid_column = rowid_column;
             t.total_rows = Some(total_rows);
             t.result = Some(result);
             t.clear_selection();
@@ -3188,10 +3256,10 @@ impl AppState {
                     return Err(format!("Browse tab {}: invalid column width", tab.title));
                 }
                 let result = (|| {
-                    let columns = db::table_column_names_in(conn, &tab.schema, &table)?;
                     let mut options = tab.options();
-                    options.remap_columns(&columns);
+                    let columns = options.remap_source(conn, &tab.schema, &table, options.show_row_id)?;
                     tab.set_options(options);
+                    tab.rowid_column = db::implicit_rowid_column_in(conn, &tab.schema, &table)?;
                     db::browse_table_in(conn, &tab.schema, &table, &tab.ordering(),
                         Self::composed_where(tab, &columns)?.as_deref(), db::DEFAULT_LIMIT, tab.offset)
                 })();
@@ -3204,14 +3272,14 @@ impl AppState {
                 .chain(tab.schema_table_options.iter_mut().flat_map(|(schema, tables)| tables.iter_mut().map(move |(table, options)| (schema.as_str(), table, options)))) {
                 if active_schema == schema && active_table.as_deref() == Some(table) { *options = active_options.clone(); continue; }
                 if schema == "temp" && db::table_columns_in(conn, schema, table)?.is_empty() { continue; }
-                let columns = db::table_column_names_in(conn, schema, table)?;
-                if columns.is_empty() { continue; }
                 if options.column_widths.iter().any(|width| !width.is_finite() || *width <= 0.0) {
                     return Err(format!("Saved table {table}: invalid column width"));
                 }
-                options.remap_columns(&columns);
+                let columns = options.remap_source(conn, schema, table, options.show_row_id)?;
+                if columns.is_empty() { continue; }
                 let mut stored = BrowseTabState::new_in(schema, Some(table.into()));
                 stored.set_options(options.clone());
+                stored.rowid_column = db::implicit_rowid_column_in(conn, schema, table)?;
                 let result = (|| {
                     db::browse_table_in(conn, schema, table, &stored.ordering(),
                         Self::composed_where(&stored, &columns)?.as_deref(), 1, 0)
@@ -3469,7 +3537,8 @@ impl AppState {
         if sql {
             let conn = self.conn.as_ref().ok_or("Wait for SQL to finish before copying INSERT statements")?;
             let writable = db::table_columns_in(conn, &tab.schema, tab.table.as_deref().ok_or("No browse table")?)?;
-            let indices = columns.iter().enumerate().filter_map(|(index, name)| writable.iter().any(|column| column.name == *name).then_some(index)).collect::<Vec<_>>();
+            let rowid = db::implicit_rowid_column_in(conn, &tab.schema, tab.table.as_deref().unwrap())?;
+            let indices = columns.iter().enumerate().filter_map(|(index, name)| (writable.iter().any(|column| column.name == *name) || rowid.as_ref()==Some(name)).then_some(index)).collect::<Vec<_>>();
             if indices.is_empty() { return Err("Selected columns are computed; select a writable column to copy INSERT statements".into()); }
             columns = indices.iter().map(|index| columns[*index].clone()).collect();
             cells = cells.into_iter().map(|row| indices.iter().map(|index| row[*index].clone()).collect()).collect();
@@ -3500,6 +3569,7 @@ impl AppState {
         let columns = &result.columns[first_col..=last_col];
         let info = db::table_columns_in(conn, &schema, &table)?;
         let values = columns.iter().map(|col| {
+            if tab.rowid_column.as_ref() == Some(col) { return Err("Rowid cannot be cleared; edit or paste a unique integer".into()); }
             let column = info.iter().find(|info| info.name == *col).ok_or("Selected column is not editable")?;
             Ok(if column.notnull { db::CellValue::Text(Vec::new()) } else { db::CellValue::Null })
         }).collect::<Result<Vec<_>, String>>()?;

@@ -73,20 +73,8 @@ fn key_columns(conn: &Connection, schema: &str, table: &str) -> Result<Arc<[Stri
         .map_err(|e| e.to_string())?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.to_string())?;
-    for alias in ["rowid", "_rowid_", "oid"] {
-        if !fields
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case(alias))
-            && conn
-                .prepare(&format!(
-                    "SELECT cell.{} FROM {} AS cell LIMIT 0",
-                    quote_ident(alias),
-                    qualified_name(schema, table)
-                ))
-                .is_ok()
-        {
-            return Ok(vec![alias.into()].into());
-        }
+    if let Some(alias) = implicit_rowid_alias(conn, schema, table, fields.iter().map(|(name, _)| name.as_str())) {
+        return Ok(vec![alias].into());
     }
     let mut primary = fields
         .into_iter()
@@ -101,6 +89,46 @@ fn key_columns(conn: &Connection, schema: &str, table: &str) -> Result<Arc<[Stri
         .map(|(column, _)| column)
         .collect::<Vec<_>>()
         .into())
+}
+
+fn implicit_rowid_alias<'a>(conn: &Connection, schema: &str, table: &str, fields: impl Iterator<Item = &'a str> + Clone) -> Option<String> {
+    for alias in ["rowid", "_rowid_", "oid"] {
+        if !fields
+            .clone()
+            .any(|name| name.eq_ignore_ascii_case(alias))
+            && conn
+                .prepare(&format!(
+                    "SELECT cell.{} FROM {} AS cell LIMIT 0",
+                    quote_ident(alias),
+                    qualified_name(schema, table)
+                ))
+                .is_ok()
+        {
+            return Some(alias.into());
+        }
+    }
+    None
+}
+
+pub fn implicit_rowid_column_in(conn: &Connection, schema: &str, table: &str) -> Result<Option<String>, String> {
+    if source_is_view_in(conn, schema, table)? { return Ok(None); }
+    let fields = table_column_names_in(conn, schema, table)?;
+    let Ok(key) = key_columns(conn, schema, table) else { return Ok(None); };
+    Ok((key.len() == 1 && ["rowid", "_rowid_", "oid"].contains(&key[0].as_str())
+        && !fields.iter().any(|field| field.eq_ignore_ascii_case(&key[0]))).then(|| key[0].clone()))
+}
+
+pub fn show_rowid_column(result: &mut QueryResult, keys: &[RowKey], alias: &str) -> Result<(), String> {
+    if keys.len() != result.rows.len() || keys.iter().any(|key| key.columns.as_ref() != [alias] || !matches!(key.values.as_slice(), [CellValue::Integer(_)])) {
+        return Err("Browse rowid keys do not match the result".into());
+    }
+    result.values.prepend_source_column(0)?;
+    result.columns.insert(0, alias.into());
+    for (row, key) in result.rows.iter_mut().zip(keys) {
+        let CellValue::Integer(value) = key.values[0] else { unreachable!() };
+        row.insert(0, value.to_string());
+    }
+    Ok(())
 }
 
 pub fn browse_with_keys_in(
@@ -295,8 +323,9 @@ pub fn update_cells_in(
         return Err("Cell update dimensions do not match".into());
     }
     let available = table_columns_in(conn, schema, table)?;
+    let rowid = implicit_rowid_column_in(conn, schema, table)?;
     if columns.iter().any(|column| {
-        !available
+        rowid.as_ref().is_none_or(|alias| !alias.eq_ignore_ascii_case(column)) && !available
             .iter()
             .any(|field| field.name.eq_ignore_ascii_case(column))
     }) {
@@ -322,11 +351,22 @@ pub fn update_cells_in(
             let params = || params_from_iter(values.iter().chain(&key.values));
             let before = conn.total_changes();
             let returned = if virtual_table {
-                // SQLite cannot RETURNING virtual updates; retain only a still-unique original key.
+                // Virtual tables cannot RETURNING; read back the assigned key with SQLite affinity.
                 if conn.execute(&sql, params()).map_err(|e| e.to_string())? != 1 {
                     return Err("The cell update was ignored; draft retained".into());
                 }
-                key.clone()
+                let mut candidate = key.clone();
+                for (index, column) in key.columns.iter().enumerate() {
+                    if let Some(value) = columns.iter().position(|name| name.eq_ignore_ascii_case(column)).and_then(|index| values.get(index)) {
+                        candidate.values[index] = value.clone();
+                    }
+                }
+                if candidate.match_count(conn, schema, table)? != 1 { updated.push(None); continue; }
+                let sql = format!("SELECT {} FROM {} AS cell WHERE {}", key.columns.iter().map(|name| format!("cell.{}",quote_ident(name))).collect::<Vec<_>>().join(","), qualified_name(schema,table),candidate.predicate()?);
+                let values = conn.query_row(&sql, params_from_iter(&candidate.values), |row| {
+                    (0..key.columns.len()).map(|index| row.get_ref(index).map(CellValue::from)).collect::<rusqlite::Result<Vec<_>>>()
+                }).map_err(|e| e.to_string())?;
+                RowKey {columns:key.columns.clone(),values}
             } else {
                 sql.push_str(" RETURNING ");
                 sql.push_str(
