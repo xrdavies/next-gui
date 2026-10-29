@@ -2634,6 +2634,7 @@ impl Demo {
 
     fn handle_field_check_change(&mut self) {
         let Some((table,row,column,checked)) = self.ui.take_table_check_change() else { return; };
+        if self.handle_cond_format_check(table, row, column, checked) { return; }
         if table == self.ids.plot.columns && table.0 != 0 {
             if self.state.plot.check(row, column, checked) { self.rebuild = true; }
             return;

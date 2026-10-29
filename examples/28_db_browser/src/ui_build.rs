@@ -2794,7 +2794,10 @@ pub fn build_ui(
     ui.set_accessible_name(ov_idx_cols, "Index columns and expressions");
     if let Some(draft)=state.cond_formats.as_ref().filter(|_|state.overlay==Some(OverlayKind::CondFormat)) {
         let previews=draft.previews(ui.font());ui.set_table_cell_styles(cond_formats.table,previews);
-        ui.set_table_selected_row(cond_formats.table,draft.selected);ui.set_table_scroll_offset(cond_formats.table,draft.scroll.0,draft.scroll.1);
+        ui.set_table_check_cells(cond_formats.table,draft.checks());
+        ui.set_table_selected_row(cond_formats.table,draft.selected);
+        ui.set_table_selected_col(cond_formats.table,draft.selected_column);
+        ui.set_table_scroll_offset(cond_formats.table,draft.scroll.0,draft.scroll.1);
         ui.set_button_enabled(cond_formats.add,!draft.columns.is_empty());
         ui.set_button_enabled(cond_formats.remove,draft.selected.is_some());
         ui.set_button_enabled(cond_formats.up,draft.selected.is_some_and(|row|row>0));

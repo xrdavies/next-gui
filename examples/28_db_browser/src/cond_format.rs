@@ -32,6 +32,7 @@ pub(crate) struct Draft {
     pub columns: Vec<String>,
     pub rules: Vec<Rule>,
     pub selected: Option<usize>,
+    pub selected_column: Option<usize>,
     next_id: usize,
     original: Vec<CondFormatRule>,
     pub scroll: (f32, f32),
@@ -58,13 +59,22 @@ impl Draft {
                     rule.color.clone(),
                     if rule.style.family.is_empty() { "Default".into() } else { rule.style.family.clone() },
                     if rule.style.size.is_empty() { "Default".into() } else { rule.style.size.clone() },
-                    if rule.style.bold { "✓".into() } else { String::new() },
-                    if rule.style.italic { "✓".into() } else { String::new() },
-                    if rule.style.underline { "✓".into() } else { String::new() },
+                    rule.style.bold.to_string(),
+                    rule.style.italic.to_string(),
+                    rule.style.underline.to_string(),
                     crate::cond_style::ALIGNMENTS.get(rule.style.alignment).unwrap_or(&"Unknown").to_string(),
                 ]
             })
             .collect()
+    }
+    pub(crate) fn checks(&self) -> Vec<Vec<Option<bool>>> {
+        self.rules.iter().map(|rule| {
+            let mut cells = vec![None; 10];
+            cells[6] = Some(rule.style.bold);
+            cells[7] = Some(rule.style.italic);
+            cells[8] = Some(rule.style.underline);
+            cells
+        }).collect()
     }
     fn same_source(&self, state: &AppState) -> bool {
         self.schema == state.browse().schema && Some(&self.table) == state.browse().table.as_ref()
@@ -118,6 +128,7 @@ impl AppState {
             columns,
             rules,
             selected,
+            selected_column: None,
             next_id,
             original: self.cond_rules.clone(),
             scroll: (0.0, 0.0),
@@ -368,6 +379,7 @@ impl Demo {
         let Some(draft) = &mut self.state.cond_formats else {
             return;
         };
+        draft.selected_column = self.ui.table_selected_col(self.ids.cond_formats.table);
         if let Some(scroll) = self.ui.table_scroll_offset(self.ids.cond_formats.table) {
             draft.scroll = scroll;
         }
@@ -377,15 +389,45 @@ impl Demo {
         let rows = draft.rows();
         let selected = self.ui.table_selected_row(self.ids.cond_formats.table);
         self.ui.set_table_rows(self.ids.cond_formats.table, rows);
+        self.ui.set_table_check_cells(self.ids.cond_formats.table, draft.checks());
         let previews=draft.previews(self.ui.font());
         self.ui.set_table_cell_styles(self.ids.cond_formats.table,previews);
         self.ui
             .set_table_selected_row(self.ids.cond_formats.table, selected);
+        self.ui.set_table_selected_col(self.ids.cond_formats.table, draft.selected_column);
         self.ui.set_table_scroll_offset(
             self.ids.cond_formats.table,
             draft.scroll.0,
             draft.scroll.1,
         );
+    }
+
+    pub(crate) fn handle_cond_format_check(
+        &mut self, table: WidgetId, row: usize, column: usize, checked: bool,
+    ) -> bool {
+        if table.0 == 0 || table != self.ids.cond_formats.table
+            || self.state.overlay != Some(OverlayKind::CondFormat) {
+            return false;
+        }
+        if !(6..=8).contains(&column)
+            || self.state.cond_formats.as_ref().is_none_or(|draft| row >= draft.rules.len()) {
+            return true;
+        }
+        // Flush the old row's controls before a checkbox selects a different rule.
+        self.snapshot_inputs();
+        let draft = self.state.cond_formats.as_mut().unwrap();
+        let style = &mut draft.rules[row].style;
+        match column {
+            6 => style.bold = checked,
+            7 => style.italic = checked,
+            8 => style.underline = checked,
+            _ => unreachable!(),
+        }
+        draft.selected = Some(row);
+        draft.selected_column = Some(column);
+        self.state.load_cond_format_fields();
+        self.do_rebuild();
+        true
     }
 
     pub(crate) fn poll_cond_formats(&mut self) -> bool {
@@ -634,6 +676,95 @@ mod tests {
         state.close_db();
         assert!(state.cond_formats.is_none());
         assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn conditional_style_grid_checks_keep_rule_identity_and_save_cancel() {
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 860), (800, 600)] {
+                let mut demo = fixture(width, height, theme);
+                crate::cond_style::prepare_qa(&mut demo.state);
+                if width == 800 { demo.state.prefs.font_size = 18.0; }
+                demo.do_rebuild();
+                let original = demo.state.cond_rules.clone();
+                let table = demo.ids.cond_formats.table;
+                for column in 6..=8 {
+                    assert_eq!(demo.ui.table_cell_checked(table, 0, column), Some(true));
+                }
+                capture(&mut demo, &format!("checks-manager-{name}-{width}"));
+
+                // A click on another rule must flush edits into the previous rule only.
+                demo.ui.set_text_input(demo.ids.ov_cond_val, ">=2");
+                demo.ui.set_table_selected_col(table, Some(6));
+                demo.ui.reveal_table_selection(table);
+                demo.ui.sync(&mut demo.scene);
+                let grid = bounds(&demo, table);
+                let style = next_gui_ui::TableStyle::from_theme(&demo.theme);
+                let x = grid.x + style.padding + 810.0 + 16.0
+                    - demo.ui.table_scroll_offset(table).unwrap().0;
+                let y = grid.y + style.header_height + style.row_height * 1.5;
+                assert_eq!(demo.ui.hit_widget(&demo.scene, x, y), Some(table));
+                assert!(demo.ui.pointer_pressed(&mut demo.scene, x, y));
+                demo.ui.pointer_released();
+                demo.snapshot_inputs();
+                demo.handle_field_check_change();
+                demo.snapshot_inputs();
+                let draft = demo.state.cond_formats.as_ref().unwrap();
+                assert_eq!(draft.rules[0].value, ">=2");
+                assert_eq!(draft.rules[1].value, "5");
+                assert!(draft.rules[1].style.bold);
+                assert_eq!(draft.selected, Some(1));
+                assert_eq!(demo.ui.is_checked(demo.ids.cond_formats.bold), Some(true));
+                assert_eq!(demo.ui.table_selected_col(demo.ids.cond_formats.table), Some(6));
+                assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.table));
+                for column in 7..=8 {
+                    assert!(demo.ui.key_input(UiKey::Right));
+                    assert_eq!(demo.ui.table_selected_col(demo.ids.cond_formats.table), Some(column));
+                    assert!(demo.ui.key_input(UiKey::Space));
+                    demo.handle_field_check_change();
+                    demo.snapshot_inputs();
+                    assert_eq!(demo.ui.table_cell_checked(demo.ids.cond_formats.table, 1, column), Some(true));
+                }
+                capture(&mut demo, &format!("checks-pointer-{name}-{width}"));
+                click(demo.ids.cond_formats.up, &mut demo);
+                assert_eq!(demo.state.cond_formats.as_ref().unwrap().rules[0].op, 4);
+                for column in 6..=8 {
+                    assert_eq!(demo.ui.table_cell_checked(demo.ids.cond_formats.table, 0, column), Some(true));
+                }
+                capture(&mut demo, &format!("checks-reordered-{name}-{width}"));
+                click(demo.ids.ov_btn_cancel, &mut demo);
+                assert_eq!(demo.state.cond_rules, original);
+
+                demo.state.begin_cond_formats().unwrap();
+                demo.do_rebuild();
+                demo.ui.set_focus(Some(demo.ids.ov_cond_val));
+                for _ in 0..3 { demo.ui.key_input(UiKey::BackTab); }
+                assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.table));
+                for _ in 0..7 { demo.ui.key_input(UiKey::Right); }
+                for column in 6..=8 {
+                    assert_eq!(demo.ui.table_selected_col(demo.ids.cond_formats.table), Some(column));
+                    assert!(demo.ui.key_input(UiKey::Space));
+                    demo.handle_field_check_change();
+                    demo.snapshot_inputs();
+                    demo.do_rebuild();
+                    assert_eq!(demo.ui.table_selected_col(demo.ids.cond_formats.table), Some(column));
+                    assert_eq!(demo.ui.table_cell_checked(demo.ids.cond_formats.table, 0, column), Some(false));
+                    if column < 8 { demo.ui.key_input(UiKey::Right); }
+                }
+                capture(&mut demo, &format!("checks-keyboard-{name}-{width}"));
+                click(demo.ids.ov_btn_ok, &mut demo);
+                assert!(demo.state.overlay.is_none(), "{:?}", demo.state.error_msg);
+                let style = &demo.state.cond_rules[0].style;
+                assert!(!style.bold && !style.italic && !style.underline);
+                assert_eq!(demo.state.cond_rules[0].value, "2~4");
+                assert_eq!(demo.state.cond_rules[1..], original[1..]);
+                assert_eq!(demo.state.conn.as_ref().unwrap().query_row(
+                    "SELECT count(*) FROM names", [], |row| row.get::<_, i64>(0)
+                ).unwrap(), 5);
+                assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
+                capture(&mut demo, &format!("checks-saved-{name}-{width}"));
+            }
+        }
     }
 
     #[test]
