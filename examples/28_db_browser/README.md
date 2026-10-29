@@ -160,10 +160,12 @@ half-transparent 320×180 PNG through the same decoder and Image control. Add
   TEXT/BLOB selector. Numeric edits preserve their type; invalid Hex/JSON is retained
   with an error. Apply or Discard Draft before changing the browse target. SQLite
   column affinity still determines the stored value, as with explicit SQL writes.
-- Edit Cell's checked Wrap lines tool persists its preference and switches between
-  character wrapping and horizontal scrolling without changing text, storage,
-  selection or Undo/Redo. Read-only views share it. Word/style-boundary wrapping
-  and complete RTL shaping remain unfinished.
+- Edit Cell's checked Word wrap tool persists its preference and switches between
+  Unicode line opportunities and horizontal scrolling without changing text,
+  storage, selection or Undo/Redo. Long words fall back to whole grapheme clusters;
+  fitting words and CJK punctuation stay together. Read-only views share it.
+  Unicode15 line rules use the existing scalar metrics; full shaping, bidi/RTL,
+  discretionary hyphens and Scintilla style-specific wrapping remain unfinished.
 - Edit Cell's checked Auto mode tool defaults on and persists its preference.
   Printable UTF-8, non-number JSON, XML declarations and supported PNG/JPEG/BMP
   pictures choose a view; corrupt/oversized images fall back to Binary. Turning

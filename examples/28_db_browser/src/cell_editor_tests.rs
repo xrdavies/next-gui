@@ -629,7 +629,7 @@ fn cell_dock_actions_and_content_fit_font_toolbar_and_window_changes() {
 fn cell_wrap_toggle_preserves_drafts_selection_history_and_read_only_views() {
     let mut demo=Demo::new(1400,860,PresentBackend::Softbuffer);
     demo.state.new_memory_db().unwrap();demo.state.conn.as_ref().unwrap().execute_batch(CURRENT_PLOT_QA_SQL).unwrap();
-    let line="SQL 中文🙂 value ".repeat(80);
+    let line="Database editing preserves complete words. 中文（标点） e\u{301} 👩\u{200d}💻 ".repeat(24);
     let original=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
     demo.state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[&original]).unwrap();
     demo.state.refresh_schema().unwrap();demo.state.switch_browse_table_in("main","quarterly_revenue").unwrap();
@@ -655,6 +655,7 @@ fn cell_wrap_toggle_preserves_drafts_selection_history_and_read_only_views() {
                 assert_eq!(demo.ui.focused(),Some(demo.ids.btn_cell_wrap));
                 assert_eq!(demo.state.edit_revision,revision);assert_eq!(demo.state.edit_value,draft);assert!(demo.state.has_cell_draft());
                 assert_eq!(demo.ui.text_area_wrap(demo.ids.edit_value),Some(enabled));
+                assert!(demo.ui.accessible_name(demo.ids.btn_cell_wrap).unwrap().contains("Word wrap"));
                 assert_eq!(demo.ui.text_area_selection(demo.ids.edit_value),Some(end-5..end));
                 assert_eq!(demo.ui.text_area_caret(demo.ids.edit_value),Some(end));
                 let (x,y)=demo.ui.text_area_scroll_offsets(demo.ids.edit_value).unwrap();
@@ -664,6 +665,9 @@ fn cell_wrap_toggle_preserves_drafts_selection_history_and_read_only_views() {
                 if let Some(folder)=&folder {
                     demo.ui.set_focus(Some(demo.ids.chart));demo.ui.sync(&mut demo.scene);
                     crate::plot_export::capture(&mut demo,folder,&format!("cell-wrap-{name}-{width}-{}",if enabled {"on"} else {"off"}));
+                    let session=demo.ui.text_area_state(demo.ids.edit_value).unwrap();demo.ui.select_text_area_range(demo.ids.edit_value,0..0);demo.ui.set_text_area_scroll_offsets(demo.ids.edit_value,0.0,0.0);demo.ui.sync(&mut demo.scene);
+                    crate::plot_export::capture(&mut demo,folder,&format!("cell-wrap-{name}-{width}-{}-start",if enabled {"on"} else {"off"}));
+                    assert!(demo.ui.restore_text_area_state(demo.ids.edit_value,&session));demo.ui.sync(&mut demo.scene);
                 }
             }
         }

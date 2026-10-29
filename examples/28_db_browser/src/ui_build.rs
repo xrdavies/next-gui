@@ -2225,8 +2225,8 @@ pub fn build_ui(
                             style.popup_max_height = cell_field_height * crate::state::EditCellMode::LABELS.len() as f32;
                             edit_mode = r.select(crate::state::EditCellMode::LABELS, Some(state.edit_mode as usize), "Editor mode", style);
                             btn_cell_wrap = if state.prefs.editor_word_wrap {
-                                r.tool_icon_button_styled(IconName::Wrap,"Wrap lines",theme.colors.selected_bg,theme.colors.text_primary)
-                            } else {r.tool_icon_button(IconName::Wrap,"Wrap lines")};
+                                r.tool_icon_button_styled(IconName::Wrap,"Word wrap",theme.colors.selected_bg,theme.colors.text_primary)
+                            } else {r.tool_icon_button(IconName::Wrap,"Word wrap")};
                             btn_cell_import = r.tool_icon_button(IconName::Open, "Import…");
                             btn_cell_export = r.tool_icon_button(IconName::Save, "Export…");
                             btn_cell_null = r.tool_icon_button(IconName::Minus, "Set as NULL");
@@ -2706,7 +2706,7 @@ pub fn build_ui(
     ui.set_text_input_enabled(edit_col, !cell_read_only);
     ui.set_text_area_read_only(edit_value, cell_read_only || state.edit_mode == crate::state::EditCellMode::Image);
     ui.set_text_area_wrap(edit_value,state.prefs.editor_word_wrap);
-    ui.set_accessible_name(btn_cell_wrap,if state.prefs.editor_word_wrap {"Wrap cell lines (on)"} else {"Wrap cell lines (off)"});
+    ui.set_accessible_name(btn_cell_wrap,if state.prefs.editor_word_wrap {"Word wrap cell lines (on)"} else {"Word wrap cell lines (off)"});
     ui.set_accessible_name(btn_cell_auto,if state.prefs.auto_switch_mode {"Automatically choose cell editor mode (on)"} else {"Automatically choose cell editor mode (off)"});
     ui.set_accessible_name(btn_cell_indent,if state.prefs.indent_compact {"Indent view and compact on Apply (on)"} else {"Indent view and compact on Apply (off)"});
     ui.set_button_enabled(btn_edit_cell, !cell_read_only);

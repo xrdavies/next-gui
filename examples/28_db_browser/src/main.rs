@@ -1422,13 +1422,14 @@ impl Demo {
                         if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
                     }
                     if tab.contains("wrapped") {
-                        let line="SQL 中文🙂 value ".repeat(80);
+                        let line=if tab.contains("words") {"Database editing preserves complete words. 中文（标点） e\u{301} 👩\u{200d}💻 ".repeat(24)}else{"SQL 中文🙂 value ".repeat(80)};
                         let text=format!("开始 • {line} — FIRST_END\n第二行 • {line} — LAST_END");
                         state.conn.as_ref().unwrap().execute("UPDATE quarterly_revenue SET region=?1 WHERE observed='2026-10-01'",[text]).unwrap();
                         state.refresh_browse().unwrap();state.goto_browse_record(1).unwrap();
                         state.browse_mut().sel_col=Some(3);state.sync_edit_cell_from_selection();
                         state.set_edit_mode(crate::state::EditCellMode::Text).unwrap();
-                        state.prefs.editor_word_wrap = !tab.contains("unwrapped");state.prefs.font_size=18.0;
+                        state.prefs.editor_word_wrap = !tab.contains("unwrapped");state.prefs.font_size=if tab.contains("words") && !tab.ends_with("narrow") {13.0}else{18.0};
+                        if tab.contains("words-readonly") {state.tab=MainTab::Pragmas;}
                     }
                     if tab.contains("under") { state.prefs.font_size = 18.0; state.prefs.toolbar_styles = [3; 5]; }
                     if tab.contains("large") { state.prefs.font_size = 28.0; state.prefs.toolbar_styles = [1; 5]; }
