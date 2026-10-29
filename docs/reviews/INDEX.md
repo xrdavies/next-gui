@@ -95,6 +95,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-29 | `a30d786..fd6d0d14751d` | Codex | issues —741 tests/strict checks,24 whole-frame Metal pairs,12 native windows and8 raw/no-op keyboard workflows; source UTF-8 validation, typed unchanged/ignored writes and quoted target names verified, full parity pending | [Report](R-20261029-fd6d0d14751d.md) |
 | 2026-10-29 | `8a037e8..987bcc9e25ac` | Codex | issues —737 tests/strict checks,20 whole-frame Metal pairs,12 native windows and4 exact-interior cancel/apply workflows; source-bound malformed-format modal/marks/Save All continuation verified, raw encoding/full parity pending | [Report](R-20261029-987bcc9e25ac.md) |
 | 2026-10-29 | `6bd60ae..6153c6ec8f5e` | Codex | issues —733 tests/strict checks,12 whole-frame Metal pairs,12 native windows and8 exact-return format workflows; persisted lossless Indent / Compact subset verified, error override/full parity pending | [Report](R-20261029-6153c6ec8f5e.md) |
 | 2026-10-29 | `05ea4ea..3ec016c3c205` | Codex | issues —729 tests/strict checks,12 Metal pairs,10 native windows and4 exact Fit-restoration workflows; dedicated image preview/session subset verified, original format/full parity pending | [Report](R-20261029-3ec016c3c205.md) |

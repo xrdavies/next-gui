@@ -862,3 +862,8 @@ F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-6153c6ec8f5e
 ### Malformed cell confirmation update (2026-10-29)
 
 F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-987bcc9e25ac.md) verifies Unicode/EOF format marks, source-bound explicit typed Apply Anyway, Cancel/history/focus/readonly guards and deferred Save All paths/writes/document actions.737 tests/strict checks,20 whole-frame Metal pairs,12 native windows and4 exact-interior cancel/reopen/apply keyboard flows pass. Original raw-encoding validation, no-op Apply, full modes/history/actions and complete visual/product/native/platform parity remain. No completion or publication claim.
+
+
+### Typed source and unchanged Apply update (2026-10-29)
+
+F02 remains **in_progress**. [Review](../../docs/reviews/R-20261029-fd6d0d14751d.md) verifies raw UTF-8 diagnostics/explicit confirmation/repair, actual typed no-op comparison, ignored-trigger rollback with retained prior pending changes/drafts, and quoted/ASCII-alias target guards/restoration.741 tests/strict checks,24 whole-frame Metal pairs,12 native windows and8 raw/no-op keyboard workflows pass. BOM/codecs, nonfinite REAL source handling, full modes/history/actions and complete visual/product/native/platform parity remain. No completion or publication claim.
