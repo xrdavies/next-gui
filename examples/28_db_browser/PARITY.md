@@ -896,3 +896,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-44c453d14
 ### Custom view key update (2026-10-29)
 
 Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-68071fced248.md) verifies actual-column unlock/relock, exact typed unique-key guards and effective INSTEAD OF view insert/update/delete, ignored/error-trigger rollback, normalized reload, source/readonly guards, retained insert form sessions and native XML/JSON per-tab settings.779 tests/strict checks,24 whole-frame Metal pairs,12 native static windows and16 changed private-key workflows pass; all12 modal Cmd+S frames remain unchanged. Applied-key viewport F01 is open: editor/Record18 restore but selected key42 remains below the grid. Display-rowid, Print/context, full codecs/RTL/history, docking and complete original visual/product/native/platform parity remain. No completion/publication claim; earlier exact Mob push approval timed out/denied.
+
+
+### Applied-cell visibility verification (2026-10-29)
+
+Status remains **in_progress**. [Review](../../docs/reviews/R-20261029-b23ae67bf985.md) verifies viewport F01: shared Apply reveals the updated record/column without stealing editor or action focus, and fresh canonical typed values do not inherit stale history. Confirmed Apply requests reveal; source changes, failed writes and filtered-out records clear it.781 tests/strict checks,24 whole-frame Metal pairs and four wide/narrow native key42 workflows pass. Display-rowid, Print/context, codecs/RTL/history, docking,500-record Browse paging and full original visual/product/native/platform parity remain. No completion/publication claim; earlier exact Mob approval timed out/denied.
