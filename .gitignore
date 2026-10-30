@@ -20,3 +20,15 @@
 
 # Local QA artifacts
 /tmp/
+# Generated GUI/test evidence (keep local, never commit binary captures)
+docs/reviews/assets/**/*.png
+docs/reviews/assets/**/*.jpg
+docs/reviews/assets/**/*.jpeg
+docs/reviews/assets/**/*.gif
+docs/reviews/assets/**/*.ppm
+docs/reviews/assets/**/*.bmp
+docs/reviews/assets/**/*.tiff
+docs/reviews/assets/**/*.webp
+docs/reviews/assets/**/*.pdf
+examples/28_db_browser/.e28_recent
+examples/28_db_browser/.e28_prefs
