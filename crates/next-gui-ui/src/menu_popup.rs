@@ -28,6 +28,70 @@ impl Ui {
         Some(items)
     }
 
+    fn menu_panel_scroll(
+        &mut self,
+        path: &[usize],
+        items: &[MenuItem],
+        height: f32,
+        viewport: f32,
+    ) -> f32 {
+        let max_scroll = (Self::menu_height(items, height) - viewport).max(0.0);
+        let mut scroll = self
+            .menu_scrolls
+            .get(path)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_scroll);
+        let selected = if self.popup_menu_path == path {
+            self.popup_menu_row
+        } else if self.popup_menu_path.starts_with(path) {
+            self.popup_menu_path.get(path.len()).copied()
+        } else {
+            None
+        };
+        if let Some(row) = selected.filter(|row| *row < items.len()) {
+            let top = Self::menu_height(&items[..row], height);
+            let bottom = top + row_height(&items[row], height);
+            if top < scroll {
+                scroll = top;
+            } else if bottom > scroll + viewport {
+                scroll = (bottom - viewport).min(top);
+            }
+        }
+        scroll = scroll.clamp(0.0, max_scroll);
+        self.menu_scrolls.insert(path.to_vec(), scroll);
+        scroll
+    }
+
+    pub(super) fn wheel_menu_popup(&mut self, id: WidgetId, x: f32, y: f32, dy: f32) -> bool {
+        let Some((panel, path)) = self
+            .menu_panels
+            .iter()
+            .rev()
+            .find(|(panel, _)| panel.contains(x, y))
+            .cloned()
+        else {
+            return false;
+        };
+        let height = match self.widgets.get(&id).map(|widget| &widget.kind) {
+            Some(Kind::Menu { style, .. }) => style.item_height,
+            Some(Kind::ContextMenu { style, .. }) => style.item_height,
+            _ => return false,
+        };
+        let Some(items) = self.menu_items_at(id, &path) else {
+            return false;
+        };
+        let max_scroll = (Self::menu_height(items, height) - panel.height).max(0.0);
+        let scroll = self.menu_scrolls.get(&path).copied().unwrap_or(0.0);
+        let next = (scroll + dy).clamp(0.0, max_scroll);
+        if next != scroll {
+            self.menu_scrolls.insert(path.clone(), next);
+            self.popup_menu_path = path;
+            self.popup_menu_row = None;
+        }
+        true
+    }
+
     fn menu_row_at(&self, id: WidgetId, x: f32, y: f32) -> Option<(Vec<usize>, usize)> {
         let height = match &self.widgets.get(&id)?.kind {
             Kind::Menu { style, .. } => style.item_height,
@@ -38,7 +102,7 @@ impl Ui {
             if !panel.contains(x, y) {
                 continue;
             }
-            let mut top = panel.y;
+            let mut top = panel.y - self.menu_scrolls.get(path).copied().unwrap_or(0.0);
             for (row, item) in self.menu_items_at(id, path)?.iter().enumerate() {
                 top += row_height(item, height);
                 if y < top {
@@ -170,11 +234,12 @@ impl Ui {
         hover_bg: Color,
         hover_fg: Color,
     ) {
+        let mut parent_scroll = self.menu_panel_scroll(&[], items, item_height, panel.height);
         let mut panels = vec![(panel, items, Vec::new())];
         let mut selected = items;
         let mut parent = panel;
         let mut path = Vec::new();
-        for &row in &self.popup_menu_path {
+        for row in self.popup_menu_path.clone() {
             let Some(item) = selected
                 .get(row)
                 .filter(|item| item.enabled && !item.children.is_empty())
@@ -200,16 +265,18 @@ impl Ui {
                 + checks
                 + arrows;
             let width = width.min(self.viewport.0);
-            let height = Self::menu_height(children, item_height);
+            let height = Self::menu_height(children, item_height).min(self.viewport.1);
             let x = if parent.x + parent.width + width <= self.viewport.0 {
                 parent.x + parent.width
             } else {
                 (parent.x - width).max(0.0)
             };
-            let y = (parent.y + Self::menu_height(&selected[..row], item_height))
+            let y = (parent.y + Self::menu_height(&selected[..row], item_height) - parent_scroll)
+                .max(0.0)
                 .min((self.viewport.1 - height).max(0.0));
             parent = Rect::new(x, y, width, height);
             path.push(row);
+            parent_scroll = self.menu_panel_scroll(&path, children, item_height, height);
             panels.push((parent, children, path.clone()));
             selected = children;
         }
@@ -241,7 +308,7 @@ impl Ui {
             scene.set_visible(bg, true);
             self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
-            let mut y = panel.y;
+            let mut y = panel.y - self.menu_scrolls.get(&path).copied().unwrap_or(0.0);
             for (row_index, item) in items.iter().enumerate() {
                 let height = row_height(item, item_height);
                 let row = Rect::new(panel.x, y, panel.width, height);
@@ -390,6 +457,173 @@ mod tests {
             ),
             MenuItem::new(15, "Clear"),
         ]
+    }
+
+    #[test]
+    fn tall_menu_keyboard_end_reveals_last_item_inside_the_viewport() {
+        for dropdown in [false, true] {
+            let mut ui = Ui::new();
+            let mut scene = Scene::new();
+            ui.set_viewport(320.0, 160.0);
+            let entries = (0..20)
+                .map(|i| MenuItem::new(i, format!("Entry {i}")))
+                .collect();
+            let menu = if dropdown {
+                let mut menu = WidgetId(0);
+                ui.column(ColumnStyle::default(), |c| {
+                    menu = c.menu("File", entries, MenuStyle::default());
+                });
+                ui.set_focus(Some(menu));
+                ui.key_input(UiKey::Down);
+                menu
+            } else {
+                let menu = ui.context_menu_popup(ContextMenuStyle::default());
+                ui.open_context_menu(menu, entries, 310.0, 150.0);
+                menu
+            };
+            ui.key_input(UiKey::End);
+            ui.sync(&mut scene);
+            let panel = ui.menu_panels[0].0;
+            assert!(panel.y >= 0.0 && panel.y + panel.height <= 160.0);
+            assert_eq!(
+                ui.menu_row_at(menu, panel.x + 12.0, panel.y + panel.height - 2.0),
+                Some((vec![], 19))
+            );
+            ui.pointer_pressed(&mut scene, panel.x + 12.0, panel.y + panel.height - 2.0);
+            assert_eq!(ui.take_menu_action(), Some((menu, 19)));
+        }
+    }
+
+    #[test]
+    fn tall_submenus_scroll_independently_consume_limits_and_reset_on_reopen() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(480.0, 180.0);
+        let menu = ui.context_menu_popup(ContextMenuStyle::default());
+        let entries = || {
+            vec![MenuItem::submenu(
+                40,
+                "Export",
+                (0..30)
+                    .map(|i| {
+                        if i == 10 {
+                            MenuItem::disabled(i, "Unavailable")
+                        } else {
+                            MenuItem::new(i, format!("Format {i}"))
+                        }
+                    })
+                    .collect(),
+            )]
+        };
+        ui.open_context_menu(menu, entries(), 460.0, 170.0);
+        ui.key_input(UiKey::Home);
+        ui.key_input(UiKey::Right);
+        ui.key_input(UiKey::End);
+        ui.sync(&mut scene);
+        let panel = ui.menu_panels[1].0;
+        assert!(panel.y + panel.height <= 180.0);
+        let (x, y) = (panel.x + 12.0, panel.y + 2.0);
+        let before = ui.menu_scrolls[&vec![0]];
+        assert!(before > 0.0);
+        assert!(ui.pointer_scroll(&scene, x, y, 0.0, -56.0));
+        ui.sync(&mut scene);
+        assert_eq!(ui.menu_scrolls[&vec![0]], before - 56.0);
+        assert!(ui.pointer_scroll(&scene, x, y, 0.0, -10000.0));
+        ui.sync(&mut scene);
+        assert_eq!(ui.menu_scrolls[&vec![0]], 0.0);
+        assert!(ui.pointer_scroll(&scene, x, y, 0.0, -10000.0));
+        assert!(!ui.pointer_scroll(&scene, x, y, 0.0, f32::NAN));
+        ui.key_input(UiKey::Home);
+        ui.key_input(UiKey::End);
+        ui.sync(&mut scene);
+        assert_eq!(
+            ui.menu_row_at(menu, panel.x + 12.0, panel.y + panel.height - 2.0),
+            Some((vec![0], 29))
+        );
+        ui.key_input(UiKey::Left);
+        ui.key_input(UiKey::Escape);
+        assert!(ui.menu_scrolls.is_empty());
+        ui.open_context_menu(menu, entries(), 460.0, 170.0);
+        ui.sync(&mut scene);
+        assert_eq!(ui.menu_panels.len(), 1);
+        assert_eq!(ui.menu_scrolls[&vec![]], 0.0);
+    }
+
+    #[test]
+    fn tall_menu_wheel_hits_visible_rows_and_resize_reveals_keyboard_selection() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(240.0, 180.0);
+        let menu = ui.context_menu_popup(ContextMenuStyle::default());
+        ui.open_context_menu(
+            menu,
+            (0..20)
+                .map(|i| MenuItem::new(i, format!("Item {i}")))
+                .collect(),
+            230.0,
+            170.0,
+        );
+        ui.sync(&mut scene);
+        let panel = ui.menu_panels[0].0;
+        assert!(ui.pointer_scroll(&scene, panel.x + 12.0, panel.y + 2.0, 0.0, 280.0));
+        ui.sync(&mut scene);
+        assert_eq!(
+            ui.menu_row_at(menu, panel.x + 12.0, panel.y + 2.0),
+            Some((vec![], 10))
+        );
+        ui.pointer_hover(&scene, panel.x + 12.0, panel.y + 2.0);
+        ui.set_viewport(200.0, 100.0);
+        ui.key_input(UiKey::End);
+        ui.sync(&mut scene);
+        let small = ui.menu_panels[0].0;
+        assert!(
+            small.x >= 0.0 && small.x + small.width <= 200.0 && small.y + small.height <= 100.0
+        );
+        assert_eq!(
+            ui.menu_row_at(menu, small.x + 12.0, small.y + small.height - 2.0),
+            Some((vec![], 19))
+        );
+        ui.key_input(UiKey::Home);
+        ui.sync(&mut scene);
+        assert_eq!(ui.menu_scrolls[&vec![]], 0.0);
+        ui.pointer_pressed(&mut scene, small.x + 12.0, small.y + 2.0);
+        assert_eq!(ui.take_menu_action(), Some((menu, 0)));
+    }
+
+    #[test]
+    fn scrolled_parent_anchors_submenu_after_separators_and_closes_it_on_wheel() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        ui.set_viewport(480.0, 180.0);
+        let menu = ui.context_menu_popup(ContextMenuStyle::default());
+        let mut items: Vec<_> = (0..12)
+            .map(|i| MenuItem::new(i, format!("Item {i}")))
+            .collect();
+        items.push(MenuItem::separator());
+        items.push(MenuItem::submenu(
+            20,
+            "Export",
+            vec![MenuItem::new(21, "SQL"), MenuItem::new(22, "CSV")],
+        ));
+        items.push(MenuItem::new(23, "Exit"));
+        ui.open_context_menu(menu, items, 0.0, 0.0);
+        ui.key_input(UiKey::End);
+        ui.key_input(UiKey::Up);
+        ui.key_input(UiKey::Right);
+        ui.sync(&mut scene);
+        let root = ui.menu_panels[0].0;
+        let child = ui.menu_panels[1].0;
+        let row_top = root.y + 12.0 * 28.0 + 8.0 - ui.menu_scrolls[&vec![]];
+        assert_eq!(child.y, row_top.min(180.0 - child.height));
+        assert_eq!(
+            ui.menu_row_at(menu, root.x + 4.0, row_top + 4.0),
+            Some((vec![], 13))
+        );
+        assert!(ui.pointer_scroll(&scene, root.x + 4.0, root.y + 4.0, 0.0, -56.0));
+        ui.sync(&mut scene);
+        assert_eq!(ui.menu_panels.len(), 1);
+        assert!(ui.popup_menu_path.is_empty());
+        assert!(ui.popup_menu_row.is_none());
     }
 
     #[test]

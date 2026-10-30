@@ -2406,6 +2406,7 @@ pub struct Ui {
     popup_menu_row: Option<usize>,
     popup_menu_path: Vec<usize>,
     menu_panels: Vec<(Rect, Vec<usize>)>,
+    menu_scrolls: HashMap<Vec<usize>, f32>,
     text_completion: Option<TextAreaCompletion>,
     context_menu_owner: Option<(WidgetId, WidgetId)>,
     text_area_hint: Option<TextAreaHint>,
@@ -2597,6 +2598,7 @@ impl Ui {
             popup_menu_row: None,
             popup_menu_path: Vec::new(),
             menu_panels: Vec::new(),
+            menu_scrolls: HashMap::new(),
             text_completion: None,
             context_menu_owner: None,
             text_area_hint: None,
@@ -3767,6 +3769,7 @@ impl Ui {
             }
         }
         if let Some(id) = self.open_popup {
+            if self.wheel_menu_popup(id, x, y, dy) { return true; }
             if self.autocomplete_popup_window(scene, id).is_some_and(|(panel, _)| panel.contains(x, y)) {
                 if dy != 0.0 { self.key_autocomplete(id, if dy > 0.0 { UiKey::Down } else { UiKey::Up }); }
                 return true;
@@ -5373,6 +5376,7 @@ impl Ui {
                 self.popup_menu_row = None;
                 self.popup_menu_path.clear();
                 self.menu_panels.clear();
+                self.menu_scrolls.clear();
                 self.key_menu_popup(id, UiKey::Home)
             }
             Some(Kind::Autocomplete { .. }) => self.key_autocomplete(id, key),
@@ -6533,6 +6537,7 @@ impl Ui {
         self.popup_menu_row = None;
         self.popup_menu_path.clear();
         self.menu_panels.clear();
+        self.menu_scrolls.clear();
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
                 Kind::Menu { open, .. }
@@ -8543,6 +8548,7 @@ impl Ui {
         self.popup_menu_row = None;
         self.popup_menu_path.clear();
         self.menu_panels.clear();
+        self.menu_scrolls.clear();
         if self.open_popup != Some(id) {
             self.close_popup_internal();
         }
@@ -16172,7 +16178,7 @@ impl Ui {
             .max(host_bounds.width)
             .max(label_w + 28.0 + if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0} + if items.iter().any(|item|!item.children.is_empty()) {20.0} else {0.0})
             .max(style.min_width);
-        let popup_h = Self::menu_height(&items,style.item_height);
+        let popup_h = Self::menu_height(&items,style.item_height).min(self.viewport.1);
         let popup_w=popup_w.min(self.viewport.0);
         let panel = Rect::new(host_bounds.x.clamp(0.0,(self.viewport.0-popup_w).max(0.0)), (host_bounds.y + host_bounds.height).min((self.viewport.1-popup_h).max(0.0)), popup_w, popup_h);
         self.paint_item_popup(scene, id, panel, &items, style.item_height, style.size, style.popup_bg, style.fg, style.disabled_fg, style.hover_bg, style.hover_fg);
@@ -16194,7 +16200,7 @@ impl Ui {
             }) if *open => (items.clone(), *style, *anchor_x, *anchor_y),
             _ => return,
         };
-        let popup_h = Self::menu_height(&items,style.item_height);
+        let popup_h = Self::menu_height(&items,style.item_height).min(self.viewport.1);
         let check_space=if items.iter().any(|item|item.checked.is_some()) {20.0} else {0.0};
         let label_width=items.iter().map(|item|self.font.measure_line(&item.label,style.size).0).fold(0.0f32,f32::max);
         let width = style.popup_width.max(label_width+20.0+check_space+if items.iter().any(|item|!item.children.is_empty()) {20.0} else {0.0}).min(self.viewport.0);
