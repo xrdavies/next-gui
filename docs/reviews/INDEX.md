@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [native conditional font weights](R-20261030-cac3431a68cc.md) —828 tests,40 Soft/Metal pairs,8 native workflows,14 Office windows and original DB4S export opening verified; full F02 remains in progress.
+Latest scoped review: [scoped conditional format dialogs](R-20261031-127765bae796.md) — 831 tests, 36 Soft/Metal pairs, 8 native workflows and 14 Office windows verified; full F02 remains in progress.
 
 ## Findings
 
@@ -100,6 +100,7 @@ Latest scoped review: [native conditional font weights](R-20261030-cac3431a68cc.
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-31 | `7610073..127765bae796` | Codex | issues — 831 tests/strict checks, 36 Metal pairs, 8 native flows and 14 Office windows; scoped modal/Reset/Help and owned menus verified, full parity pending | [Report](R-20261031-127765bae796.md) |
 | 2026-10-30 | `d33e7b4..d0db5c12cb29` | Codex | issues — 822 tests/strict checks, 20 Metal pairs and 8 native workflows; real B/I/U table edits retain rule identity and Save/Cancel, full parity pending | [Report](R-20261030-d0db5c12cb29.md) |
 | 2026-10-30 | `57f7162..5cf0d804d6cc` | Codex | issues — 821 tests/strict checks, 16 Metal pairs, 8 native style workflows and 14 Office windows; conditional typography verified, B/I/U list polish and full parity pending | [Report](R-20261030-5cf0d804d6cc.md) |
 | 2026-10-30 | `ac7df3b..8e6bd3601ca7` | Codex | issues —810 tests/strict checks,17 Metal pairs and8 native Save/Cancel flows; existing background rules now editable/removable/reorderable with atomic drafts; full parity pending | [Report](R-20261030-8e6bd3601ca7.md) |
