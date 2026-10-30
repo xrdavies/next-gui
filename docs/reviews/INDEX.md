@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [scoped conditional format dialogs](R-20261031-127765bae796.md) — 831 tests, 36 Soft/Metal pairs, 8 native workflows and 14 Office windows verified; full F02 remains in progress.
+Latest scoped review: [bounded menus and SQLiteBrowser navigation](R-20261031-98ae99626406.md) — 837 workspace tests, final menu regressions/16 Soft–Metal pairs, native keyboard flows and 14 Office render checks; locked-session OS pointer acceptance and full F02 remain pending.
 
 ## Findings
 
@@ -100,6 +100,7 @@ Latest scoped review: [scoped conditional format dialogs](R-20261031-127765bae79
 
 | Date | Reviewed range / snapshot | Agent | Result | Report |
 |---|---|---|---|---|
+| 2026-10-31 | `c7f372a..98ae99626406` | Codex | scoped pass — bounded scrolling menus, original File groups, safe measured Unicode recent labels; 837 tests, 16 final Metal pairs and native keyboard/render checks; OS pointer/full parity pending | [Report](R-20261031-98ae99626406.md) |
 | 2026-10-31 | main `3dcea1b14bc4` into feature `beb4c35e3945` | Codex | pass — four documentation/ignore conflicts resolved, source and prior findings unchanged; 831 tests, strict clippy, platform feature checks and all 20 example builds pass; fresh GUI acceptance not run | [Report](R-20261031-3dcea1b14bc4.md) |
 | 2026-10-31 | `7610073..127765bae796` | Codex | issues — 831 tests/strict checks, 36 Metal pairs, 8 native flows and 14 Office windows; scoped modal/Reset/Help and owned menus verified, full parity pending | [Report](R-20261031-127765bae796.md) |
 | 2026-10-30 | `d33e7b4..d0db5c12cb29` | Codex | issues — 822 tests/strict checks, 20 Metal pairs and 8 native workflows; real B/I/U table edits retain rule identity and Save/Cancel, full parity pending | [Report](R-20261030-d0db5c12cb29.md) |

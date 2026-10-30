@@ -8,7 +8,7 @@ Status legend: `done` = implemented local subset, not upstream parity or native 
 
 **Inventory snapshot (2026-10-31):** The tables contain 103 overlapping workflow entries: 46 `done` local subsets and 57 `partial` entries. These are not weighted requirements and do not establish a completion percentage. Full original feature/UI parity remains in progress.
 
-**Latest scoped verification:** [per-column conditional format dialogs](../../docs/reviews/R-20261031-127765bae796.md): 831 tests, 36 Soft/Metal pairs, 8 native workflows and 14 Office windows pass.
+**Latest scoped verification:** [bounded menus and File navigation](../../docs/reviews/R-20261031-98ae99626406.md): 837 workspace tests, final affected regressions/16 Soft–Metal pairs, 8 native keyboard flows plus 2 final narrow rechecks, and 14 Office render windows pass. Locked-session OS mouse/wheel acceptance remains pending.
 
 **Earlier regression/evidence correction:** [2026-10-27 report](../../docs/reviews/R-20261027-5e23229548d4.md) records that tested scope and corrects unsupported earlier claims.
 
@@ -961,3 +961,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261030-d06fea875
 ## 2026-10-31 scoped conditional format dialogs (127765bae796)
 
 [Review](../../docs/reviews/R-20261031-127765bae796.md): 831 tests, 36 Soft/Metal pairs, 8 native workflows and 14 fresh Office windows pass. Selected-column editing uses a centered modal with fixed Help/Reset/Cancel/Save, nested default-Cancel confirmation and draft-only Reset until Save. Owned context menus work within modal scope; other columns, namespaces, metadata, background selection and pending cell/database edits survive. Narrow validation errors remain fully visible. Original nine-column inline editors/serial palettes, Browse-format context actions, font/alpha/DPI fidelity, row-id/display formats, whole-result Browse and full native/platform acceptance remain; F02 stays **in_progress**.
+
+
+## 2026-10-31 File navigation and long-menu follow-up
+
+[Review](../../docs/reviews/R-20261031-98ae99626406.md): File Import/Export/Recent Files submenus and original-style File/Edit groups preserve existing actions and guards. Shared next-gui menus bound each panel, support independent wheel scrolling and reveal keyboard selections across resize/separators. Menu fonts follow preferences; recent labels safely shorten Unicode to the measured width while retaining full paths, and QA recent history is isolated. 837 workspace tests and final affected regressions/16 Soft–Metal pairs pass. Native keyboard flows and fourteen Office render windows were checked; locked-session OS pointer/wheel acceptance remains pending. Native menus/full original actions and shortcuts, Qt hover-scroll arrows and the remaining full-parity inventory stay open; counts are unchanged.
