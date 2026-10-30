@@ -2407,6 +2407,7 @@ pub struct Ui {
     popup_menu_path: Vec<usize>,
     menu_panels: Vec<(Rect, Vec<usize>)>,
     text_completion: Option<TextAreaCompletion>,
+    context_menu_owner: Option<(WidgetId, WidgetId)>,
     text_area_hint: Option<TextAreaHint>,
     /// Last activated menu/context item; drained by [`Ui::take_menu_action`].
     pending_menu_action: Option<(WidgetId, u64)>,
@@ -2597,6 +2598,7 @@ impl Ui {
             popup_menu_path: Vec::new(),
             menu_panels: Vec::new(),
             text_completion: None,
+            context_menu_owner: None,
             text_area_hint: None,
             pending_menu_action: None,
             pending_button_activate: None,
@@ -6524,6 +6526,7 @@ impl Ui {
     }
 
     fn close_popup_internal(&mut self) -> bool {
+        self.context_menu_owner = None;
         let Some(id) = self.open_popup.take() else {
             return false;
         };
@@ -8515,7 +8518,28 @@ impl Ui {
         true
     }
 
+    /// Open a detached context menu on behalf of a widget, including inside a dialog.
+    /// The owner must exist within the active dialog's scope. Closing that dialog
+    /// closes its menu; background owners are rejected without changing the popup.
+    pub fn open_context_menu_for(
+        &mut self,
+        id: WidgetId,
+        owner: WidgetId,
+        items: Vec<MenuItem>,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        if id == owner || !self.widgets.contains_key(&owner)
+            || self.dialog_focus_scope().is_some_and(|dialog| !self.widget_contains(dialog, owner)) {
+            return false;
+        }
+        if !self.open_context_menu(id, items, x, y) { return false; }
+        self.context_menu_owner = Some((id, owner));
+        true
+    }
+
     fn open_context_menu_at(&mut self, id: WidgetId, x: f32, y: f32) {
+        self.context_menu_owner = None;
         self.popup_menu_row = None;
         self.popup_menu_path.clear();
         self.menu_panels.clear();

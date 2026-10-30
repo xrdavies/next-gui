@@ -1215,6 +1215,12 @@ impl Demo {
                     if tab.ends_with("narrow") { state.prefs.font_size = 18.0; }
                     MainTab::Browse
                 }
+                "condformat-column" | "condformat-column-narrow" => {
+                    cond_style::prepare_qa(&mut state);
+                    state.begin_cond_formats_for_column("amount").unwrap();
+                    if tab.ends_with("narrow") { state.prefs.font_size = 18.0; }
+                    MainTab::Browse
+                }
                 "form" => {
                     state.browse_view = crate::state::BrowseViewMode::Form;
                     MainTab::Browse
@@ -4247,7 +4253,13 @@ impl Demo {
                     }
                     self.clear_error();
                 }
-                Err(e) => self.set_error(e),
+                Err(e) => {
+                    if kind == Some(OverlayKind::CondFormat) {
+                        self.state.wizard_scroll = (0.0, 0.0);
+                        self.ui.set_focus(Some(self.ids.ov_btn_ok));
+                    }
+                    self.set_error(e);
+                }
             }
             self.rebuild = true;
             return true;
@@ -4748,7 +4760,10 @@ impl Demo {
             self.handle_menu(if id == self.ids.btn_new { mid::FILE_NEW } else { mid::FILE_OPEN });
             return;
         }
-        if self.state.has_cell_draft() && id != self.ids.btn_edit_cell {
+        let format_action = id == self.ids.btn_cond_fmt
+            || self.state.overlay == Some(OverlayKind::CondFormat)
+                && [self.ids.ov_btn_ok, self.ids.ov_btn_cancel].contains(&id);
+        if self.state.has_cell_draft() && id != self.ids.btn_edit_cell && !format_action {
             self.set_error("Apply or discard the cell draft first");
             self.rebuild = true;
             return;
@@ -4988,11 +5003,16 @@ impl Demo {
             return;
         }
         if id == self.ids.btn_cond_fmt {
-            if self.state.cond_col.is_empty() {
-                self.state.cond_col = self.state.edit_col.clone();
-            }
+            self.cancel_browse_filter();
             self.snapshot_inputs();
-            if let Err(error)=self.state.begin_cond_formats() {self.set_error(error);}
+            let column = self.state.browse().result.as_ref().and_then(|result| {
+                self.state.browse().sel_col.and_then(|index| result.columns.get(index)).cloned()
+                    .or_else(|| result.columns.iter().find(|column| *column == &self.state.edit_col).cloned())
+                    .or_else(|| result.columns.first().cloned())
+            });
+            if let Err(error) = column.ok_or_else(|| "Choose a loaded column before editing formats".to_string())
+                .and_then(|column| self.state.begin_cond_formats_for_column(&column)) { self.set_error(error); }
+            else { self.clear_error(); }
             self.rebuild = true;
             return;
         }
@@ -5543,7 +5563,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else {self.handle_column_picker_dismiss();}
+        if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         if let Some((id, color)) = self.ui.take_color_change() {
@@ -5797,6 +5817,7 @@ impl AppCallbacks for Demo {
             } => {
                 let text_clipboard = modifiers.commandish() && matches!(key, KeyCode::Char('c' | 'C' | 'x' | 'X' | 'v' | 'V'));
                 if (self.ui.active_dialog().is_some() || self.state.confirm_open) && !text_clipboard {
+                    if self.handle_filter_context_key(key, modifiers) { self.after_ui(ctx); return; }
                     if let Some(key)=map_key(key,modifiers) {self.ui.key_input(key);}
                     self.after_ui(ctx);return;
                 }

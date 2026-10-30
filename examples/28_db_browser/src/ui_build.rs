@@ -836,13 +836,15 @@ pub fn build_ui(
     let toolbar_visible = state.toolbar_db || state.toolbar_extra || state.toolbar_project;
     let chrome_h = 50.0 + if toolbar_visible { main_toolbar_height+4.0 } else { 0.0 };
     let csv_modal = matches!(state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv));
-    let workspace_modal = csv_modal || state.overlay == Some(OverlayKind::ExportSql);
+    let cond_modal = state.overlay == Some(OverlayKind::CondFormat);
+    let workspace_modal = csv_modal || cond_modal || state.overlay == Some(OverlayKind::ExportSql);
     let mut csv_style = ModalStyle::from_theme(&theme);
     csv_style.width = (win_w - 48.0).min(1240.0);
     csv_style.height = (win_h - 48.0).min(780.0);
     csv_style.title_height = 44.0;
     csv_style.action_height = 36.0;
     csv_style.close_on_backdrop = false;
+    if cond_modal { csv_style.action_height = (cell_line_height + 16.0).max(36.0); }
     let docks_on = state.any_dock_visible() && (state.overlay.is_none() || workspace_modal);
     let body_minimum = if docks_on && state.dock_edit {
         dock_cell_minimum + if state.visible_dock_tabs().is_empty() { 0.0 } else { dock_page_minimum+6.0 }
@@ -1009,7 +1011,7 @@ pub fn build_ui(
             let mut panel = PanelStyle::from_theme(&theme);
             panel.width = shell_w - 16.0;
             panel.height = content_h - if matches!(kind, OverlayKind::FindReplace | OverlayKind::EditTable | OverlayKind::ImportCsv | OverlayKind::PasteCsv | OverlayKind::CondFormat) { 0.0 } else { 50.0 };
-            let title = match kind {
+            let mut title = match kind {
                 OverlayKind::InsertRow => "New Record",
                 OverlayKind::EditTable => {
                     if state.wizard_table_original.is_some() {
@@ -1036,13 +1038,18 @@ pub fn build_ui(
                 OverlayKind::LoadExtension => "Load Extension",
                 OverlayKind::About => "About",
             };
+            let scoped_title;
+            if let Some(column) = state.cond_formats.as_ref().filter(|_| cond_modal).and_then(|draft| draft.column_scope.as_ref()) {
+                scoped_title = format!("Conditional formats for \"{column}\"");
+                title = &scoped_title;
+            }
             let mut ov_col = ColumnStyle::from_theme(&theme);
             ov_col.width = shell_w - 40.0;
             ov_col.height = panel.height - panel.title_height - 68.0;
             ov_col.padding = 8.0;
             ov_col.gap = 6.0;
             ov_col.cross_align = CrossAlign::Start;
-            if csv_modal {
+            if csv_modal || cond_modal {
                 ov_col.width = csv_style.width - 2.0 * csv_style.padding;
                 ov_col.height = csv_style.height - csv_style.title_height - csv_style.action_height - 3.0 * csv_style.padding;
                 ov_col.padding = 0.0;
@@ -1054,6 +1061,13 @@ pub fn build_ui(
             row.gap = 8.0;
             row.padding = 0.0;
             row.cross_align = CrossAlign::Center;
+            if cond_modal {
+                row.width = ov_col.width;
+                row.height = cell_field_height;
+                let rows = if state.cond_formats.as_ref().is_some_and(|draft| draft.selected.is_some()) { 9.0 } else { 1.0 };
+                ov_col.height = 2.0 * (cell_line_height + ov_col.gap) + 190.0 + ov_col.gap + rows * (row.height + ov_col.gap)
+                    + if state.error_msg.is_some() { 3.0 * cell_line_height + 12.0 + ov_col.gap } else { 0.0 };
+            }
 
             let mut name_s = TextInputStyle::from_theme(&theme);
             name_s.width = 220.0;
@@ -1594,10 +1608,12 @@ pub fn build_ui(
                             c.text("https://sqlitebrowser.org/");
                         }
                         OverlayKind::CondFormat => {
-                            let mut scroll=next_gui_ui::ScrollAreaStyle::from_theme(&theme);
-                            scroll.width=ov_col.width-16.0;scroll.height=ov_col.height-16.0;
-                            scroll.padding=0.0;scroll.background=None;
-                            ov_scroll=c.scroll_area(scroll,|c| {
+                            if let Some(error) = &state.error_msg {
+                                let mut style = TextAreaStyle::from_theme(&theme);
+                                style.width = ov_col.width;
+                                style.height = 3.0 * cell_line_height + 12.0;
+                                cond_formats.error = c.text_area(error, "", style);
+                            }
                             if let Some(draft)=&state.cond_formats {
                                 c.text(format!("{} · {} rules",db::qualified_name(&draft.schema,&draft.table),draft.rules.len()));
                                 c.text("The first matching rule sets the cell's colors and typography.");
@@ -1605,7 +1621,7 @@ pub fn build_ui(
                                     cond_formats.add=r.tool_button("+ Add");cond_formats.remove=r.tool_button("Remove");
                                     cond_formats.up=r.tool_button("↑ Move up");cond_formats.down=r.tool_button("↓ Move down");
                                 });
-                                let width=(shell_w-72.0).max(200.0);
+                                let width=ov_col.width.max(200.0);
                                 let mut table_style=TableStyle::from_theme(&theme);table_style.width=width;table_style.height=190.0;
                                 let columns=[("Column",110.0),("Condition",240.0),("Foreground",110.0),("Background",110.0),("Font",180.0),("Size",60.0),("B",32.0),("I",32.0),("U",32.0),("Alignment",90.0)]
                                     .into_iter().map(|(name,width)|TableColumn::new(name,width)).collect();
@@ -1647,19 +1663,22 @@ pub fn build_ui(
                                     });
                                 } else {c.text("Add a rule to begin. Save applies the list; Cancel keeps the current formats.");}
                             } else {c.text("Select a loaded table before opening the format manager.");}
-                            });
                         }
                     }
                 });
             };
-            if csv_modal {
+            if csv_modal || cond_modal {
                 let mut ok = z;
                 let mut cancel = z;
                 let parent = col.dialog(title, csv_style, build_overlay, |footer| {
+                    if cond_modal {
+                        cond_formats.help = footer.tool_button("Help");
+                        cond_formats.reset = footer.tool_button("Reset");
+                    }
                     cancel = footer.tool_button("Cancel");
                     ok = footer.tool_button_styled(primary, theme.colors.accent, theme.colors.on_accent);
                 });
-                csv_files.parent = parent;
+                if cond_modal { cond_formats.parent = parent; } else { csv_files.parent = parent; }
                 ov_btn_ok = ok;
                 ov_btn_cancel = cancel;
             } else {
@@ -2548,7 +2567,7 @@ pub fn build_ui(
             (1,2) => "Foreign key references cell", (2,0) => "CHECK expression cell", _ => "CHECK name cell",
         });
     }
-    if state.overlay.is_none() {
+    if state.overlay.is_none() || workspace_modal {
         let _ = ui.set_tabs_selected(tabs, state.tab.index());
         if docks_on && dock_tabs.0 != 0 {
             let focus_idx = visible_docks_index(state);
@@ -2806,6 +2825,11 @@ pub fn build_ui(
     for (id,label) in [(cond_formats.table,"Conditional format priority list"),(cond_formats.add,"Add conditional format"),(cond_formats.remove,"Remove selected conditional format"),(cond_formats.up,"Move format earlier"),(cond_formats.down,"Move format later"),(ov_cond_col,"Conditional format column"),(ov_cond_op,"Conditional format operator"),(ov_cond_val,"Conditional format comparison value"),(ov_cond_color,"Conditional format background color")]{ui.set_accessible_name(id,label);}
     ui.set_tooltip_text(ov_cond_val,"Filter expression uses the Browse syntax: >=3, 1~10, /pattern/ or LIKE wildcards. Empty applies to all text/numeric values. Right-click or Shift+F10 inserts a template.");
     for (id,label) in [(cond_formats.foreground,"Conditional format foreground color"),(cond_formats.family,"Conditional format font family"),(cond_formats.size,"Conditional format size in points"),(cond_formats.bold,"Conditional format bold"),(cond_formats.italic,"Conditional format italic"),(cond_formats.underline,"Conditional format underline"),(cond_formats.alignment,"Conditional format text alignment")] {ui.set_accessible_name(id,label);}
+    ui.set_text_area_read_only(cond_formats.error, true);
+    ui.set_text_area_wrap(cond_formats.error, true);
+    ui.set_accessible_name(cond_formats.error, "Conditional format validation error");
+    ui.set_accessible_name(cond_formats.help, "Conditional format help");
+    ui.set_accessible_name(cond_formats.reset, "Reset conditional formats in this editor");
     ui.set_tooltip_text(cond_formats.foreground,"#RRGGBB; blank keeps the default text color.");
     ui.set_tooltip_text(cond_formats.family,"Installed font family. Unavailable project fonts are preserved and displayed using the default font.");
     if state.overlay==Some(OverlayKind::CondFormat) && !state.cond_style.family.is_empty() {
@@ -2874,6 +2898,11 @@ pub fn build_ui(
     crate::csv_files::configure(&mut ui,csv_files,state);
     if csv_files.parent.0 != 0 { ui.set_dialog_open(csv_files.parent, true); }
     crate::csv_files::build_confirmation(&mut ui,&mut csv_files,state,&theme,width as f32);
+    if cond_formats.parent.0 != 0 {
+        ui.set_dialog_open(cond_formats.parent, true);
+        ov_scroll = ui.dialog_body(cond_formats.parent).unwrap_or(z);
+    }
+    crate::cond_format::build_confirmation(&mut ui,&mut cond_formats,state,&theme);
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     let view_keys = crate::view_keys::build(&mut ui, state, &theme, width as f32);
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);

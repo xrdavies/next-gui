@@ -31,6 +31,8 @@ pub(crate) struct Draft {
     pub schema: String,
     pub table: String,
     pub columns: Vec<String>,
+    pub column_scope: Option<String>,
+    pub reset_pending: bool,
     pub rules: Vec<Rule>,
     pub selected: Option<usize>,
     pub selected_column: Option<usize>,
@@ -128,6 +130,8 @@ impl AppState {
             schema,
             table,
             columns,
+            column_scope: None,
+            reset_pending: false,
             rules,
             selected,
             selected_column: None,
@@ -138,6 +142,20 @@ impl AppState {
         self.load_cond_format_fields();
         self.wizard_scroll = (0.0, 0.0);
         self.overlay = Some(OverlayKind::CondFormat);
+        Ok(())
+    }
+
+    pub(crate) fn begin_cond_formats_for_column(&mut self, column: &str) -> Result<(), String> {
+        if !self.browse().result.as_ref().is_some_and(|result| result.columns.iter().any(|name| name == column)) {
+            return Err("Choose a loaded column before editing formats".into());
+        }
+        self.begin_cond_formats()?;
+        let draft = self.cond_formats.as_mut().unwrap();
+        draft.column_scope = Some(column.into());
+        draft.columns = vec![column.into()];
+        draft.rules.retain(|rule| rule.column == column);
+        draft.selected = (!draft.rules.is_empty()).then_some(0);
+        self.load_cond_format_fields();
         Ok(())
     }
 
@@ -196,6 +214,7 @@ impl AppState {
             .cond_formats
             .as_ref()
             .ok_or("Open the format manager first")?;
+        if draft.reset_pending { return Err("Close the reset confirmation before saving formats".into()); }
         if !draft.same_source(self) || self.cond_rules != draft.original {
             return Err("The source or formats changed. Reopen the format manager".into());
         }
@@ -210,7 +229,7 @@ impl AppState {
             .enumerate()
             .map(|(row, rule)| {
                 let error = |message: &str| format!("Rule {}: {message}", row + 1);
-                if !current.columns.contains(&rule.column) {
+                if !current.columns.contains(&rule.column) || !draft.columns.contains(&rule.column) {
                     return Err(error("choose an existing column"));
                 }
                 if rule.op >= OPERATORS.len() {
@@ -254,9 +273,13 @@ impl AppState {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let (schema, table) = (draft.schema.clone(), draft.table.clone());
-        self.cond_rules
-            .retain(|rule| rule.schema != schema || rule.table.as_ref() != Some(&table));
-        self.cond_rules.extend(rules);
+        let scope = draft.column_scope.clone();
+        let matches = |rule: &CondFormatRule| rule.schema == schema
+            && rule.table.as_ref() == Some(&table)
+            && scope.as_ref().is_none_or(|column| &rule.column == column);
+        let insertion = self.cond_rules.iter().position(matches).unwrap_or(self.cond_rules.len());
+        self.cond_rules.retain(|rule| !matches(rule));
+        self.cond_rules.splice(insertion..insertion, rules);
         self.cond_formats = None;
         self.overlay = None;
         self.status_msg = format!(
@@ -270,6 +293,13 @@ impl AppState {
 #[derive(Clone, Copy)]
 pub(crate) struct Controls {
     pub row: Option<usize>,
+    pub parent: WidgetId,
+    pub error: WidgetId,
+    pub help: WidgetId,
+    pub reset: WidgetId,
+    pub confirmation: WidgetId,
+    pub reset_confirm: WidgetId,
+    pub reset_cancel: WidgetId,
     pub table: WidgetId,
     pub add: WidgetId,
     pub remove: WidgetId,
@@ -287,6 +317,8 @@ impl Default for Controls {
     fn default() -> Self {
         Self {
             row: None,
+            error: WidgetId(0), parent: WidgetId(0), help: WidgetId(0), reset: WidgetId(0),
+            confirmation: WidgetId(0), reset_confirm: WidgetId(0), reset_cancel: WidgetId(0),
             table: WidgetId(0),
             add: WidgetId(0),
             remove: WidgetId(0),
@@ -298,7 +330,7 @@ impl Default for Controls {
     }
 }
 
-fn fields(demo: &Demo) -> [WidgetId; 16] {
+fn fields(demo: &Demo) -> [WidgetId; 18] {
     let c = demo.ids.cond_formats;
     [
         c.table,
@@ -310,7 +342,7 @@ fn fields(demo: &Demo) -> [WidgetId; 16] {
         demo.ids.ov_cond_op,
         demo.ids.ov_cond_val,
         demo.ids.ov_cond_color,
-        c.foreground,c.family,c.size,c.bold,c.italic,c.underline,c.alignment,
+        c.foreground,c.family,c.size,c.bold,c.italic,c.underline,c.alignment,c.help,c.reset,
     ]
 }
 
@@ -332,7 +364,7 @@ impl ViewSession {
             .iter()
             .position(|id| id.0 != 0 && demo.ui.focused() == Some(*id))?;
         let row = demo.ids.cond_formats.row;
-        if focus > 4 && row != draft.selected_id() {
+        if (5..16).contains(&focus) && row != draft.selected_id() {
             return None;
         }
         let id = fields(demo)[focus];
@@ -355,7 +387,7 @@ impl ViewSession {
             return;
         };
         if self.source != (draft.schema.clone(), draft.table.clone())
-            || self.focus > 4 && self.row != draft.selected_id()
+            || (5..16).contains(&self.focus) && self.row != draft.selected_id()
         {
             return;
         }
@@ -374,6 +406,17 @@ impl ViewSession {
 }
 
 impl Demo {
+    pub(crate) fn handle_cond_format_dismiss(&mut self) {
+        let Some(id) = self.ui.take_dialog_dismiss() else { return; };
+        if id == self.ids.cond_formats.confirmation {
+            if let Some(draft) = &mut self.state.cond_formats { draft.reset_pending = false; }
+            self.ui.set_focus(Some(self.ids.cond_formats.reset));
+            self.rebuild = true;
+        } else if id == self.ids.cond_formats.parent {
+            self.handle_button(self.ids.ov_btn_cancel);
+        }
+    }
+
     pub(crate) fn snapshot_cond_formats(&mut self) {
         if self.state.overlay != Some(OverlayKind::CondFormat) {
             return;
@@ -455,6 +498,30 @@ impl Demo {
 
     pub(crate) fn handle_cond_format_button(&mut self, id: WidgetId) -> bool {
         let controls = self.ids.cond_formats;
+        if id.0 != 0 && self.state.overlay == Some(OverlayKind::CondFormat) {
+            if id == controls.help {
+                self.open_url("https://github.com/sqlitebrowser/sqlitebrowser/wiki/Conditional-Formats");
+                return true;
+            }
+            if id == controls.reset || id == controls.reset_confirm || id == controls.reset_cancel {
+                if id == controls.reset { self.snapshot_inputs(); }
+                let Some(draft) = &mut self.state.cond_formats else { return true; };
+                if id == controls.reset { draft.reset_pending = true; }
+                else if draft.reset_pending {
+                    draft.reset_pending = false;
+                    if id == controls.reset_confirm {
+                        draft.rules.clear(); draft.selected = None; draft.selected_column = None;
+                        self.state.load_cond_format_fields();
+                    }
+                }
+                if id != controls.reset {
+                    self.ui.set_dialog_open(controls.confirmation, false);
+                    self.ui.set_focus(Some(controls.reset));
+                }
+                self.rebuild = true;
+                return true;
+            }
+        }
         if id.0 == 0
             || self.state.overlay != Some(OverlayKind::CondFormat)
             || ![controls.add, controls.remove, controls.up, controls.down].contains(&id)
@@ -503,6 +570,26 @@ impl Demo {
     }
 }
 
+pub(crate) fn build_confirmation(ui: &mut next_gui_ui::Ui, controls: &mut Controls, state: &AppState, theme: &next_gui_ui::Theme) {
+    if !state.cond_formats.as_ref().is_some_and(|draft| draft.reset_pending) { return; }
+    let mut style = next_gui_ui::ModalStyle::from_theme(theme);
+    style.width = 520.0;
+    style.height = 240.0;
+    style.close_on_backdrop = false;
+    controls.confirmation = ui.dialog("Reset conditional formats?", style, |body| {
+        body.text("Clear all formats in this editor?");
+        body.text("Save applies the reset.");
+        body.text("Cancel keeps the current formats.");
+    }, |footer| {
+        controls.reset_cancel = footer.tool_button("Cancel");
+        controls.reset_confirm = footer.tool_button("Reset");
+    });
+    ui.set_accessible_name(controls.reset_cancel, "Cancel conditional format reset");
+    ui.set_accessible_name(controls.reset_confirm, "Confirm conditional format reset");
+    ui.set_dialog_open(controls.confirmation, true);
+    ui.set_focus(Some(controls.reset_cancel));
+}
+
 pub(crate) fn prepare_qa(state: &mut AppState) {
     state.close_db();
     state.new_memory_db().unwrap();
@@ -548,7 +635,7 @@ mod tests {
             .iter_paint_order()
             .into_iter()
             .find(|node| demo.ui.widget_from_node(node.id) == Some(id) && !node.bounds.is_empty())
-            .unwrap()
+            .unwrap_or_else(|| panic!("No visible bounds for {id:?}; overlay {:?}", demo.state.overlay))
             .bounds
     }
     fn click(id: WidgetId, demo: &mut Demo) {
@@ -562,6 +649,140 @@ mod tests {
         demo.ui.pointer_released();
         demo.handle_button(id);
         demo.do_rebuild();
+    }
+
+    #[test]
+    fn per_column_save_retains_other_columns_namespaces_metadata_and_pending_data() {
+        let mut demo = manager(1400, 860, Theme::dark());
+        let state = &mut demo.state;
+        state.conn.as_ref().unwrap().execute_batch("CREATE TEMP TABLE names(name,amount); ATTACH ':memory:' AS \"aux space\"; CREATE TABLE \"aux space\".names(name,amount);").unwrap();
+        let mut first = state.cond_rules[0].clone();
+        first.native_format = Some(crate::state::NativeCondFormat { column: 2, xml: "<format vendor=\"keep\"/>".into() });
+        let name = state.cond_rules[2].clone();
+        let mut aux = first.clone(); aux.schema = "aux space".into();
+        let mut temp = first.clone(); temp.schema = "temp".into();
+        state.cond_rules = vec![first, name, state.cond_rules[1].clone(), aux, temp];
+        let original = state.cond_rules.clone();
+        assert!(state.begin_cond_formats_for_column("missing").is_err());
+        assert_eq!(state.cond_rules, original);
+        state.begin_cond_formats_for_column("amount").unwrap();
+        assert_eq!(state.cond_formats.as_ref().unwrap().columns, ["amount"]);
+        assert_eq!(state.cond_formats.as_ref().unwrap().rules.len(), 2);
+        state.cond_col = "name".into();
+        assert!(state.save_cond_formats().unwrap_err().contains("existing column"));
+        assert_eq!(state.cond_rules, original);
+        state.cond_col = "amount".into();
+        state.cond_value = " 3 ".into();
+        state.cond_color = "#123456".into();
+        state.read_only = true;
+        state.save_cond_formats().unwrap();
+        let saved = state.cond_rules.clone();
+        assert_eq!(saved[0].native_format, original[0].native_format);
+        assert_eq!((saved[0].value.as_str(), saved[0].color_rgb), ("3", 0x123456));
+        let outside = |rules: &[CondFormatRule]| rules.iter().filter(|rule| rule.schema != "main" || rule.column != "amount").cloned().collect::<Vec<_>>();
+        assert_eq!(outside(&saved), outside(&original));
+        assert_eq!(saved[1], original[2]);
+        state.begin_cond_formats_for_column("amount").unwrap();
+        state.cond_formats.as_mut().unwrap().rules.clear();
+        state.cond_formats.as_mut().unwrap().selected = None;
+        state.save_cond_formats().unwrap();
+        assert_eq!(state.cond_rules, outside(&original));
+        assert!(!state.conn.as_ref().unwrap().is_autocommit());
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT count(*) FROM main.names", [], |row| row.get::<_, i64>(0)).unwrap(), 5);
+        assert!(state.dirty);
+    }
+
+    #[test]
+    fn column_modal_reset_defaults_to_cancel_and_applies_only_on_save() {
+        for (theme_name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 860), (800, 600)] {
+                let mut demo = fixture(width, height, theme);
+                crate::cond_style::prepare_qa(&mut demo.state);
+                if width == 800 { demo.state.prefs.font_size = 18.0; }
+                demo.state.overlay = None;
+                demo.state.cond_formats = None;
+                demo.state.browse_mut().sel_row = Some(0);
+                demo.state.browse_mut().sel_col = Some(1);
+                demo.state.sync_edit_cell_from_selection();
+                demo.state.edit_value = "77".into();
+                assert!(demo.state.has_cell_draft());
+                demo.do_rebuild();
+                let original = demo.state.cond_rules.clone();
+                let outside = vec![original[2].clone()];
+                click(demo.ids.btn_cond_fmt, &mut demo);
+                assert_eq!(demo.state.cond_formats.as_ref().unwrap().column_scope.as_deref(), Some("amount"));
+                assert_eq!(demo.ui.active_dialog(), Some(demo.ids.cond_formats.parent));
+                demo.snapshot_inputs(); demo.poll_selection_changes();
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert!(demo.state.has_cell_draft());
+                assert_eq!(demo.ui.accessible_name(demo.ids.cond_formats.parent).as_deref(), Some("Conditional formats for \"amount\""));
+                for id in [demo.ids.cond_formats.help, demo.ids.cond_formats.reset, demo.ids.ov_btn_ok, demo.ids.ov_btn_cancel] {
+                    let rect = bounds(&demo, id);
+                    assert!(rect.y + rect.height <= height as f32 && rect.x + rect.width <= width as f32, "{rect:?}");
+                    assert_eq!(demo.ui.hit_widget(&demo.scene, rect.x + 4.0, rect.y + rect.height * 0.5), Some(id));
+                }
+                capture(&mut demo, &format!("column-modal-manager-{theme_name}-{width}"));
+                click(demo.ids.cond_formats.help, &mut demo);
+                assert_eq!(demo.pending_opens.len(), 1);
+                assert!(demo.state.status_msg.ends_with("/Conditional-Formats"));
+                demo.pending_opens.clear();
+                click(demo.ids.cond_formats.reset, &mut demo);
+                assert_eq!(demo.ui.active_dialog(), Some(demo.ids.cond_formats.confirmation));
+                assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.reset_cancel));
+                assert!(demo.state.save_cond_formats().unwrap_err().contains("confirmation"));
+                capture(&mut demo, &format!("column-modal-confirm-{theme_name}-{width}"));
+                assert!(demo.ui.key_input(UiKey::Enter));
+                let id = demo.ui.take_button_activate().unwrap();
+                assert_eq!(id, demo.ids.cond_formats.reset_cancel);
+                demo.handle_button(id); demo.do_rebuild();
+                assert!(!demo.state.cond_formats.as_ref().unwrap().reset_pending);
+                assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.reset));
+                assert_eq!(demo.state.cond_rules, original);
+                assert_eq!(demo.state.cond_formats.as_ref().unwrap().rules.len(), 2);
+                click(demo.ids.cond_formats.reset, &mut demo);
+                assert!(demo.ui.key_input(UiKey::Escape));
+                demo.handle_cond_format_dismiss(); demo.do_rebuild();
+                assert_eq!(demo.ui.active_dialog(), Some(demo.ids.cond_formats.parent));
+                assert_eq!(demo.state.cond_rules, original);
+                click(demo.ids.cond_formats.reset, &mut demo);
+                click(demo.ids.cond_formats.reset_confirm, &mut demo);
+                assert!(demo.state.cond_formats.as_ref().unwrap().rules.is_empty());
+                assert_eq!(demo.state.cond_rules, original);
+                capture(&mut demo, &format!("column-modal-reset-{theme_name}-{width}"));
+                click(demo.ids.ov_btn_cancel, &mut demo);
+                assert_eq!(demo.state.cond_rules, original);
+                assert_eq!(demo.state.tab, crate::state::MainTab::Browse);
+                assert_eq!(demo.state.browse().sel_col, Some(1));
+                capture(&mut demo, &format!("column-modal-cancel-{theme_name}-{width}"));
+                click(demo.ids.btn_cond_fmt, &mut demo);
+                demo.ui.set_text_input(demo.ids.ov_cond_color, "invalid");
+                click(demo.ids.ov_btn_ok, &mut demo);
+                assert_eq!(demo.state.cond_rules, original);
+                assert!(demo.ui.text_area_value(demo.ids.cond_formats.error).unwrap().contains("#RRGGBB"));
+                capture(&mut demo, &format!("column-modal-invalid-{theme_name}-{width}"));
+                demo.clear_error();
+                demo.ui.set_text_input(demo.ids.ov_cond_color, "#BF5266");
+                click(demo.ids.cond_formats.reset, &mut demo);
+                click(demo.ids.cond_formats.reset_confirm, &mut demo);
+                click(demo.ids.ov_btn_ok, &mut demo);
+                assert!(demo.state.overlay.is_none());
+                assert_eq!(demo.state.cond_rules, outside);
+                assert_eq!(demo.state.browse().result.as_ref().unwrap().rows.len(), 5);
+                assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
+                capture(&mut demo, &format!("column-modal-saved-{theme_name}-{width}"));
+                click(demo.ids.btn_cond_fmt, &mut demo);
+                assert!(demo.ui.key_input(UiKey::Escape));
+                demo.handle_cond_format_dismiss(); demo.do_rebuild();
+                assert!(demo.state.overlay.is_none());
+                assert!(demo.state.cond_formats.is_none());
+                assert_eq!(demo.state.cond_rules, outside);
+                demo.snapshot_inputs(); demo.poll_selection_changes();
+                assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+                assert!(demo.state.has_cell_draft());
+                assert_eq!(demo.state.edit_value, "77");
+                assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT amount FROM names ORDER BY rowid LIMIT 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+            }
+        }
     }
 
     #[test]
@@ -787,9 +1008,13 @@ mod tests {
                 for _ in 0..13 {
                     demo.ui.key_input(UiKey::Tab);
                 }
-                assert_eq!(demo.ui.focused(), Some(demo.ids.ov_btn_ok));
+                assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.help));
+                demo.ui.key_input(UiKey::Tab);
+                assert_eq!(demo.ui.focused(), Some(demo.ids.cond_formats.reset));
                 demo.ui.key_input(UiKey::Tab);
                 assert_eq!(demo.ui.focused(), Some(demo.ids.ov_btn_cancel));
+                demo.ui.key_input(UiKey::Tab);
+                assert_eq!(demo.ui.focused(), Some(demo.ids.ov_btn_ok));
                 assert_eq!(
                     demo.ui.button_enabled(demo.ids.cond_formats.up),
                     Some(false)

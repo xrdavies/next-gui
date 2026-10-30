@@ -30,12 +30,11 @@ const CONDITIONS: [(&str, &str, Option<usize>); 13] = [
 
 impl Demo {
     fn is_filter_input(&self, id: WidgetId) -> bool {
-        id.0 != 0
-            && (id == self.ids.browse_global_filter
-                || self.ids.browse_col_filters.contains(&id)
-                || (self.state.overlay == Some(crate::state::OverlayKind::CondFormat)
-                    && self.state.cond_op_idx == 5
-                    && id == self.ids.ov_cond_val))
+        id.0 != 0 && if self.state.overlay == Some(crate::state::OverlayKind::CondFormat) {
+            self.state.cond_op_idx == 5 && id == self.ids.ov_cond_val
+        } else {
+            id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)
+        }
     }
 
     fn filter_menu_available(&self) -> bool {
@@ -45,7 +44,9 @@ impl Demo {
                     && self.state.cond_formats.is_some())
             && !self.state.confirm_open
             && !self.state.sql_busy
-            && self.ui.active_dialog().is_none()
+            && (self.ui.active_dialog().is_none()
+                || self.ui.active_dialog() == Some(self.ids.cond_formats.parent))
+            && !self.state.cond_formats.as_ref().is_some_and(|draft| draft.reset_pending)
     }
 
     fn filter_menu_items(&self, input: WidgetId) -> Vec<MenuItem> {
@@ -104,7 +105,7 @@ impl Demo {
         self.ui
             .set_accessible_name(self.ids.context_menu, "Filter editing and expressions");
         self.ui
-            .open_context_menu(self.ids.context_menu, self.filter_menu_items(input), x, y)
+            .open_context_menu_for(self.ids.context_menu, input, self.filter_menu_items(input), x, y)
     }
 
     pub(crate) fn handle_filter_context_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
@@ -283,6 +284,11 @@ mod tests {
                 assert_eq!(demo.state.cond_rules, original);
                 assert_eq!(demo.ui.text_input_value(demo.ids.ov_cond_val), Some("/[/"));
                 assert!(demo.state.error_msg.is_some());
+                demo.ui.sync(&mut demo.scene);
+                let bounds = |id| demo.scene.iter_paint_order().into_iter().find(|node| demo.ui.widget_from_node(node.id) == Some(id) && !node.bounds.is_empty()).unwrap().bounds;
+                let body = bounds(demo.ids.ov_scroll);
+                let error = bounds(demo.ids.cond_formats.error);
+                assert!(error.y >= body.y && error.y + error.height <= body.y + body.height, "error {error:?} outside body {body:?}");
                 capture(&mut demo, &format!("format-error-{name}-{width}"));
                 demo.clear_error();
                 demo.ui.set_text_input(demo.ids.ov_cond_val, "2~4");

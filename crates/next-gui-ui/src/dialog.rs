@@ -177,7 +177,9 @@ impl Ui {
     }
 
     pub(super) fn widget_contains(&self, root: WidgetId, target: WidgetId) -> bool {
-        let target = self.text_completion_owner(target).unwrap_or(target);
+        let target = self.text_completion_owner(target)
+            .or_else(|| self.context_menu_owner.filter(|(popup, _)| *popup == target).map(|(_, owner)| owner))
+            .unwrap_or(target);
         root == target
             || self.widgets.get(&root).is_some_and(|widget| {
                 Self::widget_children_ids(&widget.kind)
@@ -688,6 +690,68 @@ mod tests {
             assert_eq!(ui.focused(), Some(background));
             ui.sync(&mut scene);
             assert!(!ui.focusable_widgets().contains(&input));
+        }
+    }
+
+    #[test]
+    fn detached_context_menus_follow_their_dialog_owner_and_reject_background_actions() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let mut ui = Ui::new();
+            ui.set_theme(theme);
+            ui.set_viewport(800.0, 600.0);
+            let mut scene = Scene::new();
+            let mut background = WidgetId(0);
+            ui.column(ColumnStyle::default(), |body| { background = body.text_input("background"); });
+            let mut input = WidgetId(0);
+            let parent = ui.dialog("Formats", ModalStyle::default(), |body| {
+                input = body.text_input("condition");
+            }, |_| {});
+            let child = ui.dialog("Reset?", ModalStyle::default(), |body| { body.text_input("child"); }, |_| {});
+            let popup = ui.context_menu_popup(ContextMenuStyle::from_theme(&theme));
+            ui.set_dialog_open(parent, true);
+            ui.sync(&mut scene);
+            let items = vec![MenuItem::submenu(1, "Expressions", vec![MenuItem::new(2, "Is NULL")])];
+            for pointer in [false, true] {
+                assert!(ui.open_context_menu_for(popup, input, items.clone(), 790.0, 590.0));
+                ui.sync(&mut scene);
+                assert_eq!(ui.popup_owner(), Some(popup));
+                assert_eq!(ui.focused(), Some(input));
+                assert!(!ui.open_context_menu_for(popup, background, vec![MenuItem::new(9, "blocked")], 2.0, 2.0));
+                assert!(!ui.open_context_menu_for(popup, WidgetId(u64::MAX), items.clone(), 2.0, 2.0));
+                assert!(!ui.open_context_menu_for(popup, popup, items.clone(), 2.0, 2.0));
+                assert!(!ui.open_context_menu_for(popup, input, items.clone(), f32::NAN, 2.0));
+                assert_eq!(ui.popup_owner(), Some(popup));
+                ui.key_input(UiKey::Down);
+                ui.key_input(UiKey::Right);
+                ui.sync(&mut scene);
+                assert_eq!(ui.menu_panels.len(), 2);
+                if pointer {
+                    let panel = ui.menu_panels[1].0;
+                    assert_eq!(ui.hit_widget(&scene, panel.x + 8.0, panel.y + 8.0), Some(popup));
+                    assert!(ui.pointer_pressed(&mut scene, panel.x + 8.0, panel.y + 8.0));
+                    ui.pointer_released();
+                } else { ui.key_input(UiKey::Enter); }
+                assert_eq!(ui.take_menu_action(), Some((popup, 2)));
+                assert_eq!(ui.active_dialog(), Some(parent));
+                assert_eq!(ui.focused(), Some(input));
+            }
+            assert!(ui.open_context_menu_for(popup, input, items.clone(), 20.0, 20.0));
+            ui.sync(&mut scene);
+            assert!(ui.key_input(UiKey::Escape));
+            assert!(!ui.has_open_popup());
+            assert_eq!(ui.take_dialog_dismiss(), None);
+            assert_eq!(ui.active_dialog(), Some(parent));
+            assert!(ui.open_context_menu_for(popup, input, items.clone(), 20.0, 20.0));
+            ui.set_dialog_open(child, true);
+            ui.sync(&mut scene);
+            assert!(!ui.has_open_popup());
+            assert!(!ui.open_context_menu_for(popup, input, items.clone(), 20.0, 20.0));
+            ui.set_dialog_open(child, false);
+            assert!(ui.open_context_menu_for(popup, input, items, 20.0, 20.0));
+            ui.set_dialog_open(parent, false);
+            ui.sync(&mut scene);
+            assert!(!ui.has_open_popup());
+            assert_eq!(ui.context_menu_owner, None);
         }
     }
 
