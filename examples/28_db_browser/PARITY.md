@@ -22,7 +22,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 
 | Surface | Status | Notes |
 |---------|--------|-------|
-| Menubar File / Edit / View / Tools / Help | partial | Flat in-window menus; no native menu, nested submenus or application shortcut system. |
+| Menubar File / Edit / View / Tools / Help | partial | In-window File Import/Export/Recent Files submenus and original-style File/Edit grouping; font preferences, bounded popup scrolling and keyboard selection reveal. Native menus, full original actions/shortcuts and Qt hover-scroll affordances remain. |
 | Main toolbar: New, Open, Write Changes, Revert | partial | Five original display styles with house icons/full live help, measured row heights and retained preferences; View-toggleable. Full original actions/order, movement and overflow behavior remain. |
 | Extra DB / Project toolbars | partial | Independently toggleable groups share a scrollable row and the original Main display-style preference; full accessible help. Original actions/order, movement and overflow remain. |
 | Main tabs (exactly 4): Structure / Browse / Pragmas / Execute SQL | done | Charts→Plot dock; SQL Log→Log dock |
@@ -40,7 +40,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Open Database… | done | `rfd` |
 | Open Database Read Only… | done | `open_readonly` + write blocked |
 | Attach Database… | done | overlay: path + schema name → ATTACH |
-| Recently opened | done | last 5 paths persisted (`.e28_recent`) |
+| Recently opened | done | Last 5 paths persisted (`.e28_recent`) under a Recent Files submenu; Unicode-safe display keeps full action paths. Tests/QA isolate recent history from the user's session. |
 | Close Database | done | confirm modal |
 | Save Database As… | done | SQLite live backup includes WAL and in-memory data; new destination required; commits pending edits first; encrypted databases use encrypted export |
 | Import → Database from SQL file… | done | Atomic savepoint import; dump transaction wrappers cannot commit prior edits |

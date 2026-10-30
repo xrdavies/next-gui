@@ -2803,6 +2803,7 @@ impl AppState {
 
     pub fn load_recent(&mut self) {
         self.recent.clear();
+        if cfg!(test) || std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_some() { return; }
         if let Ok(text) = std::fs::read_to_string(Self::recent_path()) {
             for line in text.lines().take(8) {
                 let l = line.trim();
@@ -2820,7 +2821,7 @@ impl AppState {
             self.recent.pop_back();
         }
         let body = self.recent.iter().cloned().collect::<Vec<_>>().join("\n");
-        if !cfg!(test) {
+        if !cfg!(test) && std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none() {
             let _ = std::fs::write(Self::recent_path(), body);
         }
     }

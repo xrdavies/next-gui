@@ -13,6 +13,10 @@ use next_gui_ui::{
 use crate::db::{self, ObjectKind};
 use crate::state::{AppState, ConfirmKind, DockKind, MainTab, OverlayKind};
 
+#[cfg(test)]
+#[path = "menu_tests.rs"]
+mod tests;
+
 const TABLE_PANE_MINIMUMS:(f32,f32)=(76.0,48.0);
 const PLOT_PANE_MINIMUMS:(f32,f32)=(36.0,164.0);
 
@@ -40,6 +44,9 @@ pub mod mid {
     pub const FILE_PROJECT_CLOSE: u64 = 21;
     pub const FILE_SAVE_ALL: u64 = 22;
     pub const FILE_PRINT_SCHEMA: u64 = 23;
+    pub const FILE_IMPORT: u64 = 24;
+    pub const FILE_EXPORT: u64 = 25;
+    pub const FILE_RECENT: u64 = 26;
     pub const FILE_RECENT_BASE: u64 = 100; // 100..104
 
     pub const EDIT_CREATE_TABLE: u64 = 30;
@@ -366,6 +373,58 @@ pub fn update_cell_caption(ui: &mut Ui, state: &AppState, host: WidgetId, label:
     let caption = state.cell_editor_caption();
     ui.set_text(label, caption.clone());
     ui.set_tooltip_text(host, caption);
+}
+
+fn file_menu_items(state: &AppState, font: &Font, size: f32, label_width: f32) -> Vec<MenuItem> {
+    let recent = state.recent.iter().take(5).enumerate().map(|(index, path)| {
+        let prefix = format!("{}. ", index + 1);
+        let mut short = if path.chars().count() > 48 {
+            let tail: String = path.chars().rev().take(47).collect();
+            format!("…{}", tail.chars().rev().collect::<String>())
+        } else {
+            path.clone()
+        };
+        while short.chars().count() > 1 && font.measure_line(&format!("{prefix}{short}"), size).0 > label_width {
+            let tail = short.strip_prefix('…').unwrap_or(&short);
+            short = format!("…{}", &tail[tail.chars().next().unwrap().len_utf8()..]);
+        }
+        MenuItem::new(mid::FILE_RECENT_BASE + index as u64, format!("{prefix}{short}"))
+    }).collect();
+    vec![
+        MenuItem::new(mid::FILE_NEW, "New Database…"),
+        MenuItem::new(mid::FILE_NEW_MEM, "New In-Memory Database"),
+        MenuItem::new(mid::FILE_OPEN, "Open Database…"),
+        MenuItem::new(mid::FILE_OPEN_RO, "Open Database Read Only…"),
+        MenuItem::new(mid::FILE_ATTACH, "Attach Database…"),
+        MenuItem::submenu(mid::FILE_RECENT, "Recent Files", recent),
+        MenuItem::new(mid::FILE_SAVE_AS, "Save Database As…"),
+        MenuItem::new(mid::FILE_CLOSE, "Close Database"),
+        MenuItem::separator(),
+        MenuItem::new(mid::FILE_WRITE, "Write Changes"),
+        MenuItem::new(mid::FILE_REVERT, "Revert Changes"),
+        MenuItem::new(mid::FILE_VACUUM, "Compact Database"),
+        MenuItem::separator(),
+        MenuItem::submenu(mid::FILE_IMPORT, "Import", vec![
+            MenuItem::new(mid::FILE_IMPORT_SQL, "Database from SQL file…"),
+            MenuItem::new(mid::FILE_IMPORT_CSV, "Table from CSV file…"),
+            MenuItem::new(mid::FILE_IMPORT_CLIP, "Table from Clipboard…"),
+        ]),
+        MenuItem::submenu(mid::FILE_EXPORT, "Export", vec![
+            MenuItem::new(mid::FILE_EXPORT_SQL, "Database to SQL file…"),
+            MenuItem::new(mid::FILE_EXPORT_CSV, "Table(s) as CSV file…"),
+            MenuItem::new(mid::FILE_EXPORT_JSON, "Table(s) to JSON…"),
+        ]),
+        MenuItem::separator(),
+        MenuItem::new(mid::FILE_PROJECT_OPEN, "Open Project…"),
+        MenuItem::new(mid::FILE_PROJECT_SAVE, "Save Project"),
+        MenuItem::new(mid::FILE_PROJECT_SAVE_AS, "Save Project As…"),
+        MenuItem::new(mid::FILE_PROJECT_CLOSE, "Close Project"),
+        MenuItem::separator(),
+        MenuItem::new(mid::FILE_SAVE_ALL, "Save All"),
+        MenuItem::new(mid::FILE_PRINT_SCHEMA, "Print Schema…"),
+        MenuItem::separator(),
+        MenuItem::new(mid::FILE_EXIT, "Exit"),
+    ]
 }
 
 fn schema_tree(state: &AppState) -> Vec<TreeNode> {
@@ -859,6 +918,8 @@ pub fn build_ui(
     let tab_page_h = (content_h - 36.0).max(240.0);
 
     let mut menu_style = MenuStyle::from_theme(&theme);
+    menu_style.size = theme.typography.body;
+    menu_style.item_height = (menu_style.size + 12.0).max(28.0);
     menu_style.popup_width = menu_style.popup_width.max(280.0);
     menu_style.min_width = menu_style.min_width.max(72.0);
 
@@ -877,43 +938,7 @@ pub fn build_ui(
     main_tb.cross_align = CrossAlign::Center;
     main_tb.background = Some(theme.colors.surface_elevated);
 
-    // Recent menu items
-    let mut file_items = vec![
-        MenuItem::new(mid::FILE_NEW, "New Database…"),
-        MenuItem::new(mid::FILE_NEW_MEM, "New In-Memory Database"),
-        MenuItem::new(mid::FILE_OPEN, "Open Database…"),
-        MenuItem::new(mid::FILE_OPEN_RO, "Open Database Read Only…"),
-        MenuItem::new(mid::FILE_ATTACH, "Attach Database…"),
-        MenuItem::new(mid::FILE_CLOSE, "Close Database"),
-        MenuItem::new(mid::FILE_SAVE_AS, "Save Database As…"),
-        MenuItem::new(mid::FILE_WRITE, "Write Changes"),
-        MenuItem::new(mid::FILE_REVERT, "Revert Changes"),
-        MenuItem::new(mid::FILE_VACUUM, "Compact Database"),
-        MenuItem::new(mid::FILE_IMPORT_CSV, "Import Table from CSV…"),
-        MenuItem::new(mid::FILE_IMPORT_SQL, "Import Database from SQL…"),
-        MenuItem::new(mid::FILE_IMPORT_CLIP, "Import CSV from Clipboard…"),
-        MenuItem::new(mid::FILE_EXPORT_CSV, "Export Table as CSV…"),
-        MenuItem::new(mid::FILE_EXPORT_SQL, "Export Database to SQL…"),
-        MenuItem::new(mid::FILE_EXPORT_JSON, "Export Table(s) to JSON…"),
-    ];
-    for (i, p) in state.recent.iter().take(5).enumerate() {
-        let short = if p.len() > 48 {
-            format!("…{}", &p[p.len() - 47..])
-        } else {
-            p.clone()
-        };
-        file_items.push(MenuItem::new(
-            mid::FILE_RECENT_BASE + i as u64,
-            format!("Recent: {short}"),
-        ));
-    }
-    file_items.push(MenuItem::new(mid::FILE_PROJECT_OPEN, "Open Project…"));
-    file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE, "Save Project"));
-    file_items.push(MenuItem::new(mid::FILE_PROJECT_SAVE_AS, "Save Project As…"));
-    file_items.push(MenuItem::new(mid::FILE_PROJECT_CLOSE, "Close Project"));
-    file_items.push(MenuItem::new(mid::FILE_SAVE_ALL, "Save All"));
-    file_items.push(MenuItem::new(mid::FILE_PRINT_SCHEMA, "Print Schema…"));
-    file_items.push(MenuItem::new(mid::FILE_EXIT, "Exit"));
+    let file_items = file_menu_items(state, ui.font(), menu_style.size, (win_w - 48.0).max(1.0));
 
     let mut shell_view = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
     shell_view.x = 6.0;
@@ -929,9 +954,11 @@ pub fn build_ui(
                 "Edit",
                 vec![
                     MenuItem::new(mid::EDIT_CREATE_TABLE, "Create Table…"),
-                    MenuItem::new(mid::EDIT_CREATE_INDEX, "Create Index…"),
                     MenuItem::new(mid::EDIT_MODIFY, "Modify Object…"),
                     MenuItem::new(mid::EDIT_DELETE, "Delete Object…"),
+                    MenuItem::separator(),
+                    MenuItem::new(mid::EDIT_CREATE_INDEX, "Create Index…"),
+                    MenuItem::separator(),
                     MenuItem::new(mid::EDIT_PREFS, "Preferences…"),
                 ],
                 menu_style,
