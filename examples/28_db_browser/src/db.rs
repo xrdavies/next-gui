@@ -2299,6 +2299,22 @@ mod tests {
     }
 
     #[test]
+    fn plain_sqlite_detection_accepts_empty_databases_but_not_partial_or_unknown_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.db");
+        Connection::open(&path).unwrap();
+        assert!(looks_like_sqlite(&path).unwrap());
+        assert!(list_schema(&open_readonly(path.to_str().unwrap()).unwrap()).unwrap().is_empty());
+        assert!(fs::read(&path).unwrap().is_empty());
+        for bytes in [b"SQLite".as_slice(), b"unknown database file", b"SQLite format 3X"] {
+            fs::write(&path, bytes).unwrap();
+            assert!(!looks_like_sqlite(&path).unwrap());
+        }
+        fs::write(&path, b"SQLite format 3\0").unwrap();
+        assert!(looks_like_sqlite(&path).unwrap());
+    }
+
+    #[test]
     fn encrypted_export_preserves_source_and_custom_settings() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES(42); PRAGMA user_version=7;")
@@ -3334,10 +3350,14 @@ pub fn looks_like_sqlite(path: &Path) -> Result<bool, String> {
     let mut buf = [0u8; 16];
     use std::io::Read;
     let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+    // A new SQLite file remains empty until its first persistent write.
+    if n == 0 {
+        return Ok(true);
+    }
     if n < 16 {
         return Ok(false);
     }
-    Ok(&buf[..15] == b"SQLite format 3")
+    Ok(&buf == b"SQLite format 3\0")
 }
 
 /// True when this build links SQLCipher (`PRAGMA cipher_version` works).
