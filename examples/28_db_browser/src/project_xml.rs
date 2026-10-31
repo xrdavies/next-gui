@@ -545,6 +545,34 @@ const CONNECTION_PRAGMAS: &[&str] = &[
     "synchronous",
 ];
 
+pub fn detach_schema(source: Option<&str>, schema: &str) -> Result<Option<String>, String> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let mut root = parse(source)?;
+    if let Some(attached) = root.content.iter_mut().find_map(|content| match content {
+        Content::Element(element) if element.name == "attached" => Some(element),
+        _ => None,
+    }) {
+        attached.content.retain(|c| !matches!(c, Content::Element(e) if e.name == "db" && e.attr("schema") == Some(schema)));
+    }
+    if let Some(browse) = root.content.iter_mut().find_map(|content| match content {
+        Content::Element(element) if element.name == "tab_browse" => Some(element),
+        _ => None,
+    }) {
+        browse.content.retain(|c| !matches!(c, Content::Element(e) if e.name == "table" && e.attr("table").and_then(|id| object_id(id).ok()).is_some_and(|(name, _)| name == schema)));
+        for content in &mut browse.content {
+            if let Content::Element(settings) = content {
+                if settings.name == "browse_table_settings" {
+                    settings.content.retain(|c| !matches!(c, Content::Element(e) if e.name == "table" && e.attr("schema").unwrap_or("main") == schema));
+                }
+            }
+        }
+    }
+    // XML encode replaces the cached extension; JSON restores its current top-level state.
+    render(&root).map(Some)
+}
+
 pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Result<(), String> {
     let mut root = project
         .db4s_xml

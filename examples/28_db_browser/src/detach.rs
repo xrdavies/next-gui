@@ -99,7 +99,10 @@ impl AppState {
         if Target::read(self, &target.schema)? != target {
             return Err("The attached database changed; choose Detach again".into());
         }
+        let project_xml =
+            crate::project_xml::detach_schema(self.project_xml.as_deref(), &target.schema)?;
         db::detach_database(self.conn.as_ref().unwrap(), &target.schema)?;
+        self.project_xml = project_xml;
         self.log_sql(format!(
             "DETACH DATABASE {};",
             db::quote_ident(&target.schema)
@@ -227,19 +230,67 @@ mod tests {
     }
 
     #[test]
+    fn detach_preflights_project_metadata_without_persisting_other_volatile_attachments() {
+        let mut state = fixture();
+        let aux = "aux.\"db";
+        state.project_xml = Some("<broken".into());
+        let before = crate::project::ProjectFile::from_state(&state);
+        state.prepare_detach(aux).unwrap();
+        assert!(state.detach_confirmed().is_err());
+        assert_eq!(
+            serde_json::to_value(crate::project::ProjectFile::from_state(&state)).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+        assert!(Target::read(&state, aux).is_ok());
+        state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("ATTACH ':memory:' AS keep")
+            .unwrap();
+        state.refresh_schema().unwrap();
+        state.project_xml = Some("<sqlb_project vendor='keep'><attached>preserve text<db schema='aux.&quot;db' path=''/><db schema='keep' path=''/><unknown value='retained'/></attached><tab_browse>browse text<browse_table_settings>settings text<table schema='aux.&quot;db' name='records'/><table schema='keep' name='records'/></browse_table_settings></tab_browse></sqlb_project>".into());
+        state.prepare_detach(aux).unwrap();
+        state.detach_confirmed().unwrap();
+        assert!(Target::read(&state, "keep").is_ok());
+        let xml = state.project_xml.as_ref().unwrap();
+        assert!(!xml.contains("aux."));
+        for retained in [
+            "preserve text",
+            "browse text",
+            "settings text",
+            "schema=\"keep\"",
+            "value=\"retained\"",
+            "vendor=\"keep\"",
+        ] {
+            assert!(xml.contains(retained), "lost {retained}");
+        }
+    }
+
+    #[test]
     fn detach_empty_database_marks_a_saved_project_modified() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = AppState::empty();
-        state.create_new_db(dir.path().join("main.db").to_str().unwrap()).unwrap();
+        state
+            .create_new_db(dir.path().join("main.db").to_str().unwrap())
+            .unwrap();
         let attached = dir.path().join("empty.db");
-        db::attach_database(state.conn.as_ref().unwrap(), attached.to_str().unwrap(), "empty").unwrap();
+        db::attach_database(
+            state.conn.as_ref().unwrap(),
+            attached.to_str().unwrap(),
+            "empty",
+        )
+        .unwrap();
         state.refresh_schema().unwrap();
         let project = dir.path().join("session.sqbpro");
         state.save_project(&project).unwrap();
         assert!(!state.has_project_drafts());
         state.prepare_detach("empty").unwrap();
         state.detach_confirmed().unwrap();
-        assert!(state.has_project_drafts(), "Detach must participate in Save Project/close confirmation");
+        assert!(
+            state.has_project_drafts(),
+            "Detach must participate in Save Project/close confirmation"
+        );
         state.save_project(&project).unwrap();
         assert!(!state.has_project_drafts());
         let mut reopened = AppState::empty();
@@ -251,28 +302,55 @@ mod tests {
     fn detach_project_roundtrip_removes_only_its_native_and_extension_settings() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = AppState::empty();
-        state.create_new_db(dir.path().join("main.db").to_str().unwrap()).unwrap();
+        state
+            .create_new_db(dir.path().join("main.db").to_str().unwrap())
+            .unwrap();
         let aux = "aux.\"db";
         let attached = dir.path().join("attached.db");
-        db::attach_database(state.conn.as_ref().unwrap(), attached.to_str().unwrap(), aux).unwrap();
+        db::attach_database(
+            state.conn.as_ref().unwrap(),
+            attached.to_str().unwrap(),
+            aux,
+        )
+        .unwrap();
         state.conn.as_ref().unwrap().execute_batch(&format!(
             "CREATE TABLE main.records(v); CREATE TABLE {}.records(v); INSERT INTO {}.records VALUES(2)",
             db::quote_ident(aux), db::quote_ident(aux)
         )).unwrap();
         state.write_changes().unwrap();
-        db::attach_database(state.conn.as_ref().unwrap(), attached.to_str().unwrap(), "keep").unwrap();
+        db::attach_database(
+            state.conn.as_ref().unwrap(),
+            attached.to_str().unwrap(),
+            "keep",
+        )
+        .unwrap();
         state.refresh_schema().unwrap();
         state.project_xml = Some("<sqlb_project vendor='preserved'><future value='untouched'/><tab_browse><browse_table_settings><table schema='keep' name='records' vendor='table'/></browse_table_settings></tab_browse></sqlb_project>".into());
         state.browse_tabs.clear();
         for schema in ["main", aux, "keep"] {
-            state.browse_tabs.push(BrowseTabState::new_in(schema, Some("records".into())));
+            state
+                .browse_tabs
+                .push(BrowseTabState::new_in(schema, Some("records".into())));
             state.browse_tab_idx = state.browse_tabs.len() - 1;
             state.refresh_browse().unwrap();
             state.browse_mut().column_widths = vec![247.0];
-            state.cond_rules.push(CondFormatRule { schema: schema.into(), table: Some("records".into()), column: "v".into(), op: 2, value: "2".into(), color_rgb: 0x336699, style: Default::default(), native_format: None });
+            state.cond_rules.push(CondFormatRule {
+                schema: schema.into(),
+                table: Some("records".into()),
+                column: "v".into(),
+                op: 2,
+                value: "2".into(),
+                color_rgb: 0x336699,
+                style: Default::default(),
+                native_format: None,
+            });
             state.plot.settings.configs.push(crate::plot::Config {
-                source: crate::plot::Source::Table { schema: schema.into(), table: "records".into() },
-                x: Some(crate::plot::Column::Row), series: Vec::new(),
+                source: crate::plot::Source::Table {
+                    schema: schema.into(),
+                    table: "records".into(),
+                },
+                x: Some(crate::plot::Column::Row),
+                series: Vec::new(),
             });
         }
         state.browse_tab_idx = 0;
@@ -288,20 +366,36 @@ mod tests {
             let path = dir.path().join(format!("detached.{extension}"));
             loaded.save_project(&path).unwrap();
             let pf = crate::project::ProjectFile::load(&path).unwrap();
-            assert!(!pf.db4s_xml.as_ref().unwrap().contains("schema=\"aux.&quot;db\""), "removed native table settings must not survive Save Project");
+            assert!(
+                !pf.db4s_xml
+                    .as_ref()
+                    .unwrap()
+                    .contains("schema=\"aux.&quot;db\""),
+                "removed native table settings must not survive Save Project"
+            );
             let mut reopened = AppState::empty();
             reopened.open_project(&path).unwrap();
             assert!(reopened.schema_names.iter().any(|name| name == "keep"));
             assert!(!reopened.schema_names.iter().any(|name| name == aux));
-            assert!(reopened.browse_tabs.iter().all(|tab| tab.schema != aux && !tab.schema_table_options.contains_key(aux)));
+            assert!(reopened
+                .browse_tabs
+                .iter()
+                .all(|tab| tab.schema != aux && !tab.schema_table_options.contains_key(aux)));
             assert!(reopened.plot.settings.configs.iter().all(|config| !matches!(&config.source, crate::plot::Source::Table { schema, .. } if schema == aux)));
             assert!(reopened.cond_rules.iter().all(|rule| rule.schema != aux));
             for schema in ["main", "keep"] {
                 assert!(reopened.cond_rules.iter().any(|rule| rule.schema == schema));
-                assert!(reopened.browse_tabs.iter().any(|tab| tab.schema == schema && tab.column_widths == [247.0]));
+                assert!(reopened
+                    .browse_tabs
+                    .iter()
+                    .any(|tab| tab.schema == schema && tab.column_widths == [247.0]));
             }
             let xml = reopened.project_xml.as_ref().unwrap();
-            assert!(xml.contains("vendor=\"preserved\"") && xml.contains("value=\"untouched\"") && xml.contains("vendor=\"table\""));
+            assert!(
+                xml.contains("vendor=\"preserved\"")
+                    && xml.contains("value=\"untouched\"")
+                    && xml.contains("vendor=\"table\"")
+            );
             assert!(!reopened.has_project_drafts());
         }
         assert_eq!(std::fs::read(attached).unwrap(), bytes);
