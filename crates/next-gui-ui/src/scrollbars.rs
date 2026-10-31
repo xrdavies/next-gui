@@ -12,6 +12,10 @@ struct Scrollbar {
 }
 
 impl Ui {
+    pub(super) fn point_on_scrollbar(&self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
+        self.scrollbar_geometry(scene, id).iter().any(|bar| bar.track.contains(x, y))
+    }
+
     pub(super) fn reveal_scroll_focus(&mut self, scene: &Scene) -> bool {
         if self.revealed_scroll_focus == self.focus {
             return false;

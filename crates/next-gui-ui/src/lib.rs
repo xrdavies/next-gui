@@ -4842,6 +4842,21 @@ impl Ui {
         }
     }
 
+    /// Visible tree row under a scene point, excluding padding, occlusion and scrollbars.
+    /// Does not change selection, expansion, focus or pointer capture.
+    pub fn tree_node_at(&self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> Option<u64> {
+        if !x.is_finite() || !y.is_finite() || self.hit_widget(scene, x, y) != Some(id)
+            || self.point_on_scrollbar(scene, id, x, y) { return None; }
+        let widget = self.widgets.get(&id)?;
+        let Kind::Tree { roots, style, scroll_y, .. } = &widget.kind else { return None; };
+        if !style.row_height.is_finite() || style.row_height <= 0.0 { return None; }
+        let bounds = scene.get(widget.node?)?.bounds;
+        let inner = Rect { x: bounds.x + style.padding, y: bounds.y + style.padding,
+            width: (bounds.width - 2.0 * style.padding).max(0.0), height: (bounds.height - 2.0 * style.padding).max(0.0) };
+        if !inner.contains(x, y) { return None; }
+        flatten_tree(roots).get(((y - inner.y + scroll_y) / style.row_height).floor() as usize).map(|row| row.id)
+    }
+
     /// Set tree selection by node id.
     pub fn set_tree_selected(&mut self, id: WidgetId, node_id: Option<u64>) {
         if let Some(w) = self.widgets.get_mut(&id) {
@@ -20954,6 +20969,34 @@ mod tests {
         assert_eq!(ui.tree_expanded(tree, 1), Some(false));
         assert_eq!(ui.tree_scroll_offset(tree).unwrap(), 0.0);
         ui.reveal_tree_selection(WidgetId(0));
+    }
+
+    #[test]
+    fn tree_node_hits_follow_visible_rows_without_changing_navigation() {
+        let mut ui = Ui::new(); let mut scene = Scene::new(); let mut tree = WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            tree = c.tree(vec![TreeNode::new(1, "root", (100..120).map(|i| TreeNode::leaf(i, i.to_string())).collect())],
+                TreeStyle { width: 180.0, height: 100.0, padding: 4.0, row_height: 20.0, ..TreeStyle::default() });
+        });
+        ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&tree].node.unwrap()).unwrap().bounds;
+        let x = bounds.x + 40.0; let y = bounds.y + 5.0;
+        assert_eq!(ui.tree_node_at(&scene, tree, x, y), Some(1));
+        ui.set_tree_scroll_offset(tree, 35.0); ui.sync(&mut scene);
+        assert_eq!(ui.tree_node_at(&scene, tree, x, y), Some(100));
+        assert_eq!(ui.tree_node_at(&scene, tree, x, y + 5.0), Some(101));
+        assert_eq!(ui.tree_selected(tree), None); assert_eq!(ui.focused(), None);
+        for (px, py) in [(bounds.x + 1.0, y), (x, bounds.y + 1.0), (x, bounds.y + bounds.height - 1.0),
+            (bounds.x + bounds.width - 2.0, y), (x, bounds.y - 1.0), (f32::NAN, y)] {
+            assert_eq!(ui.tree_node_at(&scene, tree, px, py), None);
+        }
+        ui.set_tree_expanded(tree, 1, false); ui.set_tree_scroll_offset(tree, 0.0); ui.sync(&mut scene);
+        assert_eq!(ui.tree_node_at(&scene, tree, x, y + 25.0), None);
+        assert_eq!(ui.tree_expanded(tree, 1), Some(false));
+        let modal = ui.modal("Cover tree", "body", "OK", None, ModalStyle::default());
+        ui.set_modal_open(modal, true); ui.sync(&mut scene);
+        assert_eq!(ui.tree_node_at(&scene, tree, x, y), None);
+        assert_eq!(ui.tree_node_at(&scene, WidgetId(0), x, y), None);
     }
 
     #[test]
