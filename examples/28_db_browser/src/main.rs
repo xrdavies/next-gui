@@ -488,6 +488,7 @@ struct BuiltUiIds {
     ov_cipher_kdf: WidgetId,
     ov_prefs_font: WidgetId,
     ov_prefs_filter_delay: WidgetId,
+    ov_prefs_browse_completion: WidgetId,
     ov_prefs_filter_escape: WidgetId,
     ov_prefs_toolbars: [WidgetId; 5],
     ov_prefs_theme: WidgetId,
@@ -747,6 +748,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             ov_cipher_kdf: b.ov_cipher_kdf,
             ov_prefs_font: b.ov_prefs_font,
             ov_prefs_filter_delay: b.ov_prefs_filter_delay,
+            ov_prefs_browse_completion: b.ov_prefs_browse_completion,
             ov_prefs_filter_escape: b.ov_prefs_filter_escape,
             ov_prefs_toolbars: b.ov_prefs_toolbars,
             ov_prefs_theme: b.ov_prefs_theme,
@@ -1698,6 +1700,13 @@ impl Demo {
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             if tab.starts_with("schema-dock") {schema_dock::prepare_qa(&mut state,tab.ends_with("narrow"));if tab.contains("shared") {state.dock_edit=true;}}
+            if tab.starts_with("browse-completion") {
+                state.new_memory_db().unwrap();state.conn.as_ref().unwrap().execute_batch(browse_edit::COMPLETION_QA_SQL).unwrap();
+                state.write_changes().unwrap();state.refresh_schema().unwrap();state.tab=MainTab::Browse;
+                state.switch_browse_table_in("main","choices").unwrap();state.prefs.auto_switch_mode=false;
+                if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
+                state.begin_browse_cell_edit(0,1).unwrap();
+            }
             if tab.starts_with("browse-inline") {
                 state.new_memory_db().unwrap(); state.conn.as_ref().unwrap().execute_batch(browse_edit::QA_SQL).unwrap();
                 state.write_changes().unwrap(); state.refresh_schema().unwrap(); state.tab=MainTab::Browse;
@@ -2327,6 +2336,7 @@ impl Demo {
                 }
             }
             OverlayKind::Preferences => {
+                if let Some(value) = self.ui.text_input_value(self.ids.ov_prefs_browse_completion) { self.state.prefs_browse_completion_threshold = value.to_string(); }
                 if let Some(value) = self.ui.text_input_value(self.ids.ov_prefs_filter_delay) { self.state.prefs_filter_delay = value.to_string(); }
                 if let Some(value) = self.ui.text_input_value(self.ids.ov_prefs_filter_escape) { self.state.prefs_filter_escape = value.to_string(); }
                 for (index, id) in self.ids.ov_prefs_toolbars.iter().enumerate() {
@@ -3087,7 +3097,7 @@ impl Demo {
         let mode_session = (mode_focused && self.last_edit_revision == self.state.edit_revision)
             .then(|| self.ui.select_state(self.ids.edit_mode).map(|session| (self.ui.select_selected(self.ids.edit_mode), session))).flatten();
         let prefs_input = if self.state.overlay == Some(OverlayKind::Preferences) {
-            [self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape].into_iter().enumerate().find_map(|(index,id)|
+            [self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape,self.ids.ov_prefs_browse_completion].into_iter().enumerate().find_map(|(index,id)|
                 (id.0!=0 && self.ui.focused()==Some(id)).then(||self.ui.text_input_state(id).map(|session|(index,session))).flatten())
         } else {None};
         let prefs_session = if self.state.overlay == Some(OverlayKind::Preferences) {
@@ -3436,7 +3446,7 @@ impl Demo {
         self.last_browse_row = self.state.browse().sel_row;
         self.last_log_revision = log_revision;
         if self.state.overlay == Some(OverlayKind::Preferences) {
-            if let Some((index,session))=prefs_input {let id=[self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape][index];self.ui.set_focus(Some(id));self.ui.restore_text_input_state(id,&session);self.ui.sync(&mut self.scene);}
+            if let Some((index,session))=prefs_input {let id=[self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape,self.ids.ov_prefs_browse_completion][index];self.ui.set_focus(Some(id));self.ui.restore_text_input_state(id,&session);self.ui.sync(&mut self.scene);}
         }
         if let Some(session) = filter_input { session.restore(&self.state, &mut self.ui, &self.ids); self.ui.sync(&mut self.scene); }
         self.filter_session.reconcile(&self.state, &self.ui, &self.ids);
@@ -6225,7 +6235,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("browse-completion") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

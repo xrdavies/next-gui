@@ -22,6 +22,7 @@ pub struct Prefs {
     pub auto_switch_mode: bool,
     pub indent_compact: bool,
     pub filter_delay_ms: u64,
+    pub browse_completion_threshold: usize,
     pub filter_escape: String,
     pub schema_select_query: bool,
     pub schema_qualified_names: bool,
@@ -47,6 +48,7 @@ impl Default for Prefs {
             auto_switch_mode: true,
             indent_compact: false,
             filter_delay_ms: 200,
+            browse_completion_threshold: 1000,
             filter_escape: "\\".into(),
             schema_select_query: true,
             schema_qualified_names: false,
@@ -79,6 +81,7 @@ impl Prefs {
         p.frozen_cols_default = p.frozen_cols_default.min(20);
         for style in &mut p.toolbar_styles { *style = (*style).min(4); }
         p.filter_delay_ms = p.filter_delay_ms.min(5000);
+        p.browse_completion_threshold = p.browse_completion_threshold.min(100_000_000);
         if crate::filters::validate_escape(&p.filter_escape).is_err() { p.filter_escape = "\\".into(); }
         p
     }

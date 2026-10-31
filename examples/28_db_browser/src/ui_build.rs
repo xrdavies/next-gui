@@ -319,6 +319,7 @@ pub struct BuiltUi {
     pub ov_cipher_kdf: WidgetId,
     pub ov_prefs_font: WidgetId,
     pub ov_prefs_filter_delay: WidgetId,
+    pub ov_prefs_browse_completion: WidgetId,
     pub ov_prefs_filter_escape: WidgetId,
     pub ov_prefs_toolbars: [WidgetId; 5],
     pub ov_prefs_theme: WidgetId,
@@ -820,6 +821,7 @@ pub fn build_ui(
     let mut ov_cipher_kdf = z;
     let mut ov_prefs_font = z;
     let mut ov_prefs_filter_delay = z;
+    let mut ov_prefs_browse_completion = z;
     let mut ov_prefs_filter_escape = z;
     let mut ov_prefs_toolbars = [z; 5];
     let mut ov_prefs_theme = z;
@@ -1599,6 +1601,10 @@ pub fn build_ui(
                                 ov_frozen = r.text_input_styled(format!("{}", state.prefs_frozen_cols), "0", name_s);
                             });
                             c.row(row, |r| {
+                                r.text("Value completion threshold");
+                                ov_prefs_browse_completion = r.text_input_styled(&state.prefs_browse_completion_threshold, "1000", name_s);
+                            });
+                            c.row(row, |r| {
                                 r.text("Filter delay (ms)");
                                 ov_prefs_filter_delay = r.text_input_styled(&state.prefs_filter_delay, "200", name_s);
                             });
@@ -2105,7 +2111,7 @@ pub fn build_ui(
                                         filtered_style,
                                         col_filt_style,
                                     );
-                                    crate::browse_edit::mount(p, browse_table, state, col_filt_style);
+                                    crate::browse_edit::mount(p, browse_table, state, col_filt_style, &theme);
                                 }
                                 crate::state::BrowseViewMode::Form => {
                                     let b = state.browse();
@@ -2640,6 +2646,7 @@ pub fn build_ui(
         }
         if browse_table.0 != 0 {
             ui.set_table_editable_columns(browse_table, crate::browse_edit::editable_columns(state));
+            if let Some(editor) = ui.table_cell_editor(browse_table) { ui.set_autocomplete_prefix_matching(editor, true); }
             ui.set_table_frozen_cols(browse_table, state.browse_frozen_cols());
             let styles=crate::cond_match::styles(state,ui.font());
             ui.set_table_cell_styles(browse_table,styles);
@@ -2860,6 +2867,9 @@ pub fn build_ui(
         }
     }
     ui.set_tooltip_text(cond_formats.size,"1–99 points; blank keeps the table's default font size.");
+    ui.set_text_input_integer_range(ov_prefs_browse_completion, Some((0, 100_000_000)));
+    ui.set_accessible_name(ov_prefs_browse_completion, "Browse value completion row threshold");
+    ui.set_tooltip_text(ov_prefs_browse_completion, "Offer existing unique values when the filtered row count is at most this threshold; 0 disables completion.");
     ui.set_text_input_integer_range(ov_prefs_filter_delay, Some((0, 5000)));
     ui.set_accessible_name(ov_prefs_filter_delay, "Filter delay in milliseconds");
     ui.set_accessible_name(ov_prefs_filter_escape, "Filter escape character");
@@ -3233,6 +3243,7 @@ pub fn build_ui(
         ov_cipher_kdf,
         ov_prefs_font,
         ov_prefs_filter_delay,
+        ov_prefs_browse_completion,
         ov_prefs_filter_escape,
         ov_prefs_toolbars,
         ov_prefs_theme,

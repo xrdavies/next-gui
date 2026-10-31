@@ -685,6 +685,7 @@ pub struct AppState {
     pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
     pub prefs_filter_delay: String,
+    pub prefs_browse_completion_threshold: String,
     pub prefs_filter_escape: String,
     pub prefs_toolbar_styles: [usize; 5],
     pub prefs_scroll: (f32, f32),
@@ -1059,6 +1060,7 @@ impl AppState {
             prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
             prefs_filter_delay: "200".into(),
+            prefs_browse_completion_threshold: "1000".into(),
             prefs_filter_escape: "\\".into(),
             prefs_toolbar_styles: [2, 2, 0, 0, 0],
             prefs_scroll: (0.0, 0.0),
@@ -3103,6 +3105,7 @@ impl AppState {
     pub fn sync_prefs_drafts(&mut self) {
         self.prefs_font_size = format!("{}", self.prefs.font_size as i32);
         self.prefs_filter_delay = self.prefs.filter_delay_ms.to_string();
+        self.prefs_browse_completion_threshold = self.prefs.browse_completion_threshold.to_string();
         self.prefs_filter_escape = self.prefs.filter_escape.clone();
         self.prefs_toolbar_styles = self.prefs.toolbar_styles;
         self.prefs_scroll = (0.0, 0.0);
@@ -3124,9 +3127,11 @@ impl AppState {
             return Err("font size must be finite".into());
         }
         let filter_delay = self.prefs_filter_delay.trim().parse::<u64>().ok().filter(|delay| *delay <= 5000).ok_or("Filter delay must be an integer from 0 to 5000 ms")?;
+        let completion_threshold = self.prefs_browse_completion_threshold.trim().parse::<usize>().ok().filter(|value| *value <= 100_000_000).ok_or("Value completion threshold must be an integer from 0 to 100000000")?;
         crate::filters::validate_escape(&self.prefs_filter_escape)?;
         self.prefs.font_size = fs.clamp(9.0, 28.0);
         self.prefs.filter_delay_ms = filter_delay;
+        self.prefs.browse_completion_threshold = completion_threshold;
         self.prefs.filter_escape = self.prefs_filter_escape.clone();
         self.prefs.toolbar_styles = self.prefs_toolbar_styles.map(|style| style.min(4));
         self.prefs.default_theme_dark = self.prefs_theme_dark;

@@ -545,6 +545,22 @@ fn browse_select_in(conn: &Connection, schema: &str, table: &str, ordering: &[Or
     Ok(sql)
 }
 
+/// Read one complete, bounded column for value suggestions without materializing other cells.
+pub fn browse_column_values_in(conn: &Connection, schema: &str, table: &str, column: &str, ordering: &[OrderBy], filter: Option<&str>, limit: usize) -> Result<QueryResult, String> {
+    if !table_visible_columns_in(conn, schema, table)?.iter().any(|c| c.name == column)
+        && implicit_rowid_column_in(conn, schema, table)?.as_deref() != Some(column) {
+        return Err("Completion column no longer exists".into());
+    }
+    let mut sql = format!("SELECT {} FROM {}", quote_ident(column), qualified_name(schema, table));
+    if let Some(filter) = filter.map(str::trim).filter(|s| !s.is_empty()) {
+        sql.push_str(" WHERE ");
+        sql.push_str(filter);
+    }
+    append_order_by(conn, schema, table, &mut sql, ordering)?;
+    sql.push_str(&format!(" LIMIT {}", limit.saturating_add(1)));
+    query_preview(conn, &sql, limit)
+}
+
 pub fn browse_snapshot_in(conn: &Connection, schema: &str, table: &str, ordering: &[OrderBy], filter: Option<&str>, show_row_id: bool) -> Result<QueryResult, String> {
     let sql = browse_select_in(conn, schema, table, ordering, filter, show_row_id)?;
     // Validate before the batch executor can prepare or execute any statement tail.
