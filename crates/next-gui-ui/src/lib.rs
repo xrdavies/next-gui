@@ -2184,6 +2184,7 @@ enum Kind {
     /// Text field + filtered suggestion dropdown (Office P2d).
     Autocomplete {
         options: Vec<String>,
+        prefix_matching: bool,
         value: String,
         edit: InputEdit,
         caret: usize,
@@ -8883,21 +8884,24 @@ impl Ui {
     }
 
     fn autocomplete_filtered(&self, id: WidgetId) -> Vec<(usize, String)> {
-        let (options, value) = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Autocomplete { options, value, show_all, .. }) => (options.clone(), if *show_all {String::new()} else {value.clone()}),
+        let (options, value, prefix) = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Autocomplete { options, value, show_all, prefix_matching, .. }) => (options, if *show_all {""} else {value.as_str()}, *prefix_matching),
             _ => return Vec::new(),
         };
-        let needle = value.to_ascii_lowercase();
+        let needle = if prefix { value.to_lowercase() } else { value.to_ascii_lowercase() };
         options
-            .into_iter()
+            .iter()
             .enumerate()
             .filter(|(_, o)| {
                 if needle.is_empty() {
                     true
+                } else if prefix {
+                    o.to_lowercase().starts_with(&needle)
                 } else {
                     o.to_ascii_lowercase().contains(&needle)
                 }
             })
+            .map(|(index, option)| (index, option.clone()))
             .collect()
     }
 
@@ -19939,6 +19943,7 @@ impl FlexBuilder<'_> {
             Widget {
                 kind: Kind::Autocomplete {
                     options,
+                    prefix_matching: false,
                     value,
                     edit: InputEdit::default(),
                     caret,

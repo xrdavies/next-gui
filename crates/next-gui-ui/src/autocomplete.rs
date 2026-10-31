@@ -23,6 +23,17 @@ pub struct SelectState {
 }
 
 impl Ui {
+    /// Match prefixes after Unicode lowercasing instead of the default ASCII substring matching.
+    /// Changing the mode closes this field's popup without changing its text or editing history.
+    pub fn set_autocomplete_prefix_matching(&mut self, id: WidgetId, enabled: bool) -> bool {
+        let Some(crate::Widget { kind: Kind::Autocomplete { prefix_matching, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        if *prefix_matching != enabled {
+            *prefix_matching = enabled;
+            if self.open_popup == Some(id) { self.close_popup_internal(); }
+        }
+        true
+    }
+
     /// Snapshot a Select popup without retaining widget IDs or option indices.
     pub fn select_state(&self,id:WidgetId)->Option<SelectState> {
         let Kind::Select {open,..}=&self.widgets.get(&id)?.kind else {return None;};
@@ -419,6 +430,35 @@ mod tests {
         let mut scene = Scene::new();
         ui.sync(&mut scene);
         (ui, scene, id)
+    }
+
+    #[test]
+    fn prefix_mode_filters_unicode_and_preserves_text_history_and_named_popup_sessions() {
+        let options = ["xÉcole", "École", "éclair", "Σχολή"];
+        let (mut ui, _, id) = field(&options, "é");
+        assert_eq!(ui.autocomplete_filtered(id), vec![(2, "éclair".into())]);
+        assert!(ui.set_autocomplete_prefix_matching(id, true));
+        assert_eq!(ui.autocomplete_filtered(id), vec![(1, "École".into()), (2, "éclair".into())]);
+        ui.key_input(UiKey::Down);
+        ui.key_input(UiKey::Down);
+        let session = ui.autocomplete_state(id).unwrap();
+        let (mut rebuilt, _, next) = field(&["éclair", "xÉcole", "École"], "é");
+        rebuilt.set_autocomplete_prefix_matching(next, true);
+        assert!(rebuilt.set_autocomplete_state(next, &session));
+        assert!(rebuilt.key_input(UiKey::Enter));
+        assert_eq!(rebuilt.autocomplete_value(next), Some("éclair"));
+        rebuilt.key_input(UiKey::Undo);
+        assert_eq!(rebuilt.autocomplete_value(next), Some("é"));
+        assert!(rebuilt.set_autocomplete_prefix_matching(next, false));
+        assert!(!rebuilt.has_open_popup());
+        assert_eq!(rebuilt.autocomplete_value(next), Some("é"));
+        assert!(rebuilt.key_input(UiKey::Redo));
+        assert_eq!(rebuilt.autocomplete_value(next), Some("éclair"));
+        ui.set_autocomplete_value(id, "σχ");
+        assert_eq!(ui.autocomplete_filtered(id), vec![(3, "Σχολή".into())]);
+        ui.ime_preedit("候選", None);
+        assert!(!ui.has_open_popup());
+        assert!(!ui.set_autocomplete_prefix_matching(WidgetId(0), true));
     }
 
     #[test]
