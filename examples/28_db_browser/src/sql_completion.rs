@@ -55,6 +55,7 @@ pub struct Calltip {
 #[derive(Debug, Clone)]
 pub struct Catalog {
     entries: Vec<Entry>,
+    columns: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     functions: BTreeMap<String, BTreeMap<i32, bool>>,
     pub warning: Option<String>,
 }
@@ -63,6 +64,7 @@ impl Default for Catalog {
     fn default() -> Self {
         let mut catalog = Self {
             entries: Vec::new(),
+            columns: BTreeMap::new(),
             functions: BTreeMap::new(),
             warning: None,
         };
@@ -101,6 +103,12 @@ impl Default for Catalog {
 }
 
 impl Catalog {
+    /// Cached qualified columns, including generated/virtual fields; no database work during paint.
+    pub fn columns_in(&self, schema: &str, table: &str) -> impl Iterator<Item = &str> {
+        self.columns.get(schema).and_then(|tables| tables.get(table))
+            .into_iter().flatten().map(String::as_str)
+    }
+
     fn add(&mut self, path: Vec<String>, category: Category) {
         self.entries.push(Entry { path, category });
     }
@@ -166,6 +174,7 @@ impl Catalog {
                 })();
                 match columns {
                     Ok(columns) => {
+                        self.columns.entry(schema.clone()).or_default().insert(table.clone(), columns.clone());
                         for column in columns {
                             self.add(vec![column.clone()], Category::Column);
                             self.add(vec![table.clone(), column.clone()], Category::Column);

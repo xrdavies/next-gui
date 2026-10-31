@@ -23,6 +23,9 @@ pub struct Prefs {
     pub indent_compact: bool,
     pub filter_delay_ms: u64,
     pub filter_escape: String,
+    pub schema_select_query: bool,
+    pub schema_qualified_names: bool,
+    pub schema_quoted_names: bool,
 }
 
 impl Default for Prefs {
@@ -45,6 +48,9 @@ impl Default for Prefs {
             indent_compact: false,
             filter_delay_ms: 200,
             filter_escape: "\\".into(),
+            schema_select_query: true,
+            schema_qualified_names: false,
+            schema_quoted_names: true,
         }
     }
 }

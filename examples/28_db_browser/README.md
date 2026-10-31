@@ -24,6 +24,8 @@ The structure tree groups objects under main, temp and attached databases, inclu
 
 Structure navigation retains focus, expanded groups and scroll position across page/UI rebuilds. Keyboard selection reveals the active object; expansion state follows database names when an attachment is detached. These view settings last for the current database session.
 
+The DB Schema dock has an independent object/field tree across main, temp and attached databases. Filter by object or field name, inspect the read-only SQL definition, and resize the tree/preview split. Insert (Enter) replaces the current SQL selection as one undoable edit; Insert SQL (Shift+Enter) inserts the definition, and Browse (Cmd/Ctrl+Enter) opens the selected table/view in Browse. Options persist SELECT generation, qualified names and identifier quoting. These actions preserve pending cell drafts and never execute inserted SQL. Original multiple selection, drag-and-drop, detach context action and the complete two-column interface remain pending.
+
 **Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK). Revert invalidates every Browse cache, clears sources removed by rollback and reloads the active surviving source. Valid table settings and independent SQL/definition drafts and result snapshots remain; invalid filter/plot queries report a refresh notice after the successful rollback.
 
 Browse cells support in-place text editing: click an already selected cell, press

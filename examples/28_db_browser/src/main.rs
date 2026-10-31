@@ -54,6 +54,7 @@ mod sql_function_help;
 mod state;
 mod browse_rowid;
 mod browse_edit;
+mod schema_dock;
 mod ui_build;
 
 use std::{path::PathBuf, time::Instant};
@@ -277,6 +278,7 @@ struct Demo {
 
 #[allow(dead_code)]
 struct BuiltUiIds {
+    schema: crate::schema_dock::Controls,
     cond_formats: cond_format::Controls,
     csv_files: csv_files::Controls,
     data_export: data_export::Controls,
@@ -535,6 +537,7 @@ struct BuiltUiIds {
 impl From<&BuiltUi> for BuiltUiIds {
     fn from(b: &BuiltUi) -> Self {
         Self {
+            schema: b.schema.clone(),
             cond_formats: b.cond_formats,
             csv_files: b.csv_files,
             data_export: b.data_export,
@@ -1694,6 +1697,7 @@ impl Demo {
             }
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("schema-dock") {schema_dock::prepare_qa(&mut state,tab.ends_with("narrow"));}
             if tab.starts_with("browse-inline") {
                 state.new_memory_db().unwrap(); state.conn.as_ref().unwrap().execute_batch(browse_edit::QA_SQL).unwrap();
                 state.write_changes().unwrap(); state.refresh_schema().unwrap(); state.tab=MainTab::Browse;
@@ -1722,6 +1726,11 @@ impl Demo {
         if state.browse_cell_edit.is_some() {
             let editor=built.ui.table_cell_editor(built.browse_table).unwrap();
             built.ui.set_focus(Some(editor)); built.ui.key_input(UiKey::SelectAll); built.ui.sync(&mut built.scene);
+        }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("schema-dock")) {
+            built.ui.select_text_area_range(built.sql_area,7..8);
+            let filter=std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.contains("filter"));
+            built.ui.set_focus(Some(if filter {built.schema.filter} else {built.schema.tree})); built.ui.sync(&mut built.scene);
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("condformat") || tab=="cond") {
             built.ui.set_focus(Some(built.ov_cond_val));built.ui.sync(&mut built.scene);
@@ -1863,6 +1872,7 @@ impl Demo {
 
     fn snapshot_inputs(&mut self) {
         self.snapshot_browse_cell_editor();
+        self.snapshot_schema_dock();
         if self.state.export_dialog.is_some() {self.snapshot_data_export();return;}
         self.snapshot_column_picker();
         self.snapshot_view_key_dialog();
@@ -3056,6 +3066,7 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        let schema_focus = self.schema_dock_focus();
         self.snapshot_browse_cell_editor();
         let browse_editor_focused = self.ui.table_cell_editor(self.ids.browse_table)
             .is_some_and(|editor| self.ui.focused() == Some(editor));
@@ -3406,6 +3417,7 @@ impl Demo {
         }
         ui_build::highlight_cell_format(&mut self.ui,&self.state,self.ids.edit_value,&self.theme);
         self.last_edit_revision = self.state.edit_revision;
+        self.restore_schema_dock_focus(schema_focus);
         self.restore_browse_cell_editor(browse_editor_focused && self.state.overlay.is_none() && !self.state.confirm_open);
         if self.state.confirm_open { self.ui.set_focus(Some(self.ids.modal)); self.ui.sync(&mut self.scene); }
         let clear = clear_color(&self.theme);
@@ -4660,6 +4672,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        if self.handle_schema_dock_button(id) {return;}
         if self.handle_cond_format_button(id) {return;}
         self.cancel_browse_filter();
         if id.0 == 0 || self.ui.button_enabled(id) == Some(false) { return; }
@@ -5614,7 +5627,8 @@ impl Demo {
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
             self.snapshot_inputs();
-            if item==mid::PLOT_COPY {
+            if self.handle_schema_dock_menu(item) {
+            } else if item==mid::PLOT_COPY {
                 self.copy_plot(ctx);
             } else if item == mid::BROWSE_COPY_COLUMN {
                 if let Some(name) = self.browse_header_name() {
@@ -5865,7 +5879,7 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
-                if self.handle_cell_apply_key(key, modifiers) || self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) || self.handle_sql_comment_key(key, modifiers) {
+                if self.handle_schema_dock_key(key, modifiers) || self.handle_cell_apply_key(key, modifiers) || self.handle_browse_navigation_key(key, modifiers) || self.handle_sql_search_key(key, modifiers) || self.handle_sql_comment_key(key, modifiers) {
                     self.after_ui(ctx);
                     return;
                 }
@@ -6211,7 +6225,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {

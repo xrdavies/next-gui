@@ -489,6 +489,7 @@ pub struct AppState {
     pub schema_names: Vec<String>,
     pub schema_tree_expanded: BTreeMap<String, [bool; 5]>,
     pub schema_tree_scroll: f32,
+    pub schema_dock: crate::schema_dock::State,
     pub schema_group: Option<(String, u64)>,
     pub sql_completion: crate::sql_completion::Catalog,
     pub database_encoding: String,
@@ -869,6 +870,7 @@ impl AppState {
             schema_names: Vec::new(),
             schema_tree_expanded: BTreeMap::new(),
             schema_tree_scroll: 0.0,
+            schema_dock: crate::schema_dock::State::default(),
             schema_group: None,
             sql_completion: crate::sql_completion::Catalog::default(),
             database_encoding: String::new(),
@@ -2542,6 +2544,7 @@ impl AppState {
         self.schema_group = None;
         self.schema_tree_expanded.clear();
         self.schema_tree_scroll = 0.0;
+        self.schema_dock = crate::schema_dock::State::default();
         self.sql_result = None;
         self.sql_outputs.clear();
         self.path = path;
@@ -2729,6 +2732,7 @@ impl AppState {
         self.schema_tree_expanded.clear();
         self.schema_tree_scroll = 0.0;
         self.browse_tabs = vec![BrowseTabState::new(None)];
+        self.schema_dock = crate::schema_dock::State::default();
         self.browse_tab_idx = 0;
         self.clear_browse_editor();
         self.sql_result = None;

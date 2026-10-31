@@ -199,7 +199,7 @@ pub struct BuiltUi {
     pub btn_cell_wrap: WidgetId,
     pub btn_cell_auto: WidgetId,
     pub btn_edit_cell: WidgetId,
-    pub schema_list: WidgetId,
+    pub schema: crate::schema_dock::Controls,
     pub log_area: WidgetId,
     pub log_filter: WidgetId,
     pub log_clear: WidgetId,
@@ -700,7 +700,7 @@ pub fn build_ui(
     let mut btn_cell_wrap = z;
     let mut btn_cell_auto = z;
     let mut btn_edit_cell = z;
-    let mut schema_list = z;
+    let mut schema = crate::schema_dock::Controls::default();
     let mut log_area = z;
     let mut log_filter = z;
     let mut log_clear = z;
@@ -1755,15 +1755,6 @@ pub fn build_ui(
                 .unwrap_or_default();
             let roots = schema_tree(state);
             let log_text = state.sql_log.text(crate::sql_log::Source::from_filter(state.sql_log_filter));
-            let schema_items: Vec<String> = if state.schema.is_empty() {
-                vec!["(no objects)".into()]
-            } else {
-                state
-                    .schema
-                    .iter()
-                    .map(|o| format!("{:?} · {}.{}", o.kind, db::quote_ident(&o.schema), db::quote_ident(&o.name)))
-                    .collect()
-            };
             let chart_title = if !state.plot.settings.manual { format!("{} · {}", state.plot.title, state.plot.summary) } else { format!(
                 "{} · {} ({} samples)",
                 state.chart_table.as_ref().map(|name| db::qualified_name(&state.chart_schema, name)).unwrap_or_else(|| "—".into()),
@@ -2401,7 +2392,7 @@ pub fn build_ui(
                                 DockKind::EditCell => {}
                                 DockKind::Schema => {
                                     tb.page(DockKind::Schema.title(), |p| {
-                                        schema_list = p.list(schema_items.clone(), list_style);
+                                        schema = crate::schema_dock::build(p,state,&theme,dock_col.width,dock_col.height);
                                     });
                                 }
                                 DockKind::Log => {
@@ -2985,6 +2976,7 @@ pub fn build_ui(
     highlight_cell_format(&mut ui,state,edit_value,&theme);
     if let Some(view) = &state.edit_col_view { ui.restore_text_input_state(edit_col, view); }
     ui.set_accessible_name(btn_dock_close,"Close selected dock page");
+    schema.restore(&mut ui,state,&theme);
     if let Some(Some(editor)) = state.sql_edit_states.get(state.sql_tab_idx) {
         ui.restore_text_area_state(sql_area, editor);
     }
@@ -3120,7 +3112,7 @@ pub fn build_ui(
         btn_cell_wrap,
         btn_cell_auto,
         btn_edit_cell,
-        schema_list,
+        schema,
         log_area,
         log_filter,
         log_clear,
