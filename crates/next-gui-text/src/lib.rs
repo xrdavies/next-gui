@@ -7,6 +7,7 @@
 #![deny(missing_docs)]
 
 use std::path::Path;
+use std::collections::HashMap;
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -69,6 +70,7 @@ impl AlphaMask {
 #[derive(Clone)]
 pub struct Font {
     inner: Arc<fontdue::Font>,
+    unicode_overrides: Arc<HashMap<char, u16>>,
     fallbacks: Vec<Font>,
     synthetic_bold: bool,
     synthetic_italic: bool,
@@ -90,8 +92,16 @@ impl Font {
         };
         let font = fontdue::Font::from_bytes(data, settings)
             .map_err(|e| FontError(format!("font parse: {e}")))?;
+        let face = ttf_parser::Face::parse(data, collection_index)
+            .map_err(|e| FontError(format!("font parse: {e}")))?;
+        // fontdue 0.8 lets legacy cmap subtables overwrite Unicode mappings (e.g. É → …).
+        let unicode_overrides = font.chars().iter().filter_map(|(&ch, index)| {
+            let unicode = face.glyph_index(ch).map_or(0, |glyph| glyph.0);
+            (unicode != index.get()).then_some((ch, unicode))
+        }).collect();
         Ok(Self {
             inner: Arc::new(font),
+            unicode_overrides: Arc::new(unicode_overrides),
             fallbacks: Vec::new(),
             synthetic_bold: false,
             synthetic_italic: false,
@@ -124,7 +134,7 @@ impl Font {
 
     fn glyph_metrics(&self, ch: char, px: f32) -> fontdue::Metrics {
         let face = self.face_for(ch);
-        let mut metrics = face.inner.metrics(ch, px);
+        let mut metrics = face.inner.metrics_indexed(face.glyph_index(ch), px);
         Self::style_metrics(&mut metrics, px, self.synthetic_bold || face.synthetic_bold, self.synthetic_italic || face.synthetic_italic);
         metrics
     }
@@ -142,7 +152,7 @@ impl Font {
 
     fn rasterize_glyph(&self, ch: char, px: f32) -> (fontdue::Metrics, Vec<u8>) {
         let face = self.face_for(ch);
-        let (mut metrics, bitmap) = face.inner.rasterize(ch, px);
+        let (mut metrics, bitmap) = face.inner.rasterize_indexed(face.glyph_index(ch), px);
         let bold = self.synthetic_bold || face.synthetic_bold;
         let italic = self.synthetic_italic || face.synthetic_italic;
         if (!bold && !italic) || bitmap.is_empty() { return (metrics, bitmap); }
@@ -168,17 +178,21 @@ impl Font {
 
     /// Whether any face in this stack contains a glyph for `ch`.
     pub fn has_glyph(&self, ch: char) -> bool {
-        self.face_for(ch).inner.lookup_glyph_index(ch) != 0
+        self.face_for(ch).glyph_index(ch) != 0
+    }
+
+    fn glyph_index(&self, ch: char) -> u16 {
+        self.unicode_overrides.get(&ch).copied().unwrap_or_else(|| self.inner.lookup_glyph_index(ch))
     }
 
     fn face_for(&self, ch: char) -> &Self {
-        if self.inner.lookup_glyph_index(ch) != 0 {
+        if self.glyph_index(ch) != 0 {
             return self;
         }
         self.fallbacks
             .iter()
             .map(|font| font.face_for(ch))
-            .find(|font| font.inner.lookup_glyph_index(ch) != 0)
+            .find(|font| font.glyph_index(ch) != 0)
             .unwrap_or(self)
     }
 
@@ -220,7 +234,8 @@ impl Font {
             if ch == '\n' {
                 continue;
             }
-            let g = self.face_for(ch).inner.metrics(ch, px);
+            let face = self.face_for(ch);
+            let g = face.inner.metrics_indexed(face.glyph_index(ch), px);
             width += g.advance_width;
         }
         (width, m.line_height)
@@ -257,7 +272,8 @@ impl Font {
                 push_line_break(&mut line_widths, &mut max_w, &mut x, &mut line);
                 continue;
             }
-            let g = self.face_for(ch).inner.metrics(ch, px);
+            let face = self.face_for(ch);
+            let g = face.inner.metrics_indexed(face.glyph_index(ch), px);
             if let Some(limit) = max_width {
                 if x > 0.0 && x + g.advance_width > limit {
                     push_line_break(&mut line_widths, &mut max_w, &mut x, &mut line);
@@ -528,7 +544,7 @@ pub fn load_default_cjk_font() -> Result<Font, FontError> {
         match Font::from_path(path, index) {
             Ok(font) => {
                 // Sanity: prefer a face that can draw a CJK ideograph.
-                let (_, bitmap) = font.inner.rasterize('中', 24.0);
+                let (_, bitmap) = font.rasterize_glyph('中', 24.0);
                 if bitmap.iter().any(|p| *p > 0) {
                     return Ok(font);
                 }
@@ -627,6 +643,22 @@ mod tests {
         let (_, actual) = stacked.rasterize_text("Latin 中文", 18.0, None);
         assert_eq!(original.pixels, actual.pixels);
         assert!(!stacked.has_glyph('\u{10ffff}'));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn unicode_character_maps_do_not_alias_mac_roman_glyphs() {
+        let data = std::fs::read("/System/Library/Fonts/STHeiti Medium.ttc").unwrap();
+        let font = Font::from_bytes(&data, 1).unwrap();
+        let (_, accent) = font.rasterize_glyph('É', 24.0);
+        let (_, ellipsis) = font.rasterize_glyph('…', 24.0);
+        assert_ne!(accent, ellipsis, "Unicode É must not use Mac Roman 0xC9 (ellipsis)");
+        let face = ttf_parser::Face::parse(&data, 1).unwrap();
+        for ch in "ÉéÈàöñßΣσς中文".chars() {
+            let expected = face.glyph_index(ch).unwrap().0;
+            assert_eq!(font.rasterize_glyph(ch, 24.0), font.inner.rasterize_indexed(expected, 24.0), "{ch}");
+            assert_eq!(font.measure_line(&ch.to_string(), 24.0).0, font.inner.metrics_indexed(expected,24.0).advance_width, "{ch}");
+        }
     }
 
     #[test]
