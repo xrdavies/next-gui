@@ -10,7 +10,7 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [bounded menus and SQLiteBrowser navigation](R-20261031-98ae99626406.md) — 837 workspace tests, final menu regressions/16 Soft–Metal pairs, native keyboard flows and 14 Office render checks; locked-session OS pointer acceptance and full F02 remain pending.
+Latest scoped review: [Browse inline editing and held range scrolling](R-20261101-f4d36e4b43f8.md) — 847 workspace tests, 16 Soft/Metal pairs, eight native keyboard flows and fourteen Office render checks; locked-session OS pointer acceptance and full F02 remain pending.
 
 ## Findings
 
