@@ -10,13 +10,13 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [Browse value completion](R-20261101-ca24a5c14365.md) — 858 tests pass; native review found a shared Unicode cmap defect (F01), so accented-text visual acceptance awaits its fix. Full F02 remains in_progress.
+Latest scoped review: [Unicode cmap and Browse completion](R-20261101-8d94dbe1c116.md) — 859 tests, fourteen Soft/Metal pairs, eight native keyboard/render workflows and fourteen Office windows pass. Accented-text F01 is verified; ordinary foreground pointer/wheel acceptance remains pending. Full F02 remains in_progress.
 
 ## Findings
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R-20261101-ca24a5c14365-F01 | open | P2 | codex | shared / macOS observed | existing fontdue cmap | Font loading/metrics/rasterization | Mac Roman cmap overwrites Unicode accented letters; native probe and failing regression reproduced | [F01](R-20261101-ca24a5c14365.md#r-20261101-ca24a5c14365-f01) | — | — |
+| R-20261101-ca24a5c14365-F01 | verified | P2 | codex | shared / macOS observed | existing fontdue cmap | Font loading/metrics/rasterization | Unicode glyph IDs repair accented text across fallback/metrics/layout/rasterization; pre-fix alias and final native rendering verified | [F01](R-20261101-ca24a5c14365.md#r-20261101-ca24a5c14365-f01) | 8d94dbe1c116 | 8d94dbe1c116 |
 | R-20261101-acf387f4fded-F01 | verified | P2 | codex | e28 / all | acf387f4fded | Schema dock sizing | Minimum tree/preview sizes and outer scroll reveal verified after reproduced narrow-layout failure | [F01](R-20261101-acf387f4fded.md#r-20261101-acf387f4fded-f01) | 4d4b158bd390 | 4d4b158bd390 |
 | R-20261029-9af4fd140508-F01 | verified | P2 | codex | shared / e28 | existing Revert | revert_changes / Browse cache | Qualified rollback catalog reconciliation clears stale tabs/editor/settings and retains valid settings/drafts/results | [F01](R-20261029-9af4fd140508.md#r-20261029-9af4fd140508-f01) | c660a4c210a0 | c660a4c210a0 |
 | R-20261029-68071fced248-F01 | verified | P3 | codex | shared / e28 | existing Apply viewport | apply_cell_draft_inner / do_rebuild | Shared Apply reveals both axes while retaining fresh editor/action focus;781 tests,24 Metal pairs and four native wide/narrow workflows verified | [F01](R-20261029-68071fced248.md#r-20261029-68071fced248-f01) | b23ae67bf985 | b23ae67bf985 |
