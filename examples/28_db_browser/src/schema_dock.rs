@@ -92,6 +92,19 @@ impl Default for Controls {
     }
 }
 
+fn pane_minimums(theme: &Theme) -> (f32, f32) {
+    (
+        3.0 * TreeStyle::from_theme(theme).row_height,
+        (2.0 * theme.typography.body).max(40.0),
+    )
+}
+
+pub fn minimum_height(theme: &Theme) -> f32 {
+    let input = TextInputStyle::from_theme(theme).height;
+    let (tree, preview) = pane_minimums(theme);
+    input + input.max(28.0) + 12.0 + tree + preview + SplitterStyle::from_theme(theme).sash_size
+}
+
 fn object<'a>(state: &'a AppState, path: &[String]) -> Option<&'a db::SchemaObject> {
     if path.len() < 3 {
         return None;
@@ -258,6 +271,8 @@ pub fn build(
 
 impl Controls {
     pub fn restore(&self, ui: &mut Ui, state: &AppState, theme: &Theme) {
+        let (tree, preview) = pane_minimums(theme);
+        ui.set_splitter_min_sizes(self.splitter, tree, preview);
         if let Some(path) = &state.schema_dock.selected {
             ui.set_tree_selected(
                 self.tree,
@@ -759,6 +774,48 @@ mod tests {
     }
 
     #[test]
+    fn schema_panes_keep_readable_minimums_in_shared_narrow_dock() {
+        let mut d = fixture(Theme::light(), 800, 600, 18.0);
+        d.state.dock_edit = true;
+        d.do_rebuild();
+        let rect = |d: &Demo, id| {
+            d.scene
+                .iter_paint_order()
+                .into_iter()
+                .find(|n| d.ui.widget_from_node(n.id) == Some(id))
+                .unwrap()
+                .bounds
+        };
+        assert!(
+            rect(&d, d.ids.schema.tree).height >= 3.0 * TreeStyle::from_theme(&d.theme).row_height,
+            "tree={:?}, preview={:?}, ratio={:?}, min={}",
+            rect(&d, d.ids.schema.tree),
+            rect(&d, d.ids.schema.preview),
+            d.ui.splitter_ratio(d.ids.schema.splitter),
+            minimum_height(&d.theme)
+        );
+        assert!(rect(&d, d.ids.schema.preview).height >= 2.0 * d.theme.typography.body);
+        for id in [d.ids.schema.tree, d.ids.schema.preview, d.ids.edit_value] {
+            d.ui.set_focus(Some(id));
+            d.ui.sync(&mut d.scene);
+            let node = d
+                .scene
+                .iter_paint_order()
+                .into_iter()
+                .find(|n| d.ui.widget_from_node(n.id) == Some(id))
+                .unwrap();
+            let visible = node
+                .clip
+                .map_or(node.bounds, |clip| clip.intersect(&node.bounds));
+            assert!(
+                visible.height > 10.0 && visible.y >= 0.0 && visible.y + visible.height <= 600.0,
+                "{visible:?}"
+            );
+        }
+        capture(&mut d, "light-narrow-minimums");
+    }
+
+    #[test]
     fn schema_layout_options_and_preview_fit_themes_fonts_and_rebuilds() {
         for (name, theme, w, h, size, cell) in [
             ("dark-wide", Theme::dark(), 1400, 860, 13.0, true),
@@ -769,7 +826,9 @@ mod tests {
             let mut d = fixture(theme, w, h, size);
             d.state.dock_edit = cell;
             d.do_rebuild();
-            for id in [d.ids.schema.tree, d.ids.schema.preview, d.ids.schema.filter] {
+            for id in [d.ids.schema.filter, d.ids.schema.tree, d.ids.schema.preview] {
+                d.ui.set_focus(Some(id));
+                d.ui.sync(&mut d.scene);
                 let b = d
                     .scene
                     .iter_paint_order()
@@ -778,16 +837,24 @@ mod tests {
                     .unwrap()
                     .bounds;
                 assert!(b.width > 100.0 && b.height > 10.0, "{name}: {b:?}");
+                let node = d
+                    .scene
+                    .iter_paint_order()
+                    .into_iter()
+                    .find(|n| d.ui.widget_from_node(n.id) == Some(id))
+                    .unwrap();
+                let visible = node.clip.map_or(b, |clip| clip.intersect(&b));
                 assert!(
-                    b.x >= 0.0
-                        && b.y >= 0.0
-                        && b.x + b.width <= w as f32
-                        && b.y + b.height <= h as f32,
-                    "{name}: {b:?}"
+                    visible.width > 50.0
+                        && visible.height > 10.0
+                        && visible.y >= 0.0
+                        && visible.y + visible.height <= h as f32,
+                    "{name}: {visible:?}"
                 );
             }
             capture(&mut d, name);
             d.ui.set_focus(Some(d.ids.schema.options));
+            d.ui.sync(&mut d.scene);
             assert!(d.handle_schema_dock_button(d.ids.schema.options));
             assert_eq!(d.ui.popup_owner(), Some(d.ids.context_menu));
             capture(&mut d, &format!("{name}-options"));

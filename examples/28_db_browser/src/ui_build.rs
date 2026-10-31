@@ -890,6 +890,8 @@ pub fn build_ui(
         + if image_mode { 116.0 + cell_action_height } else { 80.0 };
     let dock_page_minimum = 2.0*dock_header_height + if selected_dock == DockKind::Plot {
         plot_minimums.0 + plot_minimums.1 + 14.0
+    } else if selected_dock == DockKind::Schema {
+        crate::schema_dock::minimum_height(&theme) + 4.0
     } else { 80.0 };
     let main_toolbar_height = (toolbar_heights[0]+8.0).max(38.0);
     let toolbar_visible = state.toolbar_db || state.toolbar_extra || state.toolbar_project;
@@ -907,7 +909,7 @@ pub fn build_ui(
     let docks_on = state.any_dock_visible() && (state.overlay.is_none() || workspace_modal);
     let body_minimum = if docks_on && state.dock_edit {
         dock_cell_minimum + if state.visible_dock_tabs().is_empty() { 0.0 } else { dock_page_minimum+6.0 }
-    } else { 300.0 };
+    } else if docks_on && selected_dock == DockKind::Schema { dock_page_minimum.max(300.0) } else { 300.0 };
     // Large fonts use the existing shell scroll instead of crushing either pane's controls.
     let content_h = (shell_h - chrome_h).max(300.0).max(body_minimum);
     let pane_width = shell_w - 20.0;

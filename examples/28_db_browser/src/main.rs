@@ -1697,7 +1697,7 @@ impl Demo {
             }
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
-            if tab.starts_with("schema-dock") {schema_dock::prepare_qa(&mut state,tab.ends_with("narrow"));}
+            if tab.starts_with("schema-dock") {schema_dock::prepare_qa(&mut state,tab.ends_with("narrow"));if tab.contains("shared") {state.dock_edit=true;}}
             if tab.starts_with("browse-inline") {
                 state.new_memory_db().unwrap(); state.conn.as_ref().unwrap().execute_batch(browse_edit::QA_SQL).unwrap();
                 state.write_changes().unwrap(); state.refresh_schema().unwrap(); state.tab=MainTab::Browse;
