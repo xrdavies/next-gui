@@ -1123,6 +1123,24 @@ pub fn attach_database_mode(conn: &Connection, path: &str, schema: &str, read_on
     execute_single_statement(conn, &sql)
 }
 
+/// Detach without committing writes; release only a clean read transaction's locks.
+pub fn detach_database(conn: &Connection, schema: &str) -> Result<(), String> {
+    if schema.eq_ignore_ascii_case("main") || schema.eq_ignore_ascii_case("temp") {
+        return Err("Only attached databases can be detached".into());
+    }
+    if !database_names(conn)?.iter().any(|name| name == schema) {
+        return Err("The attached database no longer exists".into());
+    }
+    if has_pending_changes(conn)? {
+        return Err("Write Changes or Revert before detaching a database".into());
+    }
+    if !conn.is_autocommit() {
+        // A fresh deferred transaction keeps Write Changes semantics without old read locks.
+        conn.execute_batch("ROLLBACK; BEGIN").map_err(|e| e.to_string())?;
+    }
+    execute_single_statement(conn, &format!("DETACH DATABASE {}", quote_ident(schema)))
+}
+
 fn quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }

@@ -55,6 +55,7 @@ mod state;
 mod browse_rowid;
 mod browse_edit;
 mod schema_dock;
+mod detach;
 mod ui_build;
 
 use std::{path::PathBuf, time::Instant};
@@ -272,6 +273,7 @@ struct Demo {
     exit_requested: bool,
     reveal_browse_selection: bool,
     browse_header_column: Option<usize>,
+    detach_menu_target: Option<detach::Target>,
     filter_context: Option<WidgetId>,
     filter_session: browse_filter::Session,
 }
@@ -1875,6 +1877,7 @@ impl Demo {
             exit_requested: false,
             reveal_browse_selection: false,
             browse_header_column: None,
+            detach_menu_target: None,
             filter_context: None,
         }
     }
@@ -1887,6 +1890,7 @@ impl Demo {
         self.snapshot_view_key_dialog();
         if self.ids.tree.0 != 0 {
             for (database, name) in self.last_schema_names.iter().enumerate() {
+                if !self.state.schema_names.contains(name) { continue; }
                 let root = database as u64 * 5 + 1;
                 let expanded = [0, 1, 2, 3, 4].map(|group| self.ui.tree_expanded(self.ids.tree, root + group).unwrap_or(false));
                 self.state.schema_tree_expanded.insert(name.clone(), expanded);
@@ -3228,6 +3232,7 @@ impl Demo {
         self.last_dock_ratio = built.ui.splitter_ratio(built.dock_splitter);
         self.last_plot_ratio = built.ui.splitter_ratio(built.plot_splitter);
         self.browse_header_column = None;
+        self.detach_menu_target = None;
         self.filter_context = None;
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
@@ -4095,6 +4100,13 @@ impl Demo {
                 };
                 self.state.attach_path = path.display().to_string();
                 self.state.overlay = Some(OverlayKind::Attach);
+                self.rebuild = true;
+            }
+            mid::FILE_DETACH => {
+                let schema = self.state.structure_detach_schema().map(str::to_owned);
+                let result = schema.ok_or_else(|| "Select an attached database in Database Structure".to_owned())
+                    .and_then(|schema| self.state.prepare_detach(&schema));
+                match result { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
                 self.rebuild = true;
             }
             mid::FILE_IMPORT_CLIP => {
@@ -5426,7 +5438,8 @@ impl Demo {
                 return;
             }
             if matches!(kind, ConfirmKind::DeleteColumn(_)) { self.ui.set_focus(Some(self.ids.ov_fields_table)); }
-            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::Pragmas) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
+            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::Pragmas | ConfirmKind::Detach) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
+            if kind == ConfirmKind::Detach && !accepted { self.state.pending_detach = None; }
             if !accepted { self.rebuild = true; return; }
             self.apply_confirmed_action(kind);
         }
@@ -5450,6 +5463,10 @@ impl Demo {
 
     fn apply_confirmed_action(&mut self, kind: ConfirmKind) {
         match kind {
+            ConfirmKind::Detach => match self.state.detach_confirmed() {
+                Ok(()) => { self.clear_error(); self.last_tree_sel = None; }
+                Err(error) => self.set_error(error),
+            },
             ConfirmKind::Pragmas => match self.state.apply_pragmas(true) {
                 Ok(()) => self.clear_error(),
                 Err(error) => self.set_error(error),
@@ -5649,7 +5666,7 @@ impl Demo {
                 self.handle_menu(item);
             }
         }
-        if !self.ui.has_open_popup() { self.browse_header_column = None; self.filter_context = None; }
+        if !self.ui.has_open_popup() { self.browse_header_column = None; self.filter_context = None; self.detach_menu_target = None; }
         self.handle_modal();
         if !self.rebuild {
             self.snapshot_inputs();
@@ -5791,7 +5808,7 @@ impl AppCallbacks for Demo {
                 x, y, ..
             } => {
                 if !self.finish_browse_cell_pointer(x as f32, y as f32) { self.after_ui(ctx); return; }
-                if self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) {
+                if self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) {
                     self.after_ui(ctx);
                 }
             }
@@ -5882,7 +5899,7 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
-                if self.handle_filter_context_key(key,modifiers) || self.handle_plot_context_key(key,modifiers) {
+                if self.handle_schema_context_key(key,modifiers) || self.handle_filter_context_key(key,modifiers) || self.handle_plot_context_key(key,modifiers) {
                     self.after_ui(ctx);return;
                 }
                 if self.handle_sql_completion_key(key, modifiers) {

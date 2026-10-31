@@ -18,6 +18,8 @@ const BROWSE: u64 = 1102;
 const SELECT_QUERY: u64 = 1103;
 const QUALIFY: u64 = 1104;
 const QUOTE: u64 = 1105;
+const DETACH: u64 = 1106;
+const CONTEXT_DETACH: u64 = 1107;
 
 pub const QA_SQL: &str = "CREATE TABLE records(id INTEGER PRIMARY KEY, \"value.名\" TEXT, computed AS(length(\"value.名\")));
     INSERT INTO records VALUES(1,'保留'); CREATE TEMP TABLE records(temp_only);
@@ -61,6 +63,21 @@ pub struct State {
     ratio: Option<f32>,
     filter_view: Option<TextInputState>,
     preview: Option<(Path, TextAreaState)>,
+}
+
+impl State {
+    pub(crate) fn remove_schema(&mut self, schema: &str) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|path| path.first().is_some_and(|name| name == schema))
+        {
+            self.selected = None;
+            self.preview = None;
+        }
+        self.collapsed
+            .retain(|path| path.first().is_none_or(|name| name != schema));
+    }
 }
 
 #[derive(Clone)]
@@ -121,6 +138,14 @@ fn object<'a>(state: &'a AppState, path: &[String]) -> Option<&'a db::SchemaObje
                         .columns_in(&o.schema, &o.name)
                         .any(|c| c == path[3])
         })
+}
+
+fn path_exists(state: &AppState, path: &[String]) -> bool {
+    if path.len() == 1 {
+        state.schema_names.contains(&path[0])
+    } else {
+        object(state, path).is_some()
+    }
 }
 
 fn insertion(state: &AppState, path: &[String], definition: bool) -> Option<String> {
@@ -361,6 +386,9 @@ impl Demo {
             }
             if was_unfiltered && self.state.schema_dock.filter.is_empty() {
                 for (i, path) in c.paths.iter().enumerate() {
+                    if !path_exists(&self.state, path) {
+                        continue;
+                    }
                     if self.ui.tree_expanded(c.tree, i as u64 + 1) == Some(false) {
                         self.state.schema_dock.collapsed.insert(path.clone());
                     } else {
@@ -374,6 +402,7 @@ impl Demo {
             .tree_selected(c.tree)
             .and_then(|id| id.checked_sub(1))
             .and_then(|i| c.paths.get(i as usize))
+            .filter(|path| path_exists(&self.state, path))
             .cloned();
         if selected != self.state.schema_dock.selected {
             self.state.schema_dock.selected = selected;
@@ -462,10 +491,41 @@ impl Demo {
     }
 
     pub(crate) fn handle_schema_dock_menu(&mut self, action: u64) -> bool {
-        if !(INSERT..=QUOTE).contains(&action) {
+        if action == CONTEXT_DETACH {
+            let result = self
+                .detach_menu_target
+                .take()
+                .ok_or_else(|| "Choose an attached database again".to_owned())
+                .and_then(|target| self.state.prepare_detach_target(target));
+            match result {
+                Ok(()) => self.clear_error(),
+                Err(error) => self.set_error(error),
+            }
+            self.rebuild = true;
+            return true;
+        }
+        if !(INSERT..=DETACH).contains(&action) {
             return false;
         }
         match action {
+            DETACH => {
+                let schema = self
+                    .state
+                    .schema_dock
+                    .selected
+                    .as_ref()
+                    .and_then(|path| path.first())
+                    .cloned();
+                let result = schema
+                    .ok_or_else(|| "Select an attached database".to_owned())
+                    .and_then(|schema| self.state.prepare_detach(&schema));
+                match result {
+                    Ok(()) => self.clear_error(),
+                    Err(error) => self.set_error(error),
+                }
+                self.rebuild = true;
+                return true;
+            }
             SELECT_QUERY => {
                 self.state.prefs.schema_select_query = !self.state.prefs.schema_select_query
             }
@@ -503,6 +563,19 @@ impl Demo {
                 self.ui.open_context_menu(
                     self.ids.context_menu,
                     vec![
+                        if self
+                            .state
+                            .schema_dock
+                            .selected
+                            .as_ref()
+                            .and_then(|path| path.first())
+                            .is_some_and(|name| name != "main" && name != "temp")
+                        {
+                            MenuItem::new(DETACH, "Detach Database…")
+                        } else {
+                            MenuItem::disabled(DETACH, "Detach Database…")
+                        },
+                        MenuItem::separator(),
                         MenuItem::new(SELECT_QUERY, "Insert SELECT for tables and views")
                             .checked(self.state.prefs.schema_select_query),
                         MenuItem::new(QUALIFY, "Use qualified names")
@@ -559,6 +632,108 @@ impl Demo {
             self.set_error(error);
         }
         true
+    }
+
+    pub(crate) fn open_schema_context_menu(&mut self, x: f32, y: f32) -> bool {
+        if self.state.overlay.is_some()
+            || self.state.confirm_open
+            || self.ui.active_dialog().is_some()
+        {
+            return false;
+        }
+        let hit = self.ui.hit_widget(&self.scene, x, y);
+        let tree = if self.ids.schema.tree.0 != 0 && hit == Some(self.ids.schema.tree) {
+            self.ids.schema.tree
+        } else if self.ids.tree.0 != 0 && hit == Some(self.ids.tree) {
+            self.ids.tree
+        } else {
+            return false;
+        };
+        let Some(node) = self.ui.tree_node_at(&self.scene, tree, x, y) else {
+            return false;
+        };
+        self.snapshot_inputs();
+        let schema = self.schema_context_node(tree, node);
+        self.show_database_context_menu(tree, schema, x, y)
+    }
+
+    fn schema_context_node(&self, tree: WidgetId, node: u64) -> Option<String> {
+        if tree == self.ids.schema.tree {
+            let path = node
+                .checked_sub(1)
+                .and_then(|i| self.ids.schema.paths.get(i as usize));
+            path.and_then(|path| path.first()).cloned()
+        } else if node >= 10_000 {
+            self.state
+                .schema
+                .get((node - 10_000) as usize)
+                .map(|o| o.schema.clone())
+        } else {
+            node.checked_sub(1)
+                .and_then(|i| self.state.schema_names.get((i / 5) as usize))
+                .cloned()
+        }
+    }
+
+    fn show_database_context_menu(
+        &mut self,
+        tree: WidgetId,
+        schema: Option<String>,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        self.detach_menu_target = schema
+            .as_deref()
+            .and_then(|schema| crate::detach::Target::read(&self.state, schema).ok());
+        let label = schema.map_or_else(
+            || "Detach Database…".into(),
+            |schema| format!("Detach {}…", db::quote_ident(&schema)),
+        );
+        let item = if self.detach_menu_target.is_some() {
+            MenuItem::new(CONTEXT_DETACH, label)
+        } else {
+            MenuItem::disabled(CONTEXT_DETACH, label)
+        };
+        self.ui.set_focus(Some(tree));
+        self.ui
+            .set_accessible_name(self.ids.context_menu, "Selected database actions");
+        self.ui
+            .open_context_menu(self.ids.context_menu, vec![item], x, y)
+    }
+
+    pub(crate) fn handle_schema_context_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
+        if key != KeyCode::Function(10)
+            || !modifiers.shift
+            || modifiers.commandish()
+            || modifiers.alt
+            || self.state.overlay.is_some()
+            || self.state.confirm_open
+            || self.ui.active_dialog().is_some()
+        {
+            return false;
+        }
+        let Some(tree) = self
+            .ui
+            .focused()
+            .filter(|id| id.0 != 0 && (*id == self.ids.tree || *id == self.ids.schema.tree))
+        else {
+            return false;
+        };
+        let Some(node) = self.ui.tree_selected(tree) else {
+            return false;
+        };
+        let schema = self.schema_context_node(tree, node);
+        let Some(bounds) = self
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|n| self.ui.widget_from_node(n.id) == Some(tree))
+            .map(|n| n.bounds)
+        else {
+            return false;
+        };
+        self.snapshot_inputs();
+        self.show_database_context_menu(tree, schema, bounds.x + 16.0, bounds.y + 16.0)
     }
 }
 
@@ -864,6 +1039,177 @@ mod tests {
             assert_eq!(d.ui.focused(), Some(d.ids.schema.options));
             assert!(d.state.prefs.schema_qualified_names);
         }
+    }
+
+    #[test]
+    fn detach_context_targets_clicked_schema_and_defaults_to_cancel_across_rebuilds() {
+        for (name, theme, w, h, size) in [
+            ("dark-wide", Theme::dark(), 1400, 860, 13.0),
+            ("light-wide", Theme::light(), 1400, 860, 13.0),
+            ("dark-narrow", Theme::dark(), 800, 600, 18.0),
+            ("light-narrow", Theme::light(), 800, 600, 18.0),
+        ] {
+            let mut d = fixture(theme, w, h, size);
+            let aux = "aux.\"db";
+            let index = d
+                .state
+                .schema
+                .iter()
+                .position(|o| o.schema == "main" && o.name == "records")
+                .unwrap();
+            d.state.select_schema_node(10_000 + index as u64);
+            d.state.ddl_draft = "-- retain independent DDL".into();
+            d.do_rebuild();
+            let before = d.state.sql_editor().to_owned();
+            select(&mut d, &[aux, "table", "records", "value.名"]);
+            d.ui.reveal_tree_selection(d.ids.schema.tree);
+            d.ui.sync(&mut d.scene);
+            let selected = d.ui.tree_selected(d.ids.schema.tree).unwrap();
+            let bounds = d
+                .scene
+                .iter_paint_order()
+                .into_iter()
+                .find(|n| d.ui.widget_from_node(n.id) == Some(d.ids.schema.tree))
+                .unwrap()
+                .bounds;
+            let x = bounds.x + 40.0;
+            let y = (0..bounds.height.ceil() as u32)
+                .map(|i| bounds.y + i as f32 + 0.5)
+                .find(|&y| d.ui.tree_node_at(&d.scene, d.ids.schema.tree, x, y) == Some(selected))
+                .unwrap();
+            assert!(d.open_schema_context_menu(x, y));
+            assert_eq!(d.detach_menu_target.as_ref().unwrap().schema, aux);
+            assert_eq!(d.state.selected.as_ref().unwrap().schema, "main");
+            capture(&mut d, &format!("detach-{name}-menu"));
+            d.ui.key_input(UiKey::Enter);
+            let (_, item) = d.ui.take_menu_action().unwrap();
+            assert_eq!(item, CONTEXT_DETACH);
+            assert!(d.handle_schema_dock_menu(item));
+            d.do_rebuild();
+            assert_eq!(d.state.confirm_kind, crate::state::ConfirmKind::Detach);
+            assert_eq!(d.ui.modal_open(d.ids.modal), Some(true));
+            capture(&mut d, &format!("detach-{name}-confirm"));
+            d.ui.key_input(UiKey::Enter);
+            d.handle_modal();
+            d.do_rebuild();
+            assert!(d.state.schema_names.iter().any(|schema| schema == aux));
+            assert!(d.state.pending_detach.is_none());
+            d.ui.set_focus(Some(d.ids.schema.tree));
+            assert!(d.handle_schema_context_key(
+                KeyCode::Function(10),
+                Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                }
+            ));
+            d.ui.key_input(UiKey::Enter);
+            let (_, item) = d.ui.take_menu_action().unwrap();
+            d.handle_schema_dock_menu(item);
+            d.do_rebuild();
+            d.ui.key_input(UiKey::Tab);
+            d.ui.key_input(UiKey::Enter);
+            d.handle_modal();
+            d.do_rebuild();
+            assert!(!d.state.schema_names.iter().any(|schema| schema == aux));
+            assert!(!d
+                .ids
+                .schema
+                .paths
+                .iter()
+                .any(|path| path.first().is_some_and(|schema| schema == aux)));
+            assert!(d.state.schema_dock.selected.is_none());
+            assert_eq!(d.state.ddl_draft, "-- retain independent DDL");
+            assert_eq!(d.state.sql_editor(), before);
+            assert!(d.state.pending_detach.is_none());
+            assert!(d.state.error_msg.is_none(), "{:?}", d.state.error_msg);
+            capture(&mut d, &format!("detach-{name}-after"));
+        }
+    }
+
+    #[test]
+    fn detach_structure_context_and_file_actions_keep_definition_drafts_and_recheck_guards() {
+        let mut d = fixture(Theme::light(), 1400, 860, 13.0);
+        let aux = "aux.\"db";
+        d.state.tab = MainTab::Structure;
+        let main = d
+            .state
+            .schema
+            .iter()
+            .position(|o| o.schema == "main" && o.name == "records")
+            .unwrap();
+        d.state.select_schema_node(10_000 + main as u64);
+        d.state.ddl_draft = "-- keep while inspecting another database".into();
+        d.do_rebuild();
+        let root = d
+            .state
+            .schema_names
+            .iter()
+            .position(|name| name == aux)
+            .unwrap() as u64
+            * 5
+            + 1;
+        d.ui.set_tree_selected(d.ids.tree, Some(root));
+        d.ui.reveal_tree_selection(d.ids.tree);
+        d.ui.set_tree_selected(d.ids.tree, Some(10_000 + main as u64));
+        d.ui.sync(&mut d.scene);
+        let bounds = d
+            .scene
+            .iter_paint_order()
+            .into_iter()
+            .find(|n| d.ui.widget_from_node(n.id) == Some(d.ids.tree))
+            .unwrap()
+            .bounds;
+        let x = bounds.x + 40.0;
+        let y = (0..bounds.height.ceil() as u32)
+            .map(|i| bounds.y + i as f32 + 0.5)
+            .find(|&y| d.ui.tree_node_at(&d.scene, d.ids.tree, x, y) == Some(root))
+            .unwrap();
+        assert!(d.open_schema_context_menu(x, y));
+        d.ui.key_input(UiKey::Enter);
+        let (_, item) = d.ui.take_menu_action().unwrap();
+        d.handle_schema_dock_menu(item);
+        d.do_rebuild();
+        assert_eq!(d.state.pending_detach.as_ref().unwrap().schema, aux);
+        assert_eq!(
+            d.state.ddl_draft,
+            "-- keep while inspecting another database"
+        );
+        d.ui.key_input(UiKey::Escape);
+        d.handle_modal();
+        d.do_rebuild();
+        assert!(d.state.pending_detach.is_none());
+        assert!(d.state.schema_names.iter().any(|schema| schema == aux));
+        d.handle_menu(crate::mid::FILE_DETACH);
+        assert!(d.state.pending_detach.is_none());
+        assert!(d
+            .state
+            .error_msg
+            .as_deref()
+            .unwrap()
+            .contains("attached database"));
+        let attached = d
+            .state
+            .schema
+            .iter()
+            .position(|o| o.schema == aux && o.name == "records")
+            .unwrap();
+        d.state.select_schema_node(10_000 + attached as u64);
+        d.do_rebuild();
+        d.handle_menu(crate::mid::FILE_DETACH);
+        d.do_rebuild();
+        assert_eq!(d.state.pending_detach.as_ref().unwrap().schema, aux);
+        d.ui.key_input(UiKey::Enter);
+        d.handle_modal();
+        d.do_rebuild();
+        d.state.dirty = true;
+        d.handle_menu(crate::mid::FILE_DETACH);
+        assert!(d.state.pending_detach.is_none());
+        assert!(d
+            .state
+            .error_msg
+            .as_deref()
+            .unwrap()
+            .contains("Write Changes"));
     }
 
     fn capture(d: &mut Demo, name: &str) {

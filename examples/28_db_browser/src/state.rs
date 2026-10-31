@@ -640,6 +640,7 @@ pub struct AppState {
 
     pub confirm_kind: ConfirmKind,
     pub confirm_open: bool,
+    pub pending_detach: Option<crate::detach::Target>,
     pub external_cell: Option<cell_actions::ExternalCell>,
     pub pending_document: Option<DocumentAction>,
     pub pending_cell_save: Option<(Option<PathBuf>, Option<PathBuf>)>,
@@ -773,6 +774,7 @@ pub enum ConfirmKind {
     Pragmas,
     CellFormat,
     CellExternal,
+    Detach,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1016,6 +1018,7 @@ impl AppState {
             recent: VecDeque::new(),
             confirm_kind: ConfirmKind::None,
             confirm_open: false,
+            pending_detach: None,
             external_cell: None,
             pending_document: None,
             pending_cell_save: None,
@@ -2709,6 +2712,7 @@ impl AppState {
     }
 
     pub fn close_db(&mut self) {
+        self.pending_detach = None;
         self.cond_formats=None;
         self.cond_match.get_mut().take();
         if self.overlay==Some(OverlayKind::CondFormat) {self.overlay=None;}

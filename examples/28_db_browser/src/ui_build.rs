@@ -47,6 +47,7 @@ pub mod mid {
     pub const FILE_IMPORT: u64 = 24;
     pub const FILE_EXPORT: u64 = 25;
     pub const FILE_RECENT: u64 = 26;
+    pub const FILE_DETACH: u64 = 27;
     pub const FILE_RECENT_BASE: u64 = 100; // 100..104
 
     pub const EDIT_CREATE_TABLE: u64 = 30;
@@ -397,6 +398,8 @@ fn file_menu_items(state: &AppState, font: &Font, size: f32, label_width: f32) -
         MenuItem::new(mid::FILE_OPEN, "Open Database…"),
         MenuItem::new(mid::FILE_OPEN_RO, "Open Database Read Only…"),
         MenuItem::new(mid::FILE_ATTACH, "Attach Database…"),
+        if state.structure_detach_schema().is_some() { MenuItem::new(mid::FILE_DETACH, "Detach Database…") }
+            else { MenuItem::disabled(mid::FILE_DETACH, "Detach Database…") },
         MenuItem::submenu(mid::FILE_RECENT, "Recent Files", recent),
         MenuItem::new(mid::FILE_SAVE_AS, "Save Database As…"),
         MenuItem::new(mid::FILE_CLOSE, "Close Database"),
@@ -2723,6 +2726,11 @@ pub fn build_ui(
             }),
             if state.external_cell.as_ref().is_some_and(|external|external.read_only) {"Close"} else {"Apply"},
         ),
+        ConfirmKind::Detach => (
+            "Detach Database",
+            state.pending_detach.as_ref().map_or_else(|| "The detach request is no longer current".into(), |target| target.description()),
+            "Cancel",
+        ),
         ConfirmKind::None => ("Confirm", "Confirm action?".into(), "OK"),
     };
     let mut modal_style = ModalStyle::from_theme(&theme);
@@ -2731,7 +2739,7 @@ pub fn build_ui(
         modal_title,
         modal_body,
         modal_primary,
-        if state.confirm_kind==ConfirmKind::CellExternal && state.external_cell.as_ref().is_some_and(|external|external.read_only) {None} else {Some(if state.confirm_kind==ConfirmKind::CellFormat {"Apply Anyway"} else if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into())},
+        if state.confirm_kind==ConfirmKind::CellExternal && state.external_cell.as_ref().is_some_and(|external|external.read_only) {None} else {Some(if state.confirm_kind==ConfirmKind::Detach {"Detach"} else if state.confirm_kind==ConfirmKind::CellFormat {"Apply Anyway"} else if state.confirm_kind == ConfirmKind::Pragmas { "Save and Apply" } else if matches!(state.confirm_kind, ConfirmKind::DeleteColumn(_)) { "Remove" } else if state.confirm_kind == ConfirmKind::Documents { "Discard" } else { "Cancel" }.into())},
         modal_style,
     );
     if state.confirm_kind == ConfirmKind::Documents {
