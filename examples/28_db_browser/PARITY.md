@@ -8,7 +8,7 @@ Status legend: `done` = implemented local subset, not upstream parity or native 
 
 **Inventory snapshot (2026-10-31):** The tables contain 103 overlapping workflow entries: 46 `done` local subsets and 57 `partial` entries. These are not weighted requirements and do not establish a completion percentage. Full original feature/UI parity remains in progress.
 
-**Latest scoped verification:** [Browse inline editing and held range scrolling](../../docs/reviews/R-20261101-f4d36e4b43f8.md): 847 workspace tests, 16 Soft/Metal pairs, eight native keyboard flows and fourteen Office render windows pass. Locked-session OS mouse/wheel acceptance remains pending.
+**Latest scoped verification:** [Readable Schema panes](../../docs/reviews/R-20261101-4d4b158bd390.md): 853 workspace tests, nine Soft/Metal pairs and eight native keyboard flows pass. The narrow shared-dock sizing defect is verified fixed; locked-session OS mouse/wheel acceptance remains pending.
 
 **Earlier regression/evidence correction:** [2026-10-27 report](../../docs/reviews/R-20261027-5e23229548d4.md) records that tested scope and corrects unsupported earlier claims.
 

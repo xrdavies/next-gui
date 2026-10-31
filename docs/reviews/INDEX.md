@@ -10,12 +10,13 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [Browse inline editing and held range scrolling](R-20261101-f4d36e4b43f8.md) — 847 workspace tests, 16 Soft/Metal pairs, eight native keyboard flows and fourteen Office render checks; locked-session OS pointer acceptance and full F02 remain pending.
+Latest scoped review: [Readable Schema panes](R-20261101-4d4b158bd390.md) — 853 workspace tests, nine Soft/Metal pairs and eight native keyboard flows; narrow-dock finding verified, locked-session OS pointer acceptance and full F02 remain pending.
 
 ## Findings
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261101-acf387f4fded-F01 | verified | P2 | codex | e28 / all | acf387f4fded | Schema dock sizing | Minimum tree/preview sizes and outer scroll reveal verified after reproduced narrow-layout failure | [F01](R-20261101-acf387f4fded.md#r-20261101-acf387f4fded-f01) | 4d4b158bd390 | 4d4b158bd390 |
 | R-20261029-9af4fd140508-F01 | verified | P2 | codex | shared / e28 | existing Revert | revert_changes / Browse cache | Qualified rollback catalog reconciliation clears stale tabs/editor/settings and retains valid settings/drafts/results | [F01](R-20261029-9af4fd140508.md#r-20261029-9af4fd140508-f01) | c660a4c210a0 | c660a4c210a0 |
 | R-20261029-68071fced248-F01 | verified | P3 | codex | shared / e28 | existing Apply viewport | apply_cell_draft_inner / do_rebuild | Shared Apply reveals both axes while retaining fresh editor/action focus;781 tests,24 Metal pairs and four native wide/narrow workflows verified | [F01](R-20261029-68071fced248.md#r-20261029-68071fced248-f01) | b23ae67bf985 | b23ae67bf985 |
 | R-20261029-44c453d1409d-F01 | verified | P3 | codex | shared / all | 44c453d1409d | pending desktop request feedback | Request wording and stale-copy errors verified through async regression and772 full workspace tests | [F01](R-20261029-44c453d1409d.md#r-20261029-44c453d1409d-f01) | 67c5a93afacf | fd3e205e66fc |
