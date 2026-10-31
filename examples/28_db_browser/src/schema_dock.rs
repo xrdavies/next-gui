@@ -497,6 +497,9 @@ impl Demo {
                 .take()
                 .ok_or_else(|| "Choose an attached database again".to_owned())
                 .and_then(|target| self.state.prepare_detach_target(target));
+            if result.is_ok() {
+                self.detach_return_to_schema = self.ui.focused() == Some(self.ids.schema.tree);
+            }
             match result {
                 Ok(()) => self.clear_error(),
                 Err(error) => self.set_error(error),
@@ -519,6 +522,9 @@ impl Demo {
                 let result = schema
                     .ok_or_else(|| "Select an attached database".to_owned())
                     .and_then(|schema| self.state.prepare_detach(&schema));
+                if result.is_ok() {
+                    self.detach_return_to_schema = true;
+                }
                 match result {
                     Ok(()) => self.clear_error(),
                     Err(error) => self.set_error(error),
@@ -1094,7 +1100,11 @@ mod tests {
             d.do_rebuild();
             assert!(d.state.schema_names.iter().any(|schema| schema == aux));
             assert!(d.state.pending_detach.is_none());
-            assert_eq!(d.ui.focused(), Some(d.ids.schema.tree), "Cancel must restore the originating tree focus");
+            assert_eq!(
+                d.ui.focused(),
+                Some(d.ids.schema.tree),
+                "Cancel must restore the originating tree focus"
+            );
             assert!(d.handle_schema_context_key(
                 KeyCode::Function(10),
                 Modifiers {
@@ -1111,6 +1121,7 @@ mod tests {
             d.handle_modal();
             d.do_rebuild();
             assert!(!d.state.schema_names.iter().any(|schema| schema == aux));
+            assert_eq!(d.ui.focused(), Some(d.ids.schema.tree));
             assert!(!d
                 .ids
                 .schema
@@ -1177,6 +1188,7 @@ mod tests {
         d.ui.key_input(UiKey::Escape);
         d.handle_modal();
         d.do_rebuild();
+        assert_eq!(d.ui.focused(), Some(d.ids.tree));
         assert!(d.state.pending_detach.is_none());
         assert!(d.state.schema_names.iter().any(|schema| schema == aux));
         d.handle_menu(crate::mid::FILE_DETACH);
@@ -1210,6 +1222,23 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("Write Changes"));
+        d.state.dirty = false;
+        d.handle_menu(crate::mid::FILE_DETACH);
+        d.do_rebuild();
+        d.state
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch("INSERT INTO main.records VALUES(2,'pending after confirmation')")
+            .unwrap();
+        d.ui.key_input(UiKey::Tab);
+        d.ui.key_input(UiKey::Enter);
+        d.handle_modal();
+        d.do_rebuild();
+        assert_eq!(d.ui.focused(), Some(d.ids.tree));
+        assert!(d.state.pending_detach.is_none());
+        assert!(d.state.schema_names.iter().any(|schema| schema == aux));
+        assert!(db::has_pending_changes(d.state.conn.as_ref().unwrap()).unwrap());
     }
 
     fn capture(d: &mut Demo, name: &str) {

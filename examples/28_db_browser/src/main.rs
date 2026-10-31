@@ -274,6 +274,7 @@ struct Demo {
     reveal_browse_selection: bool,
     browse_header_column: Option<usize>,
     detach_menu_target: Option<detach::Target>,
+    detach_return_to_schema: bool,
     filter_context: Option<WidgetId>,
     filter_session: browse_filter::Session,
 }
@@ -1878,6 +1879,7 @@ impl Demo {
             reveal_browse_selection: false,
             browse_header_column: None,
             detach_menu_target: None,
+            detach_return_to_schema: false,
             filter_context: None,
         }
     }
@@ -4106,6 +4108,7 @@ impl Demo {
                 let schema = self.state.structure_detach_schema().map(str::to_owned);
                 let result = schema.ok_or_else(|| "Select an attached database in Database Structure".to_owned())
                     .and_then(|schema| self.state.prepare_detach(&schema));
+                if result.is_ok() { self.detach_return_to_schema = false; }
                 match result { Ok(()) => self.clear_error(), Err(error) => self.set_error(error) }
                 self.rebuild = true;
             }
@@ -5437,9 +5440,19 @@ impl Demo {
                 self.resolve_document_action(action);
                 return;
             }
+            if kind == ConfirmKind::Detach {
+                if action == ModalAction::Secondary { self.apply_confirmed_action(kind); }
+                else { self.state.pending_detach = None; }
+                self.rebuild = true;
+                self.do_rebuild();
+                let focus = if self.detach_return_to_schema { self.ids.schema.tree }
+                    else if self.ids.tree.0 != 0 { self.ids.tree }
+                    else if self.state.tab == MainTab::Browse { self.ids.browse_table } else { self.ids.sql_area };
+                if focus.0 != 0 { self.ui.set_focus(Some(focus)); self.ui.sync(&mut self.scene); }
+                return;
+            }
             if matches!(kind, ConfirmKind::DeleteColumn(_)) { self.ui.set_focus(Some(self.ids.ov_fields_table)); }
-            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::Pragmas | ConfirmKind::Detach) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
-            if kind == ConfirmKind::Detach && !accepted { self.state.pending_detach = None; }
+            let accepted = if matches!(kind, ConfirmKind::DeleteColumn(_) | ConfirmKind::Pragmas) { action == ModalAction::Secondary } else { action == ModalAction::Primary };
             if !accepted { self.rebuild = true; return; }
             self.apply_confirmed_action(kind);
         }
