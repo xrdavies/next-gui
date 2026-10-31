@@ -2274,7 +2274,7 @@ enum DragState {
         bounds: Rect,
         next_repeat: Option<std::time::Instant>,
     },
-    TableSelection { table: WidgetId, bounds: Rect },
+    TableSelection { table: WidgetId, bounds: Rect, origin: (f32, f32), edit: Option<(usize, usize)>, next_repeat: Option<std::time::Instant> },
     TextArea { area: WidgetId, bounds: Rect },
     SingleLine { input: WidgetId, bounds: Rect },
     HexEditor { area: WidgetId, bounds: Rect },
@@ -3675,7 +3675,18 @@ impl Ui {
         match drag {
             DragState::Plot {..} => self.move_plot(x, y),
             DragState::IntegerInput { .. } => self.move_integer_repeat(x, y),
-            DragState::TableSelection { table, bounds } => self.drag_table_selection(table, bounds, x, y),
+            DragState::TableSelection { table, bounds, origin, .. } => {
+                if (x-origin.0).abs().max((y-origin.1).abs()) > 3.0 {
+                    if let Some(DragState::TableSelection { edit, .. }) = &mut self.drag { *edit = None; }
+                }
+                let changed = self.drag_table_selection(table, bounds, x, y);
+                let outside = self.table_selection_outside(table, bounds, x, y);
+                if let Some(DragState::TableSelection { next_repeat, edit, .. }) = &mut self.drag {
+                    if changed { *edit = None; }
+                    *next_repeat = outside.then(|| std::time::Instant::now() + std::time::Duration::from_millis(33));
+                }
+                changed
+            }
             DragState::HexEditor { area, bounds } => self.pointer_hex_editor(area,bounds,x,y,true),
             DragState::TextArea { area, bounds } => self.pointer_text_area(area, bounds, x, y, true),
             DragState::SingleLine {input,bounds} => self.pointer_single_line(input,bounds,x,true),
@@ -3740,8 +3751,12 @@ impl Ui {
 
     /// End an active drag.
     pub fn pointer_released(&mut self) {
-        if let Some(DragState::Plot {chart,tile,moved:false,row:Some(row),extend,..}) = self.drag.take() {
-            if let Some(data) = self.chart_plot_mut(chart,tile) {data.select_row(row,extend);}
+        match self.drag.take() {
+            Some(DragState::Plot {chart,tile,moved:false,row:Some(row),extend,..}) => {
+                if let Some(data) = self.chart_plot_mut(chart,tile) {data.select_row(row,extend);}
+            }
+            Some(DragState::TableSelection { table, edit: Some((row,column)), .. }) => { self.begin_table_cell_edit(table,row,column,None); }
+            _ => {}
         }
     }
 
@@ -6216,11 +6231,11 @@ impl Ui {
             }
         }
         let dropdown=column_hit.is_some_and(|column|matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Table {dropdown_columns,..}) if dropdown_columns.contains(&column)));
-        if (was_selected || dropdown) && idx>=0 {
+        if ((was_selected && !style.drag_select) || dropdown) && idx>=0 {
             if let Some(column)=column_hit {if self.begin_table_cell_edit(id,idx as usize,column,None) {self.drag=None;return true;}}
         }
         if style.drag_select && idx >= 0 && (idx as usize) < n_rows {
-            self.drag = Some(DragState::TableSelection { table: id, bounds });
+            self.drag = Some(DragState::TableSelection { table: id, bounds, origin:(x,y), edit:was_selected.then_some(column_hit).flatten().map(|column|(idx as usize,column)), next_repeat:None });
             return true;
         }
         let (sx, scroll_y) = self.any_scroll_offset(id).unwrap_or((0.0, 0.0));

@@ -27,6 +27,17 @@ pub enum TableCellEditEvent {
 }
 
 impl Ui {
+    pub(super) fn table_selection_outside(&self, table:WidgetId, bounds:Rect, x:f32, y:f32)->bool {
+        let Some(Kind::Table { style, .. }) = self.widgets.get(&table).map(|widget| &widget.kind) else { return false; };
+        x.is_finite() && y.is_finite() && (x < bounds.x+style.padding || x >= bounds.x+bounds.width-style.padding
+            || y < bounds.y+style.header_height || y >= bounds.y+bounds.height)
+    }
+
+    pub(super) fn table_selection_repeat_allowed(&self, table:WidgetId)->bool {
+        self.focus == Some(table) && self.open_popup.is_none()
+            && self.dialog_focus_scope().is_none_or(|dialog| self.widget_contains(dialog, table))
+    }
+
     /// Opt into cell editing. Selected-click, Enter/F2 or typing queues a Begin event.
     /// Columns are sorted/deduplicated for Tab/BackTab navigation. Check cells toggle instead.
     pub fn set_table_editable_columns(&mut self, id: WidgetId, mut editable: Vec<usize>) -> bool {
@@ -133,6 +144,25 @@ impl FlexBuilder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_cell_click_waits_for_release_and_does_not_steal_range_drags() {
+        let mut ui=Ui::new(); let mut scene=Scene::new(); let mut table=WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            table=c.table(vec![TableColumn::new("Value",180.0)], vec![vec!["a".into()],vec!["b".into()]],
+                TableStyle { width:240.0,height:150.0,drag_select:true,..Default::default() });
+        });
+        ui.set_table_editable_columns(table,vec![0]);
+        ui.set_table_selected_row(table,Some(0)); ui.set_table_selected_col(table,Some(0)); ui.sync(&mut scene);
+        let bounds=scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        let style=match ui.widgets[&table].kind {Kind::Table {style,..}=>style,_=>unreachable!()};
+        let (x,y)=(bounds.x+20.0,bounds.y+style.header_height+style.row_height*0.5);
+        ui.pointer_pressed(&mut scene,x,y); assert_eq!(ui.take_table_cell_edit(),None);
+        ui.pointer_released(); assert_eq!(ui.take_table_cell_edit(),Some((table,TableCellEditEvent::Begin {row:0,column:0,key:None})));
+        ui.pointer_pressed(&mut scene,x,y); ui.pointer_moved(x,y+style.row_height); ui.pointer_released();
+        assert_eq!(ui.take_table_cell_edit(),None); assert_eq!(ui.table_selected_rows(table),Some((0,1)));
+        ui.pointer_pressed(&mut scene,x,y); ui.cancel_pointer_capture(); ui.pointer_released(); assert_eq!(ui.take_table_cell_edit(),None);
+    }
 
     #[test]
     fn dropdown_columns_activate_on_first_click_clip_and_keep_virtual_rows_bounded() {

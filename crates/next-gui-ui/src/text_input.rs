@@ -233,9 +233,12 @@ impl Ui {
             && matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput {enabled:true,preedit,integer_range:Some(_),..}) if preedit.is_empty())
     }
 
-    /// Delay until a held integer arrow repeats. Schedule a host redraw after this delay.
+    /// Delay until a held integer arrow or table selection scroll repeats. Schedule a host redraw.
     /// None means the pointer is released/paused or its editor is no longer active.
     pub fn pointer_repeat_delay(&self) -> Option<Duration> {
+        if let Some(DragState::TableSelection { table, next_repeat:Some(next), .. }) = &self.drag {
+            return self.table_selection_repeat_allowed(*table).then(||next.saturating_duration_since(Instant::now()));
+        }
         let DragState::IntegerInput {
             input,
             next_repeat: Some(next),
@@ -248,7 +251,7 @@ impl Ui {
             .then(|| next.saturating_duration_since(Instant::now()))
     }
 
-    /// Advance a held integer arrow; true means its value or tracking appearance changed.
+    /// Advance a held integer arrow or table selection scroll; true means its appearance changed.
     /// Call sync/repaint after true, including when stepping stops at a bound.
     /// Late redraws produce one step rather than a burst. Release via pointer_released.
     pub fn repeat_pointer(&mut self) -> bool {
@@ -256,6 +259,15 @@ impl Ui {
     }
 
     fn repeat_pointer_at(&mut self, now: Instant) -> bool {
+        if let Some(DragState::TableSelection { table, bounds, next_repeat:Some(next), .. }) = self.drag.clone() {
+            if !self.table_selection_repeat_allowed(table) { self.cancel_pointer_capture(); return true; }
+            if now < next { return false; }
+            let changed = self.last_pointer.is_some_and(|(x,y)| self.drag_table_selection(table,bounds,x,y));
+            if let Some(DragState::TableSelection { next_repeat, .. }) = &mut self.drag {
+                *next_repeat = changed.then(|| now + Duration::from_millis(33));
+            }
+            return changed;
+        }
         let Some(DragState::IntegerInput {
             input,
             delta,
@@ -485,7 +497,33 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AutocompleteStyle, ColumnStyle, Scene, TextInputStyle};
+    use crate::{AutocompleteStyle, ColumnStyle, Scene, TableColumn, TableStyle, TextInputStyle};
+
+    #[test]
+    fn stationary_table_range_scroll_repeats_on_both_axes_and_stops_at_limits() {
+        let mut ui=Ui::new(); let mut scene=Scene::new(); let mut table=WidgetId(0);
+        ui.column(ColumnStyle::default(), |c| {
+            table=c.table((0..8).map(|column|TableColumn::new(column.to_string(),100.0)).collect(),
+                (0..100).map(|_|vec![String::new();8]).collect(),
+                TableStyle {width:300.0,height:180.0,drag_select:true,..Default::default()});
+        });
+        ui.sync(&mut scene);
+        let bounds=scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        assert!(ui.pointer_pressed(&mut scene,bounds.x+20.0,bounds.y+70.0));
+        assert!(ui.pointer_moved(bounds.x+bounds.width+15.0,bounds.y+bounds.height+20.0));
+        let due=match ui.drag {Some(DragState::TableSelection {next_repeat:Some(next),..})=>next,_=>panic!("not armed")};
+        let before=ui.table_scroll_offset(table).unwrap();
+        assert!(!ui.repeat_pointer_at(due-Duration::from_millis(1)));
+        assert!(ui.repeat_pointer_at(due));
+        let after=ui.table_scroll_offset(table).unwrap(); assert!(after.0>before.0 && after.1>before.1);
+        assert_eq!(ui.table_selection_anchor(table),Some((1,Some(0))));
+        for step in 1..250 {ui.repeat_pointer_at(due+Duration::from_millis(step*34));}
+        assert_eq!(ui.pointer_repeat_delay(),None);
+        ui.pointer_moved(bounds.x+80.0,bounds.y+80.0); assert_eq!(ui.pointer_repeat_delay(),None);
+        ui.pointer_moved(bounds.x-20.0,bounds.y-20.0); assert!(ui.pointer_repeat_delay().is_some());
+        ui.pointer_released(); assert_eq!(ui.pointer_repeat_delay(),None);
+        let stable=ui.table_scroll_offset(table); assert!(!ui.repeat_pointer_at(due+Duration::from_secs(60))); assert_eq!(ui.table_scroll_offset(table),stable);
+    }
 
     #[test]
     fn partial_ranges_replace_copy_cut_history_and_restore_unicode_in_both_field_kinds() {
