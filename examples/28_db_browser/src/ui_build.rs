@@ -2112,6 +2112,7 @@ pub fn build_ui(
                                         filtered_style,
                                         col_filt_style,
                                     );
+                                    crate::browse_edit::mount(p, browse_table, state, col_filt_style);
                                 }
                                 crate::state::BrowseViewMode::Form => {
                                     let b = state.browse();
@@ -2645,6 +2646,7 @@ pub fn build_ui(
             }
         }
         if browse_table.0 != 0 {
+            ui.set_table_editable_columns(browse_table, crate::browse_edit::editable_columns(state));
             ui.set_table_frozen_cols(browse_table, state.browse_frozen_cols());
             let styles=crate::cond_match::styles(state,ui.font());
             ui.set_table_cell_styles(browse_table,styles);

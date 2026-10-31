@@ -26,6 +26,15 @@ Structure navigation retains focus, expanded groups and scroll position across p
 
 **Write Changes / Revert:** edits run inside a deferred transaction until Write (COMMIT) or Revert (ROLLBACK). Revert invalidates every Browse cache, clears sources removed by rollback and reloads the active surviving source. Valid table settings and independent SQL/definition drafts and result snapshots remain; invalid filter/plot queries report a refresh notice after the successful rollback.
 
+Browse cells support in-place text editing: click an already selected cell, press
+Enter/F2, or start typing. Enter applies; Tab/Shift+Tab applies and moves;
+Escape cancels. Changes remain pending until Write Changes. Unchanged NULL,
+numbers and BLOBs keep their original values; changed text follows SQLite column
+affinity. Use the Edit Cell dock for explicit storage types and binary Hex editing.
+Dragging retains range selection; holding outside the grid scrolls the selection
+while the host repeat deadline is serviced. FK value pickers/completion and
+whole-result selection/editing remain unfinished.
+
 **Phase 2:** EditTable/EditIndex overlay wizards · CSV import wizard (+ clipboard) · per-column browse filters + multi browse tabs · Execute SQL multi-tabs / Find-Replace / Stop (interrupt) · Pragma labeled form · JSON export · Recent files · Attach Database.
 
 CSV imports validate and write on background workers with byte/record progress.

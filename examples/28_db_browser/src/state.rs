@@ -515,6 +515,7 @@ pub struct AppState {
     pub browse_tab_idx: usize,
     pub edit_col: String,
     pub edit_value: String,
+    pub browse_cell_edit: Option<crate::browse_edit::Draft>,
     pub view_key_dialog: Option<crate::view_keys::Draft>,
     pub insert_target: Option<crate::view_keys::Source>,
     pub insert_columns: Vec<db::ColumnInfo>,
@@ -891,6 +892,7 @@ impl AppState {
             browse_tab_idx: 0,
             edit_col: String::new(),
             edit_value: String::new(),
+            browse_cell_edit: None,
             view_key_dialog: None,
             insert_target: None,
             insert_columns: Vec::new(),
@@ -3902,6 +3904,7 @@ impl AppState {
     }
 
     fn reset_cell_editor_session(&mut self) {
+        self.browse_cell_edit = None;
         self.reveal_applied_cell = false;
         self.cancel_external_cell();
         // Equal text in another cell must not inherit this cell's undo history.
