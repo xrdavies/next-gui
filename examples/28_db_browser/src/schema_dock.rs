@@ -1094,7 +1094,7 @@ mod tests {
             d.do_rebuild();
             assert!(d.state.schema_names.iter().any(|schema| schema == aux));
             assert!(d.state.pending_detach.is_none());
-            d.ui.set_focus(Some(d.ids.schema.tree));
+            assert_eq!(d.ui.focused(), Some(d.ids.schema.tree), "Cancel must restore the originating tree focus");
             assert!(d.handle_schema_context_key(
                 KeyCode::Function(10),
                 Modifiers {
