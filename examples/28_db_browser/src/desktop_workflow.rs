@@ -98,7 +98,12 @@ mod tests {
                 assert!(bounds(&demo,demo.ids.tabs).width>width as f32*0.68);
                 if tab==MainTab::Browse {
                     let grid=bounds(&demo,demo.ids.browse_table);
-                    assert!(grid.height>=height as f32*0.52,"the primary grid should use the available desktop: {grid:?}");
+                    assert!(grid.height>=height as f32*0.58,"the primary grid should use the available desktop: {grid:?}");
+                    let viewport=bounds(&demo,demo.ids.page_scroll);
+                    let navigation=bounds(&demo,demo.ids.btn_record_last);
+                    assert!(navigation.y>=grid.y+grid.height && viewport.y+viewport.height-navigation.y-navigation.height<32.0,
+                        "record navigation should sit at the bottom of the primary workspace: {grid:?}, {navigation:?}, {viewport:?}");
+                    assert_eq!(demo.ui.scroll_offset(demo.ids.page_scroll),Some((0.0,0.0)));
                     let baseline=bounds(&demo,demo.ids.browse_select);
                     for id in [demo.ids.browse_select,demo.ids.btn_add_row,demo.ids.btn_del_row,demo.ids.btn_form_view,demo.ids.btn_freeze,demo.ids.btn_cond_fmt,demo.ids.btn_fk_nav,demo.ids.browse_global_filter,demo.ids.browse_filter,demo.ids.btn_browse_go,demo.ids.btn_browse_clear_filters,demo.ids.btn_browse_clear_sort] {
                         let rect=bounds(&demo,id);
@@ -110,6 +115,15 @@ mod tests {
                     }
                     let widths=demo.ui.table_column_widths(demo.ids.browse_table).unwrap();assert!(widths[2]>100.0);assert!(widths[9]>120.0);assert!(widths[0]<widths[9]);
                     demo.ui.set_table_column_width(demo.ids.browse_table,9,245.0);demo.snapshot_inputs();demo.do_rebuild();assert_eq!(demo.ui.table_column_widths(demo.ids.browse_table).unwrap()[9],245.0);
+                    demo.state.browse_view=crate::state::BrowseViewMode::Form;demo.do_rebuild();
+                    let navigation=bounds(&demo,demo.ids.btn_record_last);
+                    let viewport=bounds(&demo,demo.ids.page_scroll);
+                    assert!(viewport.y+viewport.height-navigation.y-navigation.height<32.0);
+                    assert_eq!(demo.ui.scroll_offset(demo.ids.page_scroll),Some((0.0,0.0)));
+                    let first=bounds(&demo,demo.ids.form_fields[0]);
+                    assert!(first.y>viewport.y && first.y+first.height<navigation.y);
+                    capture(&mut demo,&format!("desktop-form-{name}-{width}"));
+                    demo.state.browse_view=crate::state::BrowseViewMode::Table;demo.do_rebuild();
                 }
                 if tab==MainTab::ExecuteSql {
                     demo.state.start_sql_job().unwrap();finish_sql(&mut demo.state);demo.do_rebuild();

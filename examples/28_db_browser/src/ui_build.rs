@@ -646,6 +646,7 @@ pub fn build_ui(
     let mut btn_add_row = z;
     let mut btn_del_row = z;
     let mut browse_table = z;
+    let mut browse_form_scroll = z;
     let mut browse_col_filters: Vec<WidgetId> = Vec::new();
     let mut browse_tab_btns: Vec<WidgetId> = Vec::new();
     let mut sql_tab_btns: Vec<WidgetId> = Vec::new();
@@ -1843,7 +1844,7 @@ pub fn build_ui(
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.drag_select = true;
             browse_table_style.width = main_w - 24.0;
-            browse_table_style.height = (tab_page_h - 204.0 - (browse_tools.height-tool_row.height)).max(160.0);
+            browse_table_style.height = 160.0;
 
             let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
@@ -2114,8 +2115,8 @@ pub fn build_ui(
                                     });
                                     let mut form_scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                                     form_scroll.width = main_w - 24.0;
-                                    form_scroll.height = (tab_page_h - 168.0).max(120.0);
-                                    p.scroll_area(form_scroll, |p| {
+                                    form_scroll.height = 160.0;
+                                    browse_form_scroll = p.scroll_area(form_scroll, |p| {
                                     if let Some(res) = res {
                                         let cells = res.values.row(row_i).ok();
                                         for (ci, cname) in res.columns.iter().enumerate() {
@@ -2914,6 +2915,11 @@ pub fn build_ui(
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     let view_keys = crate::view_keys::build(&mut ui, state, &theme, width as f32);
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
+    if let Some(container) = ui.filtered_table_container(browse_table) {
+        ui.set_flex_fill_minimum(container, 190.0);
+        ui.set_flex_fill(browse_table, true);
+    }
+    ui.set_flex_fill_minimum(browse_form_scroll, 160.0);
     ui.set_accessible_name(sql_splitter,"Resize SQL editor and query results");
     ui.set_flex_fill(sql_table,true);
     ui.set_splitter_min_sizes(sql_splitter,120.0,32.0+4.0+96.0+if state.sql_messages_visible { 70.0 } else { 0.0 });
