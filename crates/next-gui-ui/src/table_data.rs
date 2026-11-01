@@ -35,6 +35,14 @@ impl TableRows {
 }
 
 impl Ui {
+    /// The layout container for a filtered table, including its aligned filter inputs.
+    pub fn filtered_table_container(&self, table: WidgetId) -> Option<WidgetId> {
+        self.table_filters
+            .values()
+            .find(|group| group.table == table)
+            .map(|group| group.container)
+    }
+
     /// Replace rows with an indexed source and retain the table's filter controls.
     /// Clamp selection and clear stale styles/checks like `set_table_rows`.
     pub fn set_table_data_source(&mut self, id: WidgetId, data: Arc<dyn TableDataSource>) -> bool {

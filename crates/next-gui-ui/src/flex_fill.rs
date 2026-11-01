@@ -1,7 +1,7 @@
 use super::*;
 
 impl Ui {
-    /// Fill the remaining main-axis space in a row/column, sharing it equally
+    /// Fill the remaining main-axis space in a row/column/scroll area, sharing it equally
     /// with other fill children. The child also stretches across the parent.
     /// Fixed children retain their measured sizes. Returns false for an unknown ID.
     pub fn set_flex_fill(&mut self, id: WidgetId, fill: bool) -> bool {
@@ -9,10 +9,20 @@ impl Ui {
             return false;
         }
         if fill {
-            self.flex_fill.insert(id);
-        } else {
-            self.flex_fill.remove(&id);
+            return self.set_flex_fill_minimum(id, 0.0);
         }
+        self.flex_fill.remove(&id);
+        true
+    }
+
+    /// Fill remaining space while retaining a minimum main-axis size.
+    /// A scroll area scrolls when the minimum and fixed controls exceed its viewport.
+    /// Invalid values and unknown IDs leave the previous setting unchanged.
+    pub fn set_flex_fill_minimum(&mut self, id: WidgetId, minimum: f32) -> bool {
+        if !minimum.is_finite() || minimum < 0.0 || !self.widgets.contains_key(&id) {
+            return false;
+        }
+        self.flex_fill.insert(id, minimum);
         true
     }
 
@@ -24,7 +34,7 @@ impl Ui {
         let mut measures: Vec<_> = children.iter().map(|id| self.measure_widget(*id)).collect();
         let count = children
             .iter()
-            .filter(|id| self.flex_fill.contains(id))
+            .filter(|id| self.flex_fill.contains_key(id))
             .count();
         if count == 0 {
             return measures;
@@ -38,7 +48,7 @@ impl Ui {
         let fixed: f32 = children
             .iter()
             .zip(&measures)
-            .filter(|(id, _)| !self.flex_fill.contains(id))
+            .filter(|(id, _)| !self.flex_fill.contains_key(id))
             .map(|(_, size)| if vertical { size.height } else { size.width })
             .sum();
         let available = (span
@@ -46,16 +56,21 @@ impl Ui {
             - params.gap * children.len().saturating_sub(1) as f32
             - fixed)
             .max(0.0);
+        let minimum: f32 = children
+            .iter()
+            .filter_map(|id| self.flex_fill.get(id))
+            .sum();
+        let extra = ((available - minimum) / count as f32).max(0.0);
         for (id, size) in children.iter().zip(&mut measures) {
-            if self.flex_fill.contains(id) {
+            if let Some(minimum) = self.flex_fill.get(id) {
                 *size = if vertical {
                     ChildMeasure::new(
                         (params.max_width - 2.0 * params.padding).max(0.0),
-                        available / count as f32,
+                        minimum + extra,
                     )
                 } else {
                     ChildMeasure::new(
-                        available / count as f32,
+                        minimum + extra,
                         (params.max_height - 2.0 * params.padding).max(0.0),
                     )
                 };
@@ -68,6 +83,111 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_area_fills_a_filtered_table_and_retains_minimum_on_resize() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        #[derive(Debug)]
+        struct Rows(Arc<AtomicUsize>);
+        impl TableDataSource for Rows {
+            fn len(&self) -> usize {
+                1_000_000
+            }
+            fn row(&self, index: usize) -> Result<Vec<String>, String> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(vec![index.to_string()])
+            }
+        }
+        let reads = Arc::new(AtomicUsize::new(0));
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut table = WidgetId(0);
+        let mut toolbar = WidgetId(0);
+        let mut footer = WidgetId(0);
+        let scroll = ui.scroll_area(
+            ScrollAreaStyle {
+                width: 600.0,
+                height: 520.0,
+                padding: 4.0,
+                gap: 6.0,
+                ..Default::default()
+            },
+            |p| {
+                toolbar = p.tool_button("Choose table");
+                (table, _) = p.filtered_data_table(
+                    vec![TableColumn::new("Record", 200.0)],
+                    Arc::new(Rows(reads.clone())),
+                    &[],
+                    TableStyle {
+                        width: 592.0,
+                        height: 190.0,
+                        ..Default::default()
+                    },
+                    TextInputStyle {
+                        height: 26.0,
+                        ..Default::default()
+                    },
+                );
+                footer = p.tool_button("Last record");
+            },
+        );
+        let container = ui.filtered_table_container(table).unwrap();
+        assert_eq!(ui.filtered_table_container(footer), None);
+        assert!(ui.set_flex_fill_minimum(container, 190.0));
+        for invalid in [f32::NAN, f32::INFINITY, -1.0] {
+            assert!(!ui.set_flex_fill_minimum(container, invalid));
+        }
+        assert!(!ui.set_flex_fill_minimum(WidgetId(0), 100.0));
+        assert_eq!(ui.flex_fill[&container], 190.0);
+        ui.set_flex_fill(table, true);
+        ui.sync(&mut scene);
+        ui.set_table_selected_row(table, Some(999_999));
+        ui.reveal_table_selection(table);
+        ui.sync(&mut scene);
+        let bounds =
+            |ui: &Ui, scene: &Scene, id| scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+        for height in [900.0, 180.0, 520.0] {
+            if let Kind::ScrollArea { style, .. } = &mut ui.widgets.get_mut(&scroll).unwrap().kind {
+                style.height = height;
+            }
+            ui.sync(&mut scene);
+            let grid = bounds(&ui, &scene, table);
+            let bar = bounds(&ui, &scene, toolbar);
+            let nav = bounds(&ui, &scene, footer);
+            let group = bounds(&ui, &scene, container);
+            assert_eq!(group.width, 592.0);
+            assert_eq!(group.y, bar.y + bar.height + 6.0);
+            assert_eq!(grid.y + grid.height + 6.0, nav.y);
+            assert!(grid.height >= 160.0);
+            if height > 200.0 {
+                assert_eq!(ui.scroll_offset(scroll), Some((0.0, 0.0)));
+                assert!(
+                    (nav.y + nav.height - (height - 4.0)).abs() < 0.01,
+                    "one layout pass must fill the new viewport: {nav:?}"
+                );
+                assert_eq!(bar.y, 4.0);
+                assert_eq!(
+                    ui.hit_widget(&scene, nav.x + 5.0, nav.y + nav.height / 2.0),
+                    Some(footer)
+                );
+            }
+            if height > 200.0 {
+                assert_eq!(
+                    ui.table_cell_at(&scene, table, grid.x + 20.0, grid.y + grid.height - 15.0),
+                    Some((999_999, 0))
+                );
+            }
+            assert!(ui.widgets[&table].aux.len() < 180);
+            if height < 200.0 {
+                ui.set_scroll_offset(scroll, 0.0, 1_000.0);
+                ui.sync(&mut scene);
+                assert!(ui.scroll_offset(scroll).unwrap().1 > 0.0);
+            }
+        }
+        assert!(reads.load(Ordering::Relaxed) < 500);
+        assert!(ui.set_flex_fill(container, false));
+        assert!(!ui.flex_fill.contains_key(&container));
+    }
 
     #[test]
     fn splitter_resizes_a_fill_table_live_and_retains_fixed_controls() {

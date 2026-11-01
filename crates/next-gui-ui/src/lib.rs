@@ -74,7 +74,7 @@ pub use p1_rest::*;
 pub use office_p2::*;
 pub use theme::{Theme, ThemeColors, ThemeMode, ThemeRadii, ThemeSpacing, ThemeTypography};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use next_gui_layout::{layout_flex, Axis, ChildMeasure, CrossAlign, FlexParams};
@@ -2383,6 +2383,7 @@ fn toggle_expanded_in_forest(nodes: &mut [TreeNode], id: u64) -> bool {
 // Fields use the table's column geometry while retaining standard text input behavior.
 #[derive(Debug, Clone)]
 struct TableFilterRow {
+    container: WidgetId,
     table: WidgetId,
     fields: Vec<WidgetId>,
     last_focus: Option<WidgetId>,
@@ -2399,7 +2400,7 @@ pub struct Ui {
     node_to_widget: HashMap<NodeId, WidgetId>,
     input_selection_nodes: HashMap<WidgetId, (NodeId, NodeId)>,
     table_filters: HashMap<WidgetId, TableFilterRow>,
-    flex_fill: HashSet<WidgetId>,
+    flex_fill: HashMap<WidgetId, f32>,
     scrollbars: HashMap<WidgetId, [NodeId; 4]>,
     revealed_scroll_focus: Option<WidgetId>,
     font: Arc<Font>,
@@ -2595,7 +2596,7 @@ impl Ui {
             node_to_widget: HashMap::new(),
             input_selection_nodes: HashMap::new(),
             table_filters: HashMap::new(),
-            flex_fill: HashSet::new(),
+            flex_fill: HashMap::new(),
             scrollbars: HashMap::new(),
             revealed_scroll_focus: None,
             font: Arc::new(font),
@@ -11177,7 +11178,10 @@ impl Ui {
             gap: style.gap,
             cross_align: style.cross_align,
         };
-        let measures: Vec<_> = children.iter().map(|c| self.measure_widget(*c)).collect();
+        let measures = self.flex_child_measures(
+            &FlexParams { max_width: w, max_height: h, ..params },
+            &children,
+        );
         let total = next_gui_layout::measure_flex(&params, &measures);
         let rects = layout_flex(&params, &measures);
         for (child_id, rect) in children.iter().copied().zip(rects) {
@@ -11201,6 +11205,15 @@ impl Ui {
         }
         let max_x = (content_w - w).max(0.0);
         let max_y = (content_h - h).max(0.0);
+        let clamped_x = scroll_x.clamp(0.0, max_x);
+        let clamped_y = scroll_y.clamp(0.0, max_y);
+        // Resizing can remove overflow; apply the clamped origin in this layout pass.
+        if clamped_x != scroll_x || clamped_y != scroll_y {
+            let params = FlexParams { x: ox - clamped_x, y: oy - clamped_y, ..params };
+            for (child_id, rect) in children.iter().copied().zip(layout_flex(&params, &measures)) {
+                self.place_child(scene, child_id, rect);
+            }
+        }
         if let Some(wdig) = self.widgets.get_mut(&id) {
             if let Kind::ScrollArea {
                 scroll_x: sx,
@@ -11212,8 +11225,8 @@ impl Ui {
             {
                 *cw = content_w;
                 *ch = content_h;
-                *sx = sx.clamp(0.0, max_x);
-                *sy = sy.clamp(0.0, max_y);
+                *sx = clamped_x;
+                *sy = clamped_y;
             }
         }
     }
@@ -18719,7 +18732,7 @@ impl FlexBuilder<'_> {
         let mut fields = Vec::new();
         let mut filter_row = WidgetId(0);
         style.height = (style.height - height).max(style.header_height);
-        self.column(container, |column| {
+        let container = self.column(container, |column| {
             filter_row = column.scroll_row(filter_style, |row| {
                 for (index, definition) in columns.iter().enumerate() {
                     let mut field_style = input_style;
@@ -18736,6 +18749,7 @@ impl FlexBuilder<'_> {
         self.ui.table_filters.insert(
             filter_row,
             TableFilterRow {
+                container,
                 table,
                 fields: fields.clone(),
                 last_focus: None,
