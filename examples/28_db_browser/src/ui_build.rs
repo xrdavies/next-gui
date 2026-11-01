@@ -7,7 +7,7 @@ use next_gui_ui::{
     AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, IconName, ImageStyle, ListStyle, MenuItem,
     MenuStyle, ModalStyle, PanelStyle, RowStyle, SelectStyle, SplitterStyle, StatusBarStyle,
     SwitchStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme,
-    ToolbarStyle, TreeNode, TreeStyle, PlotData, PlotSeries, PlotLine, PlotMarker, PlotStyle, Ui, WidgetId,
+    ToolbarStyle, PlotData, PlotSeries, PlotLine, PlotMarker, PlotStyle, Ui, WidgetId,
 };
 
 use crate::db::{self, ObjectKind};
@@ -430,20 +430,6 @@ fn file_menu_items(state: &AppState, font: &Font, size: f32, label_width: f32) -
         MenuItem::separator(),
         MenuItem::new(mid::FILE_EXIT, "Exit"),
     ]
-}
-
-fn schema_tree(state: &AppState) -> Vec<TreeNode> {
-    state.schema_names.iter().enumerate().map(|(database, name)| {
-        let root = database as u64 * 5 + 1;
-        let groups = [ObjectKind::Table, ObjectKind::View, ObjectKind::Index, ObjectKind::Trigger]
-            .into_iter().enumerate().map(|(group, kind)| {
-                let objects: Vec<_> = state.schema.iter().enumerate()
-                    .filter(|(_, o)| o.schema == *name && o.kind == kind)
-                    .map(|(i, o)| TreeNode::leaf(10_000 + i as u64, o.name.clone())).collect();
-                TreeNode::new(root + group as u64 + 1, format!("{} ({})", kind.label(), objects.len()), objects)
-            }).collect();
-        TreeNode::new(root, name.clone(), groups)
-    }).collect()
 }
 
 pub fn status_text(state: &AppState) -> String {
@@ -1754,7 +1740,7 @@ pub fn build_ui(
                 .as_ref()
                 .map(|r| r.rows.clone())
                 .unwrap_or_default();
-            let roots = schema_tree(state);
+            let roots = crate::structure_tree::model(state);
             let log_text = state.sql_log.text(crate::sql_log::Source::from_filter(state.sql_log_filter));
             let chart_title = if !state.plot.settings.manual { format!("{} · {}", state.plot.title, state.plot.summary) } else { format!(
                 "{} · {} ({} samples)",
@@ -1811,26 +1797,30 @@ pub fn build_ui(
             let mut struct_split = SplitterStyle::from_theme(&theme);
             struct_split.width = main_w - 24.0;
             struct_split.height = (tab_page_h - struct_tb.height - 14.0).max(280.0);
-            struct_split.axis = Axis::Vertical;
-            struct_split.ratio = state.structure_ratio.clamp(0.25, 0.65);
+            struct_split.axis = Axis::Horizontal;
+            let structure_span=(struct_split.height-struct_split.sash_size).max(1.0);
+            let tree_minimum=theme.typography.body*6.0+32.0;
+            let ddl_minimum=theme.typography.body*3.0+120.0;
+            let structure_scale=(structure_span/(tree_minimum+ddl_minimum)).min(1.0);
+            let minimum=tree_minimum*structure_scale/structure_span;
+            let maximum=(1.0-ddl_minimum*structure_scale/structure_span).max(minimum);
+            struct_split.ratio = state.structure_ratio.clamp(minimum,maximum);
 
-            let tree_w = (main_w - 24.0) * struct_split.ratio - 8.0;
-            let right_w = (main_w - 24.0) * (1.0 - struct_split.ratio) - 8.0;
-            let mut tree_style = TreeStyle::from_theme(&theme);
+            let tree_w = main_w - 24.0;
+            let right_w = tree_w;
+            let mut tree_style = next_gui_ui::TreeTableStyle::from_theme(&theme);
             tree_style.width = tree_w;
-            tree_style.height = (tab_page_h - struct_tb.height - 22.0).max(240.0);
-
+            tree_style.height = (struct_split.height-struct_split.sash_size)*struct_split.ratio;
+            tree_style.tree_col_width = state.structure_widths.first().copied().unwrap_or(300.0f32.min(tree_w*0.38));
+            let type_width=state.structure_widths.get(1).copied().unwrap_or(110.0);
+            tree_style.size = theme.typography.body;
             let right_col = ColumnStyle {
-                width: right_w,
-                height: (tab_page_h - struct_tb.height - 22.0).max(240.0),
-                padding: 4.0,
-                gap: 4.0,
-                cross_align: CrossAlign::Start,
-                ..ColumnStyle::from_theme(&theme)
+                width:right_w,height:(struct_split.height-struct_split.sash_size)*(1.0-struct_split.ratio),
+                padding:4.0,gap:4.0,cross_align:CrossAlign::Start,..ColumnStyle::from_theme(&theme)
             };
             let mut ddl_style = TextAreaStyle::from_theme(&theme);
             ddl_style.width = right_w - 12.0;
-            ddl_style.height = 180.0;
+            ddl_style.height = (right_col.height-100.0).max(60.0);
 
             let mut tool_row = RowStyle::from_theme(&theme);
             tool_row.width = main_w - 24.0;
@@ -2000,7 +1990,7 @@ pub fn build_ui(
                             structure_splitter = p.splitter(
                                 struct_split,
                                 |l| {
-                                    tree = l.tree(roots_for_tree.clone(), tree_style);
+                                    tree = l.tree_table(vec![TableColumn::new("Type",type_width),TableColumn::new("Schema",(tree_w-tree_style.tree_col_width-type_width).max(80.0))], roots_for_tree.clone(), tree_style);
                                 },
                                 |r| {
                                     r.column(right_col, |c| {
@@ -2606,7 +2596,7 @@ pub fn build_ui(
                     .iter()
                     .position(|o| o.schema == sel.schema && o.name == sel.name && o.kind == sel.kind)
                 {
-                    ui.set_tree_selected(tree, Some(10_000 + idx as u64));
+                    ui.set_tree_selected(tree, Some(crate::structure_tree::selected_node(state,idx)));
                 }
             } else if let Some((schema, group)) = &state.schema_group {
                 if let Some(database) = state.schema_names.iter().position(|name| name == schema) {

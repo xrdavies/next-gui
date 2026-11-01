@@ -702,10 +702,9 @@ impl Demo {
                 .and_then(|i| self.ids.schema.paths.get(i as usize));
             path.and_then(|path| path.first()).cloned()
         } else if node >= 10_000 {
-            self.state
-                .schema
-                .get((node - 10_000) as usize)
-                .map(|o| o.schema.clone())
+            crate::structure_tree::object_index(&self.state,node)
+                .and_then(|index|self.state.schema.get(index))
+                .map(|o|o.schema.clone())
         } else {
             node.checked_sub(1)
                 .and_then(|i| self.state.schema_names.get((i / 5) as usize))

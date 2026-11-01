@@ -56,6 +56,7 @@ mod browse_rowid;
 mod browse_edit;
 mod fk_values;
 mod desktop_workflow;
+mod structure_tree;
 mod browse_menu;
 mod schema_dock;
 mod detach;
@@ -265,6 +266,7 @@ struct Demo {
     last_plot_ratio: Option<f32>,
     last_tree_sel: Option<u64>,
     last_schema_names: Vec<String>,
+    last_structure_objects: Vec<(String,String,String)>,
     reveal_schema_selection: bool,
     last_tab: usize,
     last_browse_sel: Option<usize>,
@@ -1866,6 +1868,7 @@ impl Demo {
         let last_log_revision = state.sql_log.revision();
         let last_edit_revision = state.edit_revision;
         let last_schema_names = state.schema_names.clone();
+        let last_structure_objects = crate::structure_tree::identities(&state);
         let ids = BuiltUiIds::from(&built);
         let filter_session = browse_filter::Session::new(&state, &built.ui, &ids);
         Self {
@@ -1895,6 +1898,7 @@ impl Demo {
             qa_stepper_started: false,
             last_tree_sel: None,
             last_schema_names,
+            last_structure_objects,
             reveal_schema_selection: false,
             last_tab: 0,
             last_browse_sel: None,
@@ -1923,6 +1927,7 @@ impl Demo {
         self.snapshot_column_picker();
         self.snapshot_view_key_dialog();
         if self.ids.tree.0 != 0 {
+            crate::structure_tree::snapshot(&mut self.state,&self.ui,self.ids.tree,&self.last_structure_objects);
             for (database, name) in self.last_schema_names.iter().enumerate() {
                 if !self.state.schema_names.contains(name) { continue; }
                 let root = database as u64 * 5 + 1;
@@ -3394,6 +3399,7 @@ impl Demo {
             self.ui.set_focus(Some(id));self.ui.sync(&mut self.scene);
         }
         self.last_schema_names = self.state.schema_names.clone();
+        self.last_structure_objects = crate::structure_tree::identities(&self.state);
         if self.ids.tree.0 != 0 {
             let reveal = std::mem::take(&mut self.reveal_schema_selection);
             if reveal { self.ui.reveal_tree_selection(self.ids.tree); }
@@ -5811,6 +5817,9 @@ impl AppCallbacks for Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("desktop-browse")) {
             self.ui.set_focus(Some(self.ids.browse_table)); self.ui.sync(&mut self.scene);
         }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("desktop-structure")) {
+            self.ui.set_focus(Some(self.ids.tree)); self.ui.sync(&mut self.scene);
+        }
         self.scene.mark_full_dirty(w as f32, h as f32);
         ctx.set_title(&format!("next-gui DB Browser — {}", self.backend.name()));
         eprintln!(
@@ -6955,6 +6964,8 @@ mod interaction_tests {
         assert_eq!(demo.ui.focused(), Some(demo.ids.tree));
         assert!(demo.ui.tree_scroll_offset(demo.ids.tree).unwrap() > 0.0);
         assert_eq!(demo.ui.tree_selected(demo.ids.tree), Some(10_080));
+        // Objects now contain field rows; collapse before moving to the next table.
+        demo.ui.set_tree_expanded(demo.ids.tree,10_080,false);
         assert!(demo.ui.key_input(UiKey::Down));
         demo.snapshot_inputs();
         demo.poll_selection_changes();

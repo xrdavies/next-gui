@@ -491,6 +491,10 @@ pub struct AppState {
     pub schema: Vec<SchemaObject>,
     pub schema_names: Vec<String>,
     pub(crate) attached_files: BTreeMap<String, Vec<u8>>,
+    pub structure_fields: Vec<Vec<crate::structure_tree::Field>>,
+    pub schema_field: Option<String>,
+    pub structure_widths: Vec<f32>,
+    pub structure_expanded: BTreeMap<(String,String,String),bool>,
     pub schema_tree_expanded: BTreeMap<String, [bool; 5]>,
     pub schema_tree_scroll: f32,
     pub schema_dock: crate::schema_dock::State,
@@ -877,6 +881,10 @@ impl AppState {
             schema: Vec::new(),
             schema_names: Vec::new(),
             attached_files: BTreeMap::new(),
+            structure_fields: Vec::new(),
+            schema_field: None,
+            structure_widths: Vec::new(),
+            structure_expanded: BTreeMap::new(),
             schema_tree_expanded: BTreeMap::new(),
             schema_tree_scroll: 0.0,
             schema_dock: crate::schema_dock::State::default(),
@@ -888,7 +896,7 @@ impl AppState {
             status_msg: "Ready".into(),
             error_msg: None,
             body_ratio: 0.72,
-            structure_ratio: 0.34,
+            structure_ratio: 0.68,
             dock_ratio: 0.38,
             plot_ratio: 0.45,
             shell_scroll: (0.0,0.0),
@@ -1445,6 +1453,7 @@ impl AppState {
     pub fn refresh_schema(&mut self) -> Result<(), String> {
         let Some(conn) = self.conn.as_ref() else {
             self.schema.clear();
+            self.structure_fields.clear();self.schema_field=None;
             self.schema_names.clear();
             self.sql_completion = crate::sql_completion::Catalog::default();
             self.database_encoding.clear();
@@ -1459,6 +1468,7 @@ impl AppState {
         self.schema = schema;
         self.schema_names = schema_names;
         self.sql_completion = crate::sql_completion::Catalog::load(conn);
+        self.structure_fields = crate::structure_tree::load(&self.schema,&self.sql_completion);
         self.database_encoding = encoding;
         Ok(())
     }
@@ -1744,7 +1754,7 @@ impl AppState {
     }
 
     pub fn schema_selection_has_draft(&self, node_id: u64) -> bool {
-        let obj = node_id.checked_sub(10_000).and_then(|i| self.schema.get(i as usize));
+        let obj = crate::structure_tree::object_index(self,node_id).and_then(|i|self.schema.get(i));
         let group = node_id > 0 && node_id <= self.schema_names.len() as u64 * 5;
         if obj.is_none() && !group { return false; }
         if obj.is_some_and(|obj| self.selected.as_ref().is_some_and(|s| s.schema == obj.schema && s.kind == obj.kind && s.name == obj.name)) { return false; }
@@ -1753,6 +1763,9 @@ impl AppState {
     }
 
     pub fn select_schema_node(&mut self, node_id: u64) {
+        let field = crate::structure_tree::field_at(self,node_id).map(|(object,field)|(object,field.name.clone()));
+        self.schema_field = field.as_ref().map(|(_,name)|name.clone());
+        let node_id = field.map_or(node_id,|(object,_)|10000+object as u64);
         if node_id < 10_000 {
             if node_id > 0 && node_id <= self.schema_names.len() as u64 * 5 {
                 let group = (self.schema_names[((node_id - 1) / 5) as usize].clone(), (node_id - 1) % 5);
@@ -2561,6 +2574,7 @@ impl AppState {
         self.ddl_draft.clear();
         self.schema_group = None;
         self.schema_tree_expanded.clear();
+        self.structure_fields.clear();self.structure_expanded.clear();self.schema_field=None;
         self.schema_tree_scroll = 0.0;
         self.schema_dock = crate::schema_dock::State::default();
         self.sql_result = None;

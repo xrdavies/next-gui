@@ -12,7 +12,10 @@ pub struct ProjectFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub db4s_xml: Option<String>,
     pub body_ratio: f32,
+    // Old left/right ratios do not describe the new top/bottom structure panes.
+    #[serde(rename = "structure_rows_ratio")]
     pub structure_ratio: f32,
+    pub structure_widths: Vec<f32>,
     pub dock_ratio: f32,
     pub plot_ratio: f32,
     pub dock_focus: crate::state::DockKind,
@@ -59,6 +62,7 @@ impl ProjectFile {
             db4s_xml: state.project_xml.clone(),
             body_ratio: state.body_ratio,
             structure_ratio: state.structure_ratio,
+            structure_widths: state.structure_widths.clone(),
             dock_ratio: state.dock_ratio,
             plot_ratio: state.plot_ratio,
             dock_focus: state.dock_focus,
@@ -135,6 +139,7 @@ impl ProjectFile {
         state.project_xml = self.db4s_xml.clone();
         state.body_ratio = self.body_ratio.clamp(0.05, 0.95);
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
+        state.structure_widths = self.structure_widths.iter().take(2).copied().map(|width|if width.is_finite() {width.max(24.0)} else {110.0}).collect();
         state.dock_ratio = if self.dock_ratio.is_finite() {self.dock_ratio.clamp(0.05,0.95)}else{0.38};
         state.plot_ratio = if self.plot_ratio.is_finite() { self.plot_ratio.clamp(0.05,0.95) } else { 0.45 };
         state.dock_focus = if self.dock_focus==crate::state::DockKind::EditCell {crate::state::DockKind::Remote}else{self.dock_focus};
@@ -190,7 +195,8 @@ impl Default for ProjectFile {
             db_path: String::new(),
             db4s_xml: None,
             body_ratio: 0.72,
-            structure_ratio: 0.34,
+            structure_ratio: 0.68,
+            structure_widths: Vec::new(),
             dock_ratio: 0.38,
             plot_ratio: 0.45,
             dock_focus: crate::state::DockKind::Schema,

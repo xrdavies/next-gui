@@ -55,7 +55,7 @@ pub struct Calltip {
 #[derive(Debug, Clone)]
 pub struct Catalog {
     entries: Vec<Entry>,
-    columns: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    columns: BTreeMap<String, BTreeMap<String, Vec<(String, String)>>>,
     functions: BTreeMap<String, BTreeMap<i32, bool>>,
     pub warning: Option<String>,
 }
@@ -106,7 +106,11 @@ impl Catalog {
     /// Cached qualified columns, including generated/virtual fields; no database work during paint.
     pub fn columns_in(&self, schema: &str, table: &str) -> impl Iterator<Item = &str> {
         self.columns.get(schema).and_then(|tables| tables.get(table))
-            .into_iter().flatten().map(String::as_str)
+            .into_iter().flatten().map(|(name, _)| name.as_str())
+    }
+
+    pub fn column_types_in(&self, schema: &str, table: &str) -> &[(String, String)] {
+        self.columns.get(schema).and_then(|tables| tables.get(table)).map_or(&[],Vec::as_slice)
     }
 
     fn add(&mut self, path: Vec<String>, category: Category) {
@@ -168,14 +172,14 @@ impl Catalog {
                         quote_ident(&table)
                     ))?;
                     let columns = stmt
-                        .query_map([], |r| r.get::<_, String>("name"))?
+                        .query_map([], |r| Ok((r.get::<_, String>("name")?,r.get::<_, String>("type")?)))?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
                     Ok::<_, rusqlite::Error>(columns)
                 })();
                 match columns {
                     Ok(columns) => {
                         self.columns.entry(schema.clone()).or_default().insert(table.clone(), columns.clone());
-                        for column in columns {
+                        for (column, _) in columns {
                             self.add(vec![column.clone()], Category::Column);
                             self.add(vec![table.clone(), column.clone()], Category::Column);
                             self.add(

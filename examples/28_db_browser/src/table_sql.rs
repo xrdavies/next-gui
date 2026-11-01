@@ -1507,6 +1507,22 @@ fn foreign_key_groups(constraints: &[NamedColumnConstraint]) -> Vec<Vec<usize>> 
     groups
 }
 
+pub fn structure_index_fields(sql:&str)->Result<Vec<(String,String,String)>,String> {
+    let Cmd::Stmt(Stmt::CreateIndex {columns,..})=parse(sql)? else {return Ok(Vec::new());};
+    Ok(columns.iter().map(|column|(
+        index_column_name(&column.expr).as_ref().map(identifier_text).unwrap_or_else(||SqlFragment(&column.expr).to_string()),
+        column.order.as_ref().map(|order|SqlFragment(order).to_string()).unwrap_or_else(||"ASC".into()),
+        SqlFragment(column).to_string(),
+    )).collect())
+}
+
+/// Canonical field definitions for the read-only structure view.
+pub fn field_definitions(sql: &str) -> Result<Vec<(String,String)>, String> {
+    let Cmd::Stmt(Stmt::CreateTable { body: CreateTableBody::ColumnsAndConstraints { columns, .. }, .. }) = parse(sql)?
+        else { return Ok(Vec::new()); };
+    Ok(columns.values().map(|column| (identifier_text(&column.col_name),SqlFragment(column).to_string())).collect())
+}
+
 pub fn read_column_constraints(sql: &str, definitions: &mut [ColDef]) -> Result<(), String> {
     let Cmd::Stmt(Stmt::CreateTable {
         body: CreateTableBody::ColumnsAndConstraints { columns, .. },
