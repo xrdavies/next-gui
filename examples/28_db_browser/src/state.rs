@@ -510,6 +510,7 @@ pub struct AppState {
 
     pub body_ratio: f32,
     pub structure_ratio: f32,
+    pub sql_ratio: f32,
     pub dock_ratio: f32,
     pub plot_ratio: f32,
     pub shell_scroll: (f32, f32),
@@ -900,6 +901,7 @@ impl AppState {
             error_msg: None,
             body_ratio: 0.72,
             structure_ratio: 0.68,
+            sql_ratio: 0.5,
             dock_ratio: 0.38,
             plot_ratio: 0.45,
             shell_scroll: (0.0,0.0),

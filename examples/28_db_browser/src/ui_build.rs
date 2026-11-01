@@ -114,6 +114,7 @@ pub struct BuiltUi {
     pub reference_editor: crate::reference_editor::Controls,
     pub body_splitter: WidgetId,
     pub structure_splitter: WidgetId,
+    pub sql_splitter: WidgetId,
     pub dock_splitter: WidgetId,
     pub plot_splitter: WidgetId,
     pub dock_scrolls: [WidgetId;5],
@@ -600,6 +601,7 @@ pub fn build_ui(
     let z = WidgetId(0);
     let mut body_splitter = z;
     let mut structure_splitter = z;
+    let mut sql_splitter = z;
     let mut dock_splitter = z;
     let mut plot_splitter = z;
     let mut dock_scrolls = [z;5];
@@ -1849,15 +1851,19 @@ pub fn build_ui(
             sql_tb.padding = 0.0;
             sql_tb.gap = 4.0;
             sql_tb.cross_align = CrossAlign::Center;
+            let mut sql_split = SplitterStyle::from_theme(&theme);
+            sql_split.width = main_w - 24.0;
+            sql_split.height = (page_scroll_style.height - tool_row.height - page_scroll_style.gap
+                - if state.toolbar_sql { sql_tb.height + page_scroll_style.gap } else { 0.0 }).max(280.0);
+            sql_split.axis = Axis::Horizontal;
+            sql_split.ratio = if state.sql_ratio.is_finite() { state.sql_ratio } else { 0.5 };
             let mut sql_area_style = TextAreaStyle::from_theme(&theme);
-            sql_area_style.width = main_w - 24.0;
-            sql_area_style.height = (page_scroll_style.height * 0.42).clamp(120.0, 380.0);
+            sql_area_style.width = sql_split.width;
+            sql_area_style.height = 300.0;
+            let sql_results_style = ColumnStyle { width:sql_split.width,height:300.0,padding:0.0,gap:4.0,..ColumnStyle::from_theme(&theme) };
             let mut sql_table_style = TableStyle::from_theme(&theme);
-            sql_table_style.width = main_w - 24.0;
-            let sql_controls_h = sql_area_style.height + 2.0 * tool_row.height
-                + AlertStyle::from_theme(&theme).height + 4.0 * page_scroll_style.gap
-                + if state.toolbar_sql { sql_tb.height + page_scroll_style.gap } else { 0.0 };
-            sql_table_style.height = (page_scroll_style.height - sql_controls_h).max(120.0);
+            sql_table_style.width = sql_split.width;
+            sql_table_style.height = 200.0;
 
             let has_dock_tabs = !state.visible_dock_tabs().is_empty();
             let mut dock_split = SplitterStyle::from_theme(&theme);
@@ -2247,7 +2253,10 @@ pub fn build_ui(
                                 btn_sql_close = row.tool_button("Close Tab");
                             });
                             sql_tabs_w = WidgetId(0);
-                            sql_area = p.text_area(&sql_editor, "SQL…", sql_area_style);
+                            sql_splitter = p.splitter(sql_split,
+                                |p| { sql_area = p.text_area(&sql_editor, "SQL…", sql_area_style); },
+                                |p| { p.column(sql_results_style, |p| {
+
                             let tone = if state.error_msg.is_some() {
                                 AlertTone::Error
                             } else if state.sql_busy {
@@ -2273,6 +2282,7 @@ pub fn build_ui(
                             sql_table = if let Some(values) = state.sql_result.as_ref().and_then(|result| result.all_values.clone()) {
                                 p.data_table(sql_cols.clone(), values, sql_table_style)
                             } else { p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style) };
+                                }); });
                             });
                         });
                     });
@@ -2922,6 +2932,9 @@ pub fn build_ui(
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     let view_keys = crate::view_keys::build(&mut ui, state, &theme, width as f32);
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
+    ui.set_accessible_name(sql_splitter,"Resize SQL editor and query results");
+    ui.set_flex_fill(sql_table,true);
+    ui.set_splitter_min_sizes(sql_splitter,120.0,AlertStyle::from_theme(&theme).height+32.0+8.0+96.0);
     ui.sync(&mut scene);
     crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
     crate::view_keys::restore(&mut ui, view_keys, state.view_key_dialog.as_ref());
@@ -3025,6 +3038,7 @@ pub fn build_ui(
         reference_editor,
         body_splitter,
         structure_splitter,
+        sql_splitter,
         dock_splitter,
         plot_splitter,
         dock_scrolls,

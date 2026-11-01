@@ -56,6 +56,7 @@ mod browse_rowid;
 mod browse_edit;
 mod fk_values;
 mod desktop_workflow;
+mod sql_layout;
 mod structure_tree;
 mod browse_menu;
 mod schema_dock;
@@ -262,6 +263,7 @@ struct Demo {
     qa_stepper_started: bool,
     last_body_ratio: Option<f32>,
     last_structure_ratio: Option<f32>,
+    last_sql_ratio: Option<f32>,
     last_dock_ratio: Option<f32>,
     last_plot_ratio: Option<f32>,
     last_tree_sel: Option<u64>,
@@ -303,6 +305,7 @@ struct BuiltUiIds {
     status: WidgetId,
     body_splitter: WidgetId,
     structure_splitter: WidgetId,
+    sql_splitter: WidgetId,
     dock_splitter: WidgetId,
     plot_splitter: WidgetId,
     dock_scrolls: [WidgetId;5],
@@ -565,6 +568,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             status: b.status,
             body_splitter: b.body_splitter,
             structure_splitter: b.structure_splitter,
+            sql_splitter: b.sql_splitter,
             dock_splitter: b.dock_splitter,
             plot_splitter: b.plot_splitter,
             dock_scrolls: b.dock_scrolls,
@@ -1882,6 +1886,7 @@ impl Demo {
             ids,
             last_body_ratio: built.ui.splitter_ratio(built.body_splitter),
             last_structure_ratio: built.ui.splitter_ratio(built.structure_splitter),
+            last_sql_ratio: built.ui.splitter_ratio(built.sql_splitter),
             last_dock_ratio: built.ui.splitter_ratio(built.dock_splitter),
             last_plot_ratio: built.ui.splitter_ratio(built.plot_splitter),
             scene: built.scene,
@@ -1947,6 +1952,10 @@ impl Demo {
         if let Some(ratio) = self.ui.splitter_ratio(self.ids.structure_splitter) {
             if Some(ratio) != self.last_structure_ratio { self.state.structure_ratio = ratio; }
             self.last_structure_ratio = Some(ratio);
+        }
+        if let Some(ratio) = self.ui.splitter_ratio(self.ids.sql_splitter) {
+            if Some(ratio) != self.last_sql_ratio { self.state.sql_ratio = ratio; }
+            self.last_sql_ratio = Some(ratio);
         }
         if let Some(value) = self.ui.text_input_value(self.ids.sql_view_name) { self.state.sql_view_name = value.to_string(); }
         if let Some(offset) = self.ui.scroll_offset(self.ids.page_scroll) { self.state.page_scroll[self.last_tab] = offset; }
@@ -3271,6 +3280,7 @@ impl Demo {
         );
         self.last_body_ratio = built.ui.splitter_ratio(built.body_splitter);
         self.last_structure_ratio = built.ui.splitter_ratio(built.structure_splitter);
+        self.last_sql_ratio = built.ui.splitter_ratio(built.sql_splitter);
         self.last_dock_ratio = built.ui.splitter_ratio(built.dock_splitter);
         self.last_plot_ratio = built.ui.splitter_ratio(built.plot_splitter);
         self.browse_header_column = None;
