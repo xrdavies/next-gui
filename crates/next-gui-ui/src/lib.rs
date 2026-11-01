@@ -10654,6 +10654,14 @@ impl Ui {
     }
 
     fn rebase_data_size(&mut self, id: WidgetId, width: f32, height: f32) {
+        let table_scroll = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Table { style, scroll_x, scroll_y, .. })
+                if style.width != width || style.height != height => {
+                    let maximum = self.data_max_scroll_y(id);
+                    Some((*scroll_x, *scroll_y, maximum > 0.0 && *scroll_y + style.padding + 1.0 >= maximum))
+                }
+            _ => None,
+        };
         if let Some(w) = self.widgets.get_mut(&id) {
             match &mut w.kind {
                 Kind::TextArea { style, .. } | Kind::HexEditor { style, .. } => {
@@ -10678,6 +10686,10 @@ impl Ui {
                 }
                 _ => {}
             }
+        }
+        if let Some((x, y, at_bottom)) = table_scroll {
+            let y = if at_bottom { self.data_max_scroll_y(id) } else { y };
+            self.set_any_scroll(id, x, y);
         }
     }
 

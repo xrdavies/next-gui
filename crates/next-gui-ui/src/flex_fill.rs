@@ -120,6 +120,9 @@ mod tests {
         assert!(!ui.set_flex_fill(WidgetId(0), true));
         ui.set_splitter_min_sizes(split, 80.0, 100.0);
         ui.sync(&mut scene);
+        ui.set_table_selected_row(table, Some(999));
+        ui.reveal_table_selection(table);
+        ui.sync(&mut scene);
         let bounds =
             |ui: &Ui, scene: &Scene, id| scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
         let mut heights = Vec::new();
@@ -138,10 +141,18 @@ mod tests {
             assert_eq!(t.y, bar.y + bar.height + 6.0);
             assert!((t.y + t.height - 496.0).abs() < 0.01);
             assert_eq!(t.width, 592.0);
+            assert_eq!(
+                ui.table_cell_at(&scene, table, t.x + 20.0, t.y + t.height - 15.0),
+                Some((999, 0))
+            );
             assert!(ui.widgets[&table].aux.len() < 150);
             heights.push(t.height);
         }
         assert!(heights[0] > heights[2] && heights[2] > heights[1]);
+        ui.set_table_scroll_offset(table, 0.0, 2000.0);
+        ui.set_splitter_ratio(split, 0.6);
+        ui.sync(&mut scene);
+        assert_eq!(ui.table_scroll_offset(table).unwrap().1, 2000.0);
         let params = FlexParams::row(0.0, 0.0, 100.0, 40.0);
         let measures = ui.flex_child_measures(&params, &[table, toolbar]);
         assert_eq!(measures[0], ChildMeasure::new(0.0, 40.0));
