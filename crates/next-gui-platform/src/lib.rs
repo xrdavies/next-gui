@@ -63,6 +63,8 @@ pub struct WindowAttrs {
     pub width: u32,
     /// Client height in **physical** pixels (see [`Self::width`]).
     pub height: u32,
+    /// Start maximized within the current monitor work area.
+    pub maximized: bool,
     /// Present backend (softbuffer vs GPU-first surface).
     pub present_backend: PresentBackend,
 }
@@ -74,8 +76,15 @@ impl WindowAttrs {
             title: title.into(),
             width,
             height,
+            maximized: false,
             present_backend: PresentBackend::Softbuffer,
         }
+    }
+
+    /// Builder: start maximized without changing monitor resolution or entering fullscreen.
+    pub fn with_maximized(mut self, maximized: bool) -> Self {
+        self.maximized = maximized;
+        self
     }
 
     /// Builder: GPU-first window without softbuffer.

@@ -185,7 +185,8 @@ impl<A: AppCallbacks> ApplicationHandler for Runner<A> {
         let size = PhysicalSize::new(self.attrs.width.max(1), self.attrs.height.max(1));
         let winit_attrs = WinitWindow::default_attributes()
             .with_title(self.attrs.title.clone())
-            .with_inner_size(size);
+            .with_inner_size(size)
+            .with_maximized(self.attrs.maximized);
         let window = match event_loop.create_window(winit_attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {

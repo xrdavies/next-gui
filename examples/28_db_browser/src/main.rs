@@ -55,6 +55,7 @@ mod state;
 mod browse_rowid;
 mod browse_edit;
 mod fk_values;
+mod desktop_workflow;
 mod browse_menu;
 mod schema_dock;
 mod detach;
@@ -1711,6 +1712,9 @@ impl Demo {
                 if tab.contains("escape") {state.prefs.filter_escape="!".into();}
                 if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
             }
+        }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("desktop-") { desktop_workflow::prepare(&mut state, &tab).expect("Desktop workflow fixture"); }
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             if tab.starts_with("fk-values") { fk_values::prepare_qa(&mut state, tab.ends_with("narrow")); }
@@ -5779,6 +5783,7 @@ impl AppCallbacks for Demo {
         let (w, h) = ctx.size();
         self.win_w = w;
         self.win_h = h;
+        self.backend.resize(w, h);
         if self.pending_native {
             self.pending_native = false;
             let window = ctx.winit_window();
@@ -5800,6 +5805,11 @@ impl AppCallbacks for Demo {
                 }
                 Err(e) => eprintln!("e28_db_browser: GPU unavailable ({e}); Soft only"),
             }
+        }
+        self.rebuild = true;
+        self.do_rebuild();
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("desktop-browse")) {
+            self.ui.set_focus(Some(self.ids.browse_table)); self.ui.sync(&mut self.scene);
         }
         self.scene.mark_full_dirty(w as f32, h as f32);
         ctx.set_title(&format!("next-gui DB Browser — {}", self.backend.name()));
@@ -5987,7 +5997,7 @@ impl AppCallbacks for Demo {
                         KeyCode::Char('s' | 'S') if self.state.overlay.is_none() => {
                             if self.state.tab == MainTab::ExecuteSql {
                                 self.action_save_sql(modifiers.shift);
-                            } else { self.handle_menu(mid::FILE_SAVE_ALL); }
+                            } else { self.handle_menu(if modifiers.shift { mid::FILE_SAVE_ALL } else { mid::FILE_WRITE }); }
                             self.after_ui(ctx);
                             return;
                         }
@@ -6294,11 +6304,16 @@ fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
     let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("cell-context") || tab.starts_with("fk-values") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("browse-completion") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let desktop_qa = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("desktop-"));
+    let (width,height) = if desktop_qa { (1600,900) } else { (width,height) };
+    let maximize = std::env::var_os("NEXT_GUI_DB_BROWSER_QA_TAB").is_none()
+        || std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.ends_with("-maximized"));
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
         WindowAttrs::new("next-gui DB Browser", width, height)
     };
+    let attrs = attrs.with_maximized(maximize);
     let demo = Demo::new(attrs.width, attrs.height, attrs.present_backend);
     #[cfg(target_os = "macos")]
     let result = next_gui_platform::macos::run(attrs, demo);
@@ -7594,7 +7609,7 @@ mod interaction_tests {
             write_ppm(&PathBuf::from(path).with_extension("browse.ppm").to_string_lossy(), renderer.frame_pixels().unwrap().0, 800, 600).unwrap();
         }
         demo.snapshot_inputs();
-        assert_eq!(demo.state.body_ratio, 0.45, "Resizing must not replace the preferred ratio");
+        assert_eq!(demo.state.body_ratio, 0.72, "Resizing must not replace the preferred ratio");
         let bounds = demo.scene.iter_paint_order().into_iter().find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.btn_edit_cell)).unwrap().bounds;
         assert!(bounds.x >= 0.0 && bounds.x + bounds.width < 800.0, "Apply must remain reachable at 800px: {bounds:?}");
         demo.ui.set_splitter_ratio(demo.ids.body_splitter, 0.60);

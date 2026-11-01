@@ -513,36 +513,24 @@ pub fn table_field_checks(state: &AppState) -> Vec<Vec<Option<bool>>> {
         Some(column.auto_increment),Some(column.unique)]).collect()
 }
 
-fn decorate_browse_cols(state: &AppState, cols: &[String]) -> Vec<TableColumn> {
-    let n = cols.len().max(1);
-    let w = (720.0 / n as f32).clamp(72.0, 200.0);
-    if cols.is_empty() {
-        return vec![TableColumn::new("—", 120.0)];
-    }
-    let ordering = state.browse().ordering();
-    cols.iter()
-        .map(|c| {
-            let title = if let Some((priority, order)) = ordering.iter().enumerate().find(|(_, o)| o.column == *c) {
-                let arrow = if order.descending { "▼" } else { "▲" };
-                if ordering.len() > 1 { format!("{c} {arrow}{}", priority + 1) } else { format!("{c} {arrow}") }
-            } else { c.clone() };
-            TableColumn::new(title, w)
-        })
-        .collect()
+fn result_columns(font: &Font, size: f32, result: &db::QueryResult) -> Vec<TableColumn> {
+    result.columns.iter().enumerate().map(|(column, name)| {
+        let measure = |text: &str| font.measure_line(&text.chars().take(128).take_while(|ch| !matches!(ch, '\n' | '\r')).collect::<String>(), size).0;
+        let width = result.rows.iter().take(64).filter_map(|row| row.get(column))
+            .map(|value| measure(value)).fold(measure(name) + 18.0, f32::max);
+        TableColumn::new(name, (width + 20.0).clamp(72.0, 320.0))
+    }).collect()
 }
 
-fn result_columns(cols: &[String], fallback: &[&str]) -> Vec<TableColumn> {
-    if cols.is_empty() {
-        return fallback
-            .iter()
-            .map(|t| TableColumn::new(*t, 120.0))
-            .collect();
-    }
-    let n = cols.len().max(1);
-    let w = (720.0 / n as f32).clamp(72.0, 200.0);
-    cols.iter()
-        .map(|c| TableColumn::new(c.clone(), w))
-        .collect()
+fn decorate_browse_cols(state: &AppState, columns: Vec<TableColumn>) -> Vec<TableColumn> {
+    let ordering = state.browse().ordering();
+    columns.into_iter().map(|mut column| {
+        if let Some((priority, order)) = ordering.iter().enumerate().find(|(_, order)| order.column == column.title) {
+            let arrow = if order.descending { "▼" } else { "▲" };
+            column.title = if ordering.len() > 1 { format!("{} {arrow}{}", column.title, priority + 1) } else { format!("{} {arrow}", column.title) };
+        }
+        column
+    }).collect()
 }
 
 /// Desktop typography and restrained surfaces, using the same widget token system.
@@ -605,6 +593,7 @@ pub fn build_ui(
     let generated_cell = !sql_cell && state.edit_cell_generated();
     let cell_read_only = state.edit_cell_read_only();
     theme = browser_theme(theme, state.prefs.font_size);
+    let column_font = font.clone();
     let mut scene = Scene::new();
     let mut ui = Ui::with_font(font);
     ui.set_theme(theme);
@@ -1747,7 +1736,7 @@ pub fn build_ui(
                 .browse()
                 .result
                 .as_ref()
-                .map(|r| decorate_browse_cols(state, &r.columns))
+                .map(|r| decorate_browse_cols(state, result_columns(&column_font, theme.typography.body, r)))
                 .unwrap_or_else(|| vec![TableColumn::new("—", 120.0)]);
             let browse_rows = state
                 .browse()
@@ -1758,7 +1747,7 @@ pub fn build_ui(
             let sql_cols = state
                 .sql_result
                 .as_ref()
-                .map(|r| result_columns(&r.columns, &["result"]))
+                .map(|r| result_columns(&column_font, theme.typography.body, r))
                 .unwrap_or_else(|| vec![TableColumn::new("result", 200.0)]);
             let sql_rows = state
                 .sql_result
@@ -1876,7 +1865,7 @@ pub fn build_ui(
             sql_tb.cross_align = CrossAlign::Center;
             let mut sql_area_style = TextAreaStyle::from_theme(&theme);
             sql_area_style.width = main_w - 24.0;
-            sql_area_style.height = 120.0;
+            sql_area_style.height = (page_scroll_style.height * 0.42).clamp(120.0, 380.0);
             let mut sql_table_style = TableStyle::from_theme(&theme);
             sql_table_style.width = main_w - 24.0;
             let sql_controls_h = sql_area_style.height + 2.0 * tool_row.height

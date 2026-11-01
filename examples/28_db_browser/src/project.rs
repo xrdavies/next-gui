@@ -189,11 +189,11 @@ impl Default for ProjectFile {
         Self {
             db_path: String::new(),
             db4s_xml: None,
-            body_ratio: 0.45,
+            body_ratio: 0.72,
             structure_ratio: 0.34,
             dock_ratio: 0.38,
             plot_ratio: 0.45,
-            dock_focus: crate::state::DockKind::Remote,
+            dock_focus: crate::state::DockKind::Schema,
             dock_remote: true,
             read_only: false,
             cond_rules: Vec::new(),
