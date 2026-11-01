@@ -670,6 +670,8 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
 pub struct SqlExecution {
     pub result: Result<QueryResult, String>,
     pub message: String,
+    /// Byte range in the submitted SQL; never an offset in expanded/bound SQL.
+    pub error_range: Option<std::ops::Range<usize>>,
 }
 
 pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> {
@@ -680,6 +682,8 @@ pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> 
 pub fn execute_sql_report(conn: &Connection, sql: &str) -> SqlExecution {
     let mut completed = 0;
     let mut detail = String::new();
+    let mut error_range = None;
+    let mut cursor = 0;
     let result = (|| {
         if sql.trim().is_empty() { return Err("empty SQL".into()); }
         let mut batch = rusqlite::Batch::new(conn, sql);
@@ -690,11 +694,23 @@ pub fn execute_sql_report(conn: &Connection, sql: &str) -> SqlExecution {
                 Ok(Some(stmt)) => stmt,
                 Ok(None) => break,
                 Err(error) => {
+                    error_range = Some(match &error {
+                        rusqlite::Error::SqlInputError { sql: tail, offset, .. } if sql.ends_with(tail.as_str()) && *offset >= 0 => {
+                            let start = sql.len() - tail.len() + *offset as usize;
+                            let start = start.min(sql.len());
+                            let start = (0..=start).rev().find(|&i| sql.is_char_boundary(i)).unwrap_or(0);
+                            let token = &sql[start..];
+                            let length = token.char_indices().take_while(|(_, c)| c.is_alphanumeric() || *c == '_').last().map_or_else(|| token.chars().next().map_or(0, char::len_utf8), |(i,c)| i+c.len_utf8());
+                            start..start+length
+                        }
+                        _ => cursor..sql.len(),
+                    });
                     detail = format!("Statement {}: preparation failed\nResult: {error}", completed + 1);
                     return Err(error.to_string());
                 }
             };
             let source = stmt.expanded_sql().unwrap_or_default();
+            let statement_range = sql[cursor..].find(&source).filter(|_| !source.is_empty()).map(|i| cursor+i..cursor+i+source.len());
             let before = conn.total_changes();
             let readonly = stmt.readonly();
             let mutation = if readonly || stmt.is_explain() != 0 { Some(false) } else { row_mutation(&source) };
@@ -739,6 +755,8 @@ pub fn execute_sql_report(conn: &Connection, sql: &str) -> SqlExecution {
                 Err(error) => format!("Error: {error}"),
             };
             detail = format!("Statement {}: {status} in {} ms\n\n{source}", completed + 1, started.elapsed().as_millis());
+            if current.is_err() { error_range = Some(statement_range.clone().unwrap_or(cursor..sql.len())); }
+            if let Some(range) = statement_range { cursor = range.end; }
             result = Some(current?);
             completed += 1;
         }
@@ -748,7 +766,7 @@ pub fn execute_sql_report(conn: &Connection, sql: &str) -> SqlExecution {
     if detail.is_empty() {
         if let Err(error) = &result { detail.clone_from(error); }
     }
-    SqlExecution { result, message: format!("{status}\n{completed} statement(s) completed.\n\n{detail}") }
+    SqlExecution { result, error_range, message: format!("{status}\n{completed} statement(s) completed.\n\n{detail}") }
 }
 
 fn row_mutation(sql: &str) -> Option<bool> {

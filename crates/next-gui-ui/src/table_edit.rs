@@ -68,8 +68,8 @@ impl Ui {
     pub fn take_table_cell_edit(&mut self) -> Option<(WidgetId,TableCellEditEvent)> {self.pending_table_cell_edit.take()}
 
     pub(super) fn begin_table_cell_edit(&mut self,id:WidgetId,row:usize,column:usize,key:Option<UiKey>)->bool {
-        let Some(Widget {kind:Kind::Table {rows,editable_columns,checks,..},..})=self.widgets.get(&id) else {return false;};
-        if row>=rows.len() || !editable_columns.contains(&column) || checks.get(row).and_then(|row|row.get(column)).copied().flatten().is_some() {return false;}
+        let Some(Widget {kind:Kind::Table {rows,columns,editable_columns,checks,..},..})=self.widgets.get(&id) else {return false;};
+        if row>=rows.len() || !columns.get(column).is_some_and(|c| c.visible) || !editable_columns.contains(&column) || checks.get(row).and_then(|row|row.get(column)).copied().flatten().is_some() {return false;}
         self.set_table_selected_row(id,Some(row));self.set_table_selected_col(id,Some(column));self.reveal_table_selection(id);
         self.pending_table_cell_edit=Some((id,TableCellEditEvent::Begin {row,column,key}));true
     }
@@ -90,7 +90,8 @@ impl Ui {
                 if let Some(control)=next.and_then(|index|controls.get(index)).copied() {
                     self.close_popup_internal();self.focus=Some(control);return Some(true);
                 }
-                let Some(Widget {kind:Kind::Table {editable_columns,rows,checks,..},..})=self.widgets.get(&table) else {return None;};
+                let Some(Widget {kind:Kind::Table {editable_columns,columns,rows,checks,..},..})=self.widgets.get(&table) else {return None;};
+                let editable_columns = visible_table_columns(columns).into_iter().filter(|i| editable_columns.contains(i)).collect::<Vec<_>>();
                 let position=editable_columns.iter().position(|&column|column==editor.column)?;
                 let index=editor.row*editable_columns.len()+position;
                 let mut next=if key==UiKey::Tab {index.checked_add(1)} else {index.checked_sub(1)};

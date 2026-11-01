@@ -80,6 +80,11 @@ pub mod mid {
     pub const BROWSE_COPY_COLUMN: u64 = 72;
     pub const BROWSE_UNLOCK_VIEW: u64 = 73;
     pub const BROWSE_SHOW_ROWID: u64 = 74;
+    pub const BROWSE_HIDE_COLUMN: u64 = 75;
+    pub const BROWSE_COLUMN_LEFT: u64 = 76;
+    pub const BROWSE_COLUMN_RIGHT: u64 = 77;
+    pub const BROWSE_RESET_COLUMNS: u64 = 78;
+    pub const BROWSE_VISIBLE_COLUMN: u64 = 10_000;
     pub const PLOT_COPY: u64 = 80;
     pub const PLOT_SAVE: u64 = 81;
     pub const PLOT_FIT: u64 = 82;
@@ -2119,7 +2124,9 @@ pub fn build_ui(
                                     browse_form_scroll = p.scroll_area(form_scroll, |p| {
                                     if let Some(res) = res {
                                         let cells = res.values.row(row_i).ok();
-                                        for (ci, cname) in res.columns.iter().enumerate() {
+                                        form_fields.resize(res.columns.len(), WidgetId(0));
+                                        for ci in b.visible_columns() {
+                                            let cname = &res.columns[ci];
                                             let val = cells.as_ref()
                                                 .and_then(|r| r.get(ci))
                                                 .map(|value|db::cell_to_string(value.as_ref()))
@@ -2127,7 +2134,7 @@ pub fn build_ui(
                                             p.scroll_row(tool_row, |row| {
                                                 row.text(cname.as_str());
                                                 let id = row.tool_button(format!("{}: {}", cname, val));
-                                                form_fields.push(id);
+                                                form_fields[ci] = id;
                                             });
                                         }
                                     } else {
@@ -2262,11 +2269,14 @@ pub fn build_ui(
                                 view_style.width = 160.0;
                                 sql_view_name = row.text_input_styled(&state.sql_view_name, "view name", view_style);
                                 btn_sql_view = row.tool_button("Save as VIEW");
+                                sql_messages.error = row.tool_button("Go to Error");
                                 sql_messages.toggle = row.tool_button(if state.sql_messages_visible { "Hide Messages" } else { "Show Messages" });
                             });
                             let toggle = sql_messages.toggle;
+                            let error = sql_messages.error;
                             (sql_messages, sql_table) = crate::sql_messages::build(p, state, &theme, sql_cols.clone(), sql_rows.clone(), sql_table_style);
                             sql_messages.toggle = toggle;
+                            sql_messages.error = error;
                                 }); });
                             });
                         });
@@ -2622,6 +2632,7 @@ pub fn build_ui(
         if browse_table.0 != 0 {
             ui.set_table_editable_columns(browse_table, crate::browse_edit::editable_columns(state));
             if let Some(editor) = ui.table_cell_editor(browse_table) { ui.set_autocomplete_prefix_matching(editor, true); }
+            ui.set_table_visible_columns(browse_table, &state.browse().visible_columns());
             ui.set_table_frozen_cols(browse_table, state.browse_frozen_cols());
             if let Some(styles)=crate::cond_match::styles(state,ui.font()) {ui.set_table_cell_style_source(browse_table,styles);}
             for (column, width) in state.browse().column_widths.iter().enumerate() {
@@ -2853,6 +2864,8 @@ pub fn build_ui(
     ui.set_tooltip_text(ov_prefs_filter_delay, "Wait 0–5000 ms after typing before applying Browse filters; 0 applies immediately.");
     ui.set_tooltip_text(ov_prefs_filter_escape, "One character escapes LIKE wildcards. Leave empty to disable escaping.");
     ui.set_accessible_name(ov_idx_where, "Partial index WHERE condition");
+    ui.set_button_enabled(sql_messages.error, !state.sql_busy && state.sql_error.is_some());
+    ui.set_accessible_name(sql_messages.error, "Go to SQL error in the executed source");
     if btn_sql_comment.0 != 0 {
         ui.set_accessible_name(btn_sql_comment, "Toggle SQL line comments (Ctrl/Cmd+/)");
     }

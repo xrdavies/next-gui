@@ -60,6 +60,7 @@ mod sql_layout;
 mod sql_messages;
 mod structure_tree;
 mod browse_menu;
+mod browse_columns;
 mod schema_dock;
 mod detach;
 mod ui_build;
@@ -3860,7 +3861,7 @@ impl Demo {
 
     fn toggle_browse_freeze(&mut self, column: usize) {
         let count = if self.state.browse_frozen_cols() == 0 {
-            column.saturating_add(1)
+            self.state.browse().visible_columns().iter().position(|&i| i == column).map_or(0, |i| i + 1)
         } else {
             0
         };
@@ -3958,6 +3959,20 @@ impl Demo {
             },
             next_gui_ui::MenuItem::new(mid::BROWSE_COPY_COLUMN, "Copy Column Name"),
         ];
+        let order = self.state.browse().visible_columns();
+        let position = order.iter().position(|&i| i == column).unwrap_or(0);
+        let ready = !self.state.has_cell_draft() && self.state.guard_background_idle().is_ok() && self.state.external_cell.is_none();
+        let action = |id, label: &str, enabled| if enabled { next_gui_ui::MenuItem::new(id, label) } else { next_gui_ui::MenuItem::disabled(id, label) };
+        items.extend([
+            next_gui_ui::MenuItem::separator(),
+            action(mid::BROWSE_HIDE_COLUMN, "Hide Column", ready && order.len() > 1),
+            action(mid::BROWSE_COLUMN_LEFT, "Move Column Left", ready && position > 0),
+            action(mid::BROWSE_COLUMN_RIGHT, "Move Column Right", ready && position + 1 < order.len()),
+            next_gui_ui::MenuItem::submenu(9_999, "Visible Columns", self.state.browse().result.as_ref().unwrap().columns.iter().enumerate().map(|(i, name)| {
+                action(mid::BROWSE_VISIBLE_COLUMN + i as u64, name, ready && (!order.contains(&i) || order.len() > 1)).checked(order.contains(&i))
+            }).collect()),
+            action(mid::BROWSE_RESET_COLUMNS, "Reset Column Layout", ready),
+        ]);
         if self.state.browse_is_view() {
             let enabled = !self.state.read_only && !self.state.sql_busy && self.state.guard_background_idle().is_ok();
             let action = if enabled { next_gui_ui::MenuItem::new(mid::BROWSE_UNLOCK_VIEW, "Unlock View Editing…") }
@@ -3982,6 +3997,7 @@ impl Demo {
     }
 
     fn handle_browse_header_action(&mut self, item: u64) -> bool {
+        if self.handle_browse_column_action(item) { return true; }
         if item == mid::BROWSE_SHOW_ROWID {
             self.browse_header_column = None;
             self.ui.close_popup();
@@ -4746,8 +4762,8 @@ impl Demo {
 
     fn execute_sql_selection(&mut self) {
         self.snapshot_inputs();
-        let result = if let Some(sql) = self.ui.text_area_selected_text(self.ids.sql_area) {
-            self.state.start_sql_text(sql)
+        let result = if let Some(range) = self.ui.text_area_selection(self.ids.sql_area).filter(|range| !range.is_empty()) {
+            self.state.start_sql_range(range)
         } else {
             self.state.start_sql_job()
         };
@@ -5090,6 +5106,7 @@ impl Demo {
             self.open_query_export(id == self.ids.btn_sql_json);
             return;
         }
+        if id.0 != 0 && id == self.ids.sql_messages.error { self.goto_sql_error(); return; }
         if id.0 != 0 && id == self.ids.sql_messages.toggle {
             self.snapshot_inputs();
             self.state.sql_messages_visible = !self.state.sql_messages_visible;

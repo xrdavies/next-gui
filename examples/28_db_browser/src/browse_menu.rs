@@ -118,7 +118,7 @@ impl Demo {
         let Some((row, column)) = self.ui.table_cell_at(&self.scene, table, x, y) else { return false; };
         self.snapshot_inputs();
         let inside = self.ui.table_selected_rows(table).is_some_and(|(a, b)| (a..=b).contains(&row))
-            && self.ui.table_selected_cols(table).is_some_and(|(a, b)| (a..=b).contains(&column));
+            && self.ui.table_selected_column_indices(table).is_some_and(|cols| cols.contains(&column));
         if inside { self.ui.set_table_active_cell(table, row, column); }
         else { self.ui.set_table_selected_cells(table, Some((row, row)), Some((column, column))); }
         self.ui.set_focus(Some(table));

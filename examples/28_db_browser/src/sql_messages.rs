@@ -10,6 +10,7 @@ pub struct Controls {
     pub splitter: WidgetId,
     pub area: WidgetId,
     pub toggle: WidgetId,
+    pub error: WidgetId,
     ratio: Option<f32>,
 }
 
@@ -19,6 +20,7 @@ impl Default for Controls {
             splitter: WidgetId(0),
             area: WidgetId(0),
             toggle: WidgetId(0),
+            error: WidgetId(0),
             ratio: None,
         }
     }

@@ -152,6 +152,10 @@ pub struct SelectedObject {
 #[serde(default)]
 pub struct BrowseTableOptions {
     pub column_names: Vec<String>,
+    #[serde(default)]
+    pub column_order: Vec<String>,
+    #[serde(default)]
+    pub hidden_columns: Vec<String>,
     pub filter: String,
     pub global_filters: Vec<String>,
     pub col_filters: Vec<String>,
@@ -161,6 +165,13 @@ pub struct BrowseTableOptions {
     pub unlock_view_pk: Option<String>,
     pub show_row_id: bool,
     pub rowid_filter: String,
+}
+
+pub(crate) fn browse_column_order(columns: &[String], order: &[String], hidden: &[String]) -> Vec<usize> {
+    let mut indices: Vec<_> = (0..columns.len()).filter(|&i| !hidden.iter().any(|name| name.eq_ignore_ascii_case(&columns[i]))).collect();
+    indices.sort_by_key(|&i| order.iter().position(|name| name.eq_ignore_ascii_case(&columns[i])).unwrap_or(usize::MAX));
+    if indices.is_empty() && !columns.is_empty() { indices.push(0); }
+    indices
 }
 
 impl BrowseTableOptions {
@@ -204,12 +215,15 @@ impl BrowseTableOptions {
     }
 
     fn rename_columns(&mut self, renames: &[(String, String)]) {
-        for name in &mut self.column_names { rename_column(name, renames); }
+        for name in self.column_names.iter_mut().chain(&mut self.column_order).chain(&mut self.hidden_columns) { rename_column(name, renames); }
         for order in &mut self.ordering { rename_column(&mut order.column, renames); }
         if let Some(key) = &mut self.unlock_view_pk { rename_column(key, renames); }
     }
 
     pub fn remap_columns(&mut self, columns: &[String]) {
+        let frozen_names = self.frozen_cols.filter(|_| !self.column_names.is_empty()).map(|count| {
+            browse_column_order(&self.column_names, &self.column_order, &self.hidden_columns).iter().take(count).map(|&i| self.column_names[i].clone()).collect::<Vec<_>>()
+        });
         if !self.column_names.is_empty() && self.column_names != columns {
             let positions: Vec<_> = columns.iter().map(|name| self.column_names.iter().position(|old| old.eq_ignore_ascii_case(name))).collect();
             if !self.col_filters.is_empty() {
@@ -222,11 +236,17 @@ impl BrowseTableOptions {
                 if let Some(name) = columns.iter().find(|name| name.eq_ignore_ascii_case(&order.column)) { order.column = name.clone(); true }
                 else { false }
             });
-            if let Some(count) = self.frozen_cols {
-                self.frozen_cols = Some(positions.iter().take_while(|i| i.is_some_and(|i| i < count)).count());
-            }
         }
         self.unlock_view_pk = self.unlock_view_pk.as_ref().and_then(|key| columns.iter().find(|name| name.eq_ignore_ascii_case(key))).cloned();
+        for names in [&mut self.column_order, &mut self.hidden_columns] {
+            names.retain_mut(|name| {
+                if let Some(current) = columns.iter().find(|c| c.eq_ignore_ascii_case(name)) { *name = current.clone(); true } else { false }
+            });
+        }
+        if !columns.is_empty() && columns.iter().all(|name| self.hidden_columns.contains(name)) { self.hidden_columns.clear(); }
+        if let Some(names) = frozen_names {
+            self.frozen_cols = Some(browse_column_order(columns, &self.column_order, &self.hidden_columns).iter().take_while(|&&i| names.contains(&columns[i])).count());
+        }
         self.column_names = columns.to_vec();
     }
 }
@@ -247,6 +267,10 @@ pub struct BrowseTabState {
     pub table: Option<String>,
     #[serde(default)]
     pub column_names: Vec<String>,
+    #[serde(default)]
+    pub column_order: Vec<String>,
+    #[serde(default)]
+    pub hidden_columns: Vec<String>,
     pub filter: String,
     #[serde(default)]
     pub global_filters: Vec<String>,
@@ -302,6 +326,20 @@ pub struct BrowseTabState {
 }
 
 impl BrowseTabState {
+    pub fn visible_columns(&self) -> Vec<usize> {
+        let columns = self.result.as_ref().map(|r| r.columns.as_slice()).unwrap_or(&self.column_names);
+        browse_column_order(columns, &self.column_order, &self.hidden_columns)
+    }
+
+    pub fn selected_columns(&self) -> Result<Vec<usize>, String> {
+        let order = self.visible_columns();
+        let Some(col) = self.sel_col else { return Ok(order); };
+        let a = order.iter().position(|&i| i == self.sel_col_start.unwrap_or(col));
+        let b = order.iter().position(|&i| i == self.sel_col_end.unwrap_or(col));
+        let (a, b) = a.zip(b).ok_or("Selection contains a hidden or removed column; select visible cells again")?;
+        Ok(order[a.min(b)..=a.max(b)].to_vec())
+    }
+
     pub fn stored_options(&self, schema: &str, table: &str) -> Option<&BrowseTableOptions> {
         if schema == "main" { self.table_options.get(table) }
         else { self.schema_table_options.get(schema)?.get(table) }
@@ -324,6 +362,8 @@ impl BrowseTabState {
             col_filters: self.col_filters.clone(),
             ordering: self.ordering(),
             column_widths: self.column_widths.clone(),
+            column_order: self.column_order.clone(),
+            hidden_columns: self.hidden_columns.clone(),
             frozen_cols: self.frozen_cols,
             unlock_view_pk: self.unlock_view_pk.clone(),
             show_row_id: self.show_row_id,
@@ -333,6 +373,8 @@ impl BrowseTabState {
 
     pub fn set_options(&mut self, options: BrowseTableOptions) {
         self.column_names = options.column_names;
+        self.column_order = options.column_order;
+        self.hidden_columns = options.hidden_columns;
         self.filter = options.filter;
         self.global_filters = options.global_filters;
         self.col_filters = options.col_filters;
@@ -411,6 +453,8 @@ impl BrowseTabState {
             schema: schema.into(),
             table,
             column_names: Vec::new(),
+            column_order: Vec::new(),
+            hidden_columns: Vec::new(),
             filter: String::new(),
             global_filters: Vec::new(),
             col_filters: Vec::new(),
@@ -624,6 +668,7 @@ pub struct AppState {
     pub sql_scroll: (f32, f32),
     pub sql_selection: SqlSelection,
     pub sql_message: String,
+    pub sql_error: Option<crate::sql_editor::ErrorTarget>,
     pub sql_messages_view: Option<next_gui_ui::TextAreaState>,
     pub sql_messages_ratio: f32,
     pub sql_messages_visible: bool,
@@ -746,6 +791,7 @@ pub struct SqlOutput {
     scroll: (f32, f32),
     selection: SqlSelection,
     message: String,
+    error: Option<crate::sql_editor::ErrorTarget>,
     messages_view: Option<next_gui_ui::TextAreaState>,
 }
 
@@ -778,6 +824,7 @@ struct CellApplyConfirmation {
 
 pub struct SqlJob {
     handle: std::thread::JoinHandle<(LoggedConnection, db::SqlExecution, bool)>,
+    source: Option<(String, std::ops::Range<usize>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1020,6 +1067,7 @@ impl AppState {
             sql_scroll: (0.0, 0.0),
             sql_selection: SqlSelection::default(),
             sql_view_name: "e28_saved_view".into(),
+            sql_error: None,
             sql_message: "Ready — Execute SQL to see results.".into(),
             sql_messages_view: None,
             sql_messages_ratio: 0.65,
@@ -1135,7 +1183,7 @@ impl AppState {
     pub fn browse_frozen_cols(&self) -> usize {
         let tab = self.browse();
         let count = tab.frozen_cols.unwrap_or(self.frozen_cols);
-        tab.result.as_ref().map_or(count, |result| count.min(result.columns.len()))
+        count.min(tab.visible_columns().len())
     }
 
     pub fn browse_mut(&mut self) -> &mut BrowseTabState {
@@ -1179,6 +1227,7 @@ impl AppState {
             scroll: self.sql_scroll,
             selection: self.sql_selection,
             message: std::mem::take(&mut self.sql_message),
+            error: self.sql_error.take(),
             messages_view: self.sql_messages_view.take(),
         };
         let output = std::mem::take(&mut self.sql_outputs[index]);
@@ -1187,6 +1236,7 @@ impl AppState {
         self.sql_scroll = output.scroll;
         self.sql_selection = output.selection;
         self.sql_message = output.message;
+        self.sql_error = output.error;
         self.sql_messages_view = output.messages_view;
         self.error_msg = None;
         self.sql_tab_idx = index;
@@ -2576,6 +2626,7 @@ impl AppState {
         self.schema_dock = crate::schema_dock::State::default();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_error = None;
         self.sql_message = "Ready — Execute SQL to see results.".into();
         self.sql_messages_view = None;
         self.path = path;
@@ -2644,6 +2695,7 @@ impl AppState {
         self.schema_names.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_error = None;
         self.sql_message = "Ready — Execute SQL to see results.".into();
         self.sql_messages_view = None;
         self.adopt_conn(conn, path.to_string(), false)?;
@@ -2659,6 +2711,7 @@ impl AppState {
         self.schema_names.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_error = None;
         self.sql_message = "Ready — Execute SQL to see results.".into();
         self.sql_messages_view = None;
         self.adopt_conn(conn, ":memory:".into(), false)?;
@@ -2775,6 +2828,7 @@ impl AppState {
         self.clear_browse_editor();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_error = None;
         self.sql_message = "Ready — Execute SQL to see results.".into();
         self.sql_messages_view = None;
         self.pragmas.clear();
@@ -3017,7 +3071,8 @@ impl AppState {
         if !self.read_only {
             db::begin_deferred(conn)?;
         }
-        self.finish_sql_result(result)
+        let source = (sql == self.sql_editor()).then(|| (sql.to_owned(), 0..sql.chars().count()));
+        self.finish_sql_result(result, source)
     }
 
     /// Move the live connection to the worker so edits, keys and ATTACH share one transaction.
@@ -3026,6 +3081,18 @@ impl AppState {
     }
 
     pub fn start_sql_text(&mut self, sql: String) -> Result<(), String> {
+        let source = (sql == self.sql_editor()).then(|| (sql.clone(), 0..sql.chars().count()));
+        self.start_sql_with_source(sql, source)
+    }
+
+    pub fn start_sql_range(&mut self, range: std::ops::Range<usize>) -> Result<(), String> {
+        let document = self.sql_editor().to_owned();
+        if range.start > range.end || range.end > document.chars().count() { return Err("SQL selection is no longer valid".into()); }
+        let sql = document.chars().skip(range.start).take(range.len()).collect();
+        self.start_sql_with_source(sql, Some((document, range)))
+    }
+
+    fn start_sql_with_source(&mut self, sql: String, source: Option<(String, std::ops::Range<usize>)>) -> Result<(), String> {
         self.guard_background_idle()?;
         if self.sql_busy {
             return Err("SQL already running".into());
@@ -3040,6 +3107,7 @@ impl AppState {
         self.sql_interrupt = Some(worker.get_interrupt_handle());
         self.sql_busy = true;
         self.sql_message = "Running…".into();
+        self.sql_error = None;
         self.sql_messages_view = None;
         self.error_msg = None;
         self.status_msg = "SQL running…".into();
@@ -3064,7 +3132,7 @@ impl AppState {
             }
             (worker, result, changed)
         });
-        self.sql_job = Some(SqlJob { handle });
+        self.sql_job = Some(SqlJob { handle, source });
         Ok(())
     }
 
@@ -3094,14 +3162,15 @@ impl AppState {
                 result
             }
             Err(_) => {
-                db::SqlExecution { result: Err("SQL worker panicked; connection closed and pending changes rolled back".into()), message: "Execution finished with errors.".into() }
+                db::SqlExecution { result: Err("SQL worker panicked; connection closed and pending changes rolled back".into()), message: "Execution finished with errors.".into(), error_range: None }
             }
         };
-        let _ = self.finish_sql_result(result);
+        let _ = self.finish_sql_result(result, job.source);
         true
     }
 
-    fn finish_sql_result(&mut self, execution: db::SqlExecution) -> Result<(), String> {
+    fn finish_sql_result(&mut self, execution: db::SqlExecution, source: Option<(String, std::ops::Range<usize>)>) -> Result<(), String> {
+        self.sql_error = source.zip(execution.error_range.clone()).and_then(|((document, range), error)| crate::sql_editor::ErrorTarget::new(document, range, error));
         self.sql_messages_view = None;
         self.sql_message = if self.sql_sensitive { "SQLCipher execution finished (details redacted)".into() } else { execution.message };
         self.sql_column_widths.clear();
@@ -3416,7 +3485,7 @@ impl AppState {
         let byte = sql.char_indices().nth(caret).map_or(sql.len(), |(i, _)| i);
         let start = sql[..byte].rfind('\n').map_or(0, |i| i + 1);
         let end = sql[byte..].find('\n').map_or(sql.len(), |i| byte + i);
-        self.start_sql_text(sql[start..end].to_string())
+        self.start_sql_range(sql[..start].chars().count()..sql[..end].chars().count())
     }
 
     fn edit_column_name(&self) -> &str {
@@ -3575,16 +3644,12 @@ impl AppState {
         let anchor = tab.sel_row_start.unwrap_or(row);
         let end = tab.sel_row_end.unwrap_or(row);
         let (first, last) = (end.min(anchor), end.max(anchor));
-        let (first_col, last_col) = if let Some(col) = tab.sel_col {
-            let anchor = tab.sel_col_start.unwrap_or(col);
-            let end = tab.sel_col_end.unwrap_or(col);
-            (end.min(anchor), end.max(anchor))
-        } else { (0, result.columns.len().saturating_sub(1)) };
-        if last >= result.values.len() || result.columns.is_empty() || last_col >= result.columns.len() {
+        let indices = tab.selected_columns()?;
+        if last >= result.values.len() || indices.is_empty() {
             return Err("Selection no longer fits the browse page; refresh and retry".into());
         }
-        let mut cells = result.values.rectangle(first..=last, first_col..=last_col)?;
-        let mut columns = result.columns[first_col..=last_col].to_vec();
+        let mut cells = (first..=last).map(|row| indices.iter().map(|&col| result.values.cell(row, col)).collect()).collect::<Result<Vec<Vec<_>>, String>>()?;
+        let mut columns = indices.iter().map(|&col| result.columns[col].clone()).collect::<Vec<_>>();
         if sql {
             let conn = self.conn.as_ref().ok_or("Wait for SQL to finish before copying INSERT statements")?;
             let writable = db::table_columns_in(conn, &tab.schema, tab.table.as_deref().ok_or("No browse table")?)?;
@@ -3610,16 +3675,12 @@ impl AppState {
         let anchor = tab.sel_row_start.unwrap_or(row);
         let end = tab.sel_row_end.unwrap_or(row);
         let (first, last) = (end.min(anchor), end.max(anchor));
-        let (first_col, last_col) = if let Some(col) = tab.sel_col {
-            let anchor = tab.sel_col_start.unwrap_or(col);
-            let end = tab.sel_col_end.unwrap_or(col);
-            (end.min(anchor), end.max(anchor))
-        } else { (0, result.columns.len().saturating_sub(1)) };
-        if last >= tab.row_keys.len() || result.columns.is_empty() || last_col >= result.columns.len() {
+        let indices = tab.selected_columns()?;
+        if last >= tab.row_keys.len() || indices.is_empty() {
             return Err("Selected cells are not editable; refresh and retry".into());
         }
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let columns = &result.columns[first_col..=last_col];
+        let columns = indices.iter().map(|&i| result.columns[i].clone()).collect::<Vec<_>>();
         let info = db::table_columns_in(conn, &schema, &table)?;
         let values = columns.iter().map(|col| {
             if tab.rowid_column.as_ref() == Some(col) { return Err("Rowid cannot be cleared; edit or paste a unique integer".into()); }
@@ -3627,7 +3688,7 @@ impl AppState {
             Ok(if column.notnull { db::CellValue::Text(Vec::new()) } else { db::CellValue::Null })
         }).collect::<Result<Vec<_>, String>>()?;
         let updates = tab.row_keys[first..=last].iter().map(|id| (id.clone(), values.clone())).collect::<Vec<_>>();
-        db::update_cells_in(conn, &schema, &table, columns, &updates)?;
+        db::update_cells_in(conn, &schema, &table, &columns, &updates)?;
         self.log_sql(format!("-- cut {}x{} from {}", updates.len(), columns.len(), db::qualified_name(&schema, &table)));
         self.mark_dirty();
         self.refresh_browse()?;
@@ -3659,30 +3720,28 @@ impl AppState {
         let anchor_row = tab.sel_row_start.unwrap_or(row);
         let end = tab.sel_row_end.unwrap_or(row);
         let (start_row, end_row) = (end.min(anchor_row), end.max(anchor_row));
-        let (start_col, end_col) = if let Some(col) = tab.sel_col {
-            let anchor = tab.sel_col_start.unwrap_or(col);
-            let end = tab.sel_col_end.unwrap_or(col);
-            (end.min(anchor), end.max(anchor))
-        } else { (0, result.columns.len().saturating_sub(1)) };
+        let visible = tab.visible_columns();
+        let selected = tab.selected_columns()?;
+        let start_col = selected.first().and_then(|col| visible.iter().position(|i| i == col)).ok_or("Select a visible column first")?;
         let width = rows.first().map_or(0, Vec::len);
         if width == 0 || rows.iter().any(|row| row.len() != width) {
             return Err("Clipboard rows have inconsistent column counts".into());
         }
         if rows.len() == 1 && width == 1 {
-            if end_row >= result.values.len() || end_col >= result.columns.len() {
+            if end_row >= result.values.len() {
                 return Err("Selection no longer fits the browse page; refresh and retry".into());
             }
-            rows = vec![vec![rows[0][0].clone(); end_col - start_col + 1]; end_row - start_row + 1];
+            rows = vec![vec![rows[0][0].clone(); selected.len()]; end_row - start_row + 1];
         }
         let width = rows[0].len();
         if start_row.saturating_add(rows.len()) > result.values.len() {
             return Err("Clipboard does not fit in the visible browse page".into());
         }
-        if start_col.saturating_add(width) > result.columns.len() {
+        if start_col.saturating_add(width) > visible.len() {
             return Err("Clipboard does not fit in the visible columns".into());
         }
         let height = rows.len();
-        let columns = result.columns[start_col..start_col + width].to_vec();
+        let columns = visible[start_col..start_col + width].iter().map(|&i| result.columns[i].clone()).collect::<Vec<_>>();
         let updates = rows.into_iter().enumerate().map(|(i, values)| {
             let key = tab.row_keys.get(start_row + i).cloned().ok_or("Selected rows are not editable")?;
             Ok((key, values))

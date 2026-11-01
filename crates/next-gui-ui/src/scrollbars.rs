@@ -107,9 +107,10 @@ impl Ui {
                 style,
                 ..
             } => {
-                let frozen: f32 = columns.iter().take(*frozen_cols).map(|c| c.width).sum();
+                let order = visible_table_columns(columns);
+                let frozen: f32 = order.iter().take(*frozen_cols).map(|&i| columns[i].width).sum();
                 let width = (bounds.width - 2.0 * style.padding - frozen).max(1.0);
-                let total: f32 = columns.iter().skip(*frozen_cols).map(|c| c.width).sum();
+                let total: f32 = order.iter().skip(*frozen_cols).map(|&i| columns[i].width).sum();
                 (
                     Rect::new(
                         bounds.x + style.padding + frozen,

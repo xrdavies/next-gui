@@ -658,8 +658,10 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
         let frozen = options.frozen_cols.or_else(|| project.browse_tabs.iter()
             .any(|tab| tab.schema == schema && tab.table.as_deref() == Some(name.as_str())).then_some(project.frozen_cols));
         if let Some(count) = frozen {
-            let count = count.min(columns.len());
-            table.set("next_gui_frozen_names", serde_json::to_string(&columns[..count]).map_err(|e| e.to_string())?);
+            let visible = crate::state::browse_column_order(&columns, &options.column_order, &options.hidden_columns);
+            let count = count.min(visible.len());
+            let names = visible.iter().take(count).map(|&i| &columns[i]).collect::<Vec<_>>();
+            table.set("next_gui_frozen_names", serde_json::to_string(&names).map_err(|e| e.to_string())?);
             if options.show_row_id || count > 0 || table.attr("freeze_columns") != Some("1") {
                 table.set("freeze_columns", count + usize::from(count > 0 && !options.show_row_id));
             }
@@ -690,6 +692,18 @@ pub fn capture_connection(project: &mut ProjectFile, conn: &Connection) -> Resul
                         column.set("next_gui_name", &actual_columns[index]);
                     }
                 }
+            }
+        }
+        table.set("next_gui_column_order", serde_json::to_string(&options.column_order).map_err(|e| e.to_string())?);
+        let hidden = table.ensure("hidden_columns");
+        hidden.retain_elements(|e| e.name != "column");
+        for name in &options.hidden_columns {
+            if let Some(index) = columns.iter().position(|column| column == name) {
+                let mut column = Element::new("column");
+                column.set("index", index + usize::from(!options.show_row_id));
+                column.set("next_gui_name", name);
+                column.set("value", 1);
+                hidden.push(column);
             }
         }
         let widths = table.ensure("column_widths");
@@ -761,10 +775,6 @@ fn restore_table_options(
                 .min(columns.len()),
         );
     }
-    if let Some(names) = table.attr("next_gui_frozen_names") {
-        let names: Vec<String> = serde_json::from_str(names).map_err(|e| format!("Invalid frozen column names: {e}"))?;
-        tab.frozen_cols = Some(columns.iter().take_while(|name| names.iter().any(|old| old.eq_ignore_ascii_case(name))).count());
-    }
     if let Some(sort) = table.child("sort") {
         tab.set_ordering(
             sort.children()
@@ -778,6 +788,20 @@ fn restore_table_options(
                 })
                 .collect(),
         );
+    }
+    if let Some(order) = table.attr("next_gui_column_order") {
+        tab.column_order = serde_json::from_str::<Vec<String>>(order).map_err(|e| format!("Invalid project column order: {e}"))?;
+    }
+    if let Some(hidden) = table.child("hidden_columns") {
+        tab.hidden_columns = hidden.children().filter(|e| e.name == "column" && e.attr("value").is_some_and(|value| value != "0"))
+            .filter_map(|column| setting_column_index(column, columns, if tab.show_row_id { 0 } else { -1 }).and_then(|i| columns.get(i)).cloned()).collect();
+    }
+    let mut options = tab.options();
+    options.remap_columns(columns);
+    tab.set_options(options);
+    if let Some(names) = table.attr("next_gui_frozen_names") {
+        let names: Vec<String> = serde_json::from_str(names).map_err(|e| format!("Invalid frozen column names: {e}"))?;
+        tab.frozen_cols = Some(crate::state::browse_column_order(columns, &tab.column_order, &tab.hidden_columns).iter().take_while(|&&i| names.iter().any(|name| name.eq_ignore_ascii_case(&columns[i]))).count());
     }
     if let Some(widths) = table.child("column_widths") {
         tab.column_widths.resize(columns.len(), 140.0);

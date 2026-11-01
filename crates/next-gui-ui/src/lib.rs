@@ -51,6 +51,8 @@ mod tree_table_support;
 pub use select_data::SelectDataSource;
 use select_data::SelectOptions;
 mod table_data;
+mod table_columns;
+use table_columns::{visible_table_columns, selected_table_columns};
 mod flex_fill;
 pub use table_data::TableDataSource;
 use table_data::TableRows;
@@ -706,6 +708,10 @@ pub struct TableColumn {
     pub title: String,
     /// Column width (px). Drag a header's right edge to resize it.
     pub width: f32,
+    /// Hide the column without changing its source index.
+    pub visible: bool,
+    /// Stable display rank; equal ranks retain source order.
+    pub display_order: usize,
 }
 
 impl TableColumn {
@@ -714,6 +720,8 @@ impl TableColumn {
         Self {
             title: title.into(),
             width,
+            visible: true,
+            display_order: usize::MAX,
         }
     }
 }
@@ -732,32 +740,20 @@ fn table_column_rects(
     frozen: usize,
 ) -> Vec<(f32, Rect)> {
     let left = bounds.x + padding;
-    let frozen_width: f32 = columns.iter().take(frozen).map(|c| c.width.max(1.0)).sum();
+    let order = visible_table_columns(columns);
+    let frozen_width: f32 = order.iter().take(frozen).map(|&i| columns[i].width.max(1.0)).sum();
+    let mut geometry = vec![(left, Rect::empty()); columns.len()];
     let mut x = left;
-    columns
-        .iter()
-        .enumerate()
-        .map(|(i, col)| {
-            let width = col.width.max(1.0);
-            let origin = if i < frozen { x } else { x - scroll_x };
-            let clip_left = if i < frozen {
-                left
-            } else {
-                left + frozen_width
-            };
-            let viewport = Rect::new(
-                clip_left,
-                bounds.y,
-                ((bounds.x + bounds.width) - padding - clip_left).max(0.0),
-                bounds.height,
-            );
-            x += width;
-            (
-                origin,
-                Rect::new(origin, bounds.y, width, bounds.height).intersect(&viewport),
-            )
-        })
-        .collect()
+    for (position, &i) in order.iter().enumerate() {
+        let width = columns[i].width.max(1.0);
+        let origin = if position < frozen { x } else { x - scroll_x };
+        let clip_left = if position < frozen { left } else { left + frozen_width };
+        let viewport = Rect::new(clip_left, bounds.y,
+            ((bounds.x + bounds.width) - padding - clip_left).max(0.0), bounds.height);
+        geometry[i] = (origin, Rect::new(origin, bounds.y, width, bounds.height).intersect(&viewport));
+        x += width;
+    }
+    geometry
 }
 
 /// Style for a basic Table.
@@ -4213,6 +4209,12 @@ impl Ui {
             return;
         };
         if matches!(w.kind,Kind::Dialog {open:false,..}) {return;}
+        if let Some(group) = self.table_filters.get(&id) {
+            if let Some(order) = self.table_visible_columns(group.table) {
+                for column in order { self.collect_focusable_dfs(group.fields[column], out); }
+                return;
+            }
+        }
         if Self::kind_is_focusable(&w.kind) {
             out.push(id);
         }
@@ -4699,8 +4701,9 @@ impl Ui {
                     style,
                     ..
                 } => {
-                    let total_w: f32 = columns.iter().map(|c| c.width).sum();
-                    let frozen_w: f32 = columns.iter().take(*frozen_cols).map(|c| c.width).sum();
+                    let order = visible_table_columns(columns);
+                    let total_w: f32 = order.iter().map(|&i| columns[i].width).sum();
+                    let frozen_w: f32 = order.iter().take(*frozen_cols).map(|&i| columns[i].width).sum();
                     let view_w = (style.width - style.padding * 2.0 - frozen_w).max(1.0);
                     let max_x = (total_w - frozen_w - view_w).max(0.0);
                     let nx = sx.clamp(0.0, max_x);
@@ -4980,16 +4983,15 @@ impl Ui {
     pub fn table_selected_text(&self, id: WidgetId) -> Option<String> {
         let Kind::Table { rows, columns, .. } = &self.widgets.get(&id)?.kind else { return None; };
         let (start, end) = self.table_selected_rows(id)?;
-        let (col_start, col_end) = self.table_selected_cols(id)
-            .unwrap_or((0, columns.len().saturating_sub(1)));
-        if end >= rows.len() || columns.is_empty() || col_end >= columns.len() { return None; }
+        let selected = self.table_selected_column_indices(id)?;
+        if end >= rows.len() || selected.is_empty() || columns.is_empty() { return None; }
         let mut output = Vec::new();
         for index in start..=end {
             let row = match rows.row(index) {
                 Ok(row) => row,
                 Err(error) => { *self.pending_table_data_error.borrow_mut() = Some((id, error)); return None; }
             };
-            output.push((col_start..=col_end).map(|col| {
+            output.push(selected.iter().map(|&col| {
                 let value = row.get(col).map(String::as_str).unwrap_or("");
                 if value.contains(['\t', '\r', '\n', '"']) {
                     format!("\"{}\"", value.replace('"', "\"\""))
@@ -5170,7 +5172,7 @@ impl Ui {
         if row >= rows.len()
             || col >= columns.len()
             || !inside(row, *selected_range)
-            || !inside(col, *selected_col_range)
+            || !selected_table_columns(columns, *selected_col_range).contains(&col)
         {
             return false;
         }
@@ -6434,16 +6436,14 @@ impl Ui {
             if row_top < ny { ny = row_top; }
             else if row_bot > ny + body_h { ny = row_bot - body_h; }
         }
-        if let Some(i) = selected_col.filter(|i| *i >= *frozen_cols && *i < columns.len()) {
-            let frozen_w: f32 = columns.iter().take(*frozen_cols).map(|c| c.width).sum();
-            let col_left: f32 = columns.iter().take(i).map(|c| c.width).sum();
+        let order = visible_table_columns(columns);
+        if let Some((position, i)) = selected_col.and_then(|i| order.iter().position(|&col| col == i).map(|p| (p, i))).filter(|(p, _)| *p >= *frozen_cols) {
+            let frozen_w: f32 = order.iter().take(*frozen_cols).map(|&c| columns[c].width).sum();
+            let col_left: f32 = order.iter().take(position).map(|&c| columns[c].width).sum();
             let view_right = style.width - style.padding * 2.0;
             let view_width = (view_right - frozen_w).max(0.0);
-            if col_left - nx < frozen_w || columns[i].width > view_width {
-                nx = col_left - frozen_w;
-            } else if col_left + columns[i].width - nx > view_right {
-                nx = col_left + columns[i].width - view_right;
-            }
+            if col_left - nx < frozen_w || columns[i].width > view_width { nx = col_left - frozen_w; }
+            else if col_left + columns[i].width - nx > view_right { nx = col_left + columns[i].width - view_right; }
         }
         self.set_any_scroll(id, nx, ny);
     }
@@ -6573,6 +6573,8 @@ impl Ui {
             return cell.is_some_and(|(row, col)| self.toggle_table_check(id, row, col));
         }
         let Some(Kind::Table {rows,columns,selected_row,selected_col,selected_range,selected_col_range,..})=self.widgets.get(&id).map(|w|&w.kind) else {return false;};
+        let order = visible_table_columns(columns);
+        let position = selected_col.and_then(|i| order.iter().position(|&c| c == i));
         let (mut row, mut col) = (selected_row.unwrap_or(0), *selected_col);
         let extend = matches!(key, UiKey::SelectUp | UiKey::SelectDown | UiKey::SelectLeft | UiKey::SelectRight | UiKey::SelectPageUp | UiKey::SelectPageDown);
         let page = self.table_visible_rows(id).unwrap_or(0).saturating_sub(1).max(1);
@@ -6581,8 +6583,8 @@ impl Ui {
             UiKey::Up | UiKey::SelectUp => row = row.saturating_sub(1),
             UiKey::PageUp | UiKey::SelectPageUp => row = row.saturating_sub(page),
             UiKey::PageDown | UiKey::SelectPageDown => row = selected_row.map_or(0, |i| i.saturating_add(page).min(rows.len() - 1)),
-            UiKey::Left | UiKey::SelectLeft if !columns.is_empty() => col = Some(col.unwrap_or(0).saturating_sub(1)),
-            UiKey::Right | UiKey::SelectRight if !columns.is_empty() => col = Some(col.map_or(0, |i| (i + 1).min(columns.len() - 1))),
+            UiKey::Left | UiKey::SelectLeft if !order.is_empty() => col = Some(order[position.unwrap_or(0).saturating_sub(1)]),
+            UiKey::Right | UiKey::SelectRight if !order.is_empty() => col = Some(order[position.map_or(0, |i| (i + 1).min(order.len() - 1))]),
             UiKey::Home => row = 0,
             UiKey::End => row = rows.len() - 1,
             _ => return false,
@@ -11378,23 +11380,20 @@ impl Ui {
             .get(*node)
             .map(|n| n.bounds)
             .unwrap_or_else(Rect::empty);
+        let order = visible_table_columns(&columns);
         let focused = self.focus.filter(|id| group.fields.contains(id));
         if focused != group.last_focus {
-            if let Some(index) = focused
-                .and_then(|id| group.fields.iter().position(|&field| field == id))
-                .filter(|&i| i >= frozen)
-            {
-                let left: f32 = columns.iter().take(index).map(|c| c.width.max(1.0)).sum();
-                let frozen_w: f32 = columns.iter().take(frozen).map(|c| c.width.max(1.0)).sum();
-                let viewport = (bounds.width - 2.0 * padding).max(0.0);
-                let width = columns[index].width.max(1.0);
-                if left - sx < frozen_w || width > viewport - frozen_w {
-                    sx = left - frozen_w;
-                } else if left + width - sx > viewport {
-                    sx = left + width - viewport;
+            if let Some(index) = focused.and_then(|id| group.fields.iter().position(|&field| field == id)) {
+                if let Some(position) = order.iter().position(|&i| i == index).filter(|&p| p >= frozen) {
+                    let left: f32 = order.iter().take(position).map(|&i| columns[i].width.max(1.0)).sum();
+                    let frozen_w: f32 = order.iter().take(frozen).map(|&i| columns[i].width.max(1.0)).sum();
+                    let viewport = (bounds.width - 2.0 * padding).max(0.0);
+                    let width = columns[index].width.max(1.0);
+                    if left - sx < frozen_w || width > viewport - frozen_w { sx = left - frozen_w; }
+                    else if left + width - sx > viewport { sx = left + width - viewport; }
+                    self.set_table_scroll_offset(group.table, sx.max(0.0), sy);
+                    sx = self.table_scroll_offset(group.table).unwrap().0;
                 }
-                self.set_table_scroll_offset(group.table, sx.max(0.0), sy);
-                sx = self.table_scroll_offset(group.table).unwrap().0;
             }
             self.table_filters.get_mut(&row).unwrap().last_focus = focused;
         }
@@ -11407,6 +11406,12 @@ impl Ui {
                 continue;
             };
             let (origin, clip) = geometry[index];
+            if !columns[index].visible {
+                scene.set_bounds(node, Rect::empty());
+                scene.set_clip(node, Some(Rect::empty()));
+                self.hide_widget_subtree(scene, *field);
+                continue;
+            }
             let field_bounds = Rect::new(
                 origin + 2.0,
                 old.y,
@@ -12544,6 +12549,7 @@ impl Ui {
 
         let label_height = self.table_header_label_height(id).unwrap_or(style.header_height);
         let cells = table_column_rects(bounds, &columns, style.padding, scroll_x, frozen_cols);
+        let selected_columns = selected_table_columns(&columns, selected_col_range.or_else(|| selected_col.map(|i| (i, i))));
         for (ci, col) in columns.iter().enumerate() {
             let (ox, clip) = cells[ci];
             let (_, mask) = self.font.rasterize_text(&col.title, style.size, None);
@@ -12630,7 +12636,7 @@ impl Ui {
                     if !valid {*self.pending_table_data_error.borrow_mut()=Some((id,"Indexed table style has an invalid font size".into()));}valid
                 });
                 let fmt = cell_style.and_then(|style| style.background).or_else(|| cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c));
-                let col_sel = selected_col_range.map_or(selected_col == Some(ci), |(start, end)| ci >= start.min(end) && ci <= start.max(end));
+                let col_sel = selected_columns.contains(&ci);
                 let is_sel = row_sel && (!has_col_selection || col_sel);
                 let dropdown = dropdown_columns.contains(&ci) && checks.get(ri).and_then(|row|row.get(ci)).copied().flatten().is_none();
                 // cell background node
