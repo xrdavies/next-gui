@@ -429,7 +429,7 @@ impl BrowseTabState {
         self.sel_col_end = None;
     }
 
-    fn restore_selection(&mut self, previous: &Self) {
+    pub(crate) fn restore_selection(&mut self, previous: &Self) {
         let (Some(row), Some(old), Some(new)) = (previous.sel_row, &previous.result, &self.result) else { return; };
         if self.schema != previous.schema || self.table != previous.table || old.columns != new.columns || old.columns.is_empty() { return; }
         let anchor = previous.sel_row_start.unwrap_or(row);
@@ -3001,8 +3001,12 @@ impl AppState {
         } else {
             ("main".into(), self.schema.iter().find(|o| o.schema == "main" && o.kind == ObjectKind::Table).map(|o| o.name.clone()))
         };
+        let candidate = BrowseTabState::new_in(&schema, table);
+        if self.browse_background && self.tab==MainTab::Browse && candidate.table.is_some() {
+            return self.start_browse_tab(candidate,crate::browse_filter::TabChange::Add);
+        }
         let old_index = self.browse_tab_idx;
-        self.browse_tabs.push(BrowseTabState::new_in(&schema, table));
+        self.browse_tabs.push(candidate);
         self.browse_tab_idx = self.browse_tabs.len() - 1;
         if let Err(e) = self.refresh_browse() {
             self.browse_tabs.pop();
@@ -3033,6 +3037,10 @@ impl AppState {
             self.clear_browse_editor();
         } else {
             let old_index = self.browse_tab_idx;
+            let target = if old_index+1<self.browse_tabs.len() {old_index+1} else {old_index-1};
+            if self.browse_background && self.tab==MainTab::Browse && self.browse_tabs[target].table.is_some() {
+                return self.start_browse_tab(self.browse_tabs[target].clone(),crate::browse_filter::TabChange::Close {index:old_index,target});
+            }
             let closed = self.browse_tabs.remove(old_index);
             self.browse_tab_idx = old_index.min(self.browse_tabs.len() - 1);
             if let Err(e) = self.refresh_browse_tab() {
@@ -3063,6 +3071,9 @@ impl AppState {
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if index >= self.browse_tabs.len() { return Err("Browse tab no longer exists".into()); }
+        if self.browse_background && self.tab==MainTab::Browse && self.browse_tabs[index].table.is_some() {
+            return self.start_browse_tab(self.browse_tabs[index].clone(),crate::browse_filter::TabChange::Switch(index));
+        }
         let old_index = self.browse_tab_idx;
         self.browse_tab_idx = index;
         if let Err(e) = self.refresh_browse_tab() {

@@ -191,11 +191,19 @@ impl Source {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum TabChange {
+    Add,
+    Switch(usize),
+    Close { index: usize, target: usize },
+}
+
 pub struct Work {
     job: Option<Job<BrowseTabState>>,
     cancel: Arc<AtomicBool>,
     source: Source,
     pub(crate) select_column: Option<usize>,
+    tab_change: Option<TabChange>,
 }
 impl Drop for Work {
     fn drop(&mut self) {
@@ -210,16 +218,24 @@ impl AppState {
         self.start_browse_candidate(self.browse().clone())
     }
 
-    pub(crate) fn start_browse_candidate(&mut self, mut candidate: BrowseTabState) -> Result<(), String> {
+    pub(crate) fn start_browse_candidate(&mut self, candidate: BrowseTabState) -> Result<(), String> {
+        self.start_browse_load(candidate, None)
+    }
+
+    pub(crate) fn start_browse_tab(&mut self, candidate: BrowseTabState, change: TabChange) -> Result<(), String> {
+        self.start_browse_load(candidate, Some(change))
+    }
+
+    fn start_browse_load(&mut self, mut candidate: BrowseTabState, tab_change: Option<TabChange>) -> Result<(), String> {
         self.guard_background_idle()?;
         if self.sql_busy {
-            return Err("Wait for SQL to finish before filtering".into());
+            return Err("Wait for SQL to finish before loading Browse data".into());
         }
         if self.has_cell_draft() {
             return Err("Apply or discard the cell draft first".into());
         }
         let source = Source::current(self);
-        candidate.offset = 0;
+        if tab_change.is_none() { candidate.offset = 0; }
         let is_view = self.schema.iter().any(|o| {
             o.schema == candidate.schema
                 && Some(&o.name) == candidate.table.as_ref()
@@ -233,7 +249,12 @@ impl AppState {
             let progress = interrupted.clone();
             conn.progress_handler(500, Some(move || progress.load(Ordering::Relaxed)));
             let result = if interrupted.load(Ordering::Relaxed) {
-                Err("Browse filtering cancelled".into())
+                Err("Browse loading cancelled".into())
+            } else if tab_change.is_some() {
+                fetch(conn, candidate.clone(), is_view, &escape).map(|mut loaded| {
+                    loaded.restore_selection(&candidate);
+                    loaded
+                })
             } else {
                 fetch(conn, candidate, is_view, &escape)
             };
@@ -245,6 +266,7 @@ impl AppState {
             cancel,
             source,
             select_column: None,
+            tab_change,
         });
         Ok(())
     }
@@ -274,7 +296,7 @@ impl AppState {
         if !work.cancel.load(Ordering::Relaxed) && work.source.matches(self) {
             let mut candidate = result?;
             let current = self.browse();
-            if candidate.schema == current.schema && candidate.table == current.table {
+            if work.tab_change.is_none() && candidate.schema == current.schema && candidate.table == current.table {
                 candidate.column_widths = current.column_widths.clone();
                 candidate.frozen_cols = current.frozen_cols;
                 candidate.scroll = current.scroll;
@@ -288,7 +310,22 @@ impl AppState {
                 }
             }
             self.status_msg = status(&candidate);
-            *self.browse_mut() = candidate;
+            match work.tab_change {
+                Some(TabChange::Add) => {
+                    self.browse_tabs.push(candidate);
+                    self.browse_tab_idx = self.browse_tabs.len()-1;
+                }
+                Some(TabChange::Switch(index)) => {
+                    self.browse_tabs[index] = candidate;
+                    self.browse_tab_idx = index;
+                }
+                Some(TabChange::Close {index,target}) => {
+                    self.browse_tabs.remove(index);
+                    self.browse_tab_idx = target-usize::from(index<target);
+                    *self.browse_mut() = candidate;
+                }
+                None => *self.browse_mut() = candidate,
+            }
             self.clear_browse_editor();
             self.sync_edit_cell_from_selection();
             return Ok(true);
@@ -507,7 +544,8 @@ impl Demo {
             || self.state.has_cell_draft()
             || self.ui.ime_is_composing()
             || self.ui.popup_owner().is_some()
-            || self.state.browse().table.is_none();
+            || self.state.browse().table.is_none()
+                && self.state.browse_work.as_ref().is_none_or(|work|work.tab_change.is_none());
         if blocked {
             self.filter_session.deadline = None;
             if self.state.browse_work.is_some() {

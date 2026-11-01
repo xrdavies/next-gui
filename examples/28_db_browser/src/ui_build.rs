@@ -2860,7 +2860,7 @@ pub fn build_ui(
     let loaded = browse.result.as_ref().map_or(0, |r| r.values.len());
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
-    ui.set_button_enabled(btn_browse_new_tab, !state.sql_busy);
+    ui.set_button_enabled(btn_browse_new_tab, !state.sql_busy && state.guard_background_idle().is_ok());
     for (index, (key, _)) in state.pragmas.iter().enumerate() {
         let label = crate::pragmas::FIELDS.iter().find(|(name, _)| *name == key).map_or(key.as_str(), |(_, label)| *label);
         if let Some(id) = pragma_inputs.get(index).filter(|id| id.0 != 0) {
