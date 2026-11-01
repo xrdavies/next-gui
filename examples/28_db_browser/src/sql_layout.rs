@@ -69,7 +69,8 @@ mod tests {
             demo.ui.sync(&mut demo.scene);
             let original = bounds(&demo, demo.ids.sql_area);
             let table = bounds(&demo, demo.ids.sql_table);
-            let end = table.y + table.height;
+            let messages = bounds(&demo, demo.ids.sql_messages.area);
+            let end = messages.y + messages.height;
             for (stage, delta) in [("results", -150.0), ("editor", 180.0)] {
                 let editor = bounds(&demo, demo.ids.sql_area);
                 let x = editor.x + editor.width * 0.5;
@@ -83,10 +84,11 @@ mod tests {
                 demo.ui.pointer_released();
                 demo.ui.sync(&mut demo.scene);
                 let resized = bounds(&demo, demo.ids.sql_table);
-                assert!((resized.y + resized.height - end).abs() < 1.0);
+                let messages = bounds(&demo, demo.ids.sql_messages.area);
+                assert!((messages.y + messages.height - end).abs() < 1.0);
                 assert!(resized.height >= 96.0);
                 if stage == "results" {
-                    assert!(resized.height > table.height + 100.0);
+                    assert!(resized.height > table.height + 80.0);
                 }
                 assert_eq!(
                     demo.ui.table_cell_at(

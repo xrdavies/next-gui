@@ -667,54 +667,95 @@ fn query_preview(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResu
 
 /// Run arbitrary SQL. For multi-statement scripts, only the last result set is returned;
 /// non-query statements return rows_affected.
+pub struct SqlExecution {
+    pub result: Result<QueryResult, String>,
+    pub message: String,
+}
+
 pub fn execute_sql(conn: &Connection, sql: &str) -> Result<QueryResult, String> {
-    let sql = sql.trim();
-    if sql.is_empty() {
-        return Err("empty SQL".into());
-    }
+    execute_sql_report(conn, sql).result
+}
 
-    let mut batch = rusqlite::Batch::new(conn, sql);
-    let mut result = None;
-    while let Some(mut stmt) = batch.next().map_err(|e| e.to_string())? {
-        let columns: Vec<String> = stmt
-            .column_names()
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        let col_count = columns.len();
-        let readonly = stmt.readonly();
-        let statement = readonly.then(|| stmt.expanded_sql()).flatten();
-        let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
-        let mut output = crate::cell_snapshot::SnapshotWriter::new(col_count)?;
-        let mut rows = Vec::new();
-        let mut cell_values = CellSnapshot::default();
-        let mut truncated = false;
-        while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
-            let cells: Vec<CellValue> = (0..col_count)
-                .map(|i| row.get_ref(i).map(CellValue::from))
-                .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
-            output.push(&cells)?;
-            if rows.len() == DEFAULT_LIMIT {
-                truncated = true;
-                continue;
-            }
-
-            rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
-            cell_values.push(cells)?;
+/// SQLite still parses and executes the batch, once, on the owning connection.
+pub fn execute_sql_report(conn: &Connection, sql: &str) -> SqlExecution {
+    let mut completed = 0;
+    let mut detail = String::new();
+    let result = (|| {
+        if sql.trim().is_empty() { return Err("empty SQL".into()); }
+        let mut batch = rusqlite::Batch::new(conn, sql);
+        let mut result = None;
+        loop {
+            let started = std::time::Instant::now();
+            let mut stmt = match batch.next() {
+                Ok(Some(stmt)) => stmt,
+                Ok(None) => break,
+                Err(error) => {
+                    detail = format!("Statement {}: preparation failed\nResult: {error}", completed + 1);
+                    return Err(error.to_string());
+                }
+            };
+            let source = stmt.expanded_sql().unwrap_or_default();
+            let before = conn.total_changes();
+            let readonly = stmt.readonly();
+            let mutation = if readonly || stmt.is_explain() != 0 { Some(false) } else { row_mutation(&source) };
+            let current: Result<QueryResult, String> = (|| {
+                let columns: Vec<String> = stmt.column_names().iter().map(|s| (*s).to_string()).collect();
+                let col_count = columns.len();
+                let statement = readonly.then(|| source.clone());
+                let mut rows_iter = stmt.query([]).map_err(|e| e.to_string())?;
+                let mut output = crate::cell_snapshot::SnapshotWriter::new(col_count)?;
+                let mut rows = Vec::new();
+                let mut cell_values = CellSnapshot::default();
+                let mut truncated = false;
+                while let Some(row) = rows_iter.next().map_err(|e| e.to_string())? {
+                    let cells: Vec<CellValue> = (0..col_count)
+                        .map(|i| row.get_ref(i).map(CellValue::from))
+                        .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
+                    output.push(&cells)?;
+                    if rows.len() == DEFAULT_LIMIT { truncated = true; continue; }
+                    rows.push(cells.iter().map(|cell| cell_to_string(cell.as_ref())).collect());
+                    cell_values.push(cells)?;
+                }
+                let all_values = std::sync::Arc::new(output.finish()?);
+                Ok(QueryResult {
+                    statement,
+                    export_rows: all_values.file(),
+                    all_values: Some(all_values),
+                    columns, rows, values: cell_values,
+                    rows_affected: (mutation == Some(true) || (mutation.is_none() && conn.total_changes() != before)).then(|| conn.changes()),
+                    truncated,
+                })
+            })();
+            let status = match &current {
+                Ok(result) => {
+                    let returned = result.all_values.as_ref().map_or(result.rows.len(), |values| values.len());
+                    match (result.columns.is_empty(), result.rows_affected) {
+                        (false, Some(affected)) => format!("{returned} rows returned; {affected} rows affected"),
+                        (false, None) => format!("{returned} rows returned"),
+                        (true, Some(affected)) => format!("{affected} rows affected"),
+                        (true, None) => "Query executed successfully".into(),
+                    }
+                }
+                Err(error) => format!("Error: {error}"),
+            };
+            detail = format!("Statement {}: {status} in {} ms\n\n{source}", completed + 1, started.elapsed().as_millis());
+            result = Some(current?);
+            completed += 1;
         }
-        let all_values = std::sync::Arc::new(output.finish()?);
-        result = Some(QueryResult {
-            statement,
-            export_rows: all_values.file(),
-            all_values: Some(all_values),
-            columns,
-            rows,
-            values: cell_values,
-            rows_affected: (!readonly).then(|| conn.changes()),
-            truncated,
-        });
+        result.ok_or_else(|| "No SQL statement to execute".into())
+    })();
+    let status = if result.is_ok() { "Execution finished without errors." } else { "Execution finished with errors." };
+    if detail.is_empty() {
+        if let Err(error) = &result { detail.clone_from(error); }
     }
-    result.ok_or_else(|| "No SQL statement to execute".into())
+    SqlExecution { result, message: format!("{status}\n{completed} statement(s) completed.\n\n{detail}") }
+}
+
+fn row_mutation(sql: &str) -> Option<bool> {
+    use fallible_iterator::FallibleIterator;
+    use sqlite3_parser::{ast::{Cmd, Stmt}, lexer::sql::Parser};
+    // Classification affects feedback only; newer SQLite syntax must still execute.
+    Parser::new(sql.as_bytes()).next().ok().flatten().map(|command| matches!(command, Cmd::Stmt(Stmt::Insert { .. } | Stmt::Update { .. } | Stmt::Delete { .. })))
 }
 
 pub fn vacuum(conn: &Connection) -> Result<(), String> {
@@ -3527,4 +3568,60 @@ pub fn schema_report(conn: &Connection) -> Result<String, String> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod sql_execution_message_tests {
+    use super::*;
+
+    #[test]
+    fn execution_messages_count_real_mutations_without_replaying_or_stale_ddl_counts() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY,n INTEGER); CREATE TABLE audit(id); CREATE TRIGGER changed AFTER UPDATE ON t BEGIN INSERT INTO audit VALUES(new.id); END; INSERT INTO t VALUES(1,0),(2,0),(3,0)").unwrap();
+        let ddl = execute_sql_report(&conn, "CREATE INDEX by_n ON t(n)");
+        assert_eq!(ddl.result.unwrap().rows_affected, None);
+        assert!(ddl.message.contains("Query executed successfully"));
+        assert!(!ddl.message.contains("rows affected"));
+        let virtual_ddl = execute_sql_report(&conn, "CREATE VIRTUAL TABLE search USING fts5(body)");
+        assert_eq!(virtual_ddl.result.unwrap().rows_affected, None);
+        let update = execute_sql_report(&conn, "-- update only two orders\nWITH wanted(id) AS (VALUES(1),(2)) UPDATE t SET n=n+1 WHERE id IN wanted RETURNING id,n;");
+        assert!(update.message.contains("2 rows returned; 2 rows affected"), "{}", update.message);
+        assert_eq!(update.result.unwrap().rows_affected, Some(2));
+        assert_eq!(conn.query_row("SELECT sum(n) FROM t", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
+        assert_eq!(conn.query_row("SELECT count(*) FROM audit", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
+        for sql in ["UPDATE t SET n=n+1 WHERE id=99", "DELETE FROM t WHERE id=99", "INSERT OR IGNORE INTO t VALUES(1,100)"] {
+            let outcome = execute_sql_report(&conn, sql);
+            assert_eq!(outcome.result.unwrap().rows_affected, Some(0));
+            assert!(outcome.message.contains("0 rows affected"));
+        }
+        let result = execute_sql_report(&conn, "SELECT * FROM t; CREATE TABLE other(x); PRAGMA user_version;");
+        assert!(result.message.contains("3 statement(s) completed."));
+        assert!(result.message.contains("Statement 3: 1 rows returned"));
+        assert_eq!(result.result.unwrap().rows_affected, None);
+        let explain = execute_sql_report(&conn, "EXPLAIN UPDATE t SET n=9;");
+        assert_eq!(explain.result.unwrap().rows_affected, None);
+        assert_eq!(conn.query_row("SELECT sum(n) FROM t", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
+    }
+
+    #[test]
+    fn failed_batch_identifies_the_statement_and_keeps_earlier_pending_changes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(id PRIMARY KEY); BEGIN").unwrap();
+        let outcome = execute_sql_report(&conn, "INSERT INTO t VALUES(1); INSERT INTO t VALUES(1); INSERT INTO t VALUES(2)");
+        assert!(outcome.result.unwrap_err().contains("UNIQUE"));
+        assert!(outcome.message.starts_with("Execution finished with errors."));
+        assert!(outcome.message.contains("1 statement(s) completed."));
+        assert!(outcome.message.contains("Statement 2: Error:"));
+        assert!(!conn.is_autocommit());
+        assert_eq!(conn.query_row("SELECT count(*) FROM t", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
+        let outcome = execute_sql_report(&conn, "SELECT 1; SELECT missing_column FROM t; INSERT INTO t VALUES(2)");
+        assert!(outcome.result.is_err());
+        assert!(outcome.message.contains("Statement 2: preparation failed"));
+        assert_eq!(conn.query_row("SELECT count(*) FROM t", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
+        let outcome = execute_sql_report(&conn, "WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3000) SELECT x FROM n");
+        assert!(outcome.message.contains("3000 rows returned"));
+        assert_eq!(outcome.result.unwrap().rows.len(), 500);
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(conn.query_row("SELECT count(*) FROM t", [], |r| r.get::<_,i64>(0)).unwrap(), 0);
+    }
 }

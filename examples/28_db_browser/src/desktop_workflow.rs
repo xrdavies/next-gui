@@ -24,6 +24,8 @@ WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200000) IN
 ";
 const REPORT: &str = "-- Revenue and order volume by status\nSELECT status,\n       COUNT(*) AS order_count,\n       ROUND(SUM(total), 2) AS revenue,\n       ROUND(AVG(total), 2) AS average_order\nFROM orders\nGROUP BY status\nORDER BY revenue DESC;";
 
+pub const DELIVERY_UPDATE: &str = "-- Revise delivery for the final four orders\nWITH deliveries(id) AS (\n    SELECT id FROM orders WHERE id > 99996\n)\nUPDATE orders\nSET shipping = shipping + 1, note = 'Priority delivery revised'\nWHERE id IN deliveries\nRETURNING id, shipping, note;";
+
 pub fn prepare(state: &mut AppState, page: &str) -> Result<(), String> {
     state.new_memory_db()?;
     state.conn.as_ref().unwrap().execute_batch(SCHEMA).map_err(|e| e.to_string())?;
@@ -37,7 +39,9 @@ pub fn prepare(state: &mut AppState, page: &str) -> Result<(), String> {
     state.tab = if page.starts_with("desktop-browse") { MainTab::Browse }
         else if page.starts_with("desktop-pragmas") { MainTab::Pragmas }
         else if page.starts_with("desktop-sql") { MainTab::ExecuteSql } else { MainTab::Structure };
-    state.sql_tabs[0] = REPORT.into();
+    state.sql_tabs[0] = if page.starts_with("desktop-sql-messages") { DELIVERY_UPDATE }
+        else if page.starts_with("desktop-sql-error") { "-- Inspect a missing order column\nSELECT id, delivery_reference FROM orders;" }
+        else { REPORT }.into();
     state.mark_sql_saved();
     if state.tab == MainTab::ExecuteSql { state.start_sql_job()?; }
     state.checkpoint_project();
@@ -98,7 +102,8 @@ mod tests {
                 }
                 if tab==MainTab::ExecuteSql {
                     demo.state.start_sql_job().unwrap();finish_sql(&mut demo.state);demo.do_rebuild();
-                    assert!(bounds(&demo,demo.ids.sql_area).height>250.0);assert!(bounds(&demo,demo.ids.sql_table).height>200.0);
+                    assert!(bounds(&demo,demo.ids.sql_area).height>250.0);assert!(bounds(&demo,demo.ids.sql_table).height>=96.0);
+                    assert!(bounds(&demo,demo.ids.sql_messages.area).height>=64.0);
                     assert_eq!(demo.state.sql_result.as_ref().unwrap().rows.len(),4);
                 }
                 capture(&mut demo,&format!("desktop-{page}-{name}-{width}"));

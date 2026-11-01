@@ -16,6 +16,8 @@ pub struct ProjectFile {
     #[serde(rename = "structure_rows_ratio")]
     pub structure_ratio: f32,
     pub sql_ratio: f32,
+    pub sql_messages_ratio: f32,
+    pub sql_messages_visible: bool,
     pub structure_widths: Vec<f32>,
     pub dock_ratio: f32,
     pub plot_ratio: f32,
@@ -64,6 +66,8 @@ impl ProjectFile {
             body_ratio: state.body_ratio,
             structure_ratio: state.structure_ratio,
             sql_ratio: state.sql_ratio,
+            sql_messages_ratio: state.sql_messages_ratio,
+            sql_messages_visible: state.sql_messages_visible,
             structure_widths: state.structure_widths.clone(),
             dock_ratio: state.dock_ratio,
             plot_ratio: state.plot_ratio,
@@ -141,6 +145,8 @@ impl ProjectFile {
         state.project_xml = self.db4s_xml.clone();
         state.body_ratio = self.body_ratio.clamp(0.05, 0.95);
         state.structure_ratio = self.structure_ratio.clamp(0.05, 0.95);
+        state.sql_messages_ratio = if self.sql_messages_ratio.is_finite() { self.sql_messages_ratio.clamp(0.05,0.95) } else { 0.65 };
+        state.sql_messages_visible = self.sql_messages_visible;
         state.sql_ratio = if self.sql_ratio.is_finite() { self.sql_ratio.clamp(0.05,0.95) } else { 0.5 };
         state.structure_widths = self.structure_widths.iter().take(2).copied().map(|width|if width.is_finite() {width.max(24.0)} else {110.0}).collect();
         state.dock_ratio = if self.dock_ratio.is_finite() {self.dock_ratio.clamp(0.05,0.95)}else{0.38};
@@ -160,6 +166,8 @@ impl ProjectFile {
         state.schema_group = None;
         state.sql_files = self.sql_files.clone();
         state.sql_outputs.clear();
+        state.sql_message = "Ready — Execute SQL to see results.".into();
+        state.sql_messages_view = None;
         state.sql_result = None;
         state.tab = MainTab::from_index(self.main_tab);
         state.dock_edit = self.dock_edit;
@@ -200,6 +208,8 @@ impl Default for ProjectFile {
             body_ratio: 0.72,
             structure_ratio: 0.68,
             sql_ratio: 0.5,
+            sql_messages_ratio: 0.65,
+            sql_messages_visible: true,
             structure_widths: Vec::new(),
             dock_ratio: 0.38,
             plot_ratio: 0.45,

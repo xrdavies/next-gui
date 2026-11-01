@@ -4,7 +4,7 @@ use next_gui_layout::{Axis, CrossAlign};
 use next_gui_scene::{Color, Scene};
 use next_gui_text::Font;
 use next_gui_ui::{
-    AlertStyle, AlertTone, ChartStyle, ChartTile, ColumnStyle, IconName, ImageStyle, ListStyle, MenuItem,
+    ChartStyle, ChartTile, ColumnStyle, IconName, ImageStyle, ListStyle, MenuItem,
     MenuStyle, ModalStyle, PanelStyle, RowStyle, SelectStyle, SplitterStyle, StatusBarStyle,
     SwitchStyle, TableColumn, TableStyle, TabsStyle, TextAreaStyle, TextInputStyle, Theme,
     ToolbarStyle, PlotData, PlotSeries, PlotLine, PlotMarker, PlotStyle, Ui, WidgetId,
@@ -185,7 +185,7 @@ pub struct BuiltUi {
     pub btn_sql_csv: WidgetId,
     pub btn_sql_json: WidgetId,
     pub sql_table: WidgetId,
-    pub sql_alert: WidgetId,
+    pub sql_messages: crate::sql_messages::Controls,
     pub dock_tabs: WidgetId,
     pub edit_col: WidgetId,
     pub edit_value: WidgetId,
@@ -668,7 +668,7 @@ pub fn build_ui(
     let mut btn_sql_csv = z;
     let mut btn_sql_json = z;
     let mut sql_table = z;
-    let mut sql_alert = z;
+    let mut sql_messages = crate::sql_messages::Controls::default();
     let mut dock_tabs = z;
     let mut edit_col = z;
     let mut edit_value = z;
@@ -2257,20 +2257,6 @@ pub fn build_ui(
                                 |p| { sql_area = p.text_area(&sql_editor, "SQL…", sql_area_style); },
                                 |p| { p.column(sql_results_style, |p| {
 
-                            let tone = if state.error_msg.is_some() {
-                                AlertTone::Error
-                            } else if state.sql_busy {
-                                AlertTone::Warning
-                            } else {
-                                AlertTone::Info
-                            };
-                            let msg = state
-                                .error_msg
-                                .clone()
-                                .unwrap_or_else(|| state.sql_message.clone());
-                            let mut alert_s = AlertStyle::from_theme(&theme);
-                            alert_s.width = main_w - 24.0;
-                            sql_alert = p.alert_styled(tone, msg, false, alert_s);
                             p.scroll_row(tool_row, |row| {
                                 btn_sql_csv = row.tool_button("Results → CSV");
                                 btn_sql_json = row.tool_button("Results → JSON");
@@ -2278,10 +2264,11 @@ pub fn build_ui(
                                 view_style.width = 160.0;
                                 sql_view_name = row.text_input_styled(&state.sql_view_name, "view name", view_style);
                                 btn_sql_view = row.tool_button("Save as VIEW");
+                                sql_messages.toggle = row.tool_button(if state.sql_messages_visible { "Hide Messages" } else { "Show Messages" });
                             });
-                            sql_table = if let Some(values) = state.sql_result.as_ref().and_then(|result| result.all_values.clone()) {
-                                p.data_table(sql_cols.clone(), values, sql_table_style)
-                            } else { p.table(sql_cols.clone(), sql_rows.clone(), sql_table_style) };
+                            let toggle = sql_messages.toggle;
+                            (sql_messages, sql_table) = crate::sql_messages::build(p, state, &theme, sql_cols.clone(), sql_rows.clone(), sql_table_style);
+                            sql_messages.toggle = toggle;
                                 }); });
                             });
                         });
@@ -2932,7 +2919,8 @@ pub fn build_ui(
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
     ui.set_accessible_name(sql_splitter,"Resize SQL editor and query results");
     ui.set_flex_fill(sql_table,true);
-    ui.set_splitter_min_sizes(sql_splitter,120.0,AlertStyle::from_theme(&theme).height+32.0+8.0+96.0);
+    ui.set_splitter_min_sizes(sql_splitter,120.0,32.0+4.0+96.0+if state.sql_messages_visible { 70.0 } else { 0.0 });
+    sql_messages.configure(&mut ui,state);
     ui.sync(&mut scene);
     let (x, y) = state.sql_scroll;
     ui.set_table_scroll_offset(sql_table, x, y);
@@ -3109,7 +3097,7 @@ pub fn build_ui(
         btn_sql_csv,
         btn_sql_json,
         sql_table,
-        sql_alert,
+        sql_messages,
         dock_tabs,
         edit_col,
         edit_value,

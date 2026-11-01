@@ -624,6 +624,9 @@ pub struct AppState {
     pub sql_scroll: (f32, f32),
     pub sql_selection: SqlSelection,
     pub sql_message: String,
+    pub sql_messages_view: Option<next_gui_ui::TextAreaState>,
+    pub sql_messages_ratio: f32,
+    pub sql_messages_visible: bool,
     pub sql_view_name: String,
     pub sql_busy: bool,
     pub sql_cancel: Arc<AtomicBool>,
@@ -743,6 +746,7 @@ pub struct SqlOutput {
     scroll: (f32, f32),
     selection: SqlSelection,
     message: String,
+    messages_view: Option<next_gui_ui::TextAreaState>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -773,7 +777,7 @@ struct CellApplyConfirmation {
 }
 
 pub struct SqlJob {
-    handle: std::thread::JoinHandle<(LoggedConnection, Result<QueryResult, String>, bool)>,
+    handle: std::thread::JoinHandle<(LoggedConnection, db::SqlExecution, bool)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1017,6 +1021,9 @@ impl AppState {
             sql_selection: SqlSelection::default(),
             sql_view_name: "e28_saved_view".into(),
             sql_message: "Ready — Execute SQL to see results.".into(),
+            sql_messages_view: None,
+            sql_messages_ratio: 0.65,
+            sql_messages_visible: true,
             sql_busy: false,
             sql_cancel: Arc::new(AtomicBool::new(false)),
             sql_interrupt: None,
@@ -1172,6 +1179,7 @@ impl AppState {
             scroll: self.sql_scroll,
             selection: self.sql_selection,
             message: std::mem::take(&mut self.sql_message),
+            messages_view: self.sql_messages_view.take(),
         };
         let output = std::mem::take(&mut self.sql_outputs[index]);
         self.sql_result = output.result;
@@ -1179,6 +1187,7 @@ impl AppState {
         self.sql_scroll = output.scroll;
         self.sql_selection = output.selection;
         self.sql_message = output.message;
+        self.sql_messages_view = output.messages_view;
         self.error_msg = None;
         self.sql_tab_idx = index;
         self.find_search.reset(&self.sql_tabs[index], 0..0);
@@ -1312,6 +1321,7 @@ impl AppState {
             self.sql_saved.push(String::new());
             self.sql_result = None;
             self.sql_message.clear();
+            self.sql_messages_view = None;
             self.sql_column_widths.clear();
             self.sql_scroll = (0.0, 0.0);
             self.sql_tab_idx = 0;
@@ -2566,6 +2576,8 @@ impl AppState {
         self.schema_dock = crate::schema_dock::State::default();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_message = "Ready — Execute SQL to see results.".into();
+        self.sql_messages_view = None;
         self.path = path;
         self.path_draft = self.path.clone();
         self.read_only = read_only;
@@ -2632,6 +2644,8 @@ impl AppState {
         self.schema_names.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_message = "Ready — Execute SQL to see results.".into();
+        self.sql_messages_view = None;
         self.adopt_conn(conn, path.to_string(), false)?;
         self.status_msg = format!("Created {path}");
         Ok(())
@@ -2645,6 +2659,8 @@ impl AppState {
         self.schema_names.clear();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_message = "Ready — Execute SQL to see results.".into();
+        self.sql_messages_view = None;
         self.adopt_conn(conn, ":memory:".into(), false)?;
         self.status_msg = "New in-memory database".into();
         Ok(())
@@ -2759,6 +2775,8 @@ impl AppState {
         self.clear_browse_editor();
         self.sql_result = None;
         self.sql_outputs.clear();
+        self.sql_message = "Ready — Execute SQL to see results.".into();
+        self.sql_messages_view = None;
         self.pragmas.clear();
         self.chart_schema = "main".into();
         self.chart_table = None;
@@ -2994,7 +3012,7 @@ impl AppState {
         self.sql_sensitive = crate::sql_log::sensitive(sql);
         self.sql_log.push(Source::User, sql);
         let conn = self.conn.as_ref().ok_or("No database open")?;
-        let result = conn.user_sql(|| db::execute_sql(conn, sql));
+        let result = conn.user_sql(|| db::execute_sql_report(conn, sql));
         self.dirty = !self.read_only && db::has_pending_changes(conn)?;
         if !self.read_only {
             db::begin_deferred(conn)?;
@@ -3022,16 +3040,18 @@ impl AppState {
         self.sql_interrupt = Some(worker.get_interrupt_handle());
         self.sql_busy = true;
         self.sql_message = "Running…".into();
+        self.sql_messages_view = None;
+        self.error_msg = None;
         self.status_msg = "SQL running…".into();
         self.sql_sensitive = crate::sql_log::sensitive(&sql);
         self.sql_log.push(Source::User, &sql);
         let handle = std::thread::spawn(move || {
             worker.progress_handler(500, Some(move || cancel.load(Ordering::SeqCst)));
-            let mut result = worker.user_sql(|| db::execute_sql(&worker, &sql));
+            let mut result = worker.user_sql(|| db::execute_sql_report(&worker, &sql));
             worker.progress_handler(0, None::<fn() -> bool>);
             let changed = !read_only && db::has_pending_changes(&worker).unwrap_or(true);
-            if result.is_err() && worker.is_autocommit() && !read_only {
-                result = result.map_err(|e| {
+            if result.result.is_err() && worker.is_autocommit() && !read_only {
+                result.result = result.result.map_err(|e| {
                     format!(
                         "{e}; the transaction ended through explicit SQL or a SQLite rollback; check earlier pending edits"
                     )
@@ -3039,7 +3059,7 @@ impl AppState {
             }
             if !read_only {
                 if let Err(e) = db::begin_deferred(&worker) {
-                    result = Err(e);
+                    result.result = Err(e);
                 }
             }
             (worker, result, changed)
@@ -3074,24 +3094,25 @@ impl AppState {
                 result
             }
             Err(_) => {
-                Err("SQL worker panicked; connection closed and pending changes rolled back".into())
+                db::SqlExecution { result: Err("SQL worker panicked; connection closed and pending changes rolled back".into()), message: "Execution finished with errors.".into() }
             }
         };
         let _ = self.finish_sql_result(result);
         true
     }
 
-    fn finish_sql_result(&mut self, result: Result<QueryResult, String>) -> Result<(), String> {
+    fn finish_sql_result(&mut self, execution: db::SqlExecution) -> Result<(), String> {
+        self.sql_messages_view = None;
+        self.sql_message = if self.sql_sensitive { "SQLCipher execution finished (details redacted)".into() } else { execution.message };
         self.sql_column_widths.clear();
         self.sql_scroll = (0.0, 0.0);
         self.sql_selection = SqlSelection::default();
         let _ = self.refresh_schema();
         let _ = self.refresh_browse();
-        match result {
+        match execution.result {
             Ok(res) => {
-                self.sql_message = format!("OK — {} result row(s)", res.all_values.as_ref().map_or(res.rows.len(), |values| values.len()));
                 self.sql_result = Some(res);
-                self.status_msg = self.sql_message.clone();
+                self.status_msg = self.sql_message.lines().next().unwrap_or_default().into();
                 self.error_msg = None;
                 Ok(())
             }
@@ -3099,8 +3120,10 @@ impl AppState {
                 self.sql_log.push(Source::Error, if self.sql_sensitive { "SQLCipher statement failed (details redacted)" } else { &e });
                 self.sql_result = None;
                 self.error_msg = Some(e.clone());
-                self.sql_message = e.clone();
-                self.status_msg = e.clone();
+                if self.sql_sensitive { self.sql_message = "SQLCipher statement failed (details redacted)".into(); }
+                else if !self.sql_message.starts_with("Execution finished with errors.") { self.sql_message.insert_str(0,"Execution finished with errors.\n"); }
+                if !self.sql_sensitive && !self.sql_message.contains(&e) { self.sql_message.push_str(&format!("\n\n{e}")); }
+                self.status_msg = if self.sql_sensitive { "SQLCipher statement failed (details redacted)".into() } else { e.clone() };
                 Err(e)
             }
         }

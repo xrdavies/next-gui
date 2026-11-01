@@ -57,6 +57,7 @@ mod browse_edit;
 mod fk_values;
 mod desktop_workflow;
 mod sql_layout;
+mod sql_messages;
 mod structure_tree;
 mod browse_menu;
 mod schema_dock;
@@ -306,6 +307,7 @@ struct BuiltUiIds {
     body_splitter: WidgetId,
     structure_splitter: WidgetId,
     sql_splitter: WidgetId,
+    sql_messages: sql_messages::Controls,
     dock_splitter: WidgetId,
     plot_splitter: WidgetId,
     dock_scrolls: [WidgetId;5],
@@ -569,6 +571,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             body_splitter: b.body_splitter,
             structure_splitter: b.structure_splitter,
             sql_splitter: b.sql_splitter,
+            sql_messages: b.sql_messages,
             dock_splitter: b.dock_splitter,
             plot_splitter: b.plot_splitter,
             dock_scrolls: b.dock_scrolls,
@@ -1944,6 +1947,7 @@ impl Demo {
             }
             if let Some(y) = self.ui.tree_scroll_offset(self.ids.tree) { self.state.schema_tree_scroll = y; }
         }
+        self.ids.sql_messages.snapshot(&self.ui, &mut self.state);
         if let Some(view) = self.ui.text_area_state(self.ids.log_area) { self.state.sql_log_view = Some(view); }
         if let Some(ratio) = self.ui.splitter_ratio(self.ids.body_splitter) {
             if self.state.any_dock_visible() && Some(ratio) != self.last_body_ratio { self.state.body_ratio = ratio; }
@@ -3268,6 +3272,7 @@ impl Demo {
         let tree_focused = self.state.tab == MainTab::Structure && self.ids.tree.0 != 0
             && self.ui.focused() == Some(self.ids.tree) && self.state.overlay.is_none() && !self.state.confirm_open;
         let sql_focused = self.ui.focused() == Some(self.ids.sql_area) && (self.state.overlay.is_none() || self.state.overlay == Some(OverlayKind::FindReplace)) && self.state.tab == MainTab::ExecuteSql;
+        let messages_focused = self.ids.sql_messages.area.0 != 0 && self.ui.focused() == Some(self.ids.sql_messages.area) && self.state.tab == MainTab::ExecuteSql;
         let sql_table_focused = self.ids.sql_table.0 != 0 && self.ui.focused() == Some(self.ids.sql_table) && self.state.tab == MainTab::ExecuteSql;
         if let Err(error) = self.state.sync_current_plot() { self.state.plot.clear(); self.set_error(error); }
         self.sync_cell_selection();
@@ -3442,6 +3447,7 @@ impl Demo {
             self.ui.set_focus(Some(self.ids.browse_table));
             self.ui.sync(&mut self.scene);
         }
+        if messages_focused && self.ids.sql_messages.area.0 != 0 { self.ui.set_focus(Some(self.ids.sql_messages.area)); self.ui.sync(&mut self.scene); }
         if sql_table_focused { self.ui.set_focus(Some(self.ids.sql_table)); self.ui.sync(&mut self.scene); }
         if sql_focused {
             self.ui.set_focus(Some(self.ids.sql_area));
@@ -5082,6 +5088,12 @@ impl Demo {
         }
         if id == self.ids.btn_sql_csv || id == self.ids.btn_sql_json {
             self.open_query_export(id == self.ids.btn_sql_json);
+            return;
+        }
+        if id.0 != 0 && id == self.ids.sql_messages.toggle {
+            self.snapshot_inputs();
+            self.state.sql_messages_visible = !self.state.sql_messages_visible;
+            self.rebuild = true;
             return;
         }
         if id == self.ids.btn_sql_stop {
