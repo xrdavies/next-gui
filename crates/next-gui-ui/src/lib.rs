@@ -47,6 +47,7 @@ mod table_edit;
 mod table_style;
 pub use table_style::{TableCellStyle, TableTextAlign};
 mod select_data;
+mod tree_table_support;
 pub use select_data::SelectDataSource;
 use select_data::SelectOptions;
 mod table_data;
@@ -4843,7 +4844,7 @@ impl Ui {
     /// Selected tree node id.
     pub fn tree_selected(&self, id: WidgetId) -> Option<u64> {
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Tree { selected, .. }) => *selected,
+            Some(Kind::Tree { selected, .. } | Kind::TreeTable { selected, .. }) => *selected,
             _ => None,
         }
     }
@@ -4853,6 +4854,7 @@ impl Ui {
     pub fn tree_node_at(&self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> Option<u64> {
         if !x.is_finite() || !y.is_finite() || self.hit_widget(scene, x, y) != Some(id)
             || self.point_on_scrollbar(scene, id, x, y) { return None; }
+        if matches!(self.widgets.get(&id).map(|w| &w.kind),Some(Kind::TreeTable { .. })) { return self.tree_table_node_at(scene,id,x,y); }
         let widget = self.widgets.get(&id)?;
         let Kind::Tree { roots, style, scroll_y, .. } = &widget.kind else { return None; };
         if !style.row_height.is_finite() || style.row_height <= 0.0 { return None; }
@@ -4866,7 +4868,7 @@ impl Ui {
     /// Set tree selection by node id.
     pub fn set_tree_selected(&mut self, id: WidgetId, node_id: Option<u64>) {
         if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Tree { selected, .. } = &mut w.kind {
+            if let Kind::Tree { selected, .. } | Kind::TreeTable { selected, .. } = &mut w.kind {
                 *selected = node_id;
             }
         }
@@ -4874,6 +4876,7 @@ impl Ui {
 
     /// Expand or collapse a tree node by id.
     pub fn set_tree_expanded(&mut self, id: WidgetId, node_id: u64, expanded: bool) {
+        self.set_tree_table_expanded(id,node_id,expanded);
         if let Some(w) = self.widgets.get_mut(&id) {
             if let Kind::Tree { roots, .. } = &mut w.kind {
                 set_expanded_in_forest(roots, node_id, expanded);
@@ -4883,6 +4886,7 @@ impl Ui {
 
     /// Expansion state of a tree node, including nodes under collapsed ancestors.
     pub fn tree_expanded(&self, id: WidgetId, node_id: u64) -> Option<bool> {
+        if let Some(value) = self.tree_table_expanded(id,node_id) { return Some(value); }
         fn find(nodes: &[TreeNode], id: u64) -> Option<bool> {
             for node in nodes {
                 if node.id == id { return Some(node.expanded); }
@@ -4897,7 +4901,7 @@ impl Ui {
     /// Vertical viewport offset of a tree.
     pub fn tree_scroll_offset(&self, id: WidgetId) -> Option<f32> {
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Tree { scroll_y, .. }) => Some(*scroll_y),
+            Some(Kind::Tree { scroll_y, .. } | Kind::TreeTable { scroll_y, .. }) => Some(*scroll_y),
             _ => None,
         }
     }
@@ -5050,10 +5054,11 @@ impl Ui {
         Some((row, column))
     }
 
-    /// Current table column widths, including pointer resizing.
+    /// Current table column widths, including pointer resizing. TreeTable includes the leading Name column.
     pub fn table_column_widths(&self, id: WidgetId) -> Option<Vec<f32>> {
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::Table { columns, .. }) => Some(columns.iter().map(|c| c.width).collect()),
+            Some(Kind::TreeTable { columns, style, .. }) => Some(std::iter::once(style.tree_col_width).chain(columns.iter().map(|c|c.width)).collect()),
             _ => None,
         }
     }
@@ -5062,6 +5067,10 @@ impl Ui {
     pub fn set_table_column_width(&mut self, id: WidgetId, column: usize, width: f32) -> bool {
         if !width.is_finite() {
             return false;
+        }
+        if let Some(Widget {kind:Kind::TreeTable {columns,style,..},..})=self.widgets.get_mut(&id) {
+            let target=if column==0 {Some(&mut style.tree_col_width)} else {columns.get_mut(column-1).map(|column|&mut column.width)};
+            let Some(target)=target else {return false;};let width=width.max(24.0);let changed=*target!=width;*target=width;return changed;
         }
         let Some(Widget {
             kind: Kind::Table { columns, .. },
@@ -5287,7 +5296,7 @@ impl Ui {
     pub fn is_tree(&self, id: WidgetId) -> bool {
         matches!(
             self.widgets.get(&id).map(|w| &w.kind),
-            Some(Kind::Tree { .. })
+            Some(Kind::Tree { .. } | Kind::TreeTable { .. })
         )
     }
 
@@ -6359,6 +6368,7 @@ impl Ui {
     /// Expand ancestors and scroll just enough to reveal the selected tree node.
     /// Keeps focus and selection; call [`Ui::sync`] to repaint.
     pub fn reveal_tree_selection(&mut self, id: WidgetId) {
+        if matches!(self.widgets.get(&id).map(|w| &w.kind),Some(Kind::TreeTable { .. })) { self.reveal_tree_table_selection(id); return; }
         fn expand_ancestors(nodes: &mut [TreeNode], selected: u64) -> bool {
             for node in nodes {
                 if node.id == selected { return true; }
@@ -8323,6 +8333,10 @@ impl Ui {
             .and_then(|n| scene.get(n).map(|n| n.bounds))
             .unwrap_or_else(Rect::empty);
         if y < bounds.y + style.header_height {
+            let widths=self.table_column_widths(id).unwrap_or_default();let mut edge=bounds.x;
+            for (column,width) in widths.into_iter().enumerate() {
+                edge+=width;if (x-edge).abs()<=4.0 {self.drag=Some(DragState::TableColumn {table:id,column,start_x:x,start_width:width});break;}
+            }
             return true;
         }
         let body_y = y - (bounds.y + style.header_height) + scroll_y;
@@ -8350,57 +8364,7 @@ impl Ui {
         true
     }
 
-    fn key_tree_table(&mut self, id: WidgetId, key: UiKey) -> bool {
-        let flats = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::TreeTable { roots, .. }) => flatten_tree_table(roots),
-            _ => return false,
-        };
-        if flats.is_empty() {
-            return false;
-        }
-        let sel = self.tree_table_selected(id);
-        let idx = sel.and_then(|s| flats.iter().position(|r| r.id == s));
-        match key {
-            UiKey::Down => {
-                let next = idx.map(|i| (i + 1).min(flats.len() - 1)).unwrap_or(0);
-                self.set_tree_table_selected(id, Some(flats[next].id));
-                true
-            }
-            UiKey::Up => {
-                let next = idx.map(|i| i.saturating_sub(1)).unwrap_or(0);
-                self.set_tree_table_selected(id, Some(flats[next].id));
-                true
-            }
-            UiKey::Left => {
-                if let Some(i) = idx {
-                    if flats[i].has_children && flats[i].expanded {
-                        if let Some(w) = self.widgets.get_mut(&id) {
-                            if let Kind::TreeTable { roots, .. } = &mut w.kind {
-                                toggle_tree_table_expanded(roots, flats[i].id);
-                            }
-                        }
-                        return true;
-                    }
-                }
-                false
-            }
-            UiKey::Right | UiKey::Enter => {
-                if let Some(i) = idx {
-                    if flats[i].has_children && !flats[i].expanded {
-                        if let Some(w) = self.widgets.get_mut(&id) {
-                            if let Kind::TreeTable { roots, .. } = &mut w.kind {
-                                toggle_tree_table_expanded(roots, flats[i].id);
-                            }
-                        }
-                        return true;
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
+    fn key_tree_table(&mut self, id: WidgetId, key: UiKey) -> bool { self.key_tree_table_input(id,key) }
 
     /// Progress value in 0..=1.
     pub fn progress_value(&self, id: WidgetId) -> Option<f32> {
@@ -16061,7 +16025,10 @@ impl Ui {
 
         // header labels: tree + columns; then rows: sel_bg + tree_lab + cell labs
         let col_n = columns.len();
-        let needed = 1 + col_n + flats.len() * (2 + col_n);
+        let first = (scroll_y / style.row_height.max(1.0)).floor().max(0.0) as usize;
+        let count = ((bounds.height-style.header_height).max(0.0)/style.row_height.max(1.0)).ceil() as usize+1;
+        let visible = first.min(flats.len())..first.saturating_add(count).min(flats.len());
+        let needed = 1 + col_n + visible.len() * (2 + col_n);
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
@@ -16077,6 +16044,7 @@ impl Ui {
                 ),
             );
             scene.set_fill(n, style.header_fg);
+            scene.set_clip(n,Some(Rect::new(bounds.x,bounds.y,style.tree_col_width,style.header_height).intersect(&bounds)));
             scene.set_mask(n, Some(AlphaMask::new(tm.width, tm.height, tm.pixels)));
             scene.set_visible(n, true);
         }
@@ -16094,6 +16062,7 @@ impl Ui {
                     ),
                 );
                 scene.set_fill(n, style.header_fg);
+                scene.set_clip(n,Some(Rect::new(cx,bounds.y,col.width,style.header_height).intersect(&bounds)));
                 scene.set_mask(n, Some(AlphaMask::new(m.width, m.height, m.pixels)));
                 scene.set_visible(n, true);
             }
@@ -16103,9 +16072,10 @@ impl Ui {
         let body_top = bounds.y + style.header_height;
         let row_stride = 2 + col_n;
         let header_slots = 1 + col_n;
-        for (ri, row) in flats.iter().enumerate() {
+        for (slot, ri) in visible.clone().enumerate() {
+            let row = &flats[ri];
             let y = body_top + ri as f32 * style.row_height - scroll_y;
-            let base = header_slots + ri * row_stride;
+            let base = header_slots + slot * row_stride;
             if y + style.row_height < body_top || y > bounds.y + bounds.height {
                 for k in 0..row_stride {
                     if let Some(&n) = aux.get(base + k) {
@@ -16121,6 +16091,7 @@ impl Ui {
                         bg,
                         Rect::new(bounds.x + 1.0, y, bounds.width - 2.0, style.row_height),
                     );
+                    scene.set_clip(bg,Some(Rect::new(bounds.x,body_top,bounds.width,(bounds.height-style.header_height).max(0.0))));
                     scene.set_fill(bg, style.selected_bg);
                     scene.set_mask(bg, None);
                     scene.set_visible(bg, true);
@@ -16139,6 +16110,7 @@ impl Ui {
                 "·"
             };
             let label = format!("{twisty} {}", row.label);
+            let label = label.chars().take(256).map(|ch| if ch.is_whitespace() { ' ' } else { ch }).collect::<String>();
             let (_, lm) = self.font.rasterize_text(&label, style.size, None);
             let lx = bounds.x + style.padding + row.depth as f32 * style.indent;
             if let Some(&n) = aux.get(base + 1) {
@@ -16152,13 +16124,15 @@ impl Ui {
                     ),
                 );
                 scene.set_fill(n, if is_sel { style.selected_fg } else { style.fg });
+                scene.set_clip(n,Some(Rect::new(bounds.x,y,style.tree_col_width,style.row_height).intersect(&Rect::new(bounds.x,body_top,bounds.width,(bounds.height-style.header_height).max(0.0)))));
                 scene.set_mask(n, Some(AlphaMask::new(lm.width, lm.height, lm.pixels)));
                 scene.set_visible(n, true);
             }
             let mut cx = bounds.x + style.tree_col_width;
             for (ci, col) in columns.iter().enumerate() {
                 let cell = row.cells.get(ci).map(|s| s.as_str()).unwrap_or("");
-                let (_, cm) = self.font.rasterize_text(cell, style.size, None);
+                let cell = cell.chars().take(256).map(|ch| if ch.is_whitespace() { ' ' } else { ch }).collect::<String>();
+                let (_, cm) = self.font.rasterize_text(&cell, style.size, None);
                 if let Some(&n) = aux.get(base + 2 + ci) {
                     scene.set_bounds(
                         n,
@@ -16170,12 +16144,14 @@ impl Ui {
                         ),
                     );
                     scene.set_fill(n, if is_sel { style.selected_fg } else { style.fg });
+                    scene.set_clip(n,Some(Rect::new(cx,y,col.width,style.row_height).intersect(&Rect::new(bounds.x,body_top,bounds.width,(bounds.height-style.header_height).max(0.0)))));
                     scene.set_mask(n, Some(AlphaMask::new(cm.width, cm.height, cm.pixels)));
                     scene.set_visible(n, true);
                 }
                 cx += col.width;
             }
         }
+        for &node in aux.iter().skip(needed) { scene.set_visible(node,false); }
     }
 
 
