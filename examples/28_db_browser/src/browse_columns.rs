@@ -57,6 +57,34 @@ mod tests {
     use next_gui_ui::Theme;
 
     #[test]
+    fn hidden_rowid_layout_follows_its_alias_when_a_real_rowid_column_is_added() {
+        let mut state = AppState::empty(); state.new_memory_db().unwrap();
+        state.conn.as_ref().unwrap().execute_batch("CREATE TABLE t(v);INSERT INTO t(rowid,v) VALUES(7,'kept');").unwrap();
+        state.refresh_schema().unwrap(); state.switch_browse_table("t").unwrap(); state.set_show_rowid(true).unwrap();
+        state.tab = crate::state::MainTab::Browse;
+        state.browse_mut().hidden_columns = vec!["rowid".into()];
+        state.browse_mut().column_order = vec!["v".into(),"rowid".into()];
+        state.browse_mut().frozen_cols = Some(1);
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE t ADD COLUMN rowid TEXT DEFAULT 'user-column'").unwrap();
+        state.refresh_schema().unwrap(); state.refresh_browse().unwrap();
+        assert_eq!(state.browse().result.as_ref().unwrap().columns,["_rowid_","v","rowid"]);
+        assert_eq!(state.browse().hidden_columns,["_rowid_"]);
+        assert_eq!(state.browse().visible_columns(),[1,2]);
+        assert_eq!(state.browse_frozen_cols(),1);
+        state.begin_browse_cell_edit(0,2).unwrap(); state.edit_value = "user-value".into(); state.apply_cell_draft().unwrap();
+        assert_eq!(state.conn.as_ref().unwrap().query_row("SELECT _rowid_,rowid,v FROM t",[],|r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).unwrap(),(7,"user-value".into(),"kept".into()));
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE t ADD COLUMN _rowid_ TEXT").unwrap();
+        state.refresh_schema().unwrap(); state.refresh_browse().unwrap();
+        assert_eq!(state.browse().hidden_columns,["oid"]);
+        state.conn.as_ref().unwrap().execute_batch("ALTER TABLE t ADD COLUMN oid TEXT").unwrap();
+        state.refresh_schema().unwrap(); state.refresh_browse().unwrap();
+        assert!(!state.browse().show_row_id);
+        assert!(state.browse().hidden_columns.is_empty());
+        assert_eq!(state.browse().visible_columns(),[0,1,2,3]);
+        assert_eq!(state.browse_frozen_cols(),1);
+    }
+
+    #[test]
     fn desktop_column_actions_preserve_typed_edits_filters_and_native_project_settings() {
         for (name, width, height, theme) in [("dark",1600,900,Theme::dark()), ("light",1920,927,Theme::light())] {
             let mut demo = fixture(width,height,theme);

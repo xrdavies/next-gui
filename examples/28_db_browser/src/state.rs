@@ -190,12 +190,18 @@ impl BrowseTableOptions {
                 if let Some(alias) = &alias {
                     self.column_names[0] = alias.clone();
                     for order in &mut self.ordering { if order.column == old { order.column = alias.clone(); } }
+                    for name in self.column_order.iter_mut().chain(&mut self.hidden_columns) {
+                        if *name == old { *name = alias.clone(); }
+                    }
                 } else {
+                    let visible_rowid = !self.hidden_columns.contains(&old);
                     self.column_names.remove(0);
+                    self.column_order.retain(|name| *name != old);
+                    self.hidden_columns.retain(|name| *name != old);
                     if !self.col_filters.is_empty() { self.col_filters.remove(0); }
                     if !self.column_widths.is_empty() { self.column_widths.remove(0); }
                     self.ordering.retain(|order| order.column != old);
-                    self.frozen_cols = self.frozen_cols.map(|count| count.saturating_sub(1));
+                    if visible_rowid { self.frozen_cols = self.frozen_cols.map(|count| count.saturating_sub(1)); }
                 }
             }
         }
