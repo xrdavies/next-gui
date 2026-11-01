@@ -51,6 +51,7 @@ mod tree_table_support;
 pub use select_data::SelectDataSource;
 use select_data::SelectOptions;
 mod table_data;
+mod flex_fill;
 pub use table_data::TableDataSource;
 use table_data::TableRows;
 pub use table_edit::TableCellEditEvent;
@@ -73,7 +74,7 @@ pub use p1_rest::*;
 pub use office_p2::*;
 pub use theme::{Theme, ThemeColors, ThemeMode, ThemeRadii, ThemeSpacing, ThemeTypography};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use next_gui_layout::{layout_flex, Axis, ChildMeasure, CrossAlign, FlexParams};
@@ -2398,6 +2399,7 @@ pub struct Ui {
     node_to_widget: HashMap<NodeId, WidgetId>,
     input_selection_nodes: HashMap<WidgetId, (NodeId, NodeId)>,
     table_filters: HashMap<WidgetId, TableFilterRow>,
+    flex_fill: HashSet<WidgetId>,
     scrollbars: HashMap<WidgetId, [NodeId; 4]>,
     revealed_scroll_focus: Option<WidgetId>,
     font: Arc<Font>,
@@ -2593,6 +2595,7 @@ impl Ui {
             node_to_widget: HashMap::new(),
             input_selection_nodes: HashMap::new(),
             table_filters: HashMap::new(),
+            flex_fill: HashSet::new(),
             scrollbars: HashMap::new(),
             revealed_scroll_focus: None,
             font: Arc::new(font),
@@ -10403,7 +10406,6 @@ impl Ui {
         cross_align: CrossAlign,
         children: &[WidgetId],
     ) -> ChildMeasure {
-        let measures: Vec<_> = children.iter().map(|c| self.measure_widget(*c)).collect();
         let params = FlexParams {
             axis,
             x: 0.0,
@@ -10414,6 +10416,7 @@ impl Ui {
             gap,
             cross_align,
         };
+        let measures = self.flex_child_measures(&params, children);
         next_gui_layout::measure_flex(&params, &measures)
     }
 
@@ -10588,10 +10591,7 @@ impl Ui {
             return;
         };
 
-        let measures: Vec<_> = children
-            .iter()
-            .map(|c| self.measure_widget(*c))
-            .collect();
+        let measures = self.flex_child_measures(&params, &children);
         let total = next_gui_layout::measure_flex(&params, &measures);
         if let Some(node) = col_node {
             let (ox, oy) = scene
