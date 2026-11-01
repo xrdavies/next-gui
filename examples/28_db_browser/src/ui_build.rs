@@ -108,6 +108,7 @@ pub struct BuiltUi {
     pub data_export: crate::data_export::Controls,
     pub sql_export: crate::sql_export::Controls,
     pub plot_load: crate::plot_load::Controls,
+    pub fk_values: crate::fk_values::Controls,
     pub column_picker: crate::column_picker::Controls,
     pub view_keys: crate::view_keys::Controls,
     pub reference_editor: crate::reference_editor::Controls,
@@ -3033,6 +3034,7 @@ pub fn build_ui(
     let data_export = crate::data_export::build(&mut ui,state,&theme,win_w,win_h);
     let sql_export = crate::sql_export::build(&mut ui,state,&theme,win_w,win_h);
     let plot_load = crate::plot_load::build(&mut ui,state,&theme,win_w,win_h);
+    let fk_values = crate::fk_values::build(&mut ui,state,&theme,win_w,win_h);
     ui.sync(&mut scene);
     scene.mark_full_dirty(win_w, win_h);
 
@@ -3042,6 +3044,7 @@ pub fn build_ui(
         data_export,
         sql_export,
         plot_load,
+        fk_values,
         column_picker,
         view_keys,
         reference_editor,

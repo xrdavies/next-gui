@@ -686,6 +686,7 @@ pub struct AppState {
     pub export_dialog: Option<crate::data_export::Draft>,
     pub export_work: Option<crate::export_jobs::Work>,
     pub plot_work: Option<crate::plot_load::Work>,
+    pub fk_work: Option<crate::fk_values::Work>,
     pub browse_work: Option<crate::browse_filter::Work>,
     pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
@@ -1063,6 +1064,7 @@ impl AppState {
             export_dialog: None,
             export_work: None,
             plot_work: None,
+            fk_work: None,
             browse_work: None,
             sql_export: None,
             prefs_frozen_cols: 0,
@@ -1305,6 +1307,7 @@ impl AppState {
     }
 
     pub fn has_cell_draft(&self) -> bool {
+        if let Some(choice) = self.browse_cell_edit.as_ref().and_then(|draft| draft.foreign_key.as_ref()) { return choice.changed(); }
         if self.edit_col.is_empty() || !matches!(self.edit_source, EditCellSource::Browse) {
             return false;
         }
@@ -1529,6 +1532,7 @@ impl AppState {
     pub fn refresh_browse(&mut self) -> Result<(), String> {
         if self.browse_work.is_some() { return Err("Wait for Browse filtering to finish".into()); }
         if self.plot_work.is_some() { return Err("Cancel or finish plot loading first".into()); }
+        if self.fk_work.is_some() { return Err("Cancel or finish foreign key loading first".into()); }
         let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.conn.is_none() {
@@ -1698,6 +1702,7 @@ impl AppState {
     }
 
     pub fn sync_current_plot(&mut self) -> Result<(), String> {
+        if self.fk_work.is_some() { return Ok(()); }
         if self.plot_work.is_some() { return Ok(()); }
         if self.plot.settings.manual { return Ok(()); }
         if self.tab == MainTab::ExecuteSql {
@@ -2728,6 +2733,7 @@ impl AppState {
         self.view_key_dialog = None;
         self.insert_target = None;
         self.plot_work = None;
+        self.fk_work = None;
         self.plot.clear();
         self.plot.settings.configs.clear();
         self.csv_work=None;self.csv_files=None;self.csv_preview=None;
@@ -3394,7 +3400,7 @@ impl AppState {
             .map_or_else(||self.edit_col.trim(),String::as_str)
     }
 
-    fn cell_apply_target(&mut self) -> Result<(String, String, db::RowKey, String), String> {
+    pub(crate) fn cell_apply_target(&mut self) -> Result<(String, String, db::RowKey, String), String> {
         if self.sql_cell_read_only() { return Err("SQL result cells are read-only".into()); }
         if self.tab != MainTab::Browse || matches!(self.edit_source, EditCellSource::BrowseReadOnly) {
             return Err("This cell is read-only; select an editable Browse cell".into());
@@ -3444,6 +3450,7 @@ impl AppState {
 
     /// Prepare a format-only question; storage/target errors never become an override.
     pub fn prepare_cell_format_confirmation(&mut self) -> Result<bool, String> {
+        if self.browse_cell_edit.as_ref().is_some_and(|draft| draft.foreign_key.is_some()) { return Ok(false); }
         if !matches!(self.edit_mode,EditCellMode::Json|EditCellMode::Xml) {return Ok(false);}
         let confirmation=self.cell_apply_confirmation()?;
         self.cell_value(false)?;
@@ -3469,7 +3476,12 @@ impl AppState {
         self.apply_cell_draft_inner(false)
     }
 
-    pub fn apply_cell_draft(&mut self) -> Result<(), String> {self.apply_cell_draft_inner(true)}
+    pub fn apply_cell_draft(&mut self) -> Result<(), String> {
+        if let Some(value) = self.browse_cell_edit.as_ref().and_then(|draft| draft.foreign_key.as_ref()).map(|choice| choice.value.clone()) {
+            return self.apply_fk_value(value);
+        }
+        self.apply_cell_draft_inner(true)
+    }
 
     fn apply_cell_draft_inner(&mut self, validate_format: bool) -> Result<(), String> {
         self.reveal_applied_cell = false;
@@ -3683,7 +3695,8 @@ impl AppState {
         // Validate before saving any SQL file; invalid cell data must not partially save documents.
         if self.has_cell_draft() {
             self.cell_apply_target()?;
-            if !matches!(self.edit_mode,EditCellMode::Evaluation|EditCellMode::Image) {self.edited_cell_value()?;}
+            if self.browse_cell_edit.as_ref().is_none_or(|draft| draft.foreign_key.is_none())
+                && !matches!(self.edit_mode,EditCellMode::Evaluation|EditCellMode::Image) {self.edited_cell_value()?;}
         }
         for i in 0..self.sql_tabs.len() {
             if self.sql_tab_dirty(i) {

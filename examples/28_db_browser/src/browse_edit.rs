@@ -26,6 +26,14 @@ pub struct Draft {
     input: Option<TextInputState>,
     suggestions: Vec<String>,
     autocomplete: Option<AutocompleteState>,
+    pub(crate) foreign_key: Option<crate::fk_values::Draft>,
+}
+
+impl Draft {
+    pub(crate) fn foreign_key(state: &AppState, row: usize, column: usize, choice: crate::fk_values::Draft) -> Self {
+        Self { row, column, revision: state.edit_revision, original: state.edit_value.clone(), storage: state.edit_type,
+            input: None, suggestions: Vec::new(), autocomplete: None, foreign_key: Some(choice) }
+    }
 }
 
 pub fn editable_columns(state: &AppState) -> Vec<usize> {
@@ -88,7 +96,12 @@ pub fn mount(
 ) {
     if let Some(draft) = &state.browse_cell_edit {
         builder.table_cell_editor(table, draft.row, draft.column, |cell| {
-            if draft.suggestions.is_empty() {
+            if let Some(choice) = &draft.foreign_key {
+                let mut select = next_gui_ui::SelectStyle::from_theme(theme);
+                select.width = style.width; select.height = style.height; select.size = style.size;
+                select.item_height = select.item_height.max(style.size + 10.0);
+                cell.data_select(choice.choices.clone(), Some(choice.selected), "Choose a referenced value", select)
+            } else if draft.suggestions.is_empty() {
                 cell.text_input_styled(&state.edit_value, "", style)
             } else {
                 let mut completion = AutocompleteStyle::from_theme(theme);
@@ -177,6 +190,7 @@ impl AppState {
         if self.edit_cell_read_only() || self.edit_col.is_empty() {
             return Err("This cell is read-only".into());
         }
+        if self.start_fk_values(row, column)? { return Ok(()); }
         if matches!(&self.edit_saved, rusqlite::types::Value::Blob(bytes) if std::str::from_utf8(bytes).is_err() || bytes.contains(&0))
         {
             self.dock_edit = true;
@@ -198,6 +212,7 @@ impl AppState {
             input: None,
             suggestions,
             autocomplete: None,
+            foreign_key: None,
         });
         Ok(())
     }
@@ -212,6 +227,14 @@ impl Demo {
             return;
         };
         if draft.revision != self.state.edit_revision || draft.revision != self.last_edit_revision {
+            return;
+        }
+        if let Some(choice) = &mut draft.foreign_key {
+            choice.session = self.ui.select_state(editor);
+            if let Some(index) = self.ui.select_selected(editor).filter(|index| *index != choice.selected) {
+                if let Err(error) = choice.select(index) { self.set_error(error); self.rebuild = true; }
+            }
+            if let Some((_, error)) = self.ui.take_select_data_error() { self.set_error(error); }
             return;
         }
         draft.input = self.ui.text_input_state(editor);
@@ -365,6 +388,9 @@ impl Demo {
             self.ui.set_autocomplete_prefix_matching(editor, true);
             if let Some(session) = &draft.autocomplete {
                 self.ui.set_autocomplete_state(editor, session);
+            }
+            if let Some(session) = draft.foreign_key.as_ref().and_then(|choice| choice.session.as_ref()) {
+                self.ui.restore_select_state(editor, session);
             }
             self.ui.set_accessible_name(
                 editor,

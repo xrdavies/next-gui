@@ -54,6 +54,7 @@ mod sql_function_help;
 mod state;
 mod browse_rowid;
 mod browse_edit;
+mod fk_values;
 mod browse_menu;
 mod schema_dock;
 mod detach;
@@ -292,6 +293,7 @@ struct BuiltUiIds {
     data_export: data_export::Controls,
     sql_export: sql_export::Controls,
     plot_load: plot_load::Controls,
+    fk_values: fk_values::Controls,
     column_picker: column_picker::Controls,
     view_keys: view_keys::Controls,
     reference_editor: reference_editor::Controls,
@@ -552,6 +554,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             data_export: b.data_export,
             sql_export: b.sql_export,
             plot_load: b.plot_load,
+            fk_values: b.fk_values,
             column_picker: b.column_picker,
             view_keys: b.view_keys,
             reference_editor: b.reference_editor,
@@ -1708,6 +1711,9 @@ impl Demo {
                 if tab.contains("escape") {state.prefs.filter_escape="!".into();}
                 if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
             }
+        }
+        if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
+            if tab.starts_with("fk-values") { fk_values::prepare_qa(&mut state, tab.ends_with("narrow")); }
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             if tab.starts_with("menus") {
@@ -4736,6 +4742,7 @@ impl Demo {
             }
             self.rebuild=true;return;
         }
+        if self.state.fk_work.is_some() { self.handle_fk_values_button(id); return; }
         if self.state.plot_work.is_some() { self.handle_plot_load_button(id); return; }
         if id == self.ids.plot.save { self.save_plot(); return; }
         if id == self.ids.plot.load_all {
@@ -5678,7 +5685,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
+        if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.fk_work.is_some() {self.handle_fk_values_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         if let Some((id, color)) = self.ui.take_color_change() {
@@ -5749,6 +5756,7 @@ impl AppCallbacks for Demo {
             && self.state.external_cell.is_none()
             && self.state.browse_work.is_none()
             && self.state.plot_work.is_none()
+            && self.state.fk_work.is_none()
             && self.state.csv_work.is_none()
             && !self.state.sql_busy
             && !self.state.has_unsaved_drafts()
@@ -5818,7 +5826,8 @@ impl AppCallbacks for Demo {
                 }
             }
             Event::CloseRequested { .. } => {
-                if self.state.plot_work.is_some() {
+                if self.state.fk_work.is_some() { self.cancel_fk_values(); }
+                else if self.state.plot_work.is_some() {
                     self.cancel_plot_load();
                 } else if self.state.export_work.is_some() {
                     self.cancel_data_export();
@@ -6053,6 +6062,7 @@ impl AppCallbacks for Demo {
                         return;
                     }
                     if matches!(ui_key, UiKey::Escape) {
+                        if self.state.fk_work.is_some() { self.cancel_fk_values(); self.do_rebuild(); ctx.request_redraw(); return; }
                         if self.state.plot_work.is_some() {
                             self.cancel_plot_load(); self.do_rebuild(); ctx.request_redraw(); return;
                         }
@@ -6201,6 +6211,11 @@ impl AppCallbacks for Demo {
             if self.rebuild {self.do_rebuild();} else {self.update_csv_progress();}
             if self.state.csv_running() || csv_progress_qa && self.state.csv_work.is_some() {ctx.request_redraw();}
         }
+        if self.state.fk_work.is_some() {
+            self.poll_fk_values();
+            if self.rebuild { self.do_rebuild(); }
+            if self.state.fk_work.is_some() { ctx.request_redraw(); }
+        }
         if self.state.plot_work.is_some() {
             self.poll_plot_load();
             if self.rebuild { self.do_rebuild(); }
@@ -6278,7 +6293,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("cell-context") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("browse-completion") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("cell-context") || tab.starts_with("fk-values") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("browse-completion") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
