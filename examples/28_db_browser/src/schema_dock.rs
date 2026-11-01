@@ -30,6 +30,9 @@ pub const QA_SQL: &str = "CREATE TABLE records(id INTEGER PRIMARY KEY, \"value.å
     CREATE VIEW \"aux.\"\"db\".summary AS SELECT * FROM records;";
 
 pub fn prepare_qa(state: &mut AppState, narrow: bool) {
+    state.prefs.schema_select_query = true;
+    state.prefs.schema_qualified_names = false;
+    state.prefs.schema_quoted_names = true;
     state.new_memory_db().unwrap();
     state.conn.as_ref().unwrap().execute_batch(QA_SQL).unwrap();
     state.write_changes().unwrap();

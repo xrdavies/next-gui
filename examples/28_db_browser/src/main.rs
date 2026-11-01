@@ -1689,6 +1689,7 @@ impl Demo {
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
             if tab.starts_with("filter-") {
+                state.prefs.filter_delay_ms = 100;
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch("CREATE TABLE names(name TEXT, amount INTEGER); INSERT INTO names VALUES('alpha',1),('alpine',2),('beta',3),('A_B',4),('A%B',5);").unwrap();
                 state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "names").unwrap(); state.tab=MainTab::Browse; state.dirty=true;
