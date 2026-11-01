@@ -35,6 +35,33 @@ impl TableRows {
 }
 
 impl Ui {
+    /// Height reserved above table body rows, including embedded filter inputs.
+    pub fn table_header_height(&self, table: WidgetId) -> Option<f32> {
+        match &self.widgets.get(&table)?.kind {
+            Kind::Table { style, .. } => Some(style.header_height),
+            _ => None,
+        }
+    }
+
+    pub(super) fn table_header_label_height(&self, table: WidgetId) -> Option<f32> {
+        self.table_filters.values().find(|group| group.table == table)?.header_label_height
+    }
+
+    pub(super) fn layout_header_filtered_table(&mut self, scene: &mut Scene, container: WidgetId) -> bool {
+        let Some((row, group)) = self.table_filters.iter().find(|(_, group)|
+            group.container == container && group.header_label_height.is_some())
+            .map(|(row, group)| (*row, group.clone())) else { return false; };
+        let Some(Widget { kind: Kind::Column { style, .. }, node: Some(node), .. }) = self.widgets.get(&container) else { return false; };
+        let bounds = Rect::new(style.x, style.y, style.width, style.height);
+        scene.set_bounds(*node, bounds);
+        scene.set_clip(*node, Some(bounds));
+        scene.set_visible(*node, false);
+        let height = self.measure_widget(row).height;
+        self.place_child(scene, group.table, bounds);
+        self.place_child(scene, row, Rect::new(bounds.x, bounds.y + group.header_label_height.unwrap(), bounds.width, height));
+        true
+    }
+
     /// The layout container for a filtered table, including its aligned filter inputs.
     pub fn filtered_table_container(&self, table: WidgetId) -> Option<WidgetId> {
         self.table_filters
@@ -71,6 +98,20 @@ impl Ui {
 }
 
 impl FlexBuilder<'_> {
+    /// Indexed rows with inputs inside the fixed header, below column labels.
+    pub fn header_filtered_data_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        data: Arc<dyn TableDataSource>,
+        values: &[String],
+        style: TableStyle,
+        input_style: TextInputStyle,
+    ) -> (WidgetId, Vec<WidgetId>) {
+        let (table, fields) = self.header_filtered_table(columns, Vec::new(), values, style, input_style);
+        self.ui.set_table_data_source(table, data);
+        (table, fields)
+    }
+
     /// Indexed rows with the same aligned filter controls as `filtered_table`.
     pub fn filtered_data_table(
         &mut self,
@@ -117,6 +158,87 @@ mod tests {
             if self.fail == Some(index) { return Err("snapshot read failed".into()); }
             Ok(vec![index.to_string(), format!("row\t{index}\nquoted \"text\"")])
         }
+    }
+
+    #[test]
+    fn embedded_filters_follow_header_resize_frozen_scroll_and_global_navigation() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut table = WidgetId(0);
+        let mut fields = Vec::new();
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let root = ui.column(ColumnStyle {
+            width: 360.0, height: 260.0, padding: 0.0, gap: 0.0,
+            ..Default::default()
+        }, |p| {
+            (table, fields) = p.header_filtered_data_table(
+                vec![TableColumn::new("ID", 80.0), TableColumn::new("Text", 160.0), TableColumn::new("Last", 300.0)],
+                Arc::new(Data { count: 1_000_000, reads: reads.clone(), fail: None }),
+                &[],
+                TableStyle { width: 360.0, height: 260.0, padding: 4.0, header_height: 24.0, row_height: 20.0, ..Default::default() },
+                TextInputStyle { height: 26.0, ..Default::default() },
+            );
+        });
+        let group = ui.filtered_table_container(table).unwrap();
+        ui.set_flex_fill(group, true);
+        ui.set_table_frozen_cols(table, 1);
+        ui.set_table_scroll_offset(table, 100.0, 0.0);
+        ui.sync(&mut scene);
+        let bounds = |ui: &Ui, scene: &Scene, id| scene.get(ui.widgets[&id].node.unwrap()).unwrap().bounds;
+        let grid = bounds(&ui, &scene, table);
+        assert_eq!(ui.table_header_height(table), Some(54.0));
+        assert_eq!(ui.table_header_height(fields[0]), None);
+        assert_eq!(ui.accessible_name(fields[2]).as_deref(), Some("Filter Last"));
+        for field in &fields {
+            let input = bounds(&ui, &scene, *field);
+            assert_eq!(input.y, grid.y + 26.0);
+            assert!(input.y + input.height <= grid.y + 54.0);
+            assert_eq!(ui.table_header_column_at(&scene, table, input.x + 5.0, input.y + 5.0), None);
+            assert_eq!(ui.table_cell_at(&scene, table, input.x + 5.0, input.y + 5.0), None);
+        }
+        let label = scene.get(ui.widgets[&table].aux[0]).unwrap().bounds;
+        assert!(label.y + label.height <= grid.y + 24.0);
+        assert_eq!(ui.table_header_column_at(&scene, table, grid.x + 25.0, grid.y + 12.0), Some(0));
+        ui.pointer_pressed(&mut scene, grid.x + 25.0, grid.y + 12.0);
+        ui.pointer_released();
+        assert_eq!(ui.take_table_header_click(), Some((table, 0)));
+        ui.pointer_pressed(&mut scene, grid.x + 84.0, grid.y + 12.0);
+        ui.pointer_moved(grid.x + 114.0, grid.y + 12.0);
+        ui.pointer_released();
+        ui.sync(&mut scene);
+        assert_eq!(ui.table_column_widths(table).unwrap()[0], 110.0);
+        let input = bounds(&ui, &scene, fields[0]);
+        assert_eq!(input.width, 106.0);
+        ui.pointer_pressed(&mut scene, input.x+10.0, input.y+12.0);
+        ui.pointer_released();
+        assert_eq!(ui.focused(), Some(fields[0]));
+        ui.paste_into_focused_text("paid");
+        assert_eq!(ui.text_input_value(fields[0]), Some("paid"));
+        assert_eq!(ui.take_table_header_click(), None);
+        assert!(ui.pointer_scroll(&scene, input.x+10.0, input.y+12.0, 0.0, 80.0));
+        ui.sync(&mut scene);
+        assert!(ui.table_scroll_offset(table).unwrap().1 > 0.0);
+        assert_eq!(bounds(&ui, &scene, fields[0]).y, input.y);
+        ui.set_focus(Some(fields[2]));
+        ui.sync(&mut scene);
+        let input = bounds(&ui, &scene, fields[2]);
+        let label = scene.get(ui.widgets[&table].aux[2]).unwrap().bounds;
+        assert_eq!(label.x, input.x+2.0, "focus reveal must update labels and filters in the same frame");
+        let clip=scene.get(ui.widgets[&fields[2]].node.unwrap()).unwrap().clip.unwrap();
+        assert_eq!(ui.hit_widget(&scene, clip.x+clip.width/2.0, clip.y+clip.height/2.0),Some(fields[2]));
+        ui.set_focus(Some(table));
+        ui.key_input(UiKey::End);
+        ui.sync(&mut scene);
+        assert_eq!(ui.table_selected_row(table), Some(999_999));
+        if let Kind::Column { style, .. } = &mut ui.widgets.get_mut(&root).unwrap().kind {
+            style.width=520.0;style.height=500.0;
+        }
+        ui.sync(&mut scene);
+        let grid=bounds(&ui,&scene,table);
+        assert_eq!((grid.width,grid.height),(520.0,500.0));
+        assert_eq!(ui.table_cell_at(&scene,table,grid.x+25.0,grid.y+grid.height-15.0),Some((999_999,0)));
+        assert!(ui.widgets[&table].aux.len()<250);
+        assert!(reads.lock().unwrap().len()<500);
     }
 
     #[test]

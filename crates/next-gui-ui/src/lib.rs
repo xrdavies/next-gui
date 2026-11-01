@@ -2385,6 +2385,7 @@ fn toggle_expanded_in_forest(nodes: &mut [TreeNode], id: u64) -> bool {
 struct TableFilterRow {
     container: WidgetId,
     table: WidgetId,
+    header_label_height: Option<f32>,
     fields: Vec<WidgetId>,
     last_focus: Option<WidgetId>,
 }
@@ -5027,7 +5028,7 @@ impl Ui {
             return None;
         };
         let bounds = scene.get(widget.node?)?.bounds;
-        if !bounds.contains(x, y) || y >= bounds.y + style.header_height {
+        if !bounds.contains(x, y) || y >= bounds.y + self.table_header_label_height(id).unwrap_or(style.header_height) {
             return None;
         }
         table_column_rects(bounds, columns, style.padding, *scroll_x, *frozen_cols)
@@ -6245,6 +6246,7 @@ impl Ui {
             .iter()
             .position(|(_, clip)| !clip.is_empty() && x >= clip.x && x < (clip.x + clip.width));
         if y < body_top {
+            if y >= bounds.y + self.table_header_label_height(id).unwrap_or(style.header_height) { return true; }
             for (i, (origin, clip)) in cells.iter().enumerate() {
                 let edge = origin + columns[i].width;
                 if !clip.is_empty() && edge <= (clip.x + clip.width) && (x - edge).abs() <= 4.0 {
@@ -10109,6 +10111,11 @@ impl Ui {
     }
 
     fn measure_widget(&self, id: WidgetId) -> ChildMeasure {
+        if self.table_filters.values().any(|group| group.container == id && group.header_label_height.is_some()) {
+            if let Some(Kind::Column { style, .. }) = self.widgets.get(&id).map(|widget| &widget.kind) {
+                return ChildMeasure::new(style.width, style.height);
+            }
+        }
         match self.widgets.get(&id).map(|w| &w.kind) {
             Some(Kind::Text { content, size, .. }) => {
                 let (w, h) = self.font.measure_line(content, *size);
@@ -10422,6 +10429,7 @@ impl Ui {
     }
 
     fn layout_widget(&mut self, scene: &mut Scene, id: WidgetId) {
+        if self.layout_header_filtered_table(scene, id) { return; }
         if matches!(self.widgets.get(&id).map(|w|&w.kind),Some(Kind::Dialog {..})) {return;}
         if matches!(
             self.widgets.get(&id).map(|w| &w.kind),
@@ -12446,6 +12454,10 @@ impl Ui {
     }
 
     fn paint_table(&mut self, scene: &mut Scene, id: WidgetId) {
+        if let Some(row) = self.table_filters.iter().find_map(|(row, group)|
+            (group.table == id && group.header_label_height.is_some()).then_some(*row)) {
+            self.align_table_filters(scene, row);
+        }
         let Some(Widget {
             kind:
                 Kind::Table {
@@ -12530,12 +12542,13 @@ impl Ui {
             scene.set_visible(chrome, true);
         }
 
+        let label_height = self.table_header_label_height(id).unwrap_or(style.header_height);
         let cells = table_column_rects(bounds, &columns, style.padding, scroll_x, frozen_cols);
         for (ci, col) in columns.iter().enumerate() {
             let (ox, clip) = cells[ci];
             let (_, mask) = self.font.rasterize_text(&col.title, style.size, None);
             if let Some(&lab) = aux.get(ci) {
-                let ly = bounds.y + ((style.header_height - mask.height as f32) * 0.5).max(0.0);
+                let ly = bounds.y + ((label_height - mask.height as f32) * 0.5).max(0.0);
                 scene.set_bounds(
                     lab,
                     Rect::new(ox + 4.0, ly, mask.width as f32, mask.height as f32),
@@ -12546,7 +12559,7 @@ impl Ui {
                         bounds.x,
                         bounds.y,
                         bounds.width,
-                        style.header_height,
+                        label_height,
                     ))),
                 );
                 scene.set_fill(lab, style.header_fg);
@@ -18712,10 +18725,36 @@ impl FlexBuilder<'_> {
         columns: Vec<TableColumn>,
         rows: Vec<Vec<String>>,
         values: &[String],
-        mut style: TableStyle,
+        style: TableStyle,
         input_style: TextInputStyle,
     ) -> (WidgetId, Vec<WidgetId>) {
+        self.build_filtered_table(columns, rows, values, style, input_style, false)
+    }
+
+    /// A filtered table with inputs below the column labels, inside its fixed header.
+    /// Header sorting/resizing excludes the inputs; body scrolling retains both rows.
+    pub fn header_filtered_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        values: &[String],
+        style: TableStyle,
+        input_style: TextInputStyle,
+    ) -> (WidgetId, Vec<WidgetId>) {
+        self.build_filtered_table(columns, rows, values, style, input_style, true)
+    }
+
+    fn build_filtered_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        rows: Vec<Vec<String>>,
+        values: &[String],
+        mut style: TableStyle,
+        input_style: TextInputStyle,
+        in_header: bool,
+    ) -> (WidgetId, Vec<WidgetId>) {
         let height = input_style.height + 4.0;
+        let header_label_height = in_header.then_some(style.header_height);
         let mut container = ColumnStyle::from_theme(self.theme());
         container.width = style.width;
         container.height = style.height;
@@ -18731,26 +18770,41 @@ impl FlexBuilder<'_> {
         let mut table = WidgetId(0);
         let mut fields = Vec::new();
         let mut filter_row = WidgetId(0);
-        style.height = (style.height - height).max(style.header_height);
+        if in_header {
+            style.header_height += height;
+        } else {
+            style.height = (style.height - height).max(style.header_height);
+        }
         let container = self.column(container, |column| {
             filter_row = column.scroll_row(filter_style, |row| {
                 for (index, definition) in columns.iter().enumerate() {
                     let mut field_style = input_style;
                     field_style.width = (definition.width - 4.0).max(1.0);
-                    fields.push(row.text_input_styled(
+                    let field = row.text_input_styled(
                         values.get(index).map(String::as_str).unwrap_or(""),
-                        &definition.title,
+                        if in_header { "Filter" } else { &definition.title },
                         field_style,
-                    ));
+                    );
+                    if in_header {
+                        row.ui.set_accessible_name(field, format!("Filter {}", definition.title));
+                    }
+                    fields.push(field);
                 }
             });
             table = column.table(columns, rows, style);
         });
+        if in_header {
+            if let Kind::Column { children, .. } = &mut self.ui.widgets.get_mut(&container).unwrap().kind {
+                // Mount the table first so filter inputs paint and hit above its header.
+                children.swap(0, 1);
+            }
+        }
         self.ui.table_filters.insert(
             filter_row,
             TableFilterRow {
                 container,
                 table,
+                header_label_height,
                 fields: fields.clone(),
                 last_focus: None,
             },
