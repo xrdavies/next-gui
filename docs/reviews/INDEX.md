@@ -12,7 +12,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 
 
-Latest scoped review: [Primary desktop database workspace](R-20261101-b1e1611c02ed.md) — realistic100k-order/200k-detail edit/revert/query/DDL/save/reopen;893 tests,eight Soft/Metal pairs,eight native main-page windows. Standard1600×900 and actual maximized desktop are primary;Structure tree-table is next. Full original parity F02 remains in_progress.
+Latest scoped review: [Desktop Structure tree-table](R-20261101-fc247f35105d.md) — original visible columns/field hierarchy,qualified selection/expansion and resizable persisted widths;896 tests,eight Soft/Metal pairs,eight native windows/28 captures and14 Office windows. Continuous complete-result Browse is next;full original parity F02 remains in_progress.
 
 ## Findings
 
