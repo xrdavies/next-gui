@@ -2655,8 +2655,6 @@ pub fn build_ui(
             for (column, width) in state.sql_column_widths.iter().enumerate() {
                 ui.set_table_column_width(sql_table, column, *width);
             }
-            let (x, y) = state.sql_scroll;
-            ui.set_table_scroll_offset(sql_table, x, y);
         }
     }
 
@@ -2936,6 +2934,8 @@ pub fn build_ui(
     ui.set_flex_fill(sql_table,true);
     ui.set_splitter_min_sizes(sql_splitter,120.0,AlertStyle::from_theme(&theme).height+32.0+8.0+96.0);
     ui.sync(&mut scene);
+    let (x, y) = state.sql_scroll;
+    ui.set_table_scroll_offset(sql_table, x, y);
     crate::column_picker::restore(&mut ui, column_picker, state.wizard_column_picker.as_ref());
     crate::view_keys::restore(&mut ui, view_keys, state.view_key_dialog.as_ref());
     crate::csv_files::restore(&mut ui,csv_files,state);

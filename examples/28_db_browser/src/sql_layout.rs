@@ -88,6 +88,16 @@ mod tests {
                 if stage == "results" {
                     assert!(resized.height > table.height + 100.0);
                 }
+                assert_eq!(
+                    demo.ui.table_cell_at(
+                        &demo.scene,
+                        demo.ids.sql_table,
+                        resized.x + 20.0,
+                        resized.y + resized.height - 15.0
+                    ),
+                    Some((99999, 0)),
+                    "last row must remain visible after live resize"
+                );
                 let ratio = demo.ui.splitter_ratio(demo.ids.sql_splitter).unwrap();
                 demo.snapshot_inputs();
                 demo.do_rebuild();
@@ -101,6 +111,17 @@ mod tests {
                     Some("report")
                 );
                 assert_eq!(demo.ui.table_selected_row(demo.ids.sql_table), Some(99999));
+                let restored = bounds(&demo, demo.ids.sql_table);
+                assert_eq!(
+                    demo.ui.table_cell_at(
+                        &demo.scene,
+                        demo.ids.sql_table,
+                        restored.x + 20.0,
+                        restored.y + restored.height - 15.0
+                    ),
+                    Some((99999, 0)),
+                    "last row must remain visible after rebuild"
+                );
                 assert_eq!(
                     demo.ui.table_selection_anchor(demo.ids.sql_table),
                     Some((99997, Some(0)))
