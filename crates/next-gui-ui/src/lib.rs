@@ -5020,6 +5020,30 @@ impl Ui {
             .position(|(_, clip)| !clip.is_empty() && x >= clip.x && x < clip.x + clip.width)
     }
 
+    /// Visible body cell under a scene point, excluding headers, blank space,
+    /// occlusion and scrollbars. Does not change selection, focus or capture.
+    pub fn table_cell_at(
+        &self,
+        scene: &Scene,
+        id: WidgetId,
+        x: f32,
+        y: f32,
+    ) -> Option<(usize, usize)> {
+        if !x.is_finite() || !y.is_finite() || self.hit_widget(scene, x, y) != Some(id)
+            || self.point_on_scrollbar(scene, id, x, y) { return None; }
+        let widget = self.widgets.get(&id)?;
+        let Kind::Table { rows, columns, style, scroll_x, scroll_y, frozen_cols, .. } = &widget.kind else { return None; };
+        if !style.row_height.is_finite() || style.row_height <= 0.0 { return None; }
+        let bounds = scene.get(widget.node?)?.bounds;
+        let body_top = bounds.y + style.header_height;
+        if y < body_top { return None; }
+        let row = ((y - body_top + scroll_y) / style.row_height).floor() as usize;
+        if row >= rows.len() { return None; }
+        let column = table_column_rects(bounds, columns, style.padding, *scroll_x, *frozen_cols)
+            .iter().position(|(_, clip)| !clip.is_empty() && x >= clip.x && x < clip.x + clip.width)?;
+        Some((row, column))
+    }
+
     /// Current table column widths, including pointer resizing.
     pub fn table_column_widths(&self, id: WidgetId) -> Option<Vec<f32>> {
         match self.widgets.get(&id).map(|w| &w.kind) {
@@ -21512,6 +21536,41 @@ mod tests {
         ] {
             assert_eq!(ui.table_header_column_at(&scene, table, x, y), None);
         }
+    }
+
+    #[test]
+    fn table_cell_hits_follow_frozen_resized_scrolled_cells_without_changing_navigation() {
+        let mut ui = Ui::new(); let mut scene = Scene::new(); let mut table = WidgetId(0);
+        ui.column(ColumnStyle { width: 300.0, height: 180.0, padding: 0.0, ..Default::default() }, |c| {
+            table = c.table(vec![TableColumn::new("a", 80.0), TableColumn::new("b", 160.0), TableColumn::new("c", 200.0)],
+                vec![vec!["cell".into(); 3]; 30],
+                TableStyle { width: 300.0, height: 180.0, padding: 4.0, header_height: 24.0, row_height: 20.0, ..Default::default() });
+        });
+        ui.set_table_frozen_cols(table, 1);
+        ui.set_table_scroll_offset(table, 100.0, 35.5);
+        ui.set_table_selected_cells(table, Some((8, 8)), Some((2, 2)));
+        ui.set_focus(Some(table)); ui.sync(&mut scene);
+        let bounds = scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        for (x, column) in [(25.0, 0), (110.0, 1), (220.0, 2)] {
+            assert_eq!(ui.table_cell_at(&scene, table, bounds.x + x, bounds.y + 25.0), Some((1, column)));
+            assert_eq!(ui.table_cell_at(&scene, table, bounds.x + x, bounds.y + 30.0), Some((2, column)));
+        }
+        ui.set_table_column_width(table, 1, 240.0); ui.sync(&mut scene);
+        assert_eq!(ui.table_cell_at(&scene, table, bounds.x + 220.0, bounds.y + 25.0), Some((1, 1)));
+        for (x, y) in [(bounds.x + 1.0, bounds.y + 30.0), (bounds.x + 25.0, bounds.y + 10.0),
+            (bounds.x + bounds.width - 2.0, bounds.y + 30.0), (bounds.x + 110.0, bounds.y + bounds.height - 2.0),
+            (bounds.x - 1.0, bounds.y + 30.0), (f32::NAN, bounds.y), (bounds.x, f32::INFINITY)] {
+            assert_eq!(ui.table_cell_at(&scene, table, x, y), None);
+        }
+        assert_eq!(ui.table_selected_row(table), Some(8));
+        assert_eq!(ui.table_selected_col(table), Some(2));
+        assert_eq!(ui.focused(), Some(table)); assert!(ui.drag.is_none());
+        ui.set_table_rows(table, vec![vec!["one".into(); 3]]); ui.set_table_scroll_offset(table, 0.0, 0.0); ui.sync(&mut scene);
+        assert_eq!(ui.table_cell_at(&scene, table, bounds.x + 25.0, bounds.y + 50.0), None);
+        let modal = ui.modal("Cover table", "body", "OK", None, ModalStyle::default());
+        ui.set_modal_open(modal, true); ui.sync(&mut scene);
+        assert_eq!(ui.table_cell_at(&scene, table, bounds.x + 25.0, bounds.y + 25.0), None);
+        assert_eq!(ui.table_cell_at(&scene, WidgetId(0), bounds.x + 25.0, bounds.y + 25.0), None);
     }
 
     #[test]
