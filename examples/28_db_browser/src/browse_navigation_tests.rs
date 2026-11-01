@@ -29,10 +29,10 @@ fn demo() -> Demo {
     demo
 }
 
-fn selected(demo: &Demo) -> (usize, usize, &str) {
+fn selected(demo: &Demo) -> (usize, usize, String) {
     let tab = demo.state.browse();
     let row = tab.sel_row.unwrap();
-    (tab.offset, row, &tab.result.as_ref().unwrap().rows[row][0])
+    (tab.offset, row, dbmod::cell_to_string(tab.result.as_ref().unwrap().values.cell(row, 0).unwrap().as_ref()))
 }
 
 fn go(demo: &mut Demo, value: &str) {
@@ -46,13 +46,13 @@ fn jump_uses_filtered_sorted_record_numbers_and_preserves_the_column() {
     let mut demo = demo();
     assert_eq!(demo.state.browse().total_rows, Some(603));
     for (record, expected) in [
-        (501, (500, 0, "205")),
-        (603, (500, 102, "1")),
-        (usize::MAX, (500, 102, "1")),
+        (501, (0, 500, "205")),
+        (603, (0, 602, "1")),
+        (usize::MAX, (0, 602, "1")),
         (0, (0, 0, "1205")),
     ] {
         demo.state.goto_browse_record(record).unwrap();
-        assert_eq!(selected(&demo), expected);
+        assert_eq!(selected(&demo), (expected.0, expected.1, expected.2.into()));
         assert_eq!(demo.state.browse().sel_col, Some(1));
         assert_eq!(demo.state.edit_value, format!("row {}", expected.2));
         assert!(!demo.state.has_cell_draft());
@@ -78,7 +78,7 @@ fn jump_guards_drafts_busy_queries_and_restores_selection_on_query_failure() {
         .goto_browse_record(1)
         .unwrap_err()
         .contains("draft"));
-    assert_eq!(selected(&demo), (500, 9, "187"));
+    assert_eq!(selected(&demo), (0, 509, "187".into()));
     assert_eq!(demo.state.edit_value, "keep this draft");
     demo.state.discard_cell_draft();
     let old_editor = demo.state.edit_value.clone();
@@ -91,7 +91,7 @@ fn jump_guards_drafts_busy_queries_and_restores_selection_on_query_failure() {
     demo.state.sql_busy = false;
     demo.state.browse_mut().filter = "missing_function()".into();
     assert!(demo.state.goto_browse_record(1).is_err());
-    assert_eq!(selected(&demo), (500, 9, "187"));
+    assert_eq!(selected(&demo), (0, 509, "187".into()));
     assert_eq!(demo.state.browse().result.as_ref().unwrap().rows, old_rows);
     assert_eq!(demo.state.browse().row_keys, old_rowids);
     assert_eq!(demo.state.edit_value, old_editor);
@@ -108,7 +108,7 @@ fn controls_normalize_numbers_report_invalid_input_and_reveal_the_target_cell() 
     );
     demo.handle_button(demo.ids.btn_record_last);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (500, 102, "1"));
+    assert_eq!(selected(&demo), (0, 602, "1".into()));
     assert_eq!(
         demo.ui.text_input_value(demo.ids.record_number),
         Some("603")
@@ -127,7 +127,7 @@ fn controls_normalize_numbers_report_invalid_input_and_reveal_the_target_cell() 
     );
     demo.handle_button(demo.ids.btn_record_first);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     assert_eq!(
         demo.ui
             .table_scroll_offset(demo.ids.browse_table)
@@ -136,7 +136,7 @@ fn controls_normalize_numbers_report_invalid_input_and_reveal_the_target_cell() 
         0.0
     );
     go(&mut demo, " 150 ");
-    assert_eq!(selected(&demo), (0, 149, "907"));
+    assert_eq!(selected(&demo), (0, 149, "907".into()));
     assert_eq!(
         demo.ui.text_input_value(demo.ids.record_number),
         Some("150")
@@ -149,7 +149,7 @@ fn controls_normalize_numbers_report_invalid_input_and_reveal_the_target_cell() 
             demo.ui.text_input_value(demo.ids.record_number),
             Some(invalid)
         );
-        assert_eq!(selected(&demo), (0, 149, "907"));
+        assert_eq!(selected(&demo), (0, 149, "907".into()));
         assert!(demo
             .state
             .error_msg
@@ -162,9 +162,9 @@ fn controls_normalize_numbers_report_invalid_input_and_reveal_the_target_cell() 
         );
     }
     go(&mut demo, "-4");
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     go(&mut demo, "999999999999999999999999999999");
-    assert_eq!(selected(&demo), (500, 102, "1"));
+    assert_eq!(selected(&demo), (0, 602, "1".into()));
     assert!(demo.state.error_msg.is_none());
     if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_QA_OUT") {
         demo.scene
@@ -194,7 +194,7 @@ fn shrinking_results_and_empty_views_clamp_navigation_without_a_stale_editor() {
         .unwrap();
     demo.state.goto_browse_record(usize::MAX).unwrap();
     assert_eq!(demo.state.browse().total_rows, Some(3));
-    assert_eq!(selected(&demo), (0, 2, "1"));
+    assert_eq!(selected(&demo), (0, 2, "1".into()));
     demo.state
         .conn
         .as_ref()
@@ -205,7 +205,7 @@ fn shrinking_results_and_empty_views_clamp_navigation_without_a_stale_editor() {
     demo.state.browse_mut().table = Some("v".into());
     demo.state.read_only = true;
     demo.state.goto_browse_record(2).unwrap();
-    assert_eq!(selected(&demo), (0, 1, "3"));
+    assert_eq!(selected(&demo), (0, 1, "3".into()));
     assert!(demo.state.browse().row_keys.is_empty());
     demo.state
         .conn
@@ -315,7 +315,7 @@ fn previous_next_step_by_the_live_viewport_and_cross_cache_boundaries() {
     demo.handle_button(demo.ids.btn_record_next);
     demo.do_rebuild();
     assert_eq!(demo.state.browse().goto_record, (499 + step).to_string());
-    assert_eq!(demo.state.browse().offset, 500);
+    assert_eq!(demo.state.browse().offset, 0);
     assert_eq!(demo.state.browse().sel_col, Some(1));
     demo.handle_button(demo.ids.btn_record_prev);
     demo.do_rebuild();
@@ -334,7 +334,7 @@ fn previous_next_step_by_the_live_viewport_and_cross_cache_boundaries() {
     go(&mut demo, "2");
     demo.handle_button(demo.ids.btn_record_prev);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     assert_eq!(
         demo.ui.button_enabled(demo.ids.btn_record_prev),
         Some(false)
@@ -343,10 +343,10 @@ fn previous_next_step_by_the_live_viewport_and_cross_cache_boundaries() {
     demo.do_rebuild();
     demo.handle_button(demo.ids.btn_record_next);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 1, "1203"));
+    assert_eq!(selected(&demo), (0, 1, "1203".into()));
     demo.handle_button(demo.ids.btn_record_prev);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn previous_next_keep_drafts_and_failed_query_selection_intact() {
         .set_text_area_value(demo.ids.edit_value, "keep draft");
     demo.handle_button(demo.ids.btn_record_next);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     assert_eq!(demo.state.edit_value, "keep draft");
     assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
     demo.handle_button(demo.ids.btn_edit_discard);
@@ -365,7 +365,7 @@ fn previous_next_keep_drafts_and_failed_query_selection_intact() {
         .set_text_input(demo.ids.browse_filter, "missing_function()");
     demo.handle_button(demo.ids.btn_record_next);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     assert_eq!(demo.state.edit_value, "row 1205");
     assert!(demo.state.error_msg.is_some());
     assert!(!demo.state.dirty);
@@ -375,7 +375,7 @@ fn previous_next_keep_drafts_and_failed_query_selection_intact() {
     assert_eq!(demo.state.browse().sel_row, None);
     demo.handle_button(demo.ids.btn_record_next);
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     assert!(demo.state.error_msg.is_none());
 }
 
@@ -390,16 +390,16 @@ fn page_shortcuts_cross_cache_and_command_home_end_reach_the_complete_result() {
     };
     assert!(demo.handle_browse_navigation_key(KeyCode::PageDown, plain));
     demo.do_rebuild();
-    assert_eq!(demo.state.browse().offset, 500);
+    assert_eq!(demo.state.browse().offset, 0);
     assert!(demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
     demo.do_rebuild();
     assert_eq!(demo.state.browse().goto_record, "499");
     assert!(demo.handle_browse_navigation_key(KeyCode::Home, command));
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     assert!(demo.handle_browse_navigation_key(KeyCode::End, command));
     demo.do_rebuild();
-    assert_eq!(selected(&demo), (500, 102, "1"));
+    assert_eq!(selected(&demo), (0, 602, "1".into()));
     assert!(demo.handle_browse_navigation_key(KeyCode::PageDown, plain));
     assert!(!demo.rebuild, "disabled end action does not rebuild");
     for modifiers in [
@@ -434,7 +434,7 @@ fn page_shortcuts_cross_cache_and_command_home_end_reach_the_complete_result() {
     demo.ui
         .set_text_area_value(demo.ids.edit_value, "retain shortcut draft");
     assert!(demo.handle_browse_navigation_key(KeyCode::PageUp, plain));
-    assert_eq!(selected(&demo), (500, 102, "1"));
+    assert_eq!(selected(&demo), (0, 602, "1".into()));
     assert_eq!(demo.state.edit_value, "retain shortcut draft");
     assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
 }
@@ -458,7 +458,7 @@ fn selecting_an_unqueryable_view_restores_the_previous_table_result_and_editor()
     demo.poll_selection_changes();
     demo.do_rebuild();
     assert_eq!(demo.state.browse().table.as_deref(), Some("t"));
-    assert_eq!(selected(&demo), (500, 0, "205"));
+    assert_eq!(selected(&demo), (0, 500, "205".into()));
     assert_eq!(demo.state.edit_value, "row 205");
     assert!(demo.state.error_msg.is_some());
     assert_eq!(
@@ -555,7 +555,7 @@ fn table_switch_apply_guards_drafts_and_busy_queries_without_mutating_the_tab() 
     demo.handle_button(demo.ids.btn_browse_go);
     demo.do_rebuild();
     assert_eq!(demo.state.browse().table.as_deref(), Some("t"));
-    assert_eq!(selected(&demo), (500, 0, "205"));
+    assert_eq!(selected(&demo), (0, 500, "205".into()));
     assert_eq!(demo.state.edit_value, "keep table draft");
     assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
     demo.handle_button(demo.ids.btn_edit_discard);
@@ -568,7 +568,7 @@ fn table_switch_apply_guards_drafts_and_busy_queries_without_mutating_the_tab() 
         .contains("Wait"));
     demo.state.sql_busy = false;
     assert!(demo.state.switch_browse_table("missing").is_err());
-    assert_eq!(selected(&demo), (500, 0, "205"));
+    assert_eq!(selected(&demo), (0, 500, "205".into()));
     assert_eq!(demo.state.edit_value, "row 205");
     assert!(!demo.state.dirty);
 }
@@ -690,7 +690,7 @@ fn invalid_saved_table_options_do_not_replace_the_current_result() {
             .insert("u".into(), options.clone());
         assert!(demo.state.switch_browse_table("u").is_err());
         assert_eq!(demo.state.browse().table.as_deref(), Some("t"));
-        assert_eq!(selected(&demo), (500, 0, "205"));
+        assert_eq!(selected(&demo), (0, 500, "205".into()));
         assert_eq!(demo.state.edit_value, "row 205");
         assert_eq!(demo.state.browse().table_options["u"], options);
     }
@@ -801,7 +801,7 @@ fn opening_a_project_preflights_saved_tables_before_replacing_the_database() {
         assert!(error.contains("Saved table u"), "{error}");
         assert!(error.contains("missing_function"), "{error}");
         assert_eq!(demo.state.path, ":memory:");
-        assert_eq!(selected(&demo), (0, 0, "1205"));
+        assert_eq!(selected(&demo), (0, 0, "1205".into()));
         assert_eq!(demo.state.edit_value, "row 1205");
         assert_eq!(
             db::count_rows(demo.state.conn.as_ref().unwrap(), "t").unwrap(),
@@ -1014,14 +1014,14 @@ fn header_context_uses_the_clicked_column_and_supports_keyboard_selection() {
     );
     assert_eq!(
         demo.ui.table_selected_rows(demo.ids.browse_table),
-        Some((0, 499))
+        Some((0, 602))
     );
     assert_eq!(demo.state.edit_value, "row 1205");
     assert_eq!(demo.ui.table_selected_row(demo.ids.browse_table), Some(0));
     demo.poll_selection_changes();
     assert_eq!(demo.state.browse().sel_row, Some(0));
-    assert_eq!(demo.state.browse().sel_row_end, Some(499));
-    assert!(demo.state.status_msg.contains("500 records"));
+    assert_eq!(demo.state.browse().sel_row_end, Some(602));
+    assert!(demo.state.status_msg.contains("603 records"));
     assert!(!demo.state.dirty);
     assert!(demo.open_browse_header_menu(bounds.x + 270.0, bounds.y + 10.0));
     demo.ui.key_input(UiKey::End);
@@ -1080,7 +1080,7 @@ fn header_context_keeps_drafts_and_refuses_obscured_busy_or_stale_targets() {
         Some((demo.ids.context_menu, mid::BROWSE_COPY_COLUMN))
     );
     assert_eq!(demo.state.edit_value, "keep draft");
-    assert_eq!(selected(&demo), (0, 0, "1205"));
+    assert_eq!(selected(&demo), (0, 0, "1205".into()));
     demo.handle_menu(mid::BROWSE_SELECT_COLUMN);
     assert!(demo.state.error_msg.as_ref().unwrap().contains("draft"));
     assert_eq!(demo.state.edit_value, "keep draft");

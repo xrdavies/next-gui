@@ -16,7 +16,7 @@ pub(crate) struct Cache {
     rules: Vec<CondFormatRule>,
     escape: String,
     revision: u64,
-    matches: Vec<Vec<Option<usize>>>,
+    matches: Arc<Vec<Vec<Option<usize>>>>,
 }
 
 fn expression_sql(filter: &str, escape: &str) -> String {
@@ -155,9 +155,10 @@ fn matches(state: &AppState) -> Vec<Vec<Option<usize>>> {
                 .collect()
         })
         .collect();
-    (0..result.rows.len())
-        .map(|row| {
-            let cells = result.values.row(row).ok();
+    let mut input=result.values.rows().ok();
+    (0..result.values.len())
+        .map(|_| {
+            let cells = input.as_mut().and_then(Iterator::next).and_then(Result::ok);
             columns
                 .iter()
                 .enumerate()
@@ -165,10 +166,7 @@ fn matches(state: &AppState) -> Vec<Vec<Option<usize>>> {
                     let value = cell_text(cells.as_ref()?.get(column)?)?;
                     indices.iter().copied().find(|index| {
                         let rule = &rules[*index];
-                        let legacy = result.rows[row]
-                            .get(column)
-                            .map(String::as_str)
-                            .unwrap_or_default();
+                        let legacy=cells.as_ref().and_then(|cells|cells.get(column)).map(|cell|db::cell_to_string(cell.as_ref())).unwrap_or_default();
                         match rule.op {
                             0 => legacy == rule.value,
                             1 => legacy != rule.value,
@@ -193,16 +191,16 @@ fn matches(state: &AppState) -> Vec<Vec<Option<usize>>> {
         .collect()
 }
 
-fn indices(state: &AppState) -> Vec<Vec<Option<usize>>> {
+fn indices(state: &AppState) -> Arc<Vec<Vec<Option<usize>>>> {
     let Some(result) = &state.browse().result else {
-        return Vec::new();
+        return Arc::new(Vec::new());
     };
     if !state.cond_rules.iter().any(|rule| {
         rule.schema == state.browse().schema
             && rule.table == state.browse().table
             && result.columns.contains(&rule.column)
     }) {
-        return vec![vec![None; result.columns.len()]; result.rows.len()];
+        return Arc::new(vec![vec![None; result.columns.len()]; result.values.len()]);
     }
     let values = result.values.identity();
     let mut cache = state.cond_match.borrow_mut();
@@ -218,8 +216,8 @@ fn indices(state: &AppState) -> Vec<Vec<Option<usize>>> {
     let found = if current {
         cache.as_ref().unwrap().matches.clone()
     } else {
-        // shortcut: scan the loaded page once; move matching to the worker when Browse loads more than500 rows.
-        let found = matches(state);
+        // shortcut: move conditional matching to the Browse worker for very large formatted results.
+        let found = Arc::new(matches(state));
         if state.conn.is_some() {
             *cache = Some(Cache {
                 schema: state.browse().schema.clone(),
@@ -239,9 +237,9 @@ fn indices(state: &AppState) -> Vec<Vec<Option<usize>>> {
 
 #[cfg(test)]
 pub(crate) fn colors(state: &AppState) -> Vec<Vec<Option<Color>>> {
-    indices(state).into_iter()
+    indices(state).iter()
         .map(|row| {
-            row.into_iter()
+            row.iter()
                 .map(|index| {
                     index.map(|index| {
                         let rgb = state.cond_rules[index].color_rgb;
@@ -253,13 +251,36 @@ pub(crate) fn colors(state: &AppState) -> Vec<Vec<Option<Color>>> {
         .collect()
 }
 
-pub(crate) fn styles(state: &AppState, font: &next_gui_text::Font) -> Vec<Vec<Option<next_gui_ui::TableCellStyle>>> {
-    let mut styles = std::collections::HashMap::new();
-    indices(state).into_iter().map(|row| row.into_iter().map(|index| index.map(|index| {
-        styles.entry(index).or_insert_with(|| {
-            let rule = &state.cond_rules[index]; rule.style.cell(rule.color_rgb, font)
-        }).clone()
-    })).collect()).collect()
+#[derive(Debug)]
+struct Styles {
+    matches: Arc<Vec<Vec<Option<usize>>>>,
+    styles: Vec<next_gui_ui::TableCellStyle>,
+}
+impl next_gui_ui::TableCellStyleSource for Styles {
+    fn cell(&self, row: usize, column: usize) -> Option<next_gui_ui::TableCellStyle> {
+        let rule = self.matches.get(row)?.get(column)?.as_ref()?;
+        self.styles.get(*rule).cloned()
+    }
+}
+pub(crate) fn styles(
+    state: &AppState,
+    font: &next_gui_text::Font,
+) -> Option<Arc<dyn next_gui_ui::TableCellStyleSource>> {
+    if !state
+        .cond_rules
+        .iter()
+        .any(|rule| rule.schema == state.browse().schema && rule.table == state.browse().table)
+    {
+        return None;
+    }
+    Some(Arc::new(Styles {
+        matches: indices(state),
+        styles: state
+            .cond_rules
+            .iter()
+            .map(|rule| rule.style.cell(rule.color_rgb, font))
+            .collect(),
+    }))
 }
 
 #[cfg(test)]

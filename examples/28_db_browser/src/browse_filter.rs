@@ -10,10 +10,60 @@ use std::sync::{
     Arc,
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Loaded {
+    schema: String,
+    table: Option<String>,
+    options: crate::state::BrowseTableOptions,
+    escape: String,
+    changes: u64,
+    versions: Vec<(String, i64, i64)>,
+}
+impl Loaded {
+    fn current(
+        conn: &LoggedConnection,
+        tab: &BrowseTabState,
+        escape: &str,
+    ) -> Result<Self, String> {
+        let mut options = tab.options();
+        options.column_widths.clear();
+        options.frozen_cols = None;
+        let versions = db::data_versions(conn)?
+            .into_iter()
+            .map(|(schema, data)| {
+                let version = conn
+                    .query_row(
+                        &format!("PRAGMA {}.schema_version", db::quote_ident(&schema)),
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok((schema, data, version))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            schema: tab.schema.clone(),
+            table: tab.table.clone(),
+            options,
+            escape: escape.into(),
+            changes: conn.total_changes(),
+            versions,
+        })
+    }
+    pub(crate) fn matches(
+        &self,
+        conn: &LoggedConnection,
+        tab: &BrowseTabState,
+        escape: &str,
+    ) -> Result<bool, String> {
+        Ok(*self == Self::current(conn, tab, escape)?)
+    }
+}
+
 pub(crate) fn fetch(
     conn: &LoggedConnection,
     mut candidate: BrowseTabState,
-    is_view: bool,
+    _is_view: bool,
     filter_escape: &str,
 ) -> Result<BrowseTabState, String> {
     let schema = candidate.schema.clone();
@@ -27,62 +77,16 @@ pub(crate) fn fetch(
 
     let where_sql = AppState::composed_where(&candidate, &columns, filter_escape)?;
 
-    let total_rows = db::count_browse_rows_in(conn, &schema, &table, where_sql.as_deref())?;
-    let last_page = total_rows.saturating_sub(1) / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
-    let offset = candidate.offset.min(last_page);
-    let (total_rows, mut result, row_keys) = {
-        if is_view && candidate.unlock_view_pk.is_some() {
-            let (result, keys) = db::browse_view_with_key_in(
-                conn,
-                &schema,
-                &table,
-                candidate.unlock_view_pk.as_deref().unwrap(),
-                &ordering,
-                where_sql.as_deref(),
-                (db::DEFAULT_LIMIT, offset),
-            )?;
-            (total_rows, result, keys)
-        } else if is_view {
-            (
-                total_rows,
-                db::browse_table_in(
-                    conn,
-                    &schema,
-                    &table,
-                    &ordering,
-                    where_sql.as_deref(),
-                    db::DEFAULT_LIMIT,
-                    offset,
-                )?,
-                Vec::new(),
-            )
-        } else {
-            match db::browse_with_keys_in(
-                conn,
-                &schema,
-                &table,
-                &ordering,
-                where_sql.as_deref(),
-                db::DEFAULT_LIMIT,
-                offset,
-            ) {
-                Ok((q, row_keys)) => (total_rows, q, row_keys),
-                Err(_) => (
-                    total_rows,
-                    db::browse_table_in(
-                        conn,
-                        &schema,
-                        &table,
-                        &ordering,
-                        where_sql.as_deref(),
-                        db::DEFAULT_LIMIT,
-                        offset,
-                    )?,
-                    Vec::new(),
-                ),
-            }
-        }
-    };
+    let (mut result, row_keys) = db::browse_full_in(
+        conn,
+        &schema,
+        &table,
+        &ordering,
+        where_sql.as_deref(),
+        candidate.unlock_view_pk.as_deref(),
+    )?;
+    let total_rows = result.values.len();
+    let offset = 0;
 
     if candidate.show_row_id {
         db::show_rowid_column(
@@ -94,6 +98,7 @@ pub(crate) fn fetch(
         )?;
     }
 
+    result.all_values = Some(Arc::new(result.values.clone()));
     candidate
         .col_filters
         .resize(result.columns.len(), String::new());
@@ -107,6 +112,7 @@ pub(crate) fn fetch(
     candidate.rowid_column = rowid_column;
     candidate.total_rows = Some(total_rows);
     candidate.result = Some(result);
+    candidate.loaded = Some(Loaded::current(conn, &candidate, filter_escape)?);
     candidate.clear_selection();
     Ok(candidate)
 }
@@ -115,7 +121,7 @@ pub(crate) fn status(tab: &BrowseTabState) -> String {
     let schema = &tab.schema;
     let table = tab.table.as_ref().unwrap();
     let result = tab.result.as_ref().unwrap();
-    let nrows = result.rows.len();
+    let nrows = result.values.len();
     let offset = tab.offset;
     let total_rows = tab.total_rows.unwrap_or(0);
     let truncated = result.truncated;
@@ -189,6 +195,7 @@ pub struct Work {
     job: Option<Job<BrowseTabState>>,
     cancel: Arc<AtomicBool>,
     source: Source,
+    pub(crate) select_column: Option<usize>,
 }
 impl Drop for Work {
     fn drop(&mut self) {
@@ -200,6 +207,10 @@ impl Drop for Work {
 }
 impl AppState {
     pub(crate) fn start_browse_filter(&mut self) -> Result<(), String> {
+        self.start_browse_candidate(self.browse().clone())
+    }
+
+    pub(crate) fn start_browse_candidate(&mut self, mut candidate: BrowseTabState) -> Result<(), String> {
         self.guard_background_idle()?;
         if self.sql_busy {
             return Err("Wait for SQL to finish before filtering".into());
@@ -208,7 +219,6 @@ impl AppState {
             return Err("Apply or discard the cell draft first".into());
         }
         let source = Source::current(self);
-        let mut candidate = self.browse().clone();
         candidate.offset = 0;
         let is_view = self.schema.iter().any(|o| {
             o.schema == candidate.schema
@@ -234,6 +244,7 @@ impl AppState {
             job: Some(job),
             cancel,
             source,
+            select_column: None,
         });
         Ok(())
     }
@@ -263,14 +274,23 @@ impl AppState {
         if !work.cancel.load(Ordering::Relaxed) && work.source.matches(self) {
             let mut candidate = result?;
             let current = self.browse();
-            candidate.column_widths = current.column_widths.clone();
-            candidate.frozen_cols = current.frozen_cols;
-            candidate.scroll = current.scroll;
-            candidate.table_options = current.table_options.clone();
-            candidate.schema_table_options = current.schema_table_options.clone();
+            if candidate.schema == current.schema && candidate.table == current.table {
+                candidate.column_widths = current.column_widths.clone();
+                candidate.frozen_cols = current.frozen_cols;
+                candidate.scroll = current.scroll;
+                candidate.table_options = current.table_options.clone();
+                candidate.schema_table_options = current.schema_table_options.clone();
+            }
+            if let Some(column) = work.select_column {
+                if candidate.result.as_ref().is_some_and(|result| !result.values.is_empty()) {
+                    candidate.sel_row = Some(0);
+                    candidate.sel_col = Some(column);
+                }
+            }
             self.status_msg = status(&candidate);
             *self.browse_mut() = candidate;
             self.clear_browse_editor();
+            self.sync_edit_cell_from_selection();
             return Ok(true);
         } else if self.conn.is_none() {
             result?;
@@ -314,6 +334,7 @@ pub(crate) struct Session {
     pending: bool,
     deadline: Option<Instant>,
     focus: Option<WidgetId>,
+    initial_attempted: bool,
 }
 impl Session {
     pub(crate) fn new(state: &AppState, ui: &Ui, ids: &BuiltUiIds) -> Self {
@@ -324,6 +345,7 @@ impl Session {
             pending: false,
             deadline: None,
             focus: focused(ui, ids),
+            initial_attempted: false,
         }
     }
     pub(crate) fn reconcile(&mut self, state: &AppState, ui: &Ui, ids: &BuiltUiIds) {
@@ -416,6 +438,22 @@ impl InputSession {
 }
 
 impl Demo {
+    pub(crate) fn cancel_browse_refresh(&mut self) {
+        self.state.cancel_browse_filter();
+        self.filter_session = Session::new(&self.state, &self.ui, &self.ids);
+        self.filter_session.initial_attempted = true;
+        self.state.status_msg = "Browse loading cancelled".into();
+        self.rebuild = true;
+    }
+
+    pub(crate) fn refresh_browse_interactive(&mut self) -> Result<(), String> {
+        if self.state.browse_background {
+            self.state.start_browse_filter()?;
+            self.filter_session = Session::new(&self.state, &self.ui, &self.ids);
+            Ok(())
+        } else { self.state.refresh_browse() }
+    }
+
     pub(crate) fn flush_browse_filter(&mut self) {
         self.filter_session.reconcile(&self.state, &self.ui, &self.ids);
         self.filter_session.observed = drafts(&self.ui, &self.ids);
@@ -435,6 +473,12 @@ impl Demo {
     pub(crate) fn advance_browse_filter(&mut self, now: Instant) -> Option<Duration> {
         self.filter_session
             .reconcile(&self.state, &self.ui, &self.ids);
+        if self.state.browse_background && !self.filter_session.initial_attempted
+            && self.state.browse().result.is_none() && self.state.browse().table.is_some() {
+            self.filter_session.initial_attempted = true;
+            self.filter_session.pending = true;
+            self.filter_session.deadline = Some(now);
+        }
         let current = drafts(&self.ui, &self.ids);
         let focus = focused(&self.ui, &self.ids);
         let lost_focus = self.filter_session.focus.is_some() && self.filter_session.focus != focus;

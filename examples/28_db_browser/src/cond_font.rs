@@ -345,13 +345,13 @@ mod tests {
                     demo.state.cond_formats = None;
                     demo.do_rebuild();
                     let original = demo.state.cond_rules.clone();
-                    let styles = crate::cond_match::styles(&demo.state, demo.ui.font());
+                    let styles = crate::cond_match::styles(&demo.state, demo.ui.font()).unwrap();
                     assert_eq!(
-                        styles[1][1].as_ref().unwrap().size,
+                        styles.cell(1, 1).unwrap().size,
                         Some(18.5 * POINT_SCALE)
                     );
-                    assert!(styles[1][1].as_ref().unwrap().strikeout);
-                    assert_eq!(styles[0][1].as_ref().unwrap().size, Some(25.0));
+                    assert!(styles.cell(1, 1).unwrap().strikeout);
+                    assert_eq!(styles.cell(0, 1).unwrap().size, Some(25.0));
                     capture(&mut demo, &format!("{prefix}-browse-{theme_name}-{width}"));
                     demo.state.begin_cond_formats().unwrap();
                     demo.do_rebuild();

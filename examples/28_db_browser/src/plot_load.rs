@@ -202,7 +202,8 @@ mod tests {
         let points = state.plot.data.series[0].points.clone();
         state.browse_page(true).unwrap();
         state.sync_current_plot().unwrap();
-        assert_eq!(state.browse().offset, 500);
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_row, Some(500));
         assert!(Arc::ptr_eq(&points, &state.plot.data.series[0].points));
         state.goto_browse_record(3).unwrap();
         state.sync_current_plot().unwrap();
@@ -216,7 +217,7 @@ mod tests {
         state.refresh_browse().unwrap();
         state.sync_current_plot().unwrap();
         assert!(!state.plot.has_full());
-        assert_eq!(state.plot.data.series[0].points.len(), 500);
+        assert_eq!(state.plot.data.series[0].points.len(), 602);
         assert_eq!(state.plot.data.series[0].points[0].y, 7.0);
     }
 
@@ -249,7 +250,7 @@ mod tests {
         state.browse_page(true).unwrap();
         state.sync_current_plot().unwrap();
         assert!(!state.plot.has_full());
-        assert_eq!(state.plot.data.series[0].points.len(), 500);
+        assert_eq!(state.plot.data.series[0].points.len(), 1003);
         assert_eq!(state.plot.data.series[0].points[0].y, 9.0);
         state.start_plot_load().unwrap();
         settle(&mut state).unwrap();
@@ -275,9 +276,11 @@ mod tests {
         state.new_memory_db().unwrap();
         let (entered, waiting) = std::sync::mpsc::channel();
         let (release, resume) = std::sync::mpsc::channel();
+        let armed = Arc::new(AtomicBool::new(false));
+        let worker_armed = armed.clone();
         let mut first = true;
         state.conn.as_ref().unwrap().create_scalar_function("plot_wait", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
-            if first {
+            if first && worker_armed.load(Ordering::Relaxed) {
                 first = false;
                 entered.send(()).unwrap();
                 resume.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -294,6 +297,7 @@ mod tests {
         state.plot.check(2, 2, true);
         state.sync_current_plot().unwrap();
         let points = state.plot.data.series[0].points.clone();
+        armed.store(true, Ordering::Relaxed);
         state.start_plot_load().unwrap();
         waiting.recv_timeout(Duration::from_secs(5)).unwrap();
         state.plot_work.as_ref().unwrap().progress.cancel();
@@ -381,7 +385,7 @@ mod tests {
         demo.snapshot_inputs();
         demo.poll_selection_changes();
         demo.do_rebuild();
-        assert_eq!((demo.state.browse().offset, demo.state.browse().sel_row), (2500, Some(1)));
+        assert_eq!((demo.state.browse().offset, demo.state.browse().sel_row), (0, Some(2501)));
         assert!(Arc::ptr_eq(&points, &demo.state.plot.data.series[0].points));
         demo.ui.set_select_selected(demo.ids.plot.line, Some(2));
         demo.poll_selection_changes();

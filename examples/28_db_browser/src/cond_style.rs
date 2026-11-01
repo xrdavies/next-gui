@@ -297,8 +297,8 @@ mod tests {
             state.cond_rules
         );
         let font = next_gui_text::load_default_cjk_font().unwrap();
-        let styles = crate::cond_match::styles(&state, &font);
-        let style = styles[1][1].as_ref().unwrap();
+        let styles = crate::cond_match::styles(&state, &font).unwrap();
+        let style = styles.cell(1, 1).unwrap();
         assert_eq!(style.foreground, Some(rgb(0xAABBCC)));
         assert_eq!(style.alignment, TableTextAlign::Justify);
         assert!(style.font.as_ref().unwrap().has_glyph('中'));

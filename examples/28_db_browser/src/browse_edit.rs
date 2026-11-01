@@ -126,6 +126,9 @@ impl AppState {
             .result
             .as_ref()
             .ok_or("Refresh Browse before completing values")?;
+        if let (Some(loaded), Some(conn)) = (&tab.loaded, &self.conn) {
+            if !loaded.matches(conn, tab, &self.prefs.filter_escape)? { return Ok(Vec::new()); }
+        }
         let name = result.columns.get(column).ok_or("No completion column")?;
         let queried;
         let (values, column) =
@@ -475,7 +478,8 @@ mod tests {
         demo.state.browse_mut().col_filters = vec![">1".into()];
         demo.state.refresh_browse().unwrap();
         demo.state.browse_page(true).unwrap();
-        assert_eq!(demo.state.browse().offset, 500);
+        assert_eq!(demo.state.browse().offset, 0);
+        assert_eq!(demo.state.browse().sel_row, Some(500));
         let values = demo.state.browse_cell_suggestions(1).unwrap();
         assert_eq!(values.len(), 601);
         assert!(!values.contains(&"Value 001".into()));

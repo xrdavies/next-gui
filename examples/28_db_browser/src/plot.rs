@@ -440,15 +440,6 @@ impl Model {
         if let Some(full) = &mut self.full { full.versions = Some(versions); }
     }
 
-    pub fn carry_full_preview(&mut self, from: &Arc<()>, to: Arc<()>, versions: Option<Vec<(String, i64)>>) {
-        if let Some(full) = &mut self.full {
-            if Arc::ptr_eq(&full.preview, from) {
-                if versions.is_some() && full.versions == versions { full.preview = to; }
-                else { self.discard_full(); }
-            }
-        }
-    }
-
     pub fn load_all(&mut self, source: Source, preview: &crate::db::QueryResult, input: &crate::db::QueryResult, mut check: impl FnMut(usize) -> Result<(), String>) -> Result<(), String> {
         let versions = self.full.as_ref().and_then(|full| full.versions.clone());
         let result = if self.full_matches(&source, preview) {

@@ -151,6 +151,7 @@ pub struct BuiltUi {
     pub btn_browse_clear_filters: WidgetId,
     pub btn_browse_clear_sort: WidgetId,
     pub btn_browse_go: WidgetId,
+    pub btn_browse_cancel: WidgetId,
     pub btn_record_prev: WidgetId,
     pub btn_record_next: WidgetId,
     pub btn_record_first: WidgetId,
@@ -455,7 +456,7 @@ pub fn status_text(state: &AppState) -> String {
             "not encrypted"
         },
     );
-    format!("{path} · {flags} · {}{}", if state.browse_work.is_some() { "Filtering… · " } else { "" }, state.status_msg)
+    format!("{path} · {flags} · {}{}", if state.browse_work.is_some() { "Loading rows… · " } else { "" }, state.status_msg)
 }
 
 fn constraint_cell_editor(c: &mut next_gui_ui::FlexBuilder<'_>, table: WidgetId, state: &AppState, theme: &Theme) -> WidgetId {
@@ -633,6 +634,7 @@ pub fn build_ui(
     let mut btn_browse_clear_filters = z;
     let mut btn_browse_clear_sort = z;
     let mut btn_browse_go = z;
+    let mut btn_browse_cancel = z;
     let mut btn_record_prev = z;
     let mut btn_record_next = z;
     let mut btn_record_first = z;
@@ -1724,12 +1726,6 @@ pub fn build_ui(
                 .as_ref()
                 .map(|r| decorate_browse_cols(state, result_columns(&column_font, theme.typography.body, r)))
                 .unwrap_or_else(|| vec![TableColumn::new("—", 120.0)]);
-            let browse_rows = state
-                .browse()
-                .result
-                .as_ref()
-                .map(|r| r.rows.clone())
-                .unwrap_or_default();
             let sql_cols = state
                 .sql_result
                 .as_ref()
@@ -2054,6 +2050,7 @@ pub fn build_ui(
                                     filter_style,
                                 );
                                 btn_browse_go = row.tool_button("Apply");
+                                if state.browse_work.is_some() { btn_browse_cancel = row.tool_button("Cancel Loading"); }
                                 btn_browse_clear_filters = row.tool_button("Clear Filters");
                                 btn_browse_clear_sort = row.tool_button("Clear Sort");
                             });
@@ -2087,9 +2084,9 @@ pub fn build_ui(
                                 crate::state::BrowseViewMode::Table => {
                                     let mut filtered_style = browse_table_style;
                                     filtered_style.height += col_filt_style.height + 4.0;
-                                    (browse_table, browse_col_filters) = p.filtered_table(
+                                    (browse_table, browse_col_filters) = p.filtered_data_table(
                                         browse_cols.clone(),
-                                        browse_rows.clone(),
+                                        std::sync::Arc::new(state.browse().result.as_ref().map(|result|result.values.clone()).unwrap_or_default()),
                                         &col_filter_vals,
                                         filtered_style,
                                         col_filt_style,
@@ -2103,7 +2100,7 @@ pub fn build_ui(
                                     p.scroll_row(tool_row, |row| {
                                         btn_form_prev = row.tool_button("◀ Prev");
                                         btn_form_next = row.tool_button("Next ▶");
-                                        let n = res.map(|r| r.rows.len()).unwrap_or(0);
+                                        let n = res.map(|r| r.values.len()).unwrap_or(0);
                                         let total = b.total_rows.unwrap_or(n);
                                         let global_row = b.offset.saturating_add(row_i);
                                         row.text(format!(
@@ -2117,11 +2114,11 @@ pub fn build_ui(
                                     form_scroll.height = (tab_page_h - 232.0).max(120.0);
                                     p.scroll_area(form_scroll, |p| {
                                     if let Some(res) = res {
-                                        let cells = res.rows.get(row_i);
+                                        let cells = res.values.row(row_i).ok();
                                         for (ci, cname) in res.columns.iter().enumerate() {
-                                            let val = cells
+                                            let val = cells.as_ref()
                                                 .and_then(|r| r.get(ci))
-                                                .cloned()
+                                                .map(|value|db::cell_to_string(value.as_ref()))
                                                 .unwrap_or_default();
                                             p.scroll_row(tool_row, |row| {
                                                 row.text(cname.as_str());
@@ -2631,8 +2628,7 @@ pub fn build_ui(
             ui.set_table_editable_columns(browse_table, crate::browse_edit::editable_columns(state));
             if let Some(editor) = ui.table_cell_editor(browse_table) { ui.set_autocomplete_prefix_matching(editor, true); }
             ui.set_table_frozen_cols(browse_table, state.browse_frozen_cols());
-            let styles=crate::cond_match::styles(state,ui.font());
-            ui.set_table_cell_styles(browse_table,styles);
+            if let Some(styles)=crate::cond_match::styles(state,ui.font()) {ui.set_table_cell_style_source(browse_table,styles);}
             for (column, width) in state.browse().column_widths.iter().enumerate() {
                 ui.set_table_column_width(browse_table, column, *width);
             }
@@ -2869,7 +2865,7 @@ pub fn build_ui(
     }
 
     let browse = state.browse();
-    let loaded = browse.result.as_ref().map_or(0, |r| r.rows.len());
+    let loaded = browse.result.as_ref().map_or(0, |r| r.values.len());
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
     for id in [btn_browse_new_tab, btn_browse_close_tab].into_iter().chain(browse_tab_btns.iter().copied()) {
@@ -3066,6 +3062,7 @@ pub fn build_ui(
         btn_browse_clear_filters,
         btn_browse_clear_sort,
         btn_browse_go,
+        btn_browse_cancel,
         btn_record_prev,
         btn_record_next,
         btn_record_first,

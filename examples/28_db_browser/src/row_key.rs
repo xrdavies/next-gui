@@ -119,7 +119,7 @@ pub fn implicit_rowid_column_in(conn: &Connection, schema: &str, table: &str) ->
 }
 
 pub fn show_rowid_column(result: &mut QueryResult, keys: &[RowKey], alias: &str) -> Result<(), String> {
-    if keys.len() != result.rows.len() || keys.iter().any(|key| key.columns.as_ref() != [alias] || !matches!(key.values.as_slice(), [CellValue::Integer(_)])) {
+    if keys.len() != result.values.len() || keys.iter().any(|key| key.columns.as_ref() != [alias] || !matches!(key.values.as_slice(), [CellValue::Integer(_)])) {
         return Err("Browse rowid keys do not match the result".into());
     }
     result.values.prepend_source_column(0)?;
@@ -236,6 +236,99 @@ fn browse_key_columns_in(
         result.values.remove_column(0);
     }
     Ok((result, row_keys))
+}
+
+/// Read a complete filtered table/view once, with typed identities and indexed cells.
+pub fn browse_full_in(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    ordering: &[OrderBy],
+    filter: Option<&str>,
+    view_key: Option<&str>,
+) -> Result<(QueryResult, Vec<RowKey>), String> {
+    let is_view = source_is_view_in(conn, schema, table)?;
+    let keys = if is_view {
+        if let Some(key) = view_key {
+            let column = table_column_names_in(conn, schema, table)?
+                .into_iter()
+                .find(|column| column.eq_ignore_ascii_case(key))
+                .ok_or("The view key column no longer exists")?;
+            Some(Arc::<[String]>::from(vec![column]))
+        } else {
+            None
+        }
+    } else {
+        key_columns(conn, schema, table).ok()
+    };
+    let Some(keys) = keys else {
+        let mut result = browse_snapshot_in(conn, schema, table, ordering, filter, false)?;
+        result.values = result.all_values.as_ref().unwrap().as_ref().clone();
+        result.truncated = false;
+        return Ok((result, Vec::new()));
+    };
+    let projection = keys
+        .iter()
+        .map(|column| format!("{}.{}", quote_ident(table), quote_ident(column)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut sql = format!(
+        "SELECT {projection}, {}.* FROM {}",
+        quote_ident(table),
+        qualified_name(schema, table)
+    );
+    if let Some(filter) = filter.map(str::trim).filter(|value| !value.is_empty()) {
+        sql.push_str(" WHERE ");
+        sql.push_str(filter);
+    }
+    append_order_by(conn, schema, table, &mut sql, ordering)?;
+    let mut statement = prepare_browse(conn, &sql)?;
+    let mut columns = statement
+        .column_names()
+        .iter()
+        .map(|column| column.to_string())
+        .collect::<Vec<_>>();
+    let width = columns.len();
+    let mut query = statement.query([]).map_err(|e| e.to_string())?;
+    let mut output = crate::cell_snapshot::SnapshotWriter::new(width)?;
+    let mut identities = Vec::new();
+    let mut rows = Vec::new();
+    while let Some(row) = query.next().map_err(|e| e.to_string())? {
+        let cells = (0..width)
+            .map(|column| row.get_ref(column).map(CellValue::from))
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())?;
+        identities.try_reserve(1).map_err(|e| e.to_string())?;
+        identities.push(RowKey {
+            columns: keys.clone(),
+            values: cells[..keys.len()].to_vec(),
+        });
+        output.push(&cells)?;
+        if rows.len() < DEFAULT_LIMIT {
+            rows.push(
+                cells[keys.len()..]
+                    .iter()
+                    .map(|cell| cell_to_string(cell.as_ref()))
+                    .collect(),
+            );
+        }
+    }
+    let mut values = output.finish()?;
+    for _ in &*keys {
+        values.remove_column(0);
+    }
+    columns.drain(..keys.len());
+    let result = QueryResult {
+        columns,
+        statement: None,
+        rows,
+        values: values.clone(),
+        all_values: Some(Arc::new(values)),
+        export_rows: None,
+        rows_affected: None,
+        truncated: false,
+    };
+    Ok((result, identities))
 }
 
 pub fn read_keyed_cell_in(

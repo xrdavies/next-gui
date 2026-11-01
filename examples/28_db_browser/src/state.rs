@@ -282,6 +282,8 @@ pub struct BrowseTabState {
     #[serde(skip)]
     pub row_keys: Vec<db::RowKey>,
     #[serde(skip)]
+    pub(crate) loaded: Option<crate::browse_filter::Loaded>,
+    #[serde(skip)]
     pub sel_row: Option<usize>,
     #[serde(skip)]
     pub sel_row_start: Option<usize>,
@@ -363,7 +365,6 @@ impl BrowseTabState {
         self.sel_col_end = None;
     }
 
-    // shortcut: remap within the refreshed preview; extend with whole-result virtual selection.
     fn restore_selection(&mut self, previous: &Self) {
         let (Some(row), Some(old), Some(new)) = (previous.sel_row, &previous.result, &self.result) else { return; };
         if self.schema != previous.schema || self.table != previous.table || old.columns != new.columns || old.columns.is_empty() { return; }
@@ -371,15 +372,15 @@ impl BrowseTabState {
         let end = previous.sel_row_end.unwrap_or(row);
         let first = row.min(anchor).min(end);
         let last = row.max(anchor).max(end);
-        if last >= old.rows.len() || [previous.sel_col, previous.sel_col_start, previous.sel_col_end]
+        if last >= old.values.len() || [previous.sel_col, previous.sel_col_start, previous.sel_col_end]
             .into_iter().flatten().any(|col| col >= new.columns.len()) { return; }
-        let start = if previous.row_keys.len() == old.rows.len() && self.row_keys.len() == new.rows.len() {
+        let start = if previous.row_keys.len() == old.values.len() && self.row_keys.len() == new.values.len() {
             let Some(start) = self.row_keys.iter().position(|id| *id == previous.row_keys[first]) else { return; };
             if self.row_keys.get(start..start + last - first + 1) != Some(&previous.row_keys[first..=last]) { return; }
             start
         } else {
             // Without a stable row key, retain only unchanged typed rows at the same positions.
-            if self.offset != previous.offset || last >= new.rows.len() || (first..=last).any(|row| {
+            if self.offset != previous.offset || last >= new.values.len() || (first..=last).any(|row| {
                 let cols = 0..=old.columns.len() - 1;
                 match (old.values.rectangle(row..=row, cols.clone()), new.values.rectangle(row..=row, cols)) {
                     (Ok(old), Ok(new)) => old != new,
@@ -428,6 +429,7 @@ impl BrowseTabState {
             schema_table_options: BTreeMap::new(),
             result: None,
             row_keys: Vec::new(),
+            loaded: None,
             sel_row: None,
             sel_row_start: None,
             sel_row_end: None,
@@ -692,6 +694,7 @@ pub struct AppState {
     pub plot_work: Option<crate::plot_load::Work>,
     pub fk_work: Option<crate::fk_values::Work>,
     pub browse_work: Option<crate::browse_filter::Work>,
+    pub(crate) browse_background: bool,
     pub sql_export: Option<crate::sql_export::Draft>,
     pub prefs_font_size: String,
     pub prefs_filter_delay: String,
@@ -1074,6 +1077,7 @@ impl AppState {
             plot_work: None,
             fk_work: None,
             browse_work: None,
+            browse_background: false,
             sql_export: None,
             prefs_frozen_cols: 0,
             prefs_font_size: "13".into(),
@@ -1540,14 +1544,16 @@ impl AppState {
     }
 
     pub fn refresh_browse(&mut self) -> Result<(), String> {
-        if self.browse_work.is_some() { return Err("Wait for Browse filtering to finish".into()); }
+        if self.browse_work.is_some() { return Err("Wait for Browse loading to finish".into()); }
         if self.plot_work.is_some() { return Err("Cancel or finish plot loading first".into()); }
         if self.fk_work.is_some() { return Err("Cancel or finish foreign key loading first".into()); }
         let schema = self.browse().schema.clone();
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
-        if self.conn.is_none() {
+        // Structure and SQL actions must not read the entire Browse source.
+        if self.conn.is_none() || self.browse_background && self.tab != MainTab::Browse {
             if let Some(t) = self.browse_tabs.get_mut(self.browse_tab_idx) {
                 t.result = None;
+                t.loaded = None;
                 t.row_keys.clear();
                 t.rowid_column = None;
                 t.total_rows = None;
@@ -1601,7 +1607,8 @@ impl AppState {
             ordering[0].descending = !ordering[0].descending;
         } else { ordering = vec![db::OrderBy { column, descending: false }]; }
         self.set_browse_ordering(ordering)?;
-        if self.browse().result.as_ref().is_some_and(|r| !r.rows.is_empty()) {
+        if let Some(work) = self.browse_work.as_mut() { work.select_column = Some(column_index); return Ok(()); }
+        if self.browse().result.as_ref().is_some_and(|r| !r.values.is_empty()) {
             self.browse_mut().sel_row = Some(0);
             self.browse_mut().sel_col = Some(column_index);
         }
@@ -1613,6 +1620,11 @@ impl AppState {
         if self.conn.is_none() { return Err("No database open".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.sql_busy { return Err("Wait for SQL to finish before sorting".into()); }
+        if self.browse_background {
+            let mut candidate = self.browse().clone();
+            candidate.set_ordering(ordering);
+            return self.start_browse_candidate(candidate);
+        }
         let previous = self.browse().clone();
         self.browse_mut().set_ordering(ordering);
         self.browse_mut().offset = 0;
@@ -1647,6 +1659,12 @@ impl AppState {
             }
             next.set_options(options);
         }
+        if self.browse_background {
+            if self.tab == MainTab::Browse { return self.start_browse_candidate(next); }
+            *self.browse_mut() = next;
+            self.clear_browse_editor();
+            return Ok(());
+        }
         *self.browse_mut() = next;
         if let Err(error) = self.refresh_browse() {
             *self.browse_mut() = previous;
@@ -1657,58 +1675,25 @@ impl AppState {
 
     /// Jump to a one-based record in the complete filtered/sorted result.
     pub fn goto_browse_record(&mut self, record: usize) -> Result<(), String> {
+        self.guard_background_idle()?;
         if self.conn.is_none() { return Err("No database open".into()); }
         if self.browse().table.is_none() { return Err("Select a table first".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if self.sql_busy { return Err("Wait for SQL to finish before navigating".into()); }
-        let previous = self.browse().clone();
-        let target = record.saturating_sub(1);
-        self.browse_mut().offset = target / db::DEFAULT_LIMIT * db::DEFAULT_LIMIT;
-        if let Err(error) = self.refresh_browse() {
-            *self.browse_mut() = previous;
-            return Err(error);
-        }
-        let tab = self.browse_mut();
-        if let Some(result) = tab.result.as_ref().filter(|r| !r.rows.is_empty()) {
-            let row = target.saturating_sub(tab.offset).min(result.rows.len() - 1);
-            tab.sel_row = Some(row);
-            tab.sel_col = (!result.columns.is_empty()).then(|| previous.sel_col.unwrap_or(0).min(result.columns.len() - 1));
-            tab.goto_record = (tab.offset + row + 1).to_string();
-        } else { tab.goto_record = "0".into(); }
-        if let Some((from, to)) = previous.result.as_ref().zip(self.browse().result.as_ref()) {
-            let versions = self.conn.as_ref().and_then(|conn| db::data_versions(conn).ok());
-            self.plot.carry_full_preview(&from.values.identity(), to.values.identity(), versions);
-        }
-        self.sync_edit_cell_from_selection();
-        Ok(())
+        let column = self.browse().sel_col.unwrap_or(0);
+        if self.browse().result.is_none() || !self.browse().loaded.as_ref().map(|loaded| loaded.matches(self.conn.as_ref().unwrap(), self.browse(), &self.prefs.filter_escape)).transpose()?.unwrap_or(false) { self.refresh_browse()?; }
+        let tab=self.browse_mut();tab.clear_selection();
+        if let Some(result)=tab.result.as_ref().filter(|result|!result.values.is_empty()) {
+            let row=record.saturating_sub(1).min(result.values.len()-1);tab.sel_row=Some(row);tab.sel_col=Some(column.min(result.columns.len().saturating_sub(1)));tab.goto_record=(row+1).to_string();
+        }else{tab.goto_record="0".into();}
+        self.sync_edit_cell_from_selection();Ok(())
     }
 
+    #[cfg(test)]
     pub fn browse_page(&mut self, next: bool) -> Result<(), String> {
-        self.guard_background_idle()?;
-        let previous = self.browse().result.as_ref().map(|r| r.values.identity());
-        let tab = self.browse_mut();
-        if next
-            && tab
-                .total_rows
-                .is_some_and(|total| tab.offset.saturating_add(db::DEFAULT_LIMIT) >= total)
-        {
-            return Ok(());
-        }
-        let old = tab.offset;
-        tab.offset = if next {
-            old.saturating_add(db::DEFAULT_LIMIT)
-        } else {
-            old.saturating_sub(db::DEFAULT_LIMIT)
-        };
-        if let Err(e) = self.refresh_browse() {
-            self.browse_mut().offset = old;
-            return Err(e);
-        }
-        if let Some((from, to)) = previous.zip(self.browse().result.as_ref().map(|r| r.values.identity())) {
-            let versions = self.conn.as_ref().and_then(|conn| db::data_versions(conn).ok());
-            self.plot.carry_full_preview(&from, to, versions);
-        }
-        Ok(())
+        let row=self.browse().sel_row.unwrap_or(0);
+        let record=if next {row.saturating_add(db::DEFAULT_LIMIT).saturating_add(1)}else{row.saturating_sub(db::DEFAULT_LIMIT).saturating_add(1)};
+        self.goto_browse_record(record)
     }
 
     pub fn sync_current_plot(&mut self) -> Result<(), String> {
@@ -2594,7 +2579,7 @@ impl AppState {
         self.browse_tabs = vec![BrowseTabState::new(first)];
         self.browse_tab_idx = 0;
         self.pick_chart_source();
-        self.refresh_browse()?;
+        if !self.browse_background { self.refresh_browse()?; } else { self.clear_browse_editor(); }
         self.refresh_chart()?;
         self.error_msg = None;
         if self.path != ":memory:" && !self.path.is_empty() {
@@ -3388,7 +3373,7 @@ impl AppState {
         pf.apply_to(self);
         self.refresh_pragmas()?;
         self.project_path = Some(path.display().to_string());
-        self.refresh_browse()?;
+        if !self.browse_background { self.refresh_browse()?; } else { self.clear_browse_editor(); }
         self.checkpoint_project();
         self.status_msg = format!("Project opened ← {}", path.display());
         if !unapplied.is_empty() { self.status_msg.push_str(&format!("; retained but not applied: {}", unapplied.join(", "))); }
@@ -3659,13 +3644,13 @@ impl AppState {
             return Err("Clipboard rows have inconsistent column counts".into());
         }
         if rows.len() == 1 && width == 1 {
-            if end_row >= result.rows.len() || end_col >= result.columns.len() {
+            if end_row >= result.values.len() || end_col >= result.columns.len() {
                 return Err("Selection no longer fits the browse page; refresh and retry".into());
             }
             rows = vec![vec![rows[0][0].clone(); end_col - start_col + 1]; end_row - start_row + 1];
         }
         let width = rows[0].len();
-        if start_row.saturating_add(rows.len()) > result.rows.len() {
+        if start_row.saturating_add(rows.len()) > result.values.len() {
             return Err("Clipboard does not fit in the visible browse page".into());
         }
         if start_col.saturating_add(width) > result.columns.len() {
@@ -4292,7 +4277,7 @@ impl AppState {
                 .browse()
                 .result
                 .as_ref()
-                .map(|r| r.rows.len())
+                .map(|r| r.values.len())
                 .unwrap_or(0);
             if n > 0 && self.browse().sel_row.is_none() {
                 self.browse_mut().sel_row = Some(0);
@@ -4311,32 +4296,13 @@ impl AppState {
     }
 
     fn move_form_record(&mut self, next: bool) -> Result<(), String> {
-        if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         let tab = self.browse();
-        let n = tab.result.as_ref().map_or(0, |r| r.rows.len());
-        if n == 0 { return Ok(()); }
-        let col = tab.sel_col.unwrap_or(0);
-        let row = tab.sel_row.unwrap_or(0).min(n - 1);
-        let target = if tab.sel_row.is_none() {
-            0
-        } else if next && row + 1 == n && tab.offset.saturating_add(n) < tab.total_rows.unwrap_or(0) {
-            self.browse_page(true)?;
-            0
-        } else if !next && row == 0 && tab.offset > 0 {
-            self.browse_page(false)?;
-            self.browse().result.as_ref().map_or(0, |r| r.rows.len().saturating_sub(1))
-        } else if next { (row + 1).min(n - 1) }
-        else { row.saturating_sub(1) };
-        let tab = self.browse_mut();
-        tab.clear_selection();
-        if let Some(result) = &tab.result {
-            if !result.rows.is_empty() {
-                tab.sel_row = Some(target.min(result.rows.len() - 1));
-                tab.sel_col = Some(col.min(result.columns.len().saturating_sub(1)));
-            }
-        }
-        self.sync_edit_cell_from_selection();
-        Ok(())
+        let record = match tab.sel_row {
+            None => 1,
+            Some(row) if next => row.saturating_add(2),
+            Some(row) => row.saturating_sub(1).saturating_add(1),
+        };
+        self.goto_browse_record(record)
     }
 
     pub fn decode_edit_image(&mut self) {
@@ -6561,37 +6527,35 @@ mod chart_default_tests {
     }
 
     #[test]
-    fn browse_pages_preserve_row_identity_and_clear_stale_edits() {
+    fn browse_record_steps_and_form_navigation_keep_complete_typed_identity() {
         let mut state = test_state();
         state.conn.as_ref().unwrap().execute_batch("DELETE FROM t; WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<601) INSERT INTO t SELECT x FROM c;").unwrap();
         state.browse_mut().table = Some("t".into());
         state.browse_mut().order_col = Some("v".into());
         state.refresh_browse().unwrap();
         assert_eq!(state.browse().result.as_ref().unwrap().rows.len(), 500);
+        assert_eq!(state.browse().result.as_ref().unwrap().values.len(), 601);
         assert_eq!(state.browse().total_rows, Some(601));
         state.browse_mut().sel_row = Some(0);
         state.sync_edit_cell_from_selection();
         state.browse_page(true).unwrap();
         let tab = state.browse();
-        assert_eq!(tab.result.as_ref().unwrap().rows.len(), 101);
-        assert_eq!(tab.result.as_ref().unwrap().rows[0][0], "501");
-        assert_eq!(tab.row_keys[0].values, [db::CellValue::Integer(501)]);
-        assert_eq!(tab.total_rows, Some(601));
-        assert!(tab.sel_row.is_none());
-        assert!(state.edit_col.is_empty());
+        assert_eq!(tab.result.as_ref().unwrap().values.cell(500, 0).unwrap(), db::CellValue::Integer(501));
+        assert_eq!(tab.row_keys[500].values, [db::CellValue::Integer(501)]);
+        assert_eq!(tab.sel_row, Some(500));
+        assert_eq!(state.edit_value, "501");
         state.browse_page(true).unwrap();
-        assert_eq!(state.browse().offset, 500);
+        assert_eq!(state.browse().sel_row, Some(600));
         state.browse_page(true).unwrap();
-        assert_eq!(state.browse().offset, 500);
+        assert_eq!(state.browse().sel_row, Some(600));
         state.browse_page(false).unwrap();
-        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_row, Some(100));
         state.browse_view = BrowseViewMode::Form;
         state.browse_mut().sel_row = Some(499);
         state.form_next_record().unwrap();
-        assert_eq!(state.browse().offset, 500);
-        assert_eq!(state.browse().sel_row, Some(0));
-        state.form_prev_record().unwrap();
         assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_row, Some(500));
+        state.form_prev_record().unwrap();
         assert_eq!(state.browse().sel_row, Some(499));
     }
 
@@ -6767,7 +6731,8 @@ mod chart_default_tests {
         assert_eq!(state.edit_value, "v500");
         state.browse_mut().filter.clear();
         state.form_next_record().unwrap();
-        assert_eq!(state.browse().offset, 500);
+        assert_eq!(state.browse().offset, 0);
+        assert_eq!(state.browse().sel_row, Some(500));
         assert_eq!(state.browse().sel_col, Some(1));
         assert_eq!(state.edit_value, "v501");
         state.form_prev_record().unwrap();

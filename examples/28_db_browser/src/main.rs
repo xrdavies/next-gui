@@ -338,6 +338,7 @@ struct BuiltUiIds {
     btn_browse_clear_filters: WidgetId,
     btn_browse_clear_sort: WidgetId,
     btn_browse_go: WidgetId,
+    btn_browse_cancel: WidgetId,
     btn_record_prev: WidgetId,
     btn_record_next: WidgetId,
     btn_record_first: WidgetId,
@@ -599,6 +600,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_browse_clear_filters: b.btn_browse_clear_filters,
             btn_browse_clear_sort: b.btn_browse_clear_sort,
             btn_browse_go: b.btn_browse_go,
+            btn_browse_cancel: b.btn_browse_cancel,
             btn_record_prev: b.btn_record_prev,
             btn_record_next: b.btn_record_next,
             btn_record_first: b.btn_record_first,
@@ -1760,6 +1762,7 @@ impl Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.contains("actions-external")) {
             let path=state.begin_external_cell().unwrap();eprintln!("QA external copy: {}",path.display());
         }
+        state.browse_background = !cfg!(test);
         let theme = ui_build::browser_theme(theme, state.prefs.font_size);
         let mut built = build_ui(font.clone(), theme, width, height, &state);
         if state.browse_cell_edit.is_some() {
@@ -3922,7 +3925,7 @@ impl Demo {
                 .browse()
                 .result
                 .as_ref()
-                .is_some_and(|result| !result.rows.is_empty());
+                .is_some_and(|result| !result.values.is_empty());
         let mut items = vec![
             next_gui_ui::MenuItem::new(
                 mid::BROWSE_FREEZE,
@@ -3999,9 +4002,8 @@ impl Demo {
             .browse()
             .result
             .as_ref()
-            .and_then(|result| result.rows.len().checked_sub(1))
+            .and_then(|result| result.values.len().checked_sub(1))
         {
-            // shortcut: column selection covers the current cache; extend with whole-result selection.
             let tab = self.state.browse_mut();
             tab.sel_row = Some(0);
             tab.sel_row_start = Some(0);
@@ -4741,6 +4743,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        if id.0 != 0 && id == self.ids.btn_browse_cancel { self.cancel_browse_refresh(); return; }
         if self.handle_schema_dock_button(id) {return;}
         if self.handle_cond_format_button(id) {return;}
         self.cancel_browse_filter();
@@ -4993,6 +4996,9 @@ impl Demo {
                 self.rebuild = true;
                 return;
             }
+            if self.state.browse_work.is_some() {
+                self.clear_error(); self.rebuild = true; return;
+            }
             if id == self.ids.btn_browse_clear_filters {
                 let tab = self.state.browse_mut();
                 tab.filter.clear();
@@ -5001,7 +5007,7 @@ impl Demo {
                 tab.rowid_filter.clear();
             }
             self.state.browse_mut().offset = 0;
-            match self.state.refresh_browse() {
+            match self.refresh_browse_interactive() {
                 Ok(()) => self.clear_error(),
                 Err(e) => self.set_error(e),
             }
@@ -5276,7 +5282,7 @@ impl Demo {
         if self.state.tab == MainTab::Browse && self.state.plot.has_full() {
             if let Some(&row) = rows.first() {
                 let tab = self.state.browse();
-                let end = tab.offset.saturating_add(tab.result.as_ref().map_or(0, |result| result.rows.len()));
+                let end = tab.offset.saturating_add(tab.result.as_ref().map_or(0, |result| result.values.len()));
                 if row < tab.offset || row >= end {
                     if let Err(error) = self.state.goto_browse_record(row.saturating_add(1)) { self.set_error(error); self.rebuild = true; return; }
                     self.state.plot.linked_rows = rows;
@@ -5293,7 +5299,7 @@ impl Demo {
         if let Some((table, offset)) = target.filter(|(id, _)| id.0 != 0) {
             let count = if table == self.ids.sql_table {
                 self.state.sql_result.as_ref().map_or(0, |result| result.all_values.as_ref().map_or(result.rows.len(), |values| values.len()))
-            } else { self.state.browse().result.as_ref().map_or(0, |result| result.rows.len()) };
+            } else { self.state.browse().result.as_ref().map_or(0, |result| result.values.len()) };
             let mut visible = rows.range(offset..offset.saturating_add(count));
             let range = visible.next().copied().map(|first| (first - offset, visible.next_back().copied().unwrap_or(first) - offset));
             if self.ui.set_table_selected_rows(table, range) {
@@ -6532,7 +6538,8 @@ mod interaction_tests {
         assert!(!demo.state.confirm_open);
         demo.handle_button(demo.ids.btn_record_last);
         demo.do_rebuild();
-        assert_eq!(demo.state.browse().offset, 500);
+        assert_eq!(demo.state.browse().offset, 0);
+        assert_eq!(demo.state.browse().sel_row, Some(500));
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_record_prev), Some(true));
         assert_eq!(demo.ui.button_enabled(demo.ids.btn_record_next), Some(false));
         demo.handle_button(demo.ids.btn_record_next);
@@ -11532,3 +11539,5 @@ mod browse_navigation_tests;
 
 #[cfg(test)]
 mod sql_result_tests;
+#[cfg(test)]
+mod browse_full_tests;
