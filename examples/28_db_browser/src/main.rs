@@ -7365,10 +7365,10 @@ mod interaction_tests {
                 }
                 let soft_pixels = soft.frame_pixels().unwrap().0;
                 let gpu_pixels = gpu.frame_pixels().unwrap().0;
-                let regions: Vec<_> = demo.scene.iter_paint_order().into_iter().filter(|n|
-                    demo.ui.widget_from_node(n.id).is_some_and(|id| [demo.ids.tree, demo.ids.ddl_area].contains(&id))
-                ).map(|n| n.bounds).collect();
-                assert_eq!(regions.len(), 2);
+                let regions = [demo.ids.tree,demo.ids.ddl_area].map(|id| {
+                    demo.scene.iter_paint_order().into_iter().find(|node|
+                        demo.ui.widget_from_node(node.id)==Some(id)).expect("structure host").bounds
+                });
                 let max_delta = regions.iter().flat_map(|r|
                     ((r.y.ceil() as usize + 2)..(r.y + r.height).floor() as usize - 2).flat_map(move |y|
                         ((r.x.ceil() as usize + 2)..(r.x + r.width).floor() as usize - 2).map(move |x| y * 1400 + x)
