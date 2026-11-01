@@ -6816,7 +6816,7 @@ mod interaction_tests {
         let bounds = demo.scene.iter_paint_order().into_iter()
             .find(|n| demo.ui.widget_from_node(n.id) == Some(demo.ids.browse_table)).unwrap().bounds;
         let x = bounds.x + 10.0;
-        let y = bounds.y + demo.ui.table_style().header_height + 5.0;
+        let y = bounds.y + demo.ui.table_header_height(demo.ids.browse_table).unwrap() + 5.0;
         assert!(demo.ui.pointer_pressed(&mut demo.scene, x, y));
         assert!(demo.ui.is_dragging());
         demo.poll_selection_changes();

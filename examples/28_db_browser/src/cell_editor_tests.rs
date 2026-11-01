@@ -13,7 +13,7 @@ fn applied_cells_reveal_both_axes_and_keep_fresh_editor_focus() {
         let widths = demo.ui.table_column_widths(table).unwrap();
         let left: f32 = widths[..col].iter().sum();
         assert!(row as f32 * style.row_height >= y - 0.1);
-        assert!((row + 1) as f32 * style.row_height <= y + bounds.height - style.header_height + 0.1);
+        assert!((row + 1) as f32 * style.row_height <= y + bounds.height - demo.ui.table_header_height(table).unwrap() + 0.1);
         assert!(left >= x - 0.1);
         assert!(left + widths[col] <= x + bounds.width - 2.0 * style.padding + 0.1);
         assert_eq!(demo.state.browse().scroll, (x, y));

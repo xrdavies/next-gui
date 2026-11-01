@@ -854,7 +854,7 @@ fn freeze_uses_selected_column_and_keeps_frozen_cells_and_filters_stationary() {
     assert!(demo.ui.pointer_pressed(
         &mut demo.scene,
         table.x + 150.0,
-        table.y + style.header_height + 12.0
+        table.y + demo.ui.table_header_height(demo.ids.browse_table).unwrap() + 12.0
     ));
     demo.ui.pointer_released();
     assert_eq!(demo.ui.table_selected_col(demo.ids.browse_table), Some(0));

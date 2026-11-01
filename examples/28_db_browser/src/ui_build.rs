@@ -2088,7 +2088,7 @@ pub fn build_ui(
                                 crate::state::BrowseViewMode::Table => {
                                     let mut filtered_style = browse_table_style;
                                     filtered_style.height += col_filt_style.height + 4.0;
-                                    (browse_table, browse_col_filters) = p.filtered_data_table(
+                                    (browse_table, browse_col_filters) = p.header_filtered_data_table(
                                         browse_cols.clone(),
                                         std::sync::Arc::new(state.browse().result.as_ref().map(|result|result.values.clone()).unwrap_or_default()),
                                         &col_filter_vals,
@@ -2917,7 +2917,6 @@ pub fn build_ui(
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
     if let Some(container) = ui.filtered_table_container(browse_table) {
         ui.set_flex_fill_minimum(container, 190.0);
-        ui.set_flex_fill(browse_table, true);
     }
     ui.set_flex_fill_minimum(browse_form_scroll, 160.0);
     ui.set_accessible_name(sql_splitter,"Resize SQL editor and query results");

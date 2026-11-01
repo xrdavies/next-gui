@@ -909,7 +909,7 @@ mod tests {
         let widths = demo.ui.table_column_widths(demo.ids.browse_table).unwrap();
         let (x, y) = (
             bounds.x + widths[0] + 20.0,
-            bounds.y + style.header_height + style.row_height * 0.5,
+            bounds.y + demo.ui.table_header_height(demo.ids.browse_table).unwrap() + style.row_height * 0.5,
         );
         assert!(demo.ui.pointer_pressed(&mut demo.scene, x, y));
         demo.snapshot_inputs();

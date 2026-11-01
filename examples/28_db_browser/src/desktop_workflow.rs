@@ -99,6 +99,11 @@ mod tests {
                 if tab==MainTab::Browse {
                     let grid=bounds(&demo,demo.ids.browse_table);
                     assert!(grid.height>=height as f32*0.58,"the primary grid should use the available desktop: {grid:?}");
+                    let filter=bounds(&demo,demo.ids.browse_col_filters[0]);
+                    let header=demo.ui.table_header_height(demo.ids.browse_table).unwrap();
+                    assert!(filter.y>grid.y && filter.y+filter.height<=grid.y+header);
+                    assert_eq!(demo.ui.table_header_column_at(&demo.scene,demo.ids.browse_table,filter.x+10.0,filter.y+5.0),None);
+                    assert_eq!(demo.ui.hit_widget(&demo.scene,filter.x+10.0,filter.y+5.0),Some(demo.ids.browse_col_filters[0]));
                     let viewport=bounds(&demo,demo.ids.page_scroll);
                     let navigation=bounds(&demo,demo.ids.btn_record_last);
                     assert!(navigation.y>=grid.y+grid.height && viewport.y+viewport.height-navigation.y-navigation.height<32.0,
