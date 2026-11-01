@@ -44,8 +44,12 @@ impl Controls {
         ui.set_splitter_min_sizes(self.splitter, 96.0, 64.0);
         ui.set_flex_fill(self.splitter, true);
         self.ratio = ui.splitter_ratio(self.splitter);
-        if let Some(view) = &state.sql_messages_view {
-            ui.restore_text_area_state(self.area, view);
+        let restored = state
+            .sql_messages_view
+            .as_ref()
+            .is_some_and(|view| ui.restore_text_area_state(self.area, view));
+        if !restored {
+            ui.select_text_area_range(self.area, 0..0);
         }
     }
 }
@@ -176,6 +180,12 @@ mod tests {
             demo.do_rebuild();
             let area = demo.ids.sql_messages.area;
             assert!(bounds(&demo, area).height >= 64.0);
+            assert_eq!(
+                demo.ui.text_area_scroll_offsets(area),
+                Some((0.0, 0.0)),
+                "new execution must show its outcome before the SQL source"
+            );
+            assert_eq!(demo.ui.text_area_selection(area), Some(0..0));
             demo.ui.set_focus(Some(area));
             demo.ui.key_input(UiKey::SelectAll);
             assert_eq!(
@@ -263,6 +273,10 @@ mod tests {
                 .state
                 .sql_message
                 .contains("Statement 1: preparation failed"));
+            assert_eq!(
+                demo.ui.text_area_scroll_offsets(demo.ids.sql_messages.area),
+                Some((0.0, 0.0))
+            );
             capture(&mut demo, &format!("desktop-sql-error-{name}-{width}"));
             demo.state.switch_sql_tab(0);
             demo.do_rebuild();
