@@ -1835,7 +1835,7 @@ pub fn build_ui(
             let mut sel_style = SelectStyle::from_theme(&theme);
             sel_style.width = 160.0;
             let mut filter_style = TextInputStyle::from_theme(&theme);
-            filter_style.width = 200.0;
+            filter_style.width = (main_w * 0.15).clamp(140.0, 200.0);
             let mut col_filt_style = TextInputStyle::from_theme(&theme);
             col_filt_style.width = 90.0;
             col_filt_style.height = 26.0;
@@ -1843,7 +1843,7 @@ pub fn build_ui(
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.drag_select = true;
             browse_table_style.width = main_w - 24.0;
-            browse_table_style.height = (tab_page_h - 268.0 - 2.0*(browse_tools.height-tool_row.height)).max(160.0);
+            browse_table_style.height = (tab_page_h - 204.0 - (browse_tools.height-tool_row.height)).max(160.0);
 
             let mut sql_tb = RowStyle::from_theme(&theme);
             sql_tb.width = main_w - 24.0;
@@ -2043,8 +2043,16 @@ pub fn build_ui(
                                     row.select(browse_opts_a.clone(), browse_sel, "table…", sel_style);
                                 btn_add_row = row.tool_icon_button(IconName::Plus, "New Record");
                                 btn_del_row = row.tool_icon_button(IconName::Minus, "Delete Record");
-                            });
-                            p.scroll_row(tool_row, |row| {
+
+                                btn_form_view = row.tool_icon_button(IconName::Menu, match state.browse_view {
+                                    crate::state::BrowseViewMode::Table => "Form View",
+                                    crate::state::BrowseViewMode::Form => "Grid View",
+                                });
+                                btn_freeze = row.tool_icon_button(IconName::Stop, if state.browse_frozen_cols() == 0 {
+                                    "Freeze columns".into()
+                                } else { format!("Unfreeze {} columns", state.browse_frozen_cols()) });
+                                btn_cond_fmt = row.tool_icon_button(IconName::Settings, "Conditional Format…");
+                                btn_fk_nav = row.tool_icon_button(IconName::Step, "Navigate Foreign Key");
                                 browse_global_filter = row.text_input_styled(
                                     state.browse().global_filters.join(" "),
                                     "Filter in any column",
@@ -2059,17 +2067,6 @@ pub fn build_ui(
                                 if state.browse_work.is_some() { btn_browse_cancel = row.tool_button("Cancel Loading"); }
                                 btn_browse_clear_filters = row.tool_button("Clear Filters");
                                 btn_browse_clear_sort = row.tool_button("Clear Sort");
-                            });
-                            p.scroll_row(browse_tools, |row| {
-                                btn_form_view = row.tool_icon_button(IconName::Menu, match state.browse_view {
-                                    crate::state::BrowseViewMode::Table => "Form View",
-                                    crate::state::BrowseViewMode::Form => "Grid View",
-                                });
-                                btn_freeze = row.tool_icon_button(IconName::Stop, if state.browse_frozen_cols() == 0 {
-                                    "Freeze columns".into()
-                                } else { format!("Unfreeze {} columns", state.browse_frozen_cols()) });
-                                btn_cond_fmt = row.tool_icon_button(IconName::Settings, "Conditional Format…");
-                                btn_fk_nav = row.tool_icon_button(IconName::Step, "Navigate Foreign Key");
                             });
                             // Per-column filters
                             if !col_names.is_empty() && state.browse_view == crate::state::BrowseViewMode::Form {
@@ -2117,7 +2114,7 @@ pub fn build_ui(
                                     });
                                     let mut form_scroll = next_gui_ui::ScrollAreaStyle::from_theme(&theme);
                                     form_scroll.width = main_w - 24.0;
-                                    form_scroll.height = (tab_page_h - 232.0).max(120.0);
+                                    form_scroll.height = (tab_page_h - 168.0).max(120.0);
                                     p.scroll_area(form_scroll, |p| {
                                     if let Some(res) = res {
                                         let cells = res.values.row(row_i).ok();

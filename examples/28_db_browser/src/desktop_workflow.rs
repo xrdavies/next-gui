@@ -97,6 +97,17 @@ mod tests {
                 demo.ui.set_tabs_selected(demo.ids.tabs,tab.index());demo.poll_selection_changes();demo.do_rebuild();assert_eq!(demo.state.tab,tab);
                 assert!(bounds(&demo,demo.ids.tabs).width>width as f32*0.68);
                 if tab==MainTab::Browse {
+                    let grid=bounds(&demo,demo.ids.browse_table);
+                    assert!(grid.height>=height as f32*0.52,"the primary grid should use the available desktop: {grid:?}");
+                    let baseline=bounds(&demo,demo.ids.browse_select);
+                    for id in [demo.ids.browse_select,demo.ids.btn_add_row,demo.ids.btn_del_row,demo.ids.btn_form_view,demo.ids.btn_freeze,demo.ids.btn_cond_fmt,demo.ids.btn_fk_nav,demo.ids.browse_global_filter,demo.ids.browse_filter,demo.ids.btn_browse_go,demo.ids.btn_browse_clear_filters,demo.ids.btn_browse_clear_sort] {
+                        let rect=bounds(&demo,id);
+                        assert!((rect.y+rect.height*0.5-baseline.y-baseline.height*0.5).abs()<1.0,"record/filter actions should share one row: {rect:?}");
+                        assert!(rect.x>=0.0 && rect.x+rect.width<=grid.x+grid.width,"primary action is outside the desktop viewport: {rect:?}, {grid:?}");
+                        if demo.ui.button_enabled(id)==Some(true) || [demo.ids.browse_select,demo.ids.browse_global_filter,demo.ids.browse_filter].contains(&id) {
+                            assert_eq!(demo.ui.hit_widget(&demo.scene,rect.x+rect.width*0.5,rect.y+rect.height*0.5),Some(id));
+                        }
+                    }
                     let widths=demo.ui.table_column_widths(demo.ids.browse_table).unwrap();assert!(widths[2]>100.0);assert!(widths[9]>120.0);assert!(widths[0]<widths[9]);
                     demo.ui.set_table_column_width(demo.ids.browse_table,9,245.0);demo.snapshot_inputs();demo.do_rebuild();assert_eq!(demo.ui.table_column_widths(demo.ids.browse_table).unwrap()[9],245.0);
                 }
