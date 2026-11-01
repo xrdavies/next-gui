@@ -34,7 +34,37 @@ pub struct TableCellStyle {
     pub alignment: TableTextAlign,
 }
 
+/// Immutable cell styles read only for the visible table viewport.
+/// Out-of-range cells return None. Invalid sizes use defaults and are reported as table data errors.
+pub trait TableCellStyleSource: std::fmt::Debug + Send + Sync {
+    /// An owned style; font stacks may share their existing font storage.
+    fn cell(&self, row: usize, column: usize) -> Option<TableCellStyle>;
+}
+
 impl Ui {
+    /// Use indexed styles without allocating one rich style per result cell.
+    pub fn set_table_cell_style_source(
+        &mut self,
+        id: WidgetId,
+        source: Arc<dyn TableCellStyleSource>,
+    ) -> bool {
+        let Some(Widget {
+            kind:
+                Kind::Table {
+                    cell_styles,
+                    cell_style_source,
+                    ..
+                },
+            ..
+        }) = self.widgets.get_mut(&id)
+        else {
+            return false;
+        };
+        cell_styles.clear();
+        *cell_style_source = Some(source);
+        true
+    }
+
     /// Replace per-cell styles. Reject invalid sizes or out-of-range metadata
     /// atomically. Replacing rows clears styles; omitted cells inherit defaults.
     pub fn set_table_cell_styles(
@@ -48,6 +78,7 @@ impl Ui {
                     rows,
                     columns,
                     cell_styles,
+                    cell_style_source,
                     ..
                 },
             ..
@@ -68,6 +99,7 @@ impl Ui {
             return false;
         }
         *cell_styles = styles;
+        *cell_style_source = None;
         true
     }
 }

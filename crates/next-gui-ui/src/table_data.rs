@@ -35,6 +35,26 @@ impl TableRows {
 }
 
 impl Ui {
+    /// Replace rows with an indexed source and retain the table's filter controls.
+    /// Clamp selection and clear stale styles/checks like `set_table_rows`.
+    pub fn set_table_data_source(&mut self, id: WidgetId, data: Arc<dyn TableDataSource>) -> bool {
+        if !matches!(
+            self.widgets.get(&id).map(|widget| &widget.kind),
+            Some(Kind::Table { .. })
+        ) {
+            return false;
+        }
+        let count = data.len();
+        self.set_table_body_rows(id, TableRows::Source { data, count });
+        if let Some(Widget {
+            kind: Kind::Table { virtualized, .. },
+            ..
+        }) = self.widgets.get_mut(&id)
+        {
+            *virtualized = true;
+        }
+        true
+    }
     /// Drain the last row read failure from painting or copying a table.
     /// Failed copies return no text, so partial data never reaches the clipboard.
     pub fn take_table_data_error(&self) -> Option<(WidgetId, String)> {
@@ -43,10 +63,29 @@ impl Ui {
 }
 
 impl FlexBuilder<'_> {
+    /// Indexed rows with the same aligned filter controls as `filtered_table`.
+    pub fn filtered_data_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        data: Arc<dyn TableDataSource>,
+        values: &[String],
+        style: TableStyle,
+        input_style: TextInputStyle,
+    ) -> (WidgetId, Vec<WidgetId>) {
+        let (table, fields) = self.filtered_table(columns, Vec::new(), values, style, input_style);
+        self.ui.set_table_data_source(table, data);
+        (table, fields)
+    }
+
     /// Virtualized table backed by an immutable, on-demand row source.
     /// Painting reads only visible rows plus a small overscan; selection and copying
     /// use global row indices. Existing cell editing is application-driven.
-    pub fn data_table(&mut self, columns: Vec<TableColumn>, data: Arc<dyn TableDataSource>, style: TableStyle) -> WidgetId {
+    pub fn data_table(
+        &mut self,
+        columns: Vec<TableColumn>,
+        data: Arc<dyn TableDataSource>,
+        style: TableStyle,
+    ) -> WidgetId {
         let count = data.len();
         let id = self.virtual_table(columns, Vec::new(), style);
         if let Kind::Table { rows, .. } = &mut self.ui.widgets.get_mut(&id).unwrap().kind {
@@ -122,5 +161,86 @@ mod tests {
         assert_eq!(ui.take_table_data_error(), Some((table, "snapshot read failed".into())));
         assert!(ui.set_table_selected_rows(table, Some((2, 2))));
         assert_eq!(ui.table_selected_text(table).as_deref(), Some("2"));
+    }
+}
+
+#[cfg(test)]
+mod indexed_style_tests {
+    use super::*;
+    use std::sync::Mutex;
+    #[derive(Debug)]
+    struct Rows;
+    impl TableDataSource for Rows {
+        fn len(&self) -> usize {
+            1_000_000
+        }
+        fn row(&self, index: usize) -> Result<Vec<String>, String> {
+            Ok(vec![index.to_string()])
+        }
+    }
+    #[derive(Debug)]
+    struct Styles(Arc<Mutex<Vec<usize>>>);
+    impl TableCellStyleSource for Styles {
+        fn cell(&self, row: usize, _column: usize) -> Option<TableCellStyle> {
+            self.0.lock().unwrap().push(row);
+            Some(TableCellStyle {
+                foreground: Some(Color::rgb(100, 30, 40)),
+                size: (row == 999999).then_some(f32::NAN),
+                ..Default::default()
+            })
+        }
+    }
+    #[test]
+    fn filtered_indexed_rows_and_styles_read_only_visible_cells_and_reset_together() {
+        let mut ui = Ui::new();
+        let mut scene = Scene::new();
+        let mut table = WidgetId(0);
+        let mut filters = Vec::new();
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        ui.column(
+            ColumnStyle {
+                width: 340.0,
+                height: 240.0,
+                ..Default::default()
+            },
+            |column| {
+                (table, filters) = column.filtered_data_table(
+                    vec![TableColumn::new("Record", 280.0)],
+                    Arc::new(Rows),
+                    &["".into()],
+                    TableStyle {
+                        width: 300.0,
+                        height: 200.0,
+                        ..Default::default()
+                    },
+                    TextInputStyle::default(),
+                );
+            },
+        );
+        assert_eq!(filters.len(), 1);
+        assert!(ui.set_table_cell_style_source(table, Arc::new(Styles(reads.clone()))));
+        ui.set_focus(Some(table));
+        ui.sync(&mut scene);
+        assert!(reads.lock().unwrap().len() < 20);
+        assert!(ui.widgets[&table].aux.len() < 100);
+        assert!(ui.take_table_data_error().is_none());
+        reads.lock().unwrap().clear();
+        ui.key_input(UiKey::End);
+        ui.sync(&mut scene);
+        assert_eq!(ui.table_selected_row(table), Some(999999));
+        assert!(reads.lock().unwrap().contains(&999999));
+        assert!(reads.lock().unwrap().len() < 20);
+        assert!(ui.take_table_data_error().unwrap().1.contains("font size"));
+        ui.set_table_selected_rows(table, Some((999998, 999999)));
+        assert_eq!(
+            ui.table_selected_text(table).as_deref(),
+            Some("999998\n999999")
+        );
+        reads.lock().unwrap().clear();
+        ui.set_table_rows(table, vec![vec!["replacement".into()]]);
+        ui.sync(&mut scene);
+        assert!(reads.lock().unwrap().is_empty());
+        assert_eq!(ui.table_selected_row(table), Some(0));
+        assert!(ui.take_table_data_error().is_none());
     }
 }

@@ -45,7 +45,7 @@ pub use autocomplete::{AutocompleteState, SelectState};
 mod dialog;
 mod table_edit;
 mod table_style;
-pub use table_style::{TableCellStyle, TableTextAlign};
+pub use table_style::{TableCellStyle, TableTextAlign,TableCellStyleSource};
 mod select_data;
 mod tree_table_support;
 pub use select_data::SelectDataSource;
@@ -1892,6 +1892,7 @@ enum Kind {
         cell_bg: Vec<Vec<Option<Color>>>,
         /// Optional per-cell typography/color overrides.
         cell_styles: Vec<Vec<Option<TableCellStyle>>>,
+        cell_style_source: Option<Arc<dyn TableCellStyleSource>>,
         /// Some(bool) renders an interactive checkbox in this cell.
         checks: Vec<Vec<Option<bool>>>,
         editable_columns: Vec<usize>,
@@ -5197,15 +5198,18 @@ impl Ui {
     }
 
     /// Replace table body rows, clamping both selection endpoints.
-    pub fn set_table_rows(&mut self, id: WidgetId, rows: Vec<Vec<String>>) {
+    pub fn set_table_rows(&mut self, id: WidgetId, rows: Vec<Vec<String>>) {self.set_table_body_rows(id,rows.into());}
+
+    pub(crate) fn set_table_body_rows(&mut self,id:WidgetId,rows:TableRows) {
         let invalid_editor=match self.widgets.get(&id).map(|w|&w.kind) {
             Some(Kind::Table {editor:Some(editor),..}) if editor.row>=rows.len()=>Some(editor.widget),_=>None};
         if let Some(Widget { kind: Kind::Table {
-            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, cell_styles, cell_bg, editor, ..
+            rows: slot, selected_row, selected_range, selected_col, selected_col_range, scroll_y, checks, cell_styles, cell_style_source, cell_bg, editor, ..
         }, .. }) = self.widgets.get_mut(&id) {
-            *slot = rows.into();
+            *slot = rows;
             checks.clear();
             cell_styles.clear();
+            *cell_style_source=None;
             cell_bg.clear();
             if let Some(editor)=editor {if editor.row>=slot.len() && self.focus==Some(editor.widget) {self.focus=None;}}
             if let Some(last) = slot.len().checked_sub(1) {
@@ -12431,6 +12435,7 @@ impl Ui {
                     frozen_cols,
                     cell_bg,
                     cell_styles,
+                    cell_style_source,
                     checks,
                     dropdown_columns,
                     virtualized,
@@ -12455,6 +12460,7 @@ impl Ui {
         let frozen_cols = *frozen_cols;
         let cell_bg = cell_bg.clone();
         let cell_styles = cell_styles.clone();
+        let cell_style_source=cell_style_source.clone();
         let checks = checks.clone();
         let dropdown_columns = dropdown_columns.clone();
         let check_style = self.checkbox_style();
@@ -12576,11 +12582,16 @@ impl Ui {
             }
             for (ci, col) in columns.iter().enumerate() {
                 let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
-                let cell_style = cell_styles.get(ri).and_then(|row| row.get(ci)).and_then(Option::as_ref);
-                let fmt = cell_style.and_then(|style| style.background).or_else(|| cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c));
                 let (ox, clip) = cells[ci];
                 let clip = clip.intersect(&body_clip).intersect(&Rect::new(ox,y,col.width.max(0.0),style.row_height));
                 let visible = !clip.is_empty();
+                let indexed_style=cell_style_source.as_ref().filter(|_|visible).and_then(|source|source.cell(ri,ci));
+                let cell_style = indexed_style.as_ref().or_else(||cell_styles.get(ri).and_then(|row| row.get(ci)).and_then(Option::as_ref));
+                let cell_style=cell_style.filter(|style| {
+                    let valid=style.size.is_none_or(|size|size.is_finite()&&(1.0..=4096.0).contains(&size));
+                    if !valid {*self.pending_table_data_error.borrow_mut()=Some((id,"Indexed table style has an invalid font size".into()));}valid
+                });
+                let fmt = cell_style.and_then(|style| style.background).or_else(|| cell_bg.get(ri).and_then(|r| r.get(ci)).and_then(|c| *c));
                 let col_sel = selected_col_range.map_or(selected_col == Some(ci), |(start, end)| ci >= start.min(end) && ci <= start.max(end));
                 let is_sel = row_sel && (!has_col_selection || col_sel);
                 let dropdown = dropdown_columns.contains(&ci) && checks.get(ri).and_then(|row|row.get(ci)).copied().flatten().is_none();
@@ -18648,6 +18659,7 @@ impl FlexBuilder<'_> {
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
                     cell_styles: Vec::new(),
+                    cell_style_source: None,
                     checks: Vec::new(),
                     editable_columns: Vec::new(),
                     dropdown_columns: Vec::new(),
@@ -19322,6 +19334,7 @@ impl FlexBuilder<'_> {
                     frozen_cols: 0,
                     cell_bg: Vec::new(),
                     cell_styles: Vec::new(),
+                    cell_style_source: None,
                     checks: Vec::new(),
                     editable_columns: Vec::new(),
                     dropdown_columns: Vec::new(),
