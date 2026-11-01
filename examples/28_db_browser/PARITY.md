@@ -8,7 +8,7 @@ Status legend: `done` = implemented local subset, not upstream parity or native 
 
 **Inventory snapshot (2026-10-31):** The tables contain 104 overlapping workflow entries: 47 `done` local subsets and 57 `partial` entries. These are not weighted requirements and do not establish a completion percentage. Full original feature/UI parity remains in progress.
 
-**Latest scoped verification:** [Desktop Browse toolbar](../../docs/reviews/R-20261101-7dcf6875e029.md): one visible record/filter action row releases64px at default desktop sizes;907 tests,eight render pairs and normal/maximized native save/reopen passed. Header-filter placement,remaining-space layout and full original/native foreground parity remain in progress. SQL message evidence is retained in the preceding review.
+**Latest scoped verification:** [Desktop Browse remaining space](../../docs/reviews/R-20261101-1d61f8d9079b.md): grid/form fill the viewport above fixed navigation;908 tests,ten render pairs,two native record100000 edit/save/reopen workflows and14 Office windows pass. Integrated header-filter placement and full original/native foreground parity remain in progress.
 
 **Earlier regression/evidence correction:** [2026-10-27 report](../../docs/reviews/R-20261027-5e23229548d4.md) records that tested scope and corrects unsupported earlier claims.
 

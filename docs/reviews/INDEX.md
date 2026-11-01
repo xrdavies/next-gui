@@ -12,12 +12,13 @@ the first entries. Keep the status in this index and its report synchronized.
 
 
 
-Latest scoped review: [Desktop Browse toolbar](R-20261101-7dcf6875e029.md) — common record/filter actions share one row and release64px to the grid/form;907 tests,eight render pairs and final normal/maximized native save/reopen passed. Header filter placement/remaining-space layout and locked foreground input remain open;full parity F02 stays in_progress.
+Latest scoped review: [Desktop Browse remaining space](R-20261101-1d61f8d9079b.md) — grid/form fill the real viewport;resize scroll clamping fixed.908 tests,ten render pairs,two native save/reopen workflows and14 fresh Office windows passed. Integrated header filters and broader primary/full parity remain in_progress.
 
 ## Findings
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261101-1d61f8d9079b-F01 | verified | P2 | codex | shared / macOS observed | existing ScrollArea clamp | layout_scroll_area | Resized scroll origin applied to children in the same layout pass | [F01](R-20261101-1d61f8d9079b.md#r-20261101-1d61f8d9079b-f01) | daf98b1 | 1d61f8d9079b |
 | R-20261101-dbba16886303-F01 | verified | P2 | codex | e28 / all | 83a501f0b9fe6 | SQL message viewport | New outcomes begin at the header;later copy/resize/tab sessions retain the user view | [F01](R-20261101-dbba16886303.md#r-20261101-dbba16886303-f01) | dbba16886303 | dbba16886303 |
 | R-20261101-e65790a0c3a7-F01 | verified | P1 | codex | e28 / all | f48b404 + existing selection | Browse context / clipboard | Clicked active cell and both rectangle endpoints retained through polling/rebuild/typed actions | [F01](R-20261101-e65790a0c3a7.md#r-20261101-e65790a0c3a7-f01) | 1541cab48606 | 1541cab48606 |
 | R-20261101-0916d358b03a-F01 | verified | P2 | codex | e28 / all | existing attachment checkpoint | project_snapshot / refresh_schema | Empty Attach and same-alias file changes trigger project Save; cached identity survives worker ownership | [F01](R-20261101-0916d358b03a.md#r-20261101-0916d358b03a-f01) | 781ffa32049a | 0916d358b03a |
