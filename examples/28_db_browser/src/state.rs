@@ -487,6 +487,7 @@ pub struct AppState {
     pub dirty: bool,
     pub schema: Vec<SchemaObject>,
     pub schema_names: Vec<String>,
+    pub(crate) attached_files: BTreeMap<String, Vec<u8>>,
     pub schema_tree_expanded: BTreeMap<String, [bool; 5]>,
     pub schema_tree_scroll: f32,
     pub schema_dock: crate::schema_dock::State,
@@ -871,6 +872,7 @@ impl AppState {
             dirty: false,
             schema: Vec::new(),
             schema_names: Vec::new(),
+            attached_files: BTreeMap::new(),
             schema_tree_expanded: BTreeMap::new(),
             schema_tree_scroll: 0.0,
             schema_dock: crate::schema_dock::State::default(),
@@ -1167,6 +1169,7 @@ impl AppState {
     fn project_snapshot(&self) -> serde_json::Value {
         let mut value = serde_json::to_value(crate::project::ProjectFile::from_state(self))
             .expect("project serialization");
+        value["attached_databases"] = serde_json::to_value(&self.attached_files).expect("attachment serialization");
         // Active pages are navigation, not unsaved content.
         for key in ["main_tab", "sql_tab_idx", "browse_tab_idx"] {
             value.as_object_mut().unwrap().remove(key);
@@ -1441,7 +1444,9 @@ impl AppState {
             self.database_encoding.clear();
             return Ok(());
         };
-        let schema_names = db::database_names(conn)?;
+        let databases = db::database_files(conn)?;
+        self.attached_files = databases.iter().filter(|(name, _)| !matches!(name.as_str(), "main" | "temp")).cloned().collect();
+        let schema_names: Vec<_> = databases.into_iter().map(|(name, _)| name).collect();
         let mut schema = Vec::new();
         for name in &schema_names { schema.extend(db::list_schema_in(conn, name)?); }
         let encoding = db::read_pragma(conn, "main.encoding")?;
@@ -2731,6 +2736,7 @@ impl AppState {
         self.schema.clear();
         self.schema_names.clear();
         self.sql_completion = crate::sql_completion::Catalog::default();
+        self.attached_files.clear();
         self.database_encoding.clear();
         self.selected = None;
         self.ddl_draft.clear();
@@ -4380,6 +4386,43 @@ impl AppState {
 mod chart_default_tests {
     use super::*;
     use crate::db;
+
+    #[test]
+    fn project_drafts_track_empty_attachments_file_identity_and_parked_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = AppState::empty();
+        state.create_new_db(dir.path().join("main.db").to_str().unwrap()).unwrap();
+        let project = dir.path().join("session.json");
+        state.save_project(&project).unwrap();
+        let first = dir.path().join("first.db");
+        state.attach_path = first.display().to_string();
+        state.attach_schema = "empty".into();
+        state.apply_attach().unwrap();
+        assert!(state.has_project_drafts(), "attaching an empty database must trigger the project Save prompt");
+        state.save_project(&project).unwrap();
+        let parked = state.conn.take();
+        assert!(!state.has_project_drafts(), "worker connection ownership must not change project dirtiness");
+        state.conn = parked;
+        let second = dir.path().join("second.db");
+        db::detach_database(state.conn.as_ref().unwrap(), "empty").unwrap();
+        db::attach_database(state.conn.as_ref().unwrap(), second.to_str().unwrap(), "empty").unwrap();
+        state.refresh_schema().unwrap();
+        assert!(state.has_project_drafts(), "reusing a schema name for another file is a project change");
+        state.save_project(&project).unwrap();
+        let mut reopened = AppState::empty();
+        reopened.open_project(&project).unwrap();
+        assert!(!reopened.has_project_drafts());
+        state.conn.as_ref().unwrap().execute_batch("ATTACH ':memory:' AS volatile").unwrap();
+        state.refresh_schema().unwrap();
+        assert!(state.has_project_drafts());
+        state.prepare_detach("volatile").unwrap();
+        state.detach_confirmed().unwrap();
+        assert!(!state.has_project_drafts(), "returning to the saved attachment set should be clean");
+        state.close_db();
+        assert!(!state.has_project_drafts());
+        assert!(std::fs::read(first).unwrap().is_empty());
+        assert!(std::fs::read(second).unwrap().is_empty());
+    }
 
     fn test_state() -> AppState {
         let mut state = AppState::empty();

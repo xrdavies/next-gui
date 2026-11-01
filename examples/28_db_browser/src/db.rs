@@ -318,8 +318,17 @@ pub fn list_all_schemas(conn: &Connection) -> Result<Vec<SchemaObject>, String> 
 }
 
 pub fn database_names(conn: &Connection) -> Result<Vec<String>, String> {
+    Ok(database_files(conn)?.into_iter().map(|(schema, _)| schema).collect())
+}
+
+/// Keep filenames as bytes so catalog reads do not reject non-UTF-8 OS paths.
+pub fn database_files(conn: &Connection) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut stmt = conn.prepare("PRAGMA database_list").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |row| row.get(1)).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        let filename = row.get_ref(2)?;
+        let bytes = filename.as_bytes().map_err(|error| rusqlite::Error::FromSqlConversionFailure(2, filename.data_type(), Box::new(error)))?;
+        Ok((row.get(1)?, bytes.to_vec()))
+    }).map_err(|e| e.to_string())?;
     rows
         .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }

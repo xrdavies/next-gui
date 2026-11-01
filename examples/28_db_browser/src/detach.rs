@@ -7,7 +7,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub schema: String,
-    file: String,
+    file: Vec<u8>,
     database: String,
 }
 
@@ -17,16 +17,7 @@ impl Target {
             return Err("Select an attached database".into());
         }
         let conn = state.conn.as_ref().ok_or("No database open")?;
-        let mut stmt = conn
-            .prepare("PRAGMA database_list")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            let (name, file) = row.map_err(|e| e.to_string())?;
+        for (name, file) in db::database_files(conn)? {
             if name == schema {
                 return Ok(Self {
                     schema: name,
@@ -172,6 +163,7 @@ impl AppState {
         self.chart_state = next_gui_ui::PlotState::default();
         self.schema.retain(|object| object.schema != schema);
         self.schema_names.retain(|name| name != schema);
+        self.attached_files.remove(schema);
         self.sql_completion = crate::sql_completion::Catalog::default();
         let schema_error = self.refresh_schema().err();
         let browse_error = self.refresh_browse().err();
