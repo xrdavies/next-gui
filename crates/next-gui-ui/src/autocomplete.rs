@@ -19,6 +19,7 @@ pub struct AutocompleteState {
 #[derive(Debug, Clone)]
 pub struct SelectState {
     value: Option<String>,
+    source: Option<(std::sync::Arc<dyn crate::SelectDataSource>, Option<usize>)>,
     open: bool,
 }
 
@@ -34,15 +35,22 @@ impl Ui {
         true
     }
 
-    /// Snapshot a Select popup without retaining widget IDs or option indices.
+    /// Snapshot a Select popup without retaining widget IDs. Indexed sources retain their identity.
     pub fn select_state(&self,id:WidgetId)->Option<SelectState> {
-        let Kind::Select {open,..}=&self.widgets.get(&id)?.kind else {return None;};
-        Some(SelectState {value:self.select_value(id).map(str::to_owned),open:*open})
+        let Kind::Select {open,options,selected,..}=&self.widgets.get(&id)?.kind else {return None;};
+        Some(SelectState {value:self.select_value(id).map(str::to_owned),source:options.source().map(|data|(data,*selected)),open:*open})
     }
 
     /// Restore popup visibility when the selected value still matches; does not focus or emit.
     pub fn restore_select_state(&mut self,id:WidgetId,state:&SelectState)->bool {
         if !self.is_select(id) || self.select_value(id)!=state.value.as_deref() {return false;}
+        let Kind::Select {options,selected,..}=&self.widgets[&id].kind else {return false;};
+        let same_source=match (options.source(), &state.source) {
+            (None,None)=>true,
+            (Some(current),Some((previous,index)))=>std::sync::Arc::ptr_eq(&current,previous) && selected==index,
+            _=>false,
+        };
+        if !same_source {return false;}
         if state.open {self.close_popup_internal();}
         if let Some(crate::Widget {kind:Kind::Select {open,options,..},..})=self.widgets.get_mut(&id) {
             *open=state.open && !options.is_empty();

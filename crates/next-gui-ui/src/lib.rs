@@ -46,6 +46,9 @@ mod dialog;
 mod table_edit;
 mod table_style;
 pub use table_style::{TableCellStyle, TableTextAlign};
+mod select_data;
+pub use select_data::SelectDataSource;
+use select_data::SelectOptions;
 mod table_data;
 pub use table_data::TableDataSource;
 use table_data::TableRows;
@@ -1921,7 +1924,8 @@ enum Kind {
         children: Vec<WidgetId>,
     },
     Select {
-        options: Vec<String>,
+        options: SelectOptions,
+        value: Option<String>,
         selected: Option<usize>,
         open: bool,
         placeholder: String,
@@ -2462,6 +2466,7 @@ pub struct Ui {
     /// Last Table header column click; drained by [`Ui::take_table_header_click`].
     pending_table_header_click: Option<(WidgetId, usize)>,
     pending_table_data_error: std::cell::RefCell<Option<(WidgetId, String)>>,
+    pending_select_data_error: std::cell::RefCell<Option<(WidgetId, String)>>,
     pending_table_check_change: Option<(WidgetId, usize, usize, bool)>,
     pending_table_cell_edit: Option<(WidgetId, TableCellEditEvent)>,
     /// Queued notification toasts (global overlay).
@@ -2629,6 +2634,7 @@ impl Ui {
             pending_pagination_change: None,
             pending_table_header_click: None,
             pending_table_data_error: std::cell::RefCell::new(None),
+            pending_select_data_error: std::cell::RefCell::new(None),
             pending_table_check_change: None,
             pending_table_cell_edit: None,
             notifications: Vec::new(),
@@ -3950,9 +3956,9 @@ impl Ui {
                     None
                 }
             }
-            Kind::Select { placeholder, selected, options, .. } => {
-                if let Some(i) = *selected {
-                    options.get(i).cloned()
+            Kind::Select { placeholder, selected, value, .. } => {
+                if selected.is_some() {
+                    value.clone()
                 } else if !placeholder.is_empty() {
                     Some(placeholder.clone())
                 } else {
@@ -5525,10 +5531,10 @@ impl Ui {
                     true
                 }
             }
-            UiKey::Down | UiKey::Up => {
-                let _ = open;
-                let n = match self.widgets.get(&id).map(|w| &w.kind) {
-                    Some(Kind::Select { options, .. }) => options.len(),
+            UiKey::Down | UiKey::Up | UiKey::Home | UiKey::End | UiKey::PageUp | UiKey::PageDown => {
+                let (n, page) = match self.widgets.get(&id).map(|w| &w.kind) {
+                    Some(Kind::Select { options, style, .. }) => (options.len(),
+                        (style.popup_max_height.min(self.viewport.1) / style.item_height.max(1.0)).floor().max(1.0) as usize),
                     _ => return false,
                 };
                 if n == 0 {
@@ -5544,6 +5550,10 @@ impl Ui {
                             cur - 1
                         }
                     }
+                    UiKey::Home => 0,
+                    UiKey::End => n - 1,
+                    UiKey::PageUp => cur.saturating_sub(page),
+                    UiKey::PageDown => cur.saturating_add(page).min(n - 1),
                     _ => return false,
                 };
                 if !open {
@@ -6991,24 +7001,27 @@ impl Ui {
     /// Selected option text from the Select's current option list.
     pub fn select_value(&self, id: WidgetId) -> Option<&str> {
         match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Select { options, selected, .. }) => selected.and_then(|i| options.get(i)).map(String::as_str),
+            Some(Kind::Select { value, .. }) => value.as_deref(),
             _ => None,
         }
     }
 
     /// Set Select selection.
     pub fn set_select_selected(&mut self, id: WidgetId, index: Option<usize>) -> bool {
-        let n = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Select { options, .. }) => options.len(),
+        let value = match self.widgets.get(&id).map(|w| &w.kind) {
+            Some(Kind::Select { options, .. }) => match index {
+                Some(i) if i >= options.len() => return false,
+                Some(i) => match options.label(i) {
+                    Ok(label) => Some(label.into_owned()),
+                    Err(error) => { *self.pending_select_data_error.borrow_mut() = Some((id, error)); return false; }
+                },
+                None => None,
+            },
             _ => return false,
         };
-        if let Some(i) = index {
-            if i >= n {
-                return false;
-            }
-        }
         if let Some(w) = self.widgets.get_mut(&id) {
-            if let Kind::Select { selected, open, .. } = &mut w.kind {
+            if let Kind::Select { selected, value: current, open, .. } = &mut w.kind {
+                *current = value;
                 *selected = index;
                 *open = false;
                 if self.open_popup == Some(id) {
@@ -9334,9 +9347,7 @@ impl Ui {
         let i=((y-panel.y)/item_h) as usize;
         if i>=visible.len() {return false;}
         let i=visible.start+i;
-        if let Some(Widget {kind:Kind::Select {selected,open,..},..})=self.widgets.get_mut(&id) {
-            *selected=Some(i);*open=false;
-        }
+        if !self.set_select_selected(id, Some(i)) { return true; }
         self.hide_popup_aux_mut(scene,id);
         self.open_popup=None;
         true
@@ -12804,11 +12815,12 @@ impl Ui {
         let Some(Widget {
             kind:
                 Kind::Select {
-                    options,
+                    value,
                     selected,
                     open,
                     placeholder,
                     style,
+                    ..
                 },
             node,
             label_node,
@@ -12817,12 +12829,9 @@ impl Ui {
         else {
             return;
         };
-        let text = match *selected {
-            Some(i) if i < options.len() => options[i].clone(),
-            _ => placeholder.clone(),
-        };
+        let text = value.as_ref().unwrap_or(placeholder).clone();
         let fg = if *open {style.selected_fg} else {match *selected {
-            Some(i) if i < options.len() => style.fg,
+            Some(_) if value.is_some() => style.fg,
             _ => style.placeholder_fg,
         }};
         let open = *open;
@@ -16299,7 +16308,14 @@ impl Ui {
             self.apply_corner_radius(scene, bg, true);
             self.node_to_widget.insert(bg, id);
         }
-        for (i, label) in options[visible.clone()].iter().enumerate() {
+        for (i, index) in visible.clone().enumerate() {
+            let label = match options.label(index) {
+                Ok(label) => label,
+                Err(error) => {
+                    *self.pending_select_data_error.borrow_mut() = Some((id, error.clone()));
+                    std::borrow::Cow::Owned(format!("Unable to read option: {error}"))
+                }
+            };
             let y = panel.y + i as f32 * style.item_height;
             let row = Rect::new(panel.x, y, panel.width, style.item_height);
             let hi = selected == Some(visible.start+i);
@@ -16313,7 +16329,7 @@ impl Ui {
                 if hi {self.apply_corner_radius(scene,rbg,false);}
                 self.node_to_widget.insert(rbg, id);
             }
-            let (_, mask) = self.font.rasterize_text(label, style.size, None);
+            let (_, mask) = self.font.rasterize_text(&label, style.size, None);
             if let Some(&lab) = aux.get(1 + i * 2 + 1) {
                 let lx = row.x + style.padding;
                 let ly = row.y + ((row.height - mask.height as f32) * 0.5).max(0.0);
@@ -18846,7 +18862,8 @@ impl FlexBuilder<'_> {
             id,
             Widget {
                 kind: Kind::Select {
-                    options,
+                    value: selected.and_then(|i| options.get(i)).cloned(),
+                    options: options.into(),
                     selected,
                     open: false,
                     placeholder: placeholder.into(),
