@@ -54,6 +54,7 @@ mod sql_function_help;
 mod state;
 mod browse_rowid;
 mod browse_edit;
+mod browse_menu;
 mod schema_dock;
 mod detach;
 mod ui_build;
@@ -273,6 +274,8 @@ struct Demo {
     exit_requested: bool,
     reveal_browse_selection: bool,
     browse_header_column: Option<usize>,
+    browse_cell_context: Option<browse_menu::Target>,
+    browse_format_return: Option<browse_menu::Target>,
     detach_menu_target: Option<detach::Target>,
     detach_return_to_schema: bool,
     filter_context: Option<WidgetId>,
@@ -1881,6 +1884,8 @@ impl Demo {
             exit_requested: false,
             reveal_browse_selection: false,
             browse_header_column: None,
+            browse_cell_context: None,
+            browse_format_return: None,
             detach_menu_target: None,
             detach_return_to_schema: false,
             filter_context: None,
@@ -3240,6 +3245,7 @@ impl Demo {
         self.last_plot_ratio = built.ui.splitter_ratio(built.plot_splitter);
         self.browse_header_column = None;
         self.detach_menu_target = None;
+        self.browse_cell_context = None;
         self.filter_context = None;
         self.filter_format_target = None;
         self.ids = BuiltUiIds::from(&built);
@@ -3441,6 +3447,7 @@ impl Demo {
         ui_build::highlight_cell_format(&mut self.ui,&self.state,self.ids.edit_value,&self.theme);
         self.last_edit_revision = self.state.edit_revision;
         self.restore_schema_dock_focus(schema_focus);
+        self.restore_browse_format_focus();
         self.restore_browse_cell_editor(browse_editor_focused && self.state.overlay.is_none() && !self.state.confirm_open);
         if self.state.confirm_open { self.ui.set_focus(Some(self.ids.modal)); self.ui.sync(&mut self.scene); }
         let clear = clear_color(&self.theme);
@@ -5684,11 +5691,11 @@ impl Demo {
                     if let Err(error) = ctx.clipboard_set_text(name) { self.set_error(error.to_string()); }
                 }
                 self.browse_header_column = None;
-            } else if !self.handle_filter_menu_action(item, ctx) && !self.handle_cell_import_action(item) && !self.handle_plot_menu_action(item) {
+            } else if !self.handle_browse_cell_menu_action(item, ctx) && !self.handle_filter_menu_action(item, ctx) && !self.handle_cell_import_action(item) && !self.handle_plot_menu_action(item) {
                 self.handle_menu(item);
             }
         }
-        if !self.ui.has_open_popup() { self.browse_header_column = None; self.filter_context = None; self.filter_format_target = None; self.detach_menu_target = None; }
+        if !self.ui.has_open_popup() { self.browse_header_column = None; self.browse_cell_context = None; self.filter_context = None; self.filter_format_target = None; self.detach_menu_target = None; }
         self.handle_modal();
         if !self.rebuild {
             self.snapshot_inputs();
@@ -5830,7 +5837,7 @@ impl AppCallbacks for Demo {
                 x, y, ..
             } => {
                 if !self.finish_browse_cell_pointer(x as f32, y as f32) { self.after_ui(ctx); return; }
-                if self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) {
+                if self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) || self.open_browse_cell_menu(x as f32, y as f32) {
                     self.after_ui(ctx);
                 }
             }
@@ -5921,7 +5928,7 @@ impl AppCallbacks for Demo {
                     self.after_ui(ctx);
                     return;
                 }
-                if self.handle_schema_context_key(key,modifiers) || self.handle_filter_context_key(key,modifiers) || self.handle_plot_context_key(key,modifiers) {
+                if self.handle_schema_context_key(key,modifiers) || self.handle_filter_context_key(key,modifiers) || self.handle_plot_context_key(key,modifiers) || self.handle_browse_cell_context_key(key,modifiers) {
                     self.after_ui(ctx);return;
                 }
                 if self.handle_sql_completion_key(key, modifiers) {
@@ -5986,14 +5993,7 @@ impl AppCallbacks for Demo {
                             }
                             if self.ui.focused() == Some(self.ids.browse_table) {
                                 let cut = matches!(key, KeyCode::Char('x' | 'X'));
-                                let result = self.state.copy_browse_cells(!cut && modifiers.shift, !cut && modifiers.alt)
-                                    .and_then(|copy| {
-                                        if copy.html.is_empty() { ctx.clipboard_set_text(&copy.text) }
-                                        else { ctx.clipboard_set_html(&copy.html, &copy.text) }
-                                            .map_err(|e| e.to_string())?;
-                                        self.cell_clipboard = Some(copy);
-                                        if cut { self.state.cut_browse_cells() } else { Ok(()) }
-                                    });
+                                let result = self.copy_browse_to_clipboard(ctx, cut, !cut && modifiers.shift, !cut && modifiers.alt);
                                 if let Err(e) = result { self.set_error(e); }
                                 else if cut { self.rebuild = true; }
                                 self.after_ui(ctx);
@@ -6014,20 +6014,7 @@ impl AppCallbacks for Demo {
                             match ctx.clipboard_get_text() {
                                 Ok(Some(text)) => {
                                     if self.ui.focused() == Some(self.ids.browse_table) {
-                                        let cells = match ctx.clipboard_get_html() {
-                                            Ok(Some(html)) => self.cell_clipboard.as_ref().and_then(|copy| copy.internal_cells(&html)),
-                                            Ok(None) => None,
-                                            Err(e) => {
-                                                self.set_error(e.to_string());
-                                                self.after_ui(ctx);
-                                                return;
-                                            }
-                                        };
-                                        let result = if let Some(cells) = cells {
-                                            self.state.paste_browse_cells(cells)
-                                        } else {
-                                            self.state.paste_browse_tsv(&text)
-                                        };
+                                        let result = self.paste_browse_from_clipboard(ctx, &text);
                                         if let Err(e) = result { self.set_error(e); }
                                         else { self.rebuild = true; }
                                     } else {
