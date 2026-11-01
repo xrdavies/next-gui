@@ -986,3 +986,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261030-d06fea875
 ## 2026-11-01 Typed foreign-key editing
 
 [Review](../../docs/reviews/R-20261101-989e83fa4ebb.md):on-demand indexed shared Select and complete cancellable parent-value loading preserve typed values,pending writes,namespace identity,failed drafts and Save All.891 workspace tests pass. FK typeahead and broader original parity remain;F02 stays **in_progress**. Desktop/main-workflow improvements are being implemented separately.
+
+
+## 2026-11-01 Complete desktop Browse
+
+[Review](../../docs/reviews/R-20261101-2e241e320a44.md): complete typed results replace 500-row Browse pages;global navigation/selection/editing and cancellable source/filter/sort workers pass with100k orders.902 tests,12 Soft/Metal pairs,eight normal/maximized native windows/16 captures and14 Office windows accepted. Raw keys remain proportional in memory;conditional matching and some refresh paths remain synchronous. SQL split resizing is active;full original parity F02 remains **in_progress**.

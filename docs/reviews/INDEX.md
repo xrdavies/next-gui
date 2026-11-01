@@ -12,7 +12,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 
 
-Latest scoped review: [Desktop Structure tree-table](R-20261101-fc247f35105d.md) — original visible columns/field hierarchy,qualified selection/expansion and resizable persisted widths;896 tests,eight Soft/Metal pairs,eight native windows/28 captures and14 Office windows. Continuous complete-result Browse is next;full original parity F02 remains in_progress.
+Latest scoped review: [Complete desktop Browse](R-20261101-2e241e320a44.md) — global complete-result navigation/typed editing and cancellable source/filter/sort loading;902 tests,12 Soft/Metal pairs,eight native windows/16 captures and14 Office windows pass. SQL workspace resizing is active;full parity F02 remains in_progress.
 
 ## Findings
 
