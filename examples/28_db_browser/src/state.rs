@@ -240,6 +240,8 @@ fn rename_column(name: &mut String, renames: &[(String, String)]) {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrowseTabState {
     pub title: String,
+    #[serde(skip)]
+    pub format_palette_index: usize,
     #[serde(default = "main_schema")]
     pub schema: String,
     pub table: Option<String>,
@@ -404,6 +406,7 @@ impl BrowseTabState {
         let title = table.as_ref().map(|name| if schema == "main" { name.clone() } else { db::qualified_name(schema, name) }).unwrap_or_else(|| "Browse".into());
         Self {
             title,
+            format_palette_index: 0,
             schema: schema.into(),
             table,
             column_names: Vec::new(),

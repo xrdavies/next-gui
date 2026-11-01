@@ -14,6 +14,11 @@ const HELP: u64 = 208;
 const EDIT_FORMATS: u64 = 224;
 const USE_FORMAT: u64 = 225;
 const CLEAR_FORMATS: u64 = 226;
+// DB4S v3.13.1 Palette::nextSerialColor, one cursor per Browse tab.
+const DARK_FORMAT_COLORS: [u32; 12] = [0x004586, 0xFF420E, 0xFFD320, 0x579D1C, 0x7E0021, 0x83CAFF,
+    0x314004, 0xAECF00, 0x4B1F6F, 0xFF950E, 0xC5000B, 0x0084D1];
+const LIGHT_FORMAT_COLORS: [u32; 12] = [0xFFFF00, 0x00FFFF, 0x00FF00, 0xFF00FF, 0xC0C0C0, 0xF5F5DC,
+    0xADD8E6, 0x40E0D0, 0x00FA9A, 0x87CEFA, 0xFFE4B5, 0xFFC0CB];
 const FIRST_CONDITION: u64 = 210;
 const CONDITIONS: [(&str, &str, Option<usize>); 13] = [
     ("Is NULL", "=NULL", None),
@@ -42,6 +47,14 @@ pub(crate) struct FormatTarget {
 }
 
 impl Demo {
+    fn next_filter_format_color(&mut self) -> u32 {
+        let colors = if self.theme.mode == next_gui_ui::ThemeMode::Dark { DARK_FORMAT_COLORS } else { LIGHT_FORMAT_COLORS };
+        let cursor = &mut self.state.browse_mut().format_palette_index;
+        let color = colors[*cursor % colors.len()];
+        *cursor = (*cursor + 1) % colors.len();
+        color
+    }
+
     fn format_target_for_filter(&self, input: WidgetId) -> Option<FormatTarget> {
         if self.state.overlay.is_some() {
             return None;
@@ -339,6 +352,7 @@ impl Demo {
                     &self.state.prefs.filter_escape,
                 )
                 .map(|()| {
+                    let color_rgb = self.next_filter_format_color();
                     let insertion = self
                         .state
                         .cond_rules
@@ -357,7 +371,7 @@ impl Demo {
                             column: target.column.clone(),
                             op: 5,
                             value: target.filter,
-                            color_rgb: 0xE67E22,
+                            color_rgb,
                             style: Default::default(),
                             native_format: None,
                         },
@@ -405,6 +419,26 @@ mod tests {
         );
         assert!(demo.handle_filter_format_action(action));
         demo.do_rebuild();
+    }
+
+    #[test]
+    fn filter_format_palette_cycles_per_tab_across_theme_changes_without_project_state() {
+        let mut demo = fixture(1400, 860, Theme::dark());
+        demo.state.write_changes().unwrap(); demo.state.checkpoint_project();
+        for color in DARK_FORMAT_COLORS { assert_eq!(demo.next_filter_format_color(), color); }
+        assert_eq!(demo.next_filter_format_color(), 0x004586);
+        demo.theme = Theme::light(); assert_eq!(demo.next_filter_format_color(), 0x00FFFF);
+        assert!(!demo.state.has_project_drafts());
+        demo.state.add_browse_tab().unwrap(); assert_eq!(demo.next_filter_format_color(), 0xFFFF00);
+        for color in LIGHT_FORMAT_COLORS.into_iter().skip(1) { assert_eq!(demo.next_filter_format_color(), color); }
+        assert_eq!(demo.next_filter_format_color(), 0xFFFF00);
+        demo.state.switch_browse_tab(0).unwrap(); demo.do_rebuild(); assert_eq!(demo.next_filter_format_color(), 0x00FF00);
+        let input = demo.ids.browse_col_filters[1]; demo.ui.set_text_input(input, "/[/"); open(&mut demo, input);
+        choose_format(&mut demo, USE_FORMAT); assert_eq!(demo.state.browse().format_palette_index, 3);
+        let input = demo.ids.browse_col_filters[1]; demo.ui.set_text_input(input, "2~4"); open(&mut demo, input);
+        choose_format(&mut demo, USE_FORMAT); assert_eq!(demo.state.cond_rules[0].color_rgb, 0xFF00FF);
+        let input = demo.ids.browse_col_filters[1]; demo.ui.set_text_input(input, ""); open(&mut demo, input);
+        choose_format(&mut demo, CLEAR_FORMATS); assert_eq!(demo.state.browse().format_palette_index, 4);
     }
 
     #[test]
