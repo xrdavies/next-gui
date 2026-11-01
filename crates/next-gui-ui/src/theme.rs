@@ -900,6 +900,7 @@ impl TabsStyle {
         let f = density.font_scale();
         let _ = (c, s, f);
         Self {
+            enabled: true,
             closable: false,
             movable: false,
             width: 400.0,

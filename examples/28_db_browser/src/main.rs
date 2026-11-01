@@ -62,6 +62,7 @@ mod sql_messages;
 mod structure_tree;
 mod browse_menu;
 mod browse_columns;
+mod browse_tabs;
 mod schema_dock;
 mod detach;
 mod ui_build;
@@ -338,7 +339,6 @@ struct BuiltUiIds {
     btn_struct_refresh: WidgetId,
     btn_run_ddl: WidgetId,
     btn_browse_new_tab: WidgetId,
-    btn_browse_close_tab: WidgetId,
     browse_select: WidgetId,
     browse_filter: WidgetId,
     browse_global_filter: WidgetId,
@@ -357,7 +357,7 @@ struct BuiltUiIds {
     browse_table: WidgetId,
     context_menu: WidgetId,
     browse_col_filters: Vec<WidgetId>,
-    browse_tab_btns: Vec<WidgetId>,
+    browse_tabs: WidgetId,
     sql_tabs: WidgetId,
     sql_documents: sql_documents::Controls,
     pragma_inputs: Vec<WidgetId>,
@@ -601,7 +601,6 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_struct_refresh: b.btn_struct_refresh,
             btn_run_ddl: b.btn_run_ddl,
             btn_browse_new_tab: b.btn_browse_new_tab,
-            btn_browse_close_tab: b.btn_browse_close_tab,
             browse_select: b.browse_select,
             browse_filter: b.browse_filter,
             browse_global_filter: b.browse_global_filter,
@@ -620,7 +619,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             browse_table: b.browse_table,
             context_menu: b.context_menu,
             browse_col_filters: b.browse_col_filters.clone(),
-            browse_tab_btns: b.browse_tab_btns.clone(),
+            browse_tabs: b.browse_tabs,
             sql_tabs: b.sql_tabs,
             sql_documents: b.sql_documents,
             pragma_inputs: b.pragma_inputs.clone(),
@@ -3269,9 +3268,10 @@ impl Demo {
         let index_focused = (self.state.overlay == Some(OverlayKind::EditIndex)).then(||
             [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available, self.ids.ov_idx_order].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
         ).flatten();
-        let tabs_focus = [self.ids.tabs,self.ids.dock_tabs,self.ids.sql_tabs].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
+        let tabs_focus = [self.ids.tabs,self.ids.dock_tabs,self.ids.sql_tabs,self.ids.browse_tabs].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
         let dock_tabs_view = self.ui.tabs_state(self.ids.dock_tabs);
         let sql_tabs_view = self.ui.tabs_state(self.ids.sql_tabs);
+        let browse_tabs_view = self.ui.tabs_state(self.ids.browse_tabs);
         let log_revision = self.state.sql_log.revision();
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
         let log_focused = self.ids.log_area.0 != 0 && self.ui.focused() == Some(self.ids.log_area)
@@ -3440,10 +3440,11 @@ impl Demo {
             }
         }
         if let Some(index) = tabs_focus {
-            let id = [self.ids.tabs,self.ids.dock_tabs,self.ids.sql_tabs][index];
+            let id = [self.ids.tabs,self.ids.dock_tabs,self.ids.sql_tabs,self.ids.browse_tabs][index];
             if id.0 != 0 { self.ui.set_focus(Some(id)); self.ui.sync(&mut self.scene); }
         }
         if let Some(view)=sql_tabs_view {self.ui.restore_tabs_state(self.ids.sql_tabs,&view);self.ui.sync(&mut self.scene);}
+        if let Some(view)=browse_tabs_view {self.ui.restore_tabs_state(self.ids.browse_tabs,&view);self.ui.sync(&mut self.scene);}
         if self.state.sql_rename.is_some() {
             if let Some(view)=rename_session {self.ui.restore_text_input_state(self.ids.sql_documents.name,&view);}
             if let Some(index)=rename_focus {self.ui.set_focus(Some([self.ids.sql_documents.name,self.ids.sql_documents.apply,self.ids.sql_documents.cancel][index]));}
@@ -5104,19 +5105,6 @@ impl Demo {
             self.rebuild = true;
             return;
         }
-        if id == self.ids.btn_browse_close_tab {
-            if let Err(e) = self.state.close_browse_tab() { self.set_error(e); }
-            self.rebuild = true;
-            return;
-        }
-        for (i, bid) in self.ids.browse_tab_btns.iter().enumerate() {
-            if id == *bid {
-                self.snapshot_inputs();
-                if let Err(e) = self.state.switch_browse_tab(i) { self.set_error(e); }
-                self.rebuild = true;
-                return;
-            }
-        }
         if id == self.ids.btn_sql_csv || id == self.ids.btn_sql_json {
             self.open_query_export(id == self.ids.btn_sql_json);
             return;
@@ -5368,7 +5356,7 @@ impl Demo {
         }
         if let Some((_, error)) = self.ui.take_table_data_error() { self.set_error(error); }
         if self.ui.is_dragging() { return; }
-        if self.poll_sql_documents() { return; }
+        if self.poll_browse_tabs() || self.poll_sql_documents() { return; }
         if self.poll_cond_formats() {return;}
         if let Some(mode) = self.ui.select_selected(self.ids.plot.mode) {
             if (mode == 1) != self.state.plot.settings.manual {
@@ -6891,7 +6879,7 @@ mod interaction_tests {
         demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((2, 2)), Some((1, 1)));
         demo.poll_selection_changes();
         demo.do_rebuild();
-        demo.handle_button(demo.ids.browse_tab_btns[0]);
+        demo.ui.set_tabs_selected(demo.ids.browse_tabs,0);demo.poll_selection_changes();
         demo.do_rebuild();
         assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((1, 3)));
         assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 2)));
@@ -6910,17 +6898,17 @@ mod interaction_tests {
         demo.poll_selection_changes();
         assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((2, 3)));
         demo.do_rebuild();
-        demo.handle_button(demo.ids.btn_browse_close_tab);
+        demo.state.close_browse_tab().unwrap();
         demo.do_rebuild();
         assert_eq!(demo.state.browse_tabs.len(), 1);
         assert_eq!(demo.ui.table_selected_row(demo.ids.browse_table), Some(2));
         assert_eq!(demo.state.edit_value, "7");
         demo.state.start_sql_text("SELECT 1".into()).unwrap();
         demo.do_rebuild();
-        for id in [demo.ids.btn_browse_new_tab, demo.ids.btn_browse_close_tab, demo.ids.browse_tab_btns[0]] {
-            assert_eq!(demo.ui.button_enabled(id), Some(false));
-            demo.handle_button(id);
-        }
+        assert!(!demo.ui.focusable_widgets().contains(&demo.ids.browse_tabs));
+        demo.ui.set_tabs_selected(demo.ids.browse_tabs,0);demo.poll_selection_changes();
+        assert_eq!(demo.ui.button_enabled(demo.ids.btn_browse_new_tab), Some(false));
+        demo.handle_button(demo.ids.btn_browse_new_tab);
         assert_eq!(demo.state.browse_tabs.len(), 1);
         assert_eq!(demo.state.browse().sel_row, Some(2));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

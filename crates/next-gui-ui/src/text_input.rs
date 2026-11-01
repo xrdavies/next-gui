@@ -238,7 +238,7 @@ impl Ui {
             && self.dialog_focus_scope().is_none_or(|dialog|self.widget_contains(dialog,id))
             && match self.widgets.get(&id).map(|w|&w.kind) {
                 Some(Kind::Table {style,..})=>style.reorder_columns,
-                Some(Kind::Tabs {style,..})=>style.movable,
+                Some(Kind::Tabs {style,..})=>style.enabled && style.movable,
                 _=>false,
             }
     }

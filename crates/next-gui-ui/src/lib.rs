@@ -973,6 +973,8 @@ impl Default for ContextMenuStyle {
 /// Style for Tabs (strip + content pane).
 #[derive(Debug, Clone, Copy)]
 pub struct TabsStyle {
+    /// Accept pointer/keyboard navigation and document actions.
+    pub enabled: bool,
     /// Show a close button on each tab; closing is a request for the owner to handle.
     pub closable: bool,
     /// Allow header dragging; the owner handles the emitted move request.
@@ -1010,6 +1012,7 @@ pub struct TabsStyle {
 impl Default for TabsStyle {
     fn default() -> Self {
         Self {
+            enabled: true,
             closable: false,
             movable: false,
             width: 400.0,
@@ -3554,6 +3557,7 @@ impl Ui {
                 self.focus = None;
                 false
             }
+            Some(Kind::Tabs { style, .. }) if !style.enabled => false,
             Some(Kind::Tabs { .. }) => {
                 self.focus = Some(id);
                 self.pointer_tabs(scene, id, x, y)
@@ -3911,7 +3915,8 @@ impl Ui {
     pub fn set_focus(&mut self, id: Option<WidgetId>) {
         if id.is_some_and(|id|self.dialog_focus_scope().is_some_and(|dialog|!self.widget_contains(dialog,id))) {return;}
         if self.focus != id { self.cancel_pointer_repeat(); }
-        self.focus = id.filter(|id| self.button_enabled(*id) != Some(false) && self.text_input_enabled(*id)!=Some(false));
+        self.focus = id.filter(|id| self.button_enabled(*id) != Some(false) && self.text_input_enabled(*id)!=Some(false)
+            && !matches!(self.widgets.get(id).map(|w|&w.kind),Some(Kind::Tabs {style,..}) if !style.enabled));
     }
 
     /// Override the accessible name for `id` (P6d). Empty string clears to fallback.
@@ -4166,6 +4171,7 @@ impl Ui {
                 ..
             } => primary_action.is_some() || secondary_action.is_some(),
             Kind::Button { enabled, .. } | Kind::TextInput {enabled,..} => *enabled,
+            Kind::Tabs {style,..} => style.enabled,
             Kind::TextArea { .. }
             | Kind::HexEditor { .. }
             | Kind::InputNumber { .. }
@@ -4176,7 +4182,6 @@ impl Ui {
             | Kind::Tree { .. }
             | Kind::Table { .. }
             | Kind::Menu { .. }
-            | Kind::Tabs { .. }
             | Kind::Select { .. }
             | Kind::TreeSelect { .. }
             | Kind::AlarmList { .. }
@@ -5546,7 +5551,7 @@ impl Ui {
 
     fn key_tabs(&mut self, id: WidgetId, key: UiKey) -> bool {
         let n = match self.widgets.get(&id).map(|w| &w.kind) {
-            Some(Kind::Tabs { titles, .. }) => titles.len(),
+            Some(Kind::Tabs { titles, style, .. }) if style.enabled => titles.len(),
             _ => return false,
         };
         if n == 0 {
@@ -12768,7 +12773,7 @@ impl Ui {
                 };
                 if let Some(&lab) = aux.get(base + 1 + ncols + ci) {
                     scene.set_corner_radius(lab,0.0);
-                    scene.set_clip(lab, Some(clip));
+                    scene.set_clip(lab, Some(clip.intersect(&Rect::new(ox+4.0,y,max_w,style.row_height))));
                     let ly = y + ((style.row_height - mask.height as f32) * 0.5).max(0.0);
                     if visible {
                         scene.set_bounds(

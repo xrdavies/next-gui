@@ -34,12 +34,17 @@ pub fn prepare(state: &mut AppState, page: &str) -> Result<(), String> {
     if let Ok(path) = std::env::var("NEXT_GUI_DB_BROWSER_DESKTOP_DB") { state.save_as(&path)?; }
     let index = state.schema.iter().position(|object| object.schema == "main" && object.name == "orders").unwrap();
     state.select_schema_node(10_000 + index as u64);
-    if page.starts_with("desktop-browse-columns") {
+    if page.starts_with("desktop-browse-columns") || page.starts_with("desktop-browse-tabs") {
         state.browse_mut().column_order = ["note", "id", "status", "customer_id"].into_iter().map(str::to_owned).collect();
         state.browse_mut().hidden_columns = ["currency", "updated_at"].into_iter().map(str::to_owned).collect();
     }
     state.browse_mut().sel_row = Some(0); state.browse_mut().sel_col = Some(9);
     state.sync_edit_cell_from_selection();
+    if page.starts_with("desktop-browse-tabs") {
+        state.add_browse_tab()?;state.switch_browse_table_in("main","customers")?;
+        state.add_browse_tab()?;state.switch_browse_table_in("main","products")?;
+        state.switch_browse_tab(0)?;
+    }
     state.tab = if page.starts_with("desktop-browse") { MainTab::Browse }
         else if page.starts_with("desktop-pragmas") { MainTab::Pragmas }
         else if page.starts_with("desktop-sql") { MainTab::ExecuteSql } else { MainTab::Structure };

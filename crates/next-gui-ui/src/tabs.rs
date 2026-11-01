@@ -31,6 +31,7 @@ pub struct TabsState {
     titles: Vec<String>,
     selected: usize,
     scrollable: bool,
+    document_actions: (bool, bool, bool),
     strip: TabStripState,
 }
 
@@ -115,6 +116,7 @@ impl Ui {
             titles: titles.clone(),
             selected: *selected,
             scrollable: style.scrollable,
+            document_actions: (style.enabled, style.closable, style.movable),
             strip: strip.clone(),
         })
     }
@@ -142,7 +144,8 @@ impl Ui {
         {
             return false;
         }
-        if style.width == state.strip.width && style.size == state.strip.size {
+        if style.width == state.strip.width && style.size == state.strip.size
+            && (style.enabled,style.closable,style.movable)==state.document_actions {
             *strip = state.strip.clone();
         }
         true
@@ -446,6 +449,18 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_document_tabs_reject_pointer_keys_focus_and_actions() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut tabs=WidgetId(0);
+        ui.column(ColumnStyle::default(),|p| {tabs=p.tabs(TabsStyle {enabled:false,movable:true,closable:true,scrollable:true,..Default::default()},|t| {t.page("First",|_|{});t.page("Second",|_|{});});});
+        ui.sync(&mut scene);let b=scene.get(ui.widgets[&tabs].node.unwrap()).unwrap().bounds;
+        assert!(!ui.focusable_widgets().contains(&tabs));ui.set_focus(Some(tabs));assert_eq!(ui.focused(),None);
+        for x in [b.x+12.0,b.x+50.0,b.x+90.0] {
+            assert!(!ui.pointer_pressed(&mut scene,x,b.y+12.0));ui.pointer_moved(x+100.0,b.y+12.0);ui.pointer_released();
+        }
+        assert!(!ui.key_tabs(tabs,UiKey::End));assert_eq!(ui.tabs_selected(tabs),Some(0));assert_eq!(ui.take_tab_action(),None);assert!(!ui.is_dragging());
+    }
 
     #[test]
     fn document_strip_retains_double_click_across_rebuild() {

@@ -150,7 +150,6 @@ pub struct BuiltUi {
     pub btn_run_ddl: WidgetId,
     pub browse_tabs: WidgetId,
     pub btn_browse_new_tab: WidgetId,
-    pub btn_browse_close_tab: WidgetId,
     pub browse_select: WidgetId,
     pub browse_filter: WidgetId,
     pub browse_global_filter: WidgetId,
@@ -169,7 +168,6 @@ pub struct BuiltUi {
     pub browse_table: WidgetId,
     pub context_menu: WidgetId,
     pub browse_col_filters: Vec<WidgetId>,
-    pub browse_tab_btns: Vec<WidgetId>,
     pub sql_documents: crate::sql_documents::Controls,
     pub pragma_inputs: Vec<WidgetId>,
     pub pragma_switches: Vec<WidgetId>,
@@ -632,7 +630,6 @@ pub fn build_ui(
     let mut btn_run_ddl = z;
     let mut browse_tabs = z;
     let mut btn_browse_new_tab = z;
-    let mut btn_browse_close_tab = z;
     let mut browse_select = z;
     let mut browse_filter = z;
     let mut browse_global_filter = z;
@@ -651,7 +648,6 @@ pub fn build_ui(
     let mut browse_table = z;
     let mut browse_form_scroll = z;
     let mut browse_col_filters: Vec<WidgetId> = Vec::new();
-    let mut browse_tab_btns: Vec<WidgetId> = Vec::new();
     let mut pragma_inputs: Vec<WidgetId> = Vec::new();
     let mut pragma_switches: Vec<WidgetId> = Vec::new();
     let mut pragma_selects: Vec<WidgetId> = Vec::new();
@@ -2025,22 +2021,15 @@ pub fn build_ui(
                                 return;
                             }
                             page_scroll = p.scroll_area(page_scroll_style, |p| {
-                            // Browse multi-tabs strip
-                            let titles: Vec<String> =
-                                state.browse_tabs.iter().map(|t| t.title.clone()).collect();
-                            p.scroll_row(tool_row, |row| {
-                                btn_browse_new_tab = row.tool_button("+ Tab");
-                                for (i, title) in titles.iter().enumerate() {
-                                    let label = if i == state.browse_tab_idx {
-                                        format!("[{title}]")
-                                    } else {
-                                        title.clone()
-                                    };
-                                    browse_tab_btns.push(row.tool_button(label));
-                                }
-                                btn_browse_close_tab = row.tool_button("Close Tab");
+                            p.row(tool_row, |row| {
+                                btn_browse_new_tab = row.tool_icon_button(IconName::Plus,"New Browse Tab");
+                                let mut style=TabsStyle::from_theme(&theme);
+                                style.width=sql_split.width-36.0;style.height=32.0;style.strip_height=32.0;
+                                style.padding=0.0;style.gap=0.0;style.scrollable=true;style.closable=true;style.movable=true;
+                                style.enabled=!state.sql_busy && state.guard_background_idle().is_ok();
+                                if !style.enabled {style.fg=theme.colors.disabled;style.active_fg=theme.colors.disabled;}
+                                browse_tabs=row.tabs(style,|tabs| {for tab in &state.browse_tabs {tabs.page(&tab.title,|_|{});}});
                             });
-                            browse_tabs = WidgetId(0);
                             p.scroll_row(browse_tools, |row| {
                                 row.text("Table");
                                 browse_select =
@@ -2246,9 +2235,11 @@ pub fn build_ui(
                                 });
                             }
                             let mut document_style = TabsStyle::from_theme(&theme);
+                            document_style.enabled = !state.sql_busy;
                             document_style.width = sql_split.width; document_style.height = 40.0;
                             document_style.strip_height = 40.0; document_style.padding=0.0; document_style.gap=0.0;
-                            document_style.scrollable = true; document_style.closable = !state.sql_busy; document_style.movable = !state.sql_busy;
+                            document_style.scrollable = true; document_style.closable = true; document_style.movable = true;
+                            if !document_style.enabled {document_style.fg=theme.colors.disabled;document_style.active_fg=theme.colors.disabled;}
                             sql_tabs_w = p.tabs(document_style, |tabs| {
                                 for i in 0..state.sql_tabs.len() { tabs.page(state.sql_tab_label(i), |_|{}); }
                             });
@@ -2869,9 +2860,7 @@ pub fn build_ui(
     let loaded = browse.result.as_ref().map_or(0, |r| r.values.len());
     let total = browse.total_rows.unwrap_or(0);
     let can_browse = state.conn.is_some() && !state.sql_busy && browse.result.is_some();
-    for id in [btn_browse_new_tab, btn_browse_close_tab].into_iter().chain(browse_tab_btns.iter().copied()) {
-        ui.set_button_enabled(id, !state.sql_busy);
-    }
+    ui.set_button_enabled(btn_browse_new_tab, !state.sql_busy);
     for (index, (key, _)) in state.pragmas.iter().enumerate() {
         let label = crate::pragmas::FIELDS.iter().find(|(name, _)| *name == key).map_or(key.as_str(), |(_, label)| *label);
         if let Some(id) = pragma_inputs.get(index).filter(|id| id.0 != 0) {
@@ -2923,6 +2912,8 @@ pub fn build_ui(
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     let view_keys = crate::view_keys::build(&mut ui, state, &theme, width as f32);
     let sql_documents = crate::sql_documents::build(&mut ui,state,&theme);
+    ui.set_tabs_selected(browse_tabs,state.browse_tab_idx);
+    ui.set_accessible_name(browse_tabs,"Browse tabs — drag to move, close individual tables");
     ui.set_tabs_selected(sql_tabs_w,state.sql_tab_idx);
     ui.set_accessible_name(sql_tabs_w,"SQL documents — drag to move, double-click to rename");
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
@@ -3071,7 +3062,6 @@ pub fn build_ui(
         btn_run_ddl,
         browse_tabs,
         btn_browse_new_tab,
-        btn_browse_close_tab,
         browse_select,
         browse_filter,
         browse_global_filter,
@@ -3090,7 +3080,6 @@ pub fn build_ui(
         browse_table,
         context_menu,
         browse_col_filters,
-        browse_tab_btns,
         sql_documents,
         pragma_inputs,
         pragma_switches,

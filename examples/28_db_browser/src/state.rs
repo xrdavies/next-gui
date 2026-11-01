@@ -3012,10 +3012,21 @@ impl AppState {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn close_browse_tab(&mut self) -> Result<(), String> {
+        self.close_browse_tab_at(self.browse_tab_idx)
+    }
+
+    pub fn close_browse_tab_at(&mut self, index: usize) -> Result<(), String> {
         self.guard_background_idle()?;
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
+        if index>=self.browse_tabs.len() {return Err("Browse tab no longer exists".into());}
+        if index!=self.browse_tab_idx {
+            self.browse_tabs.remove(index);
+            self.browse_tab_idx-=usize::from(index<self.browse_tab_idx);
+            self.status_msg="Browse tab closed".into();return Ok(());
+        }
         if self.browse_tabs.len() <= 1 {
             self.browse_tabs[0] = BrowseTabState::new(None);
             self.browse_tab_idx = 0;
@@ -3031,6 +3042,19 @@ impl AppState {
             }
         }
         self.status_msg = "Browse tab closed".into();
+        Ok(())
+    }
+
+    pub fn move_browse_tab(&mut self, from: usize, to: usize) -> Result<(), String> {
+        self.guard_background_idle()?;
+        if self.sql_busy {return Err("Wait for SQL to finish before changing browse tabs".into());}
+        if self.has_cell_draft() {return Err("Apply or discard the cell draft first".into());}
+        if from>=self.browse_tabs.len() || to>=self.browse_tabs.len() {return Err("Browse tab no longer exists".into());}
+        let tab=self.browse_tabs.remove(from);self.browse_tabs.insert(to,tab);
+        self.browse_tab_idx=if self.browse_tab_idx==from {to}
+            else if from<self.browse_tab_idx && self.browse_tab_idx<=to {self.browse_tab_idx-1}
+            else if to<=self.browse_tab_idx && self.browse_tab_idx<from {self.browse_tab_idx+1}
+            else {self.browse_tab_idx};
         Ok(())
     }
 

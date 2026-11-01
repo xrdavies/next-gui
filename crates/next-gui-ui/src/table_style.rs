@@ -157,6 +157,20 @@ pub(super) fn text_mask(
 mod tests {
     use super::*;
 
+    #[test]
+    fn plain_cell_glyphs_respect_padding_and_keep_complete_copied_text() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut table=WidgetId(0);
+        let text="Priority delivery revised with a long note";
+        ui.column(ColumnStyle::default(),|p| {table=p.table(vec![TableColumn::new("note",90.0),TableColumn::new("id",60.0)],vec![vec![text.into(),"100000".into()]],TableStyle {width:200.0,height:100.0,..Default::default()});});
+        ui.sync(&mut scene);let b=scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        let label=scene.get(ui.widgets[&table].aux[5]).unwrap();let clip=label.clip.unwrap();
+        assert!(label.mask.as_ref().unwrap().width as f32>90.0);
+        assert!(clip.x>=b.x+TableStyle::default().padding+4.0);
+        assert!(clip.x+clip.width<=b.x+TableStyle::default().padding+90.0-4.0);
+        ui.set_table_selected_cells(table,Some((0,0)),Some((0,0)));ui.set_focus(Some(table));
+        assert_eq!(ui.table_selected_text(table).as_deref(),Some(text));
+    }
+
     fn ink_left(mask: &AlphaMask) -> usize {
         mask.pixels
             .iter()
