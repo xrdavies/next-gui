@@ -3537,10 +3537,12 @@ impl AppState {
         let result = tab.result.as_ref().ok_or("No browse data")?;
         let row = tab.sel_row.ok_or("Select browse cells first")?;
         let anchor = tab.sel_row_start.unwrap_or(row);
-        let (first, last) = (row.min(anchor), row.max(anchor));
+        let end = tab.sel_row_end.unwrap_or(row);
+        let (first, last) = (end.min(anchor), end.max(anchor));
         let (first_col, last_col) = if let Some(col) = tab.sel_col {
             let anchor = tab.sel_col_start.unwrap_or(col);
-            (col.min(anchor), col.max(anchor))
+            let end = tab.sel_col_end.unwrap_or(col);
+            (end.min(anchor), end.max(anchor))
         } else { (0, result.columns.len().saturating_sub(1)) };
         if last >= result.values.len() || result.columns.is_empty() || last_col >= result.columns.len() {
             return Err("Selection no longer fits the browse page; refresh and retry".into());
@@ -3570,10 +3572,12 @@ impl AppState {
         let table = tab.table.clone().ok_or("No browse table")?;
         let row = tab.sel_row.ok_or("Select browse cells first")?;
         let anchor = tab.sel_row_start.unwrap_or(row);
-        let (first, last) = (row.min(anchor), row.max(anchor));
+        let end = tab.sel_row_end.unwrap_or(row);
+        let (first, last) = (end.min(anchor), end.max(anchor));
         let (first_col, last_col) = if let Some(col) = tab.sel_col {
             let anchor = tab.sel_col_start.unwrap_or(col);
-            (col.min(anchor), col.max(anchor))
+            let end = tab.sel_col_end.unwrap_or(col);
+            (end.min(anchor), end.max(anchor))
         } else { (0, result.columns.len().saturating_sub(1)) };
         if last >= tab.row_keys.len() || result.columns.is_empty() || last_col >= result.columns.len() {
             return Err("Selected cells are not editable; refresh and retry".into());
@@ -3617,10 +3621,12 @@ impl AppState {
         let table = tab.table.clone().ok_or("No browse table")?;
         let row = tab.sel_row.ok_or("Select a browse cell first")?;
         let anchor_row = tab.sel_row_start.unwrap_or(row);
-        let (start_row, end_row) = (row.min(anchor_row), row.max(anchor_row));
+        let end = tab.sel_row_end.unwrap_or(row);
+        let (start_row, end_row) = (end.min(anchor_row), end.max(anchor_row));
         let (start_col, end_col) = if let Some(col) = tab.sel_col {
             let anchor = tab.sel_col_start.unwrap_or(col);
-            (col.min(anchor), col.max(anchor))
+            let end = tab.sel_col_end.unwrap_or(col);
+            (end.min(anchor), end.max(anchor))
         } else { (0, result.columns.len().saturating_sub(1)) };
         let width = rows.first().map_or(0, Vec::len);
         if width == 0 || rows.iter().any(|row| row.len() != width) {

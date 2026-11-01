@@ -54,7 +54,7 @@ pub(crate) struct Target {
     schema: String,
     table: String,
     values: Arc<()>,
-    selection: [Option<usize>; 4],
+    selection: [Option<usize>; 6],
 }
 
 
@@ -63,7 +63,7 @@ impl Target {
         let tab = demo.state.browse();
         Some(Self { path: demo.state.path.clone(), tab: demo.state.browse_tab_idx,
             schema: tab.schema.clone(), table: tab.table.clone()?, values: tab.result.as_ref()?.values.identity(),
-            selection: [tab.sel_row, tab.sel_col, tab.sel_row_start, tab.sel_col_start] })
+            selection: [tab.sel_row, tab.sel_col, tab.sel_row_start, tab.sel_col_start, tab.sel_row_end, tab.sel_col_end] })
     }
 
     fn matches(&self, demo: &Demo) -> bool {
@@ -119,7 +119,8 @@ impl Demo {
         self.snapshot_inputs();
         let inside = self.ui.table_selected_rows(table).is_some_and(|(a, b)| (a..=b).contains(&row))
             && self.ui.table_selected_cols(table).is_some_and(|(a, b)| (a..=b).contains(&column));
-        if !inside { self.ui.set_table_selected_cells(table, Some((row, row)), Some((column, column))); }
+        if inside { self.ui.set_table_active_cell(table, row, column); }
+        else { self.ui.set_table_selected_cells(table, Some((row, row)), Some((column, column))); }
         self.ui.set_focus(Some(table));
         self.poll_selection_changes();
         if self.rebuild { self.do_rebuild(); }
@@ -305,6 +306,57 @@ mod tests {
     }
 
     #[test]
+    fn right_click_inside_range_changes_active_cell_without_shrinking_clipboard_actions() {
+        for (name, width, height, theme) in [("dark", 1400, 860, Theme::dark()), ("light", 800, 600, Theme::light())] {
+            for reverse in [false, true] {
+                let mut demo = fixture(width, height, theme); demo.state.write_changes().unwrap();
+                let select = |demo: &mut Demo| {
+                    let rows = if reverse { (2, 0) } else { (0, 2) };
+                    let cols = if reverse { (1, 0) } else { (0, 1) };
+                    demo.ui.set_table_selected_cells(demo.ids.browse_table, Some(rows), Some(cols));
+                    demo.poll_selection_changes(); demo.do_rebuild();
+                    let clicked = if reverse { (1, 1) } else { (0, 0) };
+                    let (x, y) = point(demo, clicked.0, clicked.1);
+                    assert!(demo.open_browse_cell_menu(x, y));
+                    assert_eq!((demo.state.browse().sel_row, demo.state.browse().sel_col), (Some(clicked.0), Some(clicked.1)), "context actions must use the clicked cell");
+                    assert_eq!(demo.ui.table_selected_rows(demo.ids.browse_table), Some((0, 2)));
+                    assert_eq!(demo.ui.table_selected_cols(demo.ids.browse_table), Some((0, 1)));
+                    assert_eq!((demo.state.browse().sel_row_start, demo.state.browse().sel_row_end), (Some(rows.0), Some(rows.1)));
+                    assert_eq!((demo.state.browse().sel_col_start, demo.state.browse().sel_col_end), (Some(cols.0), Some(cols.1)));
+                };
+                select(&mut demo);
+                let original = demo.state.browse().result.as_ref().unwrap().values.rectangle(0..=4, 0..=1).unwrap();
+                let copy = demo.state.copy_browse_cells(true, false).unwrap();
+                assert_eq!(copy.text, "name\tamount\nalpha\t1\nalpine\t2\nbeta\t3");
+                capture(&mut demo, &format!("cell-context-interior-{name}-{reverse}"));
+                choose(&mut demo, FORMATS);
+                assert_eq!(demo.state.cond_formats.as_ref().unwrap().column_scope.as_deref(), Some(if reverse { "amount" } else { "name" }));
+                demo.ui.key_input(UiKey::Escape); demo.handle_cond_format_dismiss(); demo.do_rebuild();
+                assert_eq!(demo.ui.focused(), Some(demo.ids.browse_table));
+                select(&mut demo); demo.take_browse_cell_target().unwrap();
+                demo.state.conn.as_ref().unwrap().execute_batch("CREATE TRIGGER reject_clear BEFORE UPDATE ON names WHEN OLD.amount=3 AND NEW.amount IS NULL BEGIN SELECT RAISE(ABORT,'keep selected range'); END;").unwrap();
+                assert!(demo.browse_cell_action(NULL).unwrap_err().contains("keep selected range"));
+                assert_eq!(demo.state.browse().result.as_ref().unwrap().values.rectangle(0..=4, 0..=1).unwrap(), original);
+                assert_eq!(crate::db::execute_sql(demo.state.conn.as_ref().unwrap(), "SELECT name,amount FROM names ORDER BY rowid").unwrap().values.rectangle(0..=4, 0..=1).unwrap(), original);
+                demo.state.conn.as_ref().unwrap().execute_batch("DROP TRIGGER reject_clear;").unwrap();
+                select(&mut demo); choose(&mut demo, NULL);
+                let cleared = demo.state.browse().result.as_ref().unwrap().values.rectangle(0..=4, 0..=1).unwrap();
+                assert_eq!(&cleared[..3], vec![vec![crate::db::CellValue::Null; 2]; 3]);
+                assert_eq!(&cleared[3..], &original[3..]);
+                capture(&mut demo, &format!("cell-context-interior-cleared-{name}-{reverse}"));
+                assert!(demo.state.dirty); demo.state.revert_changes().unwrap(); demo.do_rebuild();
+                select(&mut demo); demo.ui.close_popup(); demo.state.cut_browse_cells().unwrap(); demo.do_rebuild();
+                assert_eq!(demo.state.browse().result.as_ref().unwrap().values.rectangle(0..=2, 0..=1).unwrap(), vec![vec![crate::db::CellValue::Null; 2]; 3]);
+                select(&mut demo); demo.ui.close_popup();
+                demo.state.paste_browse_cells(copy.internal_cells(&copy.html).unwrap()).unwrap(); demo.do_rebuild();
+                assert_eq!(demo.state.browse().result.as_ref().unwrap().values.rectangle(0..=4, 0..=1).unwrap(), original);
+                select(&mut demo); demo.state.browse_mut().sel_row_end = Some(4);
+                assert!(demo.take_browse_cell_target().is_err(), "changed range endpoints must invalidate a menu");
+            }
+        }
+    }
+
+    #[test]
     fn browse_cell_context_preserves_ranges_and_returns_from_scoped_formats() {
         for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
             for (width, height) in [(1400, 860), (800, 600)] {
@@ -312,7 +364,7 @@ mod tests {
                 demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((0, 2)), Some((0, 1)));
                 demo.poll_selection_changes(); demo.do_rebuild();
                 let selection = Target::read(&demo).unwrap().selection;
-                let (x, y) = point(&demo, 0, 0);
+                let (x, y) = point(&demo, 2, 1);
                 assert!(demo.open_browse_cell_menu(x, y));
                 assert_eq!(Target::read(&demo).unwrap().selection, selection);
                 assert_eq!(demo.state.copy_browse_cells(false, false).unwrap().text, "alpha\t1\nalpine\t2\nbeta\t3");
@@ -329,7 +381,7 @@ mod tests {
                 assert!(demo.handle_browse_cell_context_key(KeyCode::Function(10), Modifiers { shift: true, ..Default::default() }));
                 demo.ui.close_popup();
                 let (x, y) = point(&demo, 4, 0); assert!(demo.open_browse_cell_menu(x, y));
-                assert_eq!(Target::read(&demo).unwrap().selection, [Some(4), Some(0), Some(4), Some(0)]);
+                assert_eq!(Target::read(&demo).unwrap().selection, [Some(4), Some(0), Some(4), Some(0), Some(4), Some(0)]);
                 choose(&mut demo, NULL);
                 assert!(demo.state.dirty);
                 assert_eq!(demo.state.conn.as_ref().unwrap().query_row("SELECT name IS NULL, amount FROM names WHERE rowid=5", [], |row| Ok((row.get::<_, bool>(0)?, row.get::<_, i64>(1)?))).unwrap(), (true, 5));

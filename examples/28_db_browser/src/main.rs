@@ -1699,6 +1699,10 @@ impl Demo {
                 if tab.starts_with("cell-context") {
                     let browse = state.browse_mut(); browse.sel_row = Some(2); browse.sel_row_start = Some(2); browse.sel_row_end = Some(2);
                     browse.sel_col = Some(1); browse.sel_col_start = Some(1); browse.sel_col_end = Some(1);
+                    if tab.contains("range") {
+                        browse.sel_row = Some(0); browse.sel_row_start = Some(0);
+                        browse.sel_col = Some(0); browse.sel_col_start = Some(0);
+                    }
                     state.sync_edit_cell_from_selection();
                 }
                 if tab.contains("escape") {state.prefs.filter_escape="!".into();}
@@ -5392,17 +5396,22 @@ impl Demo {
             let col = self.ui.table_selected_col(self.ids.browse_table);
             let (anchor_row, anchor_col) = self.ui.table_selection_anchor(self.ids.browse_table)
                 .unwrap_or((row, col));
+            let end_row = self.ui.table_selected_rows(self.ids.browse_table)
+                .map(|(first, last)| if anchor_row == first { last } else { first }).unwrap_or(row);
+            let end_col = anchor_col.zip(self.ui.table_selected_cols(self.ids.browse_table))
+                .map(|(anchor, (first, last))| if anchor == first { last } else { first });
             let tab = self.state.browse();
             let cell_changed = tab.sel_row != Some(row) || tab.sel_col != col;
-            if cell_changed || tab.sel_row_start != Some(anchor_row) || tab.sel_col_start != anchor_col {
+            if cell_changed || tab.sel_row_start != Some(anchor_row) || tab.sel_col_start != anchor_col
+                || tab.sel_row_end != Some(end_row) || tab.sel_col_end != end_col {
                 self.last_browse_row = Some(row);
                 let tab = self.state.browse_mut();
                 tab.sel_row = Some(row);
                 tab.sel_col = col;
                 tab.sel_row_start = Some(anchor_row);
-                tab.sel_row_end = Some(row);
+                tab.sel_row_end = Some(end_row);
                 tab.sel_col_start = anchor_col;
-                tab.sel_col_end = col;
+                tab.sel_col_end = end_col;
                 if cell_changed { self.state.sync_edit_cell_from_selection(); }
                 dirty = true;
             }
@@ -6269,7 +6278,7 @@ impl AppCallbacks for Demo {
 fn main() {
     let use_native =
         std::env::var_os("NEXT_GUI_GPU_SURFACE").is_some() && GpuRenderer::adapter_available();
-    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("browse-completion") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
+    let (width,height)=if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|matches!(tab.as_str(),"plot-image-clipboard-narrow"|"plot-bars-grouped-narrow"|"plot-bars-stacked-narrow"|"docks-narrow"|"plot-hover-narrow"|"toolbar-browse-narrow"|"toolbar-sql-narrow"|"sql-results-end-narrow"|"cell-structure-narrow"|"cell-pragmas-narrow"|"prefs-narrow"|"cell-session-narrow"|"condformat-narrow") || ((tab.starts_with("toolbar-style-") || tab.starts_with("cell-mode-") || tab.starts_with("row-keys") || tab.starts_with("view-keys") || tab.starts_with("rowid-") || tab.starts_with("revert-") || tab.starts_with("filter-") || tab.starts_with("cell-context") || tab.starts_with("condformat-") || tab.starts_with("menus") || tab.starts_with("browse-inline") || tab.starts_with("browse-completion") || tab.starts_with("schema-dock")) && tab.ends_with("-narrow"))) {(800,600)} else {(1400,860)};
     let attrs = if use_native {
         WindowAttrs::new("next-gui DB Browser", width, height).with_gpu_surface()
     } else {
