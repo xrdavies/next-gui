@@ -149,10 +149,6 @@ fn path_exists(state: &AppState, path: &[String]) -> bool {
 }
 
 fn insertion(state: &AppState, path: &[String], definition: bool) -> Option<String> {
-    let o = object(state, path)?;
-    if definition {
-        return o.sql.clone().filter(|s| !s.is_empty());
-    }
     let name = |s: &str| {
         if state.prefs.schema_quoted_names {
             db::quote_ident(s)
@@ -160,10 +156,40 @@ fn insertion(state: &AppState, path: &[String], definition: bool) -> Option<Stri
             s.to_owned()
         }
     };
+    if path.len() == 1 {
+        return (!definition && path_exists(state, path)).then(|| name(&path[0]));
+    }
+    let o = object(state, path)?;
+    if definition {
+        return o.sql.clone().filter(|s| !s.is_empty());
+    }
     let mut names = if state.prefs.schema_qualified_names {
         vec![name(&o.schema), name(&o.name)]
     } else {
         vec![name(&o.name)]
+    };
+    // A generated query must still target the selected table when TEMP/other schemas shadow it.
+    let resolved_schema = ["temp", "main"]
+        .into_iter()
+        .chain(
+            state
+                .schema_names
+                .iter()
+                .map(String::as_str)
+                .filter(|schema| !matches!(*schema, "main" | "temp")),
+        )
+        .find(|schema| {
+            state.schema.iter().any(|other| {
+                other.schema == *schema
+                    && other.name.eq_ignore_ascii_case(&o.name)
+                    && matches!(other.kind, db::ObjectKind::Table | db::ObjectKind::View)
+            })
+        });
+    let table = if !state.prefs.schema_qualified_names && resolved_schema != Some(o.schema.as_str())
+    {
+        format!("{}.{}", name(&o.schema), name(&o.name))
+    } else {
+        names.join(".")
     };
     if path.len() == 4 {
         if !state.prefs.schema_qualified_names {
@@ -173,11 +199,11 @@ fn insertion(state: &AppState, path: &[String], definition: bool) -> Option<Stri
     }
     let text = names.join(".");
     Some(
-        if path.len() == 3
-            && state.prefs.schema_select_query
+        if state.prefs.schema_select_query
             && matches!(o.kind, db::ObjectKind::Table | db::ObjectKind::View)
         {
-            format!("SELECT * FROM {text};\n")
+            let fields = if path.len() == 4 { text.as_str() } else { "*" };
+            format!("SELECT {fields} FROM {table};\n")
         } else {
             text
         },
@@ -460,8 +486,11 @@ impl Demo {
         if !self.ids.schema.paths.contains(&path) {
             return Err("Select a visible schema object or field".into());
         }
-        let o = object(&self.state, &path).ok_or("The selected schema object no longer exists")?;
+        if !path_exists(&self.state, &path) {
+            return Err("The selected schema object no longer exists".into());
+        }
         if action == BROWSE {
+            let o = object(&self.state, &path).ok_or("Select a table or view")?;
             if !matches!(o.kind, db::ObjectKind::Table | db::ObjectKind::View) {
                 return Err("Select a table or view".into());
             }
@@ -822,6 +851,137 @@ mod tests {
     }
 
     #[test]
+    fn schema_field_queries_and_database_names_follow_insertion_options() {
+        let mut d = fixture(Theme::light(), 1400, 860, 13.0);
+        let field = path(&["aux.\"db", "table", "records", "value.名"]);
+        for (qualified, quoted, query, expected) in [
+            (
+                false,
+                true,
+                true,
+                "SELECT \"value.名\" FROM \"aux.\"\"db\".\"records\";\n",
+            ),
+            (
+                true,
+                true,
+                true,
+                "SELECT \"aux.\"\"db\".\"records\".\"value.名\" FROM \"aux.\"\"db\".\"records\";\n",
+            ),
+            (
+                false,
+                false,
+                true,
+                "SELECT value.名 FROM aux.\"db.records;\n",
+            ),
+            (
+                true,
+                false,
+                true,
+                "SELECT aux.\"db.records.value.名 FROM aux.\"db.records;\n",
+            ),
+            (false, true, false, "\"value.名\""),
+            (true, true, false, "\"aux.\"\"db\".\"records\".\"value.名\""),
+            (false, false, false, "value.名"),
+            (true, false, false, "aux.\"db.records.value.名"),
+        ] {
+            d.state.prefs.schema_qualified_names = qualified;
+            d.state.prefs.schema_quoted_names = quoted;
+            d.state.prefs.schema_select_query = query;
+            assert_eq!(
+                insertion(&d.state, &field, false).as_deref(),
+                Some(expected)
+            );
+        }
+        d.state.prefs.schema_quoted_names = true;
+        d.state.prefs.schema_select_query = true;
+        for qualified in [false, true] {
+            d.state.prefs.schema_qualified_names = qualified;
+            for (schema, column, expected) in [
+                ("main", "value.名", "保留"),
+                ("aux.\"db", "value.名", "attached"),
+            ] {
+                let query = insertion(
+                    &d.state,
+                    &path(&[schema, "table", "records", column]),
+                    false,
+                )
+                .unwrap();
+                assert_eq!(
+                    d.state
+                        .conn
+                        .as_ref()
+                        .unwrap()
+                        .query_row(&query, [], |row| row.get::<_, String>(0))
+                        .unwrap(),
+                    expected
+                );
+                let query =
+                    insertion(&d.state, &path(&[schema, "table", "records"]), false).unwrap();
+                assert!(query.contains(&format!("FROM {}", db::qualified_name(schema, "records"))));
+            }
+        }
+        assert_eq!(
+            insertion(
+                &d.state,
+                &path(&["temp", "table", "records", "temp_only"]),
+                false
+            )
+            .as_deref(),
+            Some("SELECT \"temp\".\"records\".\"temp_only\" FROM \"temp\".\"records\";\n")
+        );
+        for schema in ["main", "temp", "aux.\"db"] {
+            let root = path(&[schema]);
+            assert_eq!(
+                insertion(&d.state, &root, false),
+                Some(db::quote_ident(schema))
+            );
+            assert!(insertion(&d.state, &root, true).is_none());
+            select(&mut d, &[schema]);
+            d.ui.select_text_area_range(d.ids.sql_area, 0..d.state.sql_editor().chars().count());
+            let before = d.state.sql_editor().to_string();
+            assert!(d.handle_schema_dock_key(KeyCode::Enter, Modifiers::default()));
+            assert_eq!(d.state.sql_editor(), db::quote_ident(schema));
+            assert!(d.ui.key_input(UiKey::Undo));
+            d.snapshot_inputs();
+            assert_eq!(d.state.sql_editor(), before);
+        }
+        assert!(insertion(&d.state, &path(&["missing"]), false).is_none());
+        assert!(insertion(
+            &d.state,
+            &path(&["aux.\"db", "table", "records", "missing"]),
+            false
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn field_select_and_database_name_insertions_are_single_undoable_edits() {
+        for (name, theme, width, height, font) in [
+            ("dark-wide", Theme::dark(), 1400, 860, 13.0),
+            ("light-wide", Theme::light(), 1400, 860, 13.0),
+            ("dark-narrow", Theme::dark(), 800, 600, 18.0),
+            ("light-narrow", Theme::light(), 800, 600, 18.0),
+        ] {
+            let mut d = fixture(theme, width, height, font);
+            for selected in [path(&["aux.\"db", "table", "records", "value.名"]), path(&["aux.\"db"])] {
+                let original = d.state.sql_editor().to_string();
+                d.ui.select_text_area_range(d.ids.sql_area, 0..original.chars().count());
+                d.snapshot_inputs();
+                select(&mut d, &selected.iter().map(String::as_str).collect::<Vec<_>>());
+                assert!(d.handle_schema_dock_key(KeyCode::Enter, Modifiers::default()));
+                let expected = if selected.len() == 1 { "\"aux.\"\"db\"" } else { "SELECT \"value.名\" FROM \"aux.\"\"db\".\"records\";\n" };
+                assert_eq!(d.state.sql_editor(), expected);
+                capture(&mut d, &format!("insertion-{name}-{}", selected.len()));
+                assert!(d.ui.key_input(UiKey::Undo));
+                d.snapshot_inputs();
+                assert_eq!(d.state.sql_editor(), original);
+                assert_eq!(d.ui.text_area_selection(d.ids.sql_area), Some(0..original.chars().count()));
+                assert!(!d.state.dirty);
+            }
+        }
+    }
+
+    #[test]
     fn schema_insert_preserves_sql_selection_undo_tabs_and_never_executes_sql() {
         let mut d = fixture(Theme::light(), 1400, 860, 13.0);
         let original = "SELECT '保留';\nSELECT ?;";
@@ -830,6 +990,7 @@ mod tests {
         d.ui.select_text_area_range(d.ids.sql_area, at..at + 1);
         d.snapshot_inputs();
         d.state.prefs.schema_qualified_names = true;
+        d.state.prefs.schema_select_query = false;
         select(&mut d, &["aux.\"db", "table", "records", "value.名"]);
         assert!(d.handle_schema_dock_key(KeyCode::Enter, Modifiers::default()));
         let inserted = "\"aux.\"\"db\".\"records\".\"value.名\"";
@@ -858,6 +1019,7 @@ mod tests {
             0
         );
         select(&mut d, &["aux.\"db", "view", "summary"]);
+        d.state.prefs.schema_select_query = true;
         assert_eq!(
             insertion(
                 &d.state,
