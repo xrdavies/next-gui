@@ -10,6 +10,43 @@ const COPY: u64 = 283;
 const HEADERS: u64 = 284;
 const SQL: u64 = 285;
 const PASTE: u64 = 286;
+const FILTERS: u64 = 287;
+const EXACT: u64 = 288;
+const FIRST_FILTER: u64 = 289;
+const FILTER_ACTIONS: [(&str, &str, &str); 9] = [
+    ("Containing", "", ""), ("Not containing", "/^((?!", ").)*$/"),
+    ("Not equal to", "<>", ""), ("Greater than", ">", ""), ("Less than", "<", ""),
+    ("Greater or equal", ">=", ""), ("Less or equal", "<=", ""),
+    ("Between this and…", "~", ""), ("Regular expression", "/", "/"),
+];
+
+fn filter_expression(value: &crate::db::CellValue, item: u64, escape: &str) -> Option<String> {
+    use crate::db::CellValue;
+    let mut text = match value {
+        CellValue::Null => "NULL".into(), CellValue::Integer(value) => value.to_string(),
+        CellValue::Real(value) => value.to_string(),
+        CellValue::Text(bytes) => {
+            let text = std::str::from_utf8(bytes).ok()?;
+            if text.contains('\0') { return None; }
+            if text.is_empty() { "''".into() } else { text.into() }
+        }
+        CellValue::Blob(_) => return None,
+    };
+    if item == EXACT {
+        if matches!(value, CellValue::Text(bytes) if matches!(bytes.as_slice(), b"NULL" | b"''" | b"%" | b"%%")) {
+            let mut literal = String::new();
+            for ch in text.chars() {
+                if "\\^$.|?*+()[]{}".contains(ch) { literal.push('\\'); }
+                literal.push(ch);
+            }
+            return Some(format!("/^{literal}$/"));
+        }
+        return Some(format!("={text}"));
+    }
+    let (_, prefix, suffix) = FILTER_ACTIONS.get(item.checked_sub(FIRST_FILTER)? as usize)?;
+    if prefix.is_empty() && text.starts_with(['<', '>', '=', '/']) { text.insert_str(0, escape); }
+    Some(if *prefix == "~" { format!("{text}~") } else { format!("{prefix}{text}{suffix}") })
+}
 
 pub(crate) struct Target {
     path: String,
@@ -45,12 +82,24 @@ impl Demo {
     }
 
     fn browse_cell_menu_items(&self) -> Vec<MenuItem> {
-        let action = |id, label, enabled| if enabled { MenuItem::new(id, label) } else { MenuItem::disabled(id, label) };
+        let action = |id, label: &str, enabled| if enabled { MenuItem::new(id, label) } else { MenuItem::disabled(id, label) };
         let writable = !self.state.read_only && self.state.guard_browse_editable().is_ok();
-        vec![MenuItem::new(FORMATS, "Edit Conditional Formats…"), MenuItem::separator(),
+        let cell = self.browse_menu_cell();
+        let filters = FILTER_ACTIONS.iter().enumerate().map(|(index, (label, _, _))| {
+            let item = FIRST_FILTER + index as u64;
+            action(item, label, cell.as_ref().is_some_and(|cell| filter_expression(cell, item, &self.state.prefs.filter_escape).is_some()))
+        }).collect();
+        vec![action(EXACT, "Use as Exact Filter", cell.as_ref().is_some_and(|cell| filter_expression(cell, EXACT, &self.state.prefs.filter_escape).is_some())),
+            MenuItem::submenu(FILTERS, "Use in Filter Expression", filters),
+            MenuItem::new(FORMATS, "Edit Conditional Formats…"), MenuItem::separator(),
             action(NULL, "Set to NULL", writable), MenuItem::separator(), action(CUT, "Cut", writable),
             MenuItem::new(COPY, "Copy"), MenuItem::new(HEADERS, "Copy with Headers"),
             MenuItem::new(SQL, "Copy as SQL"), action(PASTE, "Paste", writable)]
+    }
+
+    fn browse_menu_cell(&self) -> Option<crate::db::CellValue> {
+        let tab = self.state.browse();
+        tab.result.as_ref()?.values.cell(tab.sel_row?, tab.sel_col?).ok()
     }
 
     fn open_selected_browse_cell_menu(&mut self, x: f32, y: f32) -> bool {
@@ -105,6 +154,13 @@ impl Demo {
     }
 
     fn browse_cell_action(&mut self, item: u64) -> Result<(), String> {
+        if item == EXACT || (FIRST_FILTER..FIRST_FILTER + FILTER_ACTIONS.len() as u64).contains(&item) {
+            let expression = self.browse_menu_cell().and_then(|value| filter_expression(&value, item, &self.state.prefs.filter_escape)).ok_or("This cell cannot be used in a text filter")?;
+            let input = self.state.browse().sel_col.and_then(|column| self.ids.browse_col_filters.get(column)).copied().ok_or("Choose a loaded column filter")?;
+            self.ui.set_focus(Some(input)); self.ui.key_input(crate::UiKey::SelectAll);
+            self.ui.paste_into_focused_text(&expression); self.snapshot_inputs(); self.flush_browse_filter();
+            return Ok(());
+        }
         match item {
             FORMATS => {
                 let column = self.state.browse().sel_col.and_then(|column| self.state.browse().result.as_ref()?.columns.get(column)).cloned().ok_or("Select a loaded column")?;
@@ -135,7 +191,7 @@ impl Demo {
     }
 
     pub(crate) fn handle_browse_cell_menu_action(&mut self, item: u64, ctx: &mut WindowCtx<'_>) -> bool {
-        if !(FORMATS..=PASTE).contains(&item) { return false; }
+        if !(FORMATS..=PASTE).contains(&item) && item != EXACT && !(FIRST_FILTER..FIRST_FILTER + FILTER_ACTIONS.len() as u64).contains(&item) { return false; }
         let result = self.take_browse_cell_target().and_then(|()| {
             self.ui.set_focus(Some(self.ids.browse_table));
             match item {
@@ -180,6 +236,72 @@ mod tests {
         assert_eq!(demo.ui.take_menu_action(), Some((demo.ids.context_menu, item)));
         demo.take_browse_cell_target().unwrap();
         demo.browse_cell_action(item).unwrap(); demo.rebuild = true; demo.do_rebuild();
+    }
+
+    #[test]
+    fn cell_filter_expressions_keep_typed_null_literals_and_original_operator_forms() {
+        use crate::db::CellValue;
+        assert_eq!(filter_expression(&CellValue::Integer(42), EXACT, "\\").as_deref(), Some("=42"));
+        for (value, expected) in [(CellValue::Null, "=NULL"),
+            (CellValue::Text(Vec::new()), "=''"), (CellValue::Text(b"NULL".to_vec()), "/^NULL$/"),
+            (CellValue::Text(b"''".to_vec()), "/^''$/"), (CellValue::Text(b"%".to_vec()), "/^%$/"),
+            (CellValue::Text(b"%%".to_vec()), "/^%%$/"), (CellValue::Text(b"O'Reilly".to_vec()), "=O'Reilly")] {
+            assert_eq!(filter_expression(&value, EXACT, "\\").as_deref(), Some(expected));
+            let conn = crate::db::open_path(":memory:").unwrap();
+            let condition = crate::filters::condition(expected, "\\").unwrap();
+            assert!(conn.query_row(&format!("SELECT ?1 {condition}"), [&value], |row| row.get::<_, bool>(0)).unwrap(), "{expected}");
+            if matches!(value, CellValue::Text(_)) && expected.starts_with('/') {
+                assert!(!conn.query_row(&format!("SELECT NULL {condition}"), [], |row| row.get::<_, bool>(0)).unwrap());
+            }
+        }
+        let text = CellValue::Text(b"3".to_vec());
+        for (index, expected) in ["3", "/^((?!3).)*$/", "<>3", ">3", "<3", ">=3", "<=3", "3~", "/3/"].into_iter().enumerate() {
+            assert_eq!(filter_expression(&text, FIRST_FILTER + index as u64, "\\").as_deref(), Some(expected));
+        }
+        assert_eq!(filter_expression(&CellValue::Text(b"=data".to_vec()), FIRST_FILTER, "!").as_deref(), Some("!=data"));
+        for value in [CellValue::Blob(b"text".to_vec()), CellValue::Text(vec![0xFF]), CellValue::Text(b"a\0b".to_vec())] {
+            for item in [EXACT, FIRST_FILTER, FIRST_FILTER + 8] { assert!(filter_expression(&value, item, "\\").is_none()); }
+        }
+    }
+
+    #[test]
+    fn cell_exact_filter_uses_background_query_and_retains_filter_undo() {
+        let mut demo = fixture(1400, 860, Theme::light()); demo.state.write_changes().unwrap();
+        let (x, y) = point(&demo, 2, 1); assert!(demo.open_browse_cell_menu(x, y));
+        choose(&mut demo, EXACT);
+        assert_eq!(demo.state.browse().col_filters[1], "=3");
+        let now = std::time::Instant::now(); demo.advance_browse_filter(now);
+        crate::browse_filter::tests::settle(&mut demo, now);
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows, [vec!["beta", "3"]]);
+        let input = demo.ids.browse_col_filters[1]; assert_eq!(demo.ui.focused(), Some(input));
+        demo.ui.key_input(UiKey::Undo); assert_eq!(demo.ui.text_input_value(input), Some(""));
+        demo.ui.key_input(UiKey::Redo); assert_eq!(demo.ui.text_input_value(input), Some("=3"));
+        assert!(!demo.state.dirty);
+    }
+
+    #[test]
+    fn cell_filter_submenu_applies_to_the_active_column_and_rejects_binary_values() {
+        let mut demo = fixture(1400, 860, Theme::light()); demo.state.write_changes().unwrap();
+        let (x, y) = point(&demo, 2, 1); assert!(demo.open_browse_cell_menu(x, y));
+        demo.ui.key_input(UiKey::Home); demo.ui.key_input(UiKey::Down); demo.ui.key_input(UiKey::Right);
+        capture(&mut demo, "cell-context-filter-submenu");
+        for _ in 0..3 { demo.ui.key_input(UiKey::Down); }
+        demo.ui.key_input(UiKey::Enter);
+        assert_eq!(demo.ui.take_menu_action(), Some((demo.ids.context_menu, FIRST_FILTER + 3)));
+        demo.take_browse_cell_target().unwrap(); demo.browse_cell_action(FIRST_FILTER + 3).unwrap();
+        demo.rebuild = true; demo.do_rebuild();
+        let now = std::time::Instant::now(); demo.advance_browse_filter(now); crate::browse_filter::tests::settle(&mut demo, now);
+        assert_eq!(demo.state.browse().col_filters[1], ">3");
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows, [vec!["A_B", "4"], vec!["A%B", "5"]]);
+        assert!(demo.state.browse().col_filters[0].is_empty()); assert!(!demo.state.dirty);
+        demo.state.browse_mut().col_filters[1].clear();
+        demo.state.conn.as_ref().unwrap().execute("UPDATE names SET name=x'4E554C4C' WHERE rowid=1", []).unwrap();
+        demo.state.refresh_browse().unwrap(); demo.do_rebuild();
+        let (x, y) = point(&demo, 0, 0); assert!(demo.open_browse_cell_menu(x, y));
+        let items = demo.browse_cell_menu_items();
+        assert!(items.iter().any(|item| item.id == EXACT && !item.enabled));
+        let filters = items.iter().find(|item| item.id == FILTERS).unwrap();
+        assert!(filters.children.iter().all(|item| !item.enabled));
     }
 
     #[test]

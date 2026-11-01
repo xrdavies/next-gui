@@ -1691,11 +1691,16 @@ impl Demo {
             }
         }
         if let Ok(tab) = std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB") {
-            if tab.starts_with("filter-") {
+            if tab.starts_with("filter-") || tab.starts_with("cell-context") {
                 state.prefs.filter_delay_ms = 100;
                 state.new_memory_db().unwrap();
                 state.conn.as_ref().unwrap().execute_batch("CREATE TABLE names(name TEXT, amount INTEGER); INSERT INTO names VALUES('alpha',1),('alpine',2),('beta',3),('A_B',4),('A%B',5);").unwrap();
                 state.refresh_schema().unwrap(); state.switch_browse_table_in("main", "names").unwrap(); state.tab=MainTab::Browse; state.dirty=true;
+                if tab.starts_with("cell-context") {
+                    let browse = state.browse_mut(); browse.sel_row = Some(2); browse.sel_row_start = Some(2); browse.sel_row_end = Some(2);
+                    browse.sel_col = Some(1); browse.sel_col_start = Some(1); browse.sel_col_end = Some(1);
+                    state.sync_edit_cell_from_selection();
+                }
                 if tab.contains("escape") {state.prefs.filter_escape="!".into();}
                 if tab.ends_with("narrow") {state.prefs.font_size=18.0;}
             }
@@ -1757,6 +1762,9 @@ impl Demo {
             if tab.starts_with("filter-") {
                 let input=if tab.starts_with("filter-column") {built.browse_col_filters[1]} else {built.browse_global_filter};
                 built.ui.set_focus(Some(input));built.ui.sync(&mut built.scene);
+            }
+            if tab.starts_with("cell-context") {
+                built.ui.set_focus(Some(built.browse_table)); built.ui.reveal_table_selection(built.browse_table); built.ui.sync(&mut built.scene);
             }
         }
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab|tab.starts_with("revert-")) && state.confirm_open {built.ui.set_focus(Some(built.modal));built.ui.sync(&mut built.scene);}
