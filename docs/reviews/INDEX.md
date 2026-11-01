@@ -12,7 +12,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 
 
-Latest scoped review: [Indexed Select and typed foreign keys](R-20261101-989e83fa4ebb.md) —891 tests,16 Soft/Metal pairs,four owned native workflows and14 Office windows pass. Main acceptance now prioritizes normal/maximized desktop workflows with realistic databases;small-window cases are supplementary. Full original parity F02 remains in_progress.
+Latest scoped review: [Primary desktop database workspace](R-20261101-b1e1611c02ed.md) — realistic100k-order/200k-detail edit/revert/query/DDL/save/reopen;893 tests,eight Soft/Metal pairs,eight native main-page windows. Standard1600×900 and actual maximized desktop are primary;Structure tree-table is next. Full original parity F02 remains in_progress.
 
 ## Findings
 

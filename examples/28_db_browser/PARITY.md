@@ -8,7 +8,7 @@ Status legend: `done` = implemented local subset, not upstream parity or native 
 
 **Inventory snapshot (2026-10-31):** The tables contain 104 overlapping workflow entries: 47 `done` local subsets and 57 `partial` entries. These are not weighted requirements and do not establish a completion percentage. Full original feature/UI parity remains in progress.
 
-**Latest scoped verification:** [Indexed Select and typed foreign keys](../../docs/reviews/R-20261101-989e83fa4ebb.md):891 tests,16 Soft/Metal pairs,four owned native workflows and14 Office windows pass. Complete parent choices preserve raw SQLite types through Save All and constraint refusal. Primary acceptance is now normal/maximized desktop use with realistic databases;small windows are supplementary. Full parity remains in progress.
+**Latest scoped verification:** [Primary desktop database workspace](../../docs/reviews/R-20261101-b1e1611c02ed.md): realistic100k orders/200k details through edit/revert/query/DDL/save/reopen;893 tests,eight Soft/Metal pairs,eight owned native main-page windows. Normal1600×900 and actual maximized desktop are primary;main workspace sizing,readable default columns and database Save routing fixed. Structure tree-table and full parity remain in progress.
 
 **Earlier regression/evidence correction:** [2026-10-27 report](../../docs/reviews/R-20261027-5e23229548d4.md) records that tested scope and corrects unsupported earlier claims.
 
