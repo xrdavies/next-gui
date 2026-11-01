@@ -10,12 +10,13 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [Guarded Detach and project persistence](R-20261101-14d00db973c9.md) — 869 workspace tests, twelve Soft/Metal pairs and four final native repeated keyboard workflows pass; initial focus and project persistence findings verified. Full original F02 remains in_progress.
+Latest scoped review: [Schema insertion, filter formats and attachment checkpoints](R-20261101-0916d358b03a.md) — 874 tests, twenty Soft/Metal pairs and sixteen final owned native keyboard workflows (112 frames) pass; empty-attachment project prompt finding verified. Full original F02 remains in_progress.
 
 ## Findings
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
+| R-20261101-0916d358b03a-F01 | verified | P2 | codex | e28 / all | existing attachment checkpoint | project_snapshot / refresh_schema | Empty Attach and same-alias file changes trigger project Save; cached identity survives worker ownership | [F01](R-20261101-0916d358b03a.md#r-20261101-0916d358b03a-f01) | 781ffa32049a | 0916d358b03a |
 | R-20261101-1cf20265f6d3-F02 | verified | P1 | codex | e28 / all | 1cf20265f6d3 | Detach project persistence | Removed-source native metadata pruned before Detach; XML/JSON reopen and Save prompts verified | [F02](R-20261101-1cf20265f6d3.md#r-20261101-1cf20265f6d3-f02) | 14d00db973c9 | 14d00db973c9 |
 | R-20261101-1cf20265f6d3-F01 | verified | P2 | codex | e28 / all; macOS observed | 1cf20265f6d3 | Detach confirmation / retained focus | Originating fresh tree focus restored after Cancel/Escape/success/refusal; repeated native keys verified | [F01](R-20261101-1cf20265f6d3.md#r-20261101-1cf20265f6d3-f01) | 3c367365d290 | 3c367365d290 |
 | R-20261101-ca24a5c14365-F01 | verified | P2 | codex | shared / macOS observed | existing fontdue cmap | Font loading/metrics/rasterization | Unicode glyph IDs repair accented text across fallback/metrics/layout/rasterization; pre-fix alias and final native rendering verified | [F01](R-20261101-ca24a5c14365.md#r-20261101-ca24a5c14365-f01) | 8d94dbe1c116 | 8d94dbe1c116 |
