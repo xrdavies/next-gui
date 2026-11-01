@@ -820,6 +820,7 @@ impl TableStyle {
             header_bg: c.header_bg,
             selected_bg: c.selected_bg,
             drag_select: false,
+            reorder_columns: false,
             grid: c.grid,
             focus_border: c.focus,
         }
@@ -899,6 +900,8 @@ impl TabsStyle {
         let f = density.font_scale();
         let _ = (c, s, f);
         Self {
+            closable: false,
+            movable: false,
             width: 400.0,
             height: 240.0,
             strip_height: scale(32.0, s),

@@ -471,6 +471,8 @@ impl Demo {
         }
     }
     pub(crate) fn advance_browse_filter(&mut self, now: Instant) -> Option<Duration> {
+        // A completed background load must not replace widgets under an active drag.
+        if self.ui.is_dragging() {return None;}
         self.filter_session
             .reconcile(&self.state, &self.ui, &self.ids);
         if self.state.browse_background && !self.filter_session.initial_attempted

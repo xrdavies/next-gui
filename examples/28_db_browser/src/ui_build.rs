@@ -170,7 +170,7 @@ pub struct BuiltUi {
     pub context_menu: WidgetId,
     pub browse_col_filters: Vec<WidgetId>,
     pub browse_tab_btns: Vec<WidgetId>,
-    pub sql_tab_btns: Vec<WidgetId>,
+    pub sql_documents: crate::sql_documents::Controls,
     pub pragma_inputs: Vec<WidgetId>,
     pub pragma_switches: Vec<WidgetId>,
     pub pragma_selects: Vec<WidgetId>,
@@ -181,9 +181,7 @@ pub struct BuiltUi {
     pub btn_sql_new_tab: WidgetId,
     pub btn_sql_open: WidgetId,
     pub btn_sql_save_as: WidgetId,
-    pub btn_sql_close: WidgetId,
-    pub btn_sql_left: WidgetId,
-    pub btn_sql_right: WidgetId,
+    pub btn_sql_layout: WidgetId,
     pub btn_sql_save: WidgetId,
     pub btn_sql_find: WidgetId,
     pub btn_sql_stop: WidgetId,
@@ -654,7 +652,6 @@ pub fn build_ui(
     let mut browse_form_scroll = z;
     let mut browse_col_filters: Vec<WidgetId> = Vec::new();
     let mut browse_tab_btns: Vec<WidgetId> = Vec::new();
-    let mut sql_tab_btns: Vec<WidgetId> = Vec::new();
     let mut pragma_inputs: Vec<WidgetId> = Vec::new();
     let mut pragma_switches: Vec<WidgetId> = Vec::new();
     let mut pragma_selects: Vec<WidgetId> = Vec::new();
@@ -665,9 +662,7 @@ pub fn build_ui(
     let mut btn_sql_new_tab = z;
     let mut btn_sql_open = z;
     let mut btn_sql_save_as = z;
-    let mut btn_sql_close = z;
-    let mut btn_sql_left = z;
-    let mut btn_sql_right = z;
+    let mut btn_sql_layout = z;
     let mut btn_sql_save = z;
     let mut btn_sql_find = z;
     let mut btn_sql_stop = z;
@@ -1848,6 +1843,8 @@ pub fn build_ui(
 
             let mut browse_table_style = TableStyle::from_theme(&theme);
             browse_table_style.drag_select = true;
+            browse_table_style.reorder_columns = state.guard_background_idle().is_ok()
+                && !state.has_cell_draft() && state.external_cell.is_none();
             browse_table_style.width = main_w - 24.0;
             browse_table_style.height = 160.0;
 
@@ -1859,10 +1856,11 @@ pub fn build_ui(
             sql_tb.cross_align = CrossAlign::Center;
             let mut sql_split = SplitterStyle::from_theme(&theme);
             sql_split.width = main_w - 24.0;
-            sql_split.height = (page_scroll_style.height - tool_row.height - page_scroll_style.gap
+            sql_split.height = (page_scroll_style.height - 40.0 - page_scroll_style.gap
                 - if state.toolbar_sql { sql_tb.height + page_scroll_style.gap } else { 0.0 }).max(280.0);
-            sql_split.axis = Axis::Horizontal;
-            sql_split.ratio = if state.sql_ratio.is_finite() { state.sql_ratio } else { 0.5 };
+            sql_split.axis = if state.sql_side_by_side { Axis::Vertical } else { Axis::Horizontal };
+            let ratio = if state.sql_side_by_side { state.sql_side_ratio } else { state.sql_ratio };
+            sql_split.ratio = if ratio.is_finite() { ratio } else { 0.5 };
             let mut sql_area_style = TextAreaStyle::from_theme(&theme);
             sql_area_style.width = sql_split.width;
             sql_area_style.height = 300.0;
@@ -2247,30 +2245,27 @@ pub fn build_ui(
                                     btn_sql_comment = tb.tool_icon_button(IconName::Code, "Toggle SQL Line Comments (Ctrl/Cmd+/)");
                                 });
                             }
-                            // SQL editor tabs as buttons
-                            p.scroll_row(tool_row, |row| {
-                                for i in 0..state.sql_tabs.len() {
-                                    let label = state.sql_tab_label(i);
-                                    sql_tab_btns.push(row.tool_button(label));
-                                }
-                                btn_sql_left = row.tool_button("←");
-                                btn_sql_right = row.tool_button("→");
-                                btn_sql_close = row.tool_button("Close Tab");
+                            let mut document_style = TabsStyle::from_theme(&theme);
+                            document_style.width = sql_split.width; document_style.height = 40.0;
+                            document_style.strip_height = 40.0; document_style.padding=0.0; document_style.gap=0.0;
+                            document_style.scrollable = true; document_style.closable = !state.sql_busy; document_style.movable = !state.sql_busy;
+                            sql_tabs_w = p.tabs(document_style, |tabs| {
+                                for i in 0..state.sql_tabs.len() { tabs.page(state.sql_tab_label(i), |_|{}); }
                             });
-                            sql_tabs_w = WidgetId(0);
                             sql_splitter = p.splitter(sql_split,
                                 |p| { sql_area = p.text_area(&sql_editor, "SQL…", sql_area_style); },
                                 |p| { p.column(sql_results_style, |p| {
 
                             p.scroll_row(tool_row, |row| {
-                                btn_sql_csv = row.tool_button("Results → CSV");
-                                btn_sql_json = row.tool_button("Results → JSON");
+                                btn_sql_layout = row.tool_icon_button(if state.sql_side_by_side { IconName::Rows } else { IconName::Columns },if state.sql_side_by_side { "Stack Editor / Results" } else { "Editor / Results Side by Side" });
+                                btn_sql_csv = row.tool_icon_button(IconName::File,"Export Results as CSV");
+                                btn_sql_json = row.tool_icon_button(IconName::Code,"Export Results as JSON");
                                 let mut view_style = TextInputStyle::from_theme(&theme);
-                                view_style.width = 160.0;
+                                view_style.width = 120.0;
                                 sql_view_name = row.text_input_styled(&state.sql_view_name, "view name", view_style);
-                                btn_sql_view = row.tool_button("Save as VIEW");
-                                sql_messages.error = row.tool_button("Go to Error");
-                                sql_messages.toggle = row.tool_button(if state.sql_messages_visible { "Hide Messages" } else { "Show Messages" });
+                                btn_sql_view = row.tool_icon_button(IconName::Database,"Save Results as VIEW");
+                                sql_messages.error = row.tool_icon_button(IconName::Warning,"Go to Error");
+                                sql_messages.toggle = row.tool_icon_button(IconName::Info,if state.sql_messages_visible { "Hide Messages" } else { "Show Messages" });
                             });
                             let toggle = sql_messages.toggle;
                             let error = sql_messages.error;
@@ -2927,6 +2922,9 @@ pub fn build_ui(
     crate::cond_format::build_confirmation(&mut ui,&mut cond_formats,state,&theme);
     let column_picker = crate::column_picker::build(&mut ui, state, &theme, width as f32);
     let view_keys = crate::view_keys::build(&mut ui, state, &theme, width as f32);
+    let sql_documents = crate::sql_documents::build(&mut ui,state,&theme);
+    ui.set_tabs_selected(sql_tabs_w,state.sql_tab_idx);
+    ui.set_accessible_name(sql_tabs_w,"SQL documents — drag to move, double-click to rename");
     crate::plot::configure(&mut ui, plot_controls, &state.plot, theme.colors.input_bg);
     if let Some(container) = ui.filtered_table_container(browse_table) {
         ui.set_flex_fill_minimum(container, 190.0);
@@ -2934,7 +2932,8 @@ pub fn build_ui(
     ui.set_flex_fill_minimum(browse_form_scroll, 160.0);
     ui.set_accessible_name(sql_splitter,"Resize SQL editor and query results");
     ui.set_flex_fill(sql_table,true);
-    ui.set_splitter_min_sizes(sql_splitter,120.0,32.0+4.0+96.0+if state.sql_messages_visible { 70.0 } else { 0.0 });
+    if state.sql_side_by_side { ui.set_splitter_min_sizes(sql_splitter,240.0,280.0); }
+    else { ui.set_splitter_min_sizes(sql_splitter,120.0,32.0+4.0+96.0+if state.sql_messages_visible { 70.0 } else { 0.0 }); }
     sql_messages.configure(&mut ui,state);
     ui.sync(&mut scene);
     let (x, y) = state.sql_scroll;
@@ -3092,7 +3091,7 @@ pub fn build_ui(
         context_menu,
         browse_col_filters,
         browse_tab_btns,
-        sql_tab_btns,
+        sql_documents,
         pragma_inputs,
         pragma_switches,
         pragma_selects,
@@ -3103,9 +3102,7 @@ pub fn build_ui(
         btn_sql_new_tab,
         btn_sql_open,
         btn_sql_save_as,
-        btn_sql_close,
-        btn_sql_left,
-        btn_sql_right,
+        btn_sql_layout,
         btn_sql_save,
         btn_sql_find,
         btn_sql_stop,

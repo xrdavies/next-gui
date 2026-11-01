@@ -57,6 +57,7 @@ mod browse_edit;
 mod fk_values;
 mod desktop_workflow;
 mod sql_layout;
+mod sql_documents;
 mod sql_messages;
 mod structure_tree;
 mod browse_menu;
@@ -357,7 +358,8 @@ struct BuiltUiIds {
     context_menu: WidgetId,
     browse_col_filters: Vec<WidgetId>,
     browse_tab_btns: Vec<WidgetId>,
-    sql_tab_btns: Vec<WidgetId>,
+    sql_tabs: WidgetId,
+    sql_documents: sql_documents::Controls,
     pragma_inputs: Vec<WidgetId>,
     pragma_switches: Vec<WidgetId>,
     pragma_selects: Vec<WidgetId>,
@@ -367,9 +369,7 @@ struct BuiltUiIds {
     btn_sql_new_tab: WidgetId,
     btn_sql_open: WidgetId,
     btn_sql_save_as: WidgetId,
-    btn_sql_close: WidgetId,
-    btn_sql_left: WidgetId,
-    btn_sql_right: WidgetId,
+    btn_sql_layout: WidgetId,
     btn_sql_save: WidgetId,
     btn_sql_find: WidgetId,
     btn_sql_stop: WidgetId,
@@ -621,7 +621,8 @@ impl From<&BuiltUi> for BuiltUiIds {
             context_menu: b.context_menu,
             browse_col_filters: b.browse_col_filters.clone(),
             browse_tab_btns: b.browse_tab_btns.clone(),
-            sql_tab_btns: b.sql_tab_btns.clone(),
+            sql_tabs: b.sql_tabs,
+            sql_documents: b.sql_documents,
             pragma_inputs: b.pragma_inputs.clone(),
             pragma_switches: b.pragma_switches.clone(),
             pragma_selects: b.pragma_selects.clone(),
@@ -631,9 +632,7 @@ impl From<&BuiltUi> for BuiltUiIds {
             btn_sql_new_tab: b.btn_sql_new_tab,
             btn_sql_open: b.btn_sql_open,
             btn_sql_save_as: b.btn_sql_save_as,
-            btn_sql_close: b.btn_sql_close,
-            btn_sql_left: b.btn_sql_left,
-            btn_sql_right: b.btn_sql_right,
+            btn_sql_layout: b.btn_sql_layout,
             btn_sql_save: b.btn_sql_save,
             btn_sql_find: b.btn_sql_find,
             btn_sql_stop: b.btn_sql_stop,
@@ -1933,6 +1932,7 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
+        if self.state.sql_rename.is_some() {self.snapshot_sql_rename();return;}
         self.snapshot_browse_cell_editor();
         self.snapshot_schema_dock();
         if self.state.export_dialog.is_some() {self.snapshot_data_export();return;}
@@ -1959,7 +1959,10 @@ impl Demo {
             self.last_structure_ratio = Some(ratio);
         }
         if let Some(ratio) = self.ui.splitter_ratio(self.ids.sql_splitter) {
-            if Some(ratio) != self.last_sql_ratio { self.state.sql_ratio = ratio; }
+            if Some(ratio) != self.last_sql_ratio {
+                if self.state.sql_side_by_side { self.state.sql_side_ratio = ratio; }
+                else { self.state.sql_ratio = ratio; }
+            }
             self.last_sql_ratio = Some(ratio);
         }
         if let Some(value) = self.ui.text_input_value(self.ids.sql_view_name) { self.state.sql_view_name = value.to_string(); }
@@ -2068,8 +2071,8 @@ impl Demo {
                 self.state.sql_edit_states[self.state.sql_tab_idx] = self.ui.text_area_state(self.ids.sql_area);
             }
         }
-        for (index, button) in self.ids.sql_tab_btns.iter().enumerate() {
-            self.ui.set_button_label(*button, self.state.sql_tab_label(index));
+        for index in 0..self.state.sql_tabs.len() {
+            self.ui.set_tab_title(self.ids.sql_tabs,index,self.state.sql_tab_label(index));
         }
         if let Some(plot)=self.ui.chart_plot(self.ids.chart,0) {
             if !self.state.plot.settings.manual && self.state.plot.matches_rendered(plot) {
@@ -3136,6 +3139,10 @@ impl Demo {
     }
 
     fn do_rebuild(&mut self) {
+        self.snapshot_sql_rename();
+        let rename_session=self.ui.text_input_state(self.ids.sql_documents.name);
+        let rename_focus=[self.ids.sql_documents.name,self.ids.sql_documents.apply,self.ids.sql_documents.cancel].into_iter()
+            .position(|id|id.0!=0 && self.ui.focused()==Some(id));
         let schema_focus = self.schema_dock_focus();
         self.snapshot_browse_cell_editor();
         let browse_editor_focused = self.ui.table_cell_editor(self.ids.browse_table)
@@ -3262,8 +3269,9 @@ impl Demo {
         let index_focused = (self.state.overlay == Some(OverlayKind::EditIndex)).then(||
             [self.ids.ov_idx_cols, self.ids.ov_idx_where, self.ids.ov_idx_preview, self.ids.ov_list, self.ids.ov_idx_available, self.ids.ov_idx_order].into_iter().position(|area| area.0 != 0 && self.ui.focused() == Some(area))
         ).flatten();
-        let tabs_focus = [self.ids.tabs,self.ids.dock_tabs].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
+        let tabs_focus = [self.ids.tabs,self.ids.dock_tabs,self.ids.sql_tabs].into_iter().position(|id| id.0 != 0 && self.ui.focused() == Some(id));
         let dock_tabs_view = self.ui.tabs_state(self.ids.dock_tabs);
+        let sql_tabs_view = self.ui.tabs_state(self.ids.sql_tabs);
         let log_revision = self.state.sql_log.revision();
         self.theme = ui_build::browser_theme(self.theme, self.state.prefs.font_size);
         let log_focused = self.ids.log_area.0 != 0 && self.ui.focused() == Some(self.ids.log_area)
@@ -3432,8 +3440,14 @@ impl Demo {
             }
         }
         if let Some(index) = tabs_focus {
-            let id = [self.ids.tabs,self.ids.dock_tabs][index];
+            let id = [self.ids.tabs,self.ids.dock_tabs,self.ids.sql_tabs][index];
             if id.0 != 0 { self.ui.set_focus(Some(id)); self.ui.sync(&mut self.scene); }
+        }
+        if let Some(view)=sql_tabs_view {self.ui.restore_tabs_state(self.ids.sql_tabs,&view);self.ui.sync(&mut self.scene);}
+        if self.state.sql_rename.is_some() {
+            if let Some(view)=rename_session {self.ui.restore_text_input_state(self.ids.sql_documents.name,&view);}
+            if let Some(index)=rename_focus {self.ui.set_focus(Some([self.ids.sql_documents.name,self.ids.sql_documents.apply,self.ids.sql_documents.cancel][index]));}
+            self.ui.sync(&mut self.scene);
         }
         let reveal_browse_selection = std::mem::take(&mut self.reveal_browse_selection);
         if (reveal_browse_selection || reveal_applied_cell) && self.ids.browse_table.0 != 0 {
@@ -4775,6 +4789,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
+        if self.state.sql_rename.is_some() {self.handle_sql_rename_button(id);return;}
         if id.0 != 0 && id == self.ids.btn_browse_cancel { self.cancel_browse_refresh(); return; }
         if self.handle_schema_dock_button(id) {return;}
         if self.handle_cond_format_button(id) {return;}
@@ -5122,14 +5137,6 @@ impl Demo {
             self.open_sql_find();
             return;
         }
-        for (i, bid) in self.ids.sql_tab_btns.iter().enumerate() {
-            if id == *bid {
-                self.snapshot_inputs();
-                self.state.switch_sql_tab(i);
-                self.rebuild = true;
-                return;
-            }
-        }
         if id == self.ids.btn_sql_line {
             self.snapshot_inputs();
             match self
@@ -5242,14 +5249,9 @@ impl Demo {
             self.action_save_sql(id == self.ids.btn_sql_save_as);
             return;
         }
-        if id == self.ids.btn_sql_close {
-            self.request_document_action(DocumentAction::CloseSqlTab(self.state.sql_tab_idx));
-            return;
-        }
-        if id == self.ids.btn_sql_left || id == self.ids.btn_sql_right {
-            let index = self.state.sql_tab_idx;
-            let next = if id == self.ids.btn_sql_left { index.saturating_sub(1) } else { (index + 1).min(self.state.sql_tabs.len() - 1) };
-            self.state.move_sql_tab(index, next);
+        if id.0 != 0 && id == self.ids.btn_sql_layout {
+            self.snapshot_inputs();
+            self.state.sql_side_by_side = !self.state.sql_side_by_side;
             self.rebuild = true;
             return;
         }
@@ -5366,6 +5368,7 @@ impl Demo {
         }
         if let Some((_, error)) = self.ui.take_table_data_error() { self.set_error(error); }
         if self.ui.is_dragging() { return; }
+        if self.poll_sql_documents() { return; }
         if self.poll_cond_formats() {return;}
         if let Some(mode) = self.ui.select_selected(self.ids.plot.mode) {
             if (mode == 1) != self.state.plot.settings.manual {
@@ -5740,7 +5743,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.fk_work.is_some() {self.handle_fk_values_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
+        if self.state.sql_rename.is_some() {self.handle_sql_rename_dismiss();} else if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.fk_work.is_some() {self.handle_fk_values_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         if let Some((id, color)) = self.ui.take_color_change() {
@@ -5762,7 +5765,7 @@ impl Demo {
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
             self.snapshot_inputs();
-            if self.handle_schema_dock_menu(item) {
+            if self.handle_sql_document_menu(item) || self.handle_schema_dock_menu(item) {
             } else if item==mid::PLOT_COPY {
                 self.copy_plot(ctx);
             } else if item == mid::BROWSE_COPY_COLUMN {
@@ -5865,6 +5868,9 @@ impl AppCallbacks for Demo {
         if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.starts_with("desktop-structure")) {
             self.ui.set_focus(Some(self.ids.tree)); self.ui.sync(&mut self.scene);
         }
+        if std::env::var("NEXT_GUI_DB_BROWSER_QA_TAB").is_ok_and(|tab| tab.contains("sql-documents")) {
+            self.ui.set_focus(Some(self.ids.sql_tabs));self.ui.sync(&mut self.scene);
+        }
         self.scene.mark_full_dirty(w as f32, h as f32);
         ctx.set_title(&format!("next-gui DB Browser — {}", self.backend.name()));
         eprintln!(
@@ -5927,7 +5933,7 @@ impl AppCallbacks for Demo {
                 x, y, ..
             } => {
                 if !self.finish_browse_cell_pointer(x as f32, y as f32) { self.after_ui(ctx); return; }
-                if self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) || self.open_browse_cell_menu(x as f32, y as f32) {
+                if self.open_sql_document_menu(x as f32,y as f32) || self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) || self.open_browse_cell_menu(x as f32, y as f32) {
                     self.after_ui(ctx);
                 }
             }
@@ -5959,6 +5965,7 @@ impl AppCallbacks for Demo {
             Event::PointerButton {
                 button: PointerButton::Left,
                 pressed: false,
+                modifiers,
                 ..
             } => {
                 if self.release_column_picker_pointer() {
@@ -5967,6 +5974,8 @@ impl AppCallbacks for Demo {
                 if self.ui.is_dragging() {
                     self.ui.pointer_released();
                     self.snapshot_inputs();
+                    self.poll_browse_column_order();
+                    self.poll_header_sort(modifiers.commandish());
                     self.handle_table_cell_edit();
                     self.poll_selection_changes();
                     self.do_rebuild();
@@ -6008,6 +6017,7 @@ impl AppCallbacks for Demo {
                 ..
             } => {
                 let text_clipboard = modifiers.commandish() && matches!(key, KeyCode::Char('c' | 'C' | 'x' | 'X' | 'v' | 'V'));
+                if self.handle_sql_rename_key(key) {self.after_ui(ctx);return;}
                 if (self.ui.active_dialog().is_some() || self.state.confirm_open) && !text_clipboard {
                     if self.handle_filter_context_key(key, modifiers) { self.after_ui(ctx); return; }
                     if let Some(key)=map_key(key,modifiers) {self.ui.key_input(key);}
@@ -8629,7 +8639,7 @@ mod interaction_tests {
         demo.ui.set_focus(Some(demo.ids.sql_area));
         demo.ui.key_input(UiKey::Undo);
         assert_eq!(demo.ui.text_area_value(demo.ids.sql_area), Some(""));
-        demo.handle_button(demo.ids.sql_tab_btns[0]);
+        demo.ui.set_tabs_selected(demo.ids.sql_tabs,0); demo.poll_selection_changes();
         demo.do_rebuild();
         assert_eq!(demo.ui.text_area_selection(demo.ids.sql_area), Some(21..23));
         demo.ui.set_focus(Some(demo.ids.sql_area));
@@ -11344,6 +11354,7 @@ mod interaction_tests {
             .bounds;
         demo.ui
             .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
+        demo.ui.pointer_released();
         demo.poll_header_sort(false);
         assert_eq!(demo.state.browse().order_col.as_deref(), Some("score ▲"));
         assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "1");
@@ -11357,6 +11368,7 @@ mod interaction_tests {
             .bounds;
         demo.ui
             .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
+        demo.ui.pointer_released();
         demo.poll_header_sort(false);
         assert!(demo.state.browse().order_desc);
         demo.do_rebuild();
@@ -11369,6 +11381,7 @@ mod interaction_tests {
             .bounds;
         demo.ui
             .pointer_pressed(&mut demo.scene, bounds.x + 30.0, bounds.y + 10.0);
+        demo.ui.pointer_released();
         demo.poll_header_sort(false);
         assert!(!demo.state.browse().order_desc);
         demo.do_rebuild();

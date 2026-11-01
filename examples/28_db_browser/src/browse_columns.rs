@@ -2,6 +2,21 @@
 use crate::{mid, Demo};
 
 impl Demo {
+    pub(crate) fn poll_browse_column_order(&mut self) {
+        let Some((table, order)) = self.ui.take_table_column_order() else { return; };
+        if table != self.ids.browse_table { return; }
+        let result = (|| {
+            self.state.guard_background_idle()?;
+            if self.state.has_cell_draft() || self.state.external_cell.is_some() { return Err("Apply or discard the cell draft first".into()); }
+            self.state.browse_mut().reorder_visible_columns(&order)
+        })();
+        match result {
+            Ok(()) => { self.clear_error(); self.state.status_msg = "Column order updated".into(); }
+            Err(error) => self.set_error(error),
+        }
+        self.rebuild = true;
+    }
+
     pub(crate) fn handle_browse_column_action(&mut self, item: u64) -> bool {
         let count = self.state.browse().result.as_ref().map_or(0, |r| r.columns.len());
         if !(mid::BROWSE_HIDE_COLUMN..=mid::BROWSE_RESET_COLUMNS).contains(&item)
@@ -20,12 +35,7 @@ impl Demo {
                     let position = column.and_then(|col| order.iter().position(|&i| i == col)).ok_or("Choose a visible column")?;
                     let next = if item == mid::BROWSE_COLUMN_LEFT { position.checked_sub(1) } else { position.checked_add(1).filter(|&i| i < order.len()) };
                     if let Some(next) = next { order.swap(position, next); }
-                    // Keep hidden columns' relative positions when they are made visible again.
-                    let mut all = tab.column_order.clone();
-                    for name in &names { if !all.contains(name) { all.push(name.clone()); } }
-                    let mut visible = order.iter();
-                    for name in &mut all { if !tab.hidden_columns.contains(name) { *name = names[*visible.next().ok_or("Column layout changed; reopen the menu")?].clone(); } }
-                    tab.column_order = all;
+                    tab.reorder_visible_columns(&order)?;
                 }
                 _ => {
                     let col = if item == mid::BROWSE_HIDE_COLUMN { column.ok_or("Choose a column")? } else { (item - mid::BROWSE_VISIBLE_COLUMN) as usize };
@@ -55,6 +65,38 @@ impl Demo {
 mod tests {
     use crate::{browse_filter::tests::{capture, fixture}, db, mid, state::AppState, UiKey};
     use next_gui_ui::Theme;
+
+    #[test]
+    fn desktop_header_drag_moves_columns_without_sorting_and_survives_project_reopen() {
+        for (name,width,height,theme) in [("dark",1600,900,Theme::dark()),("light",1920,927,Theme::light())] {
+            let mut demo=fixture(width,height,theme);
+            demo.state.write_changes().unwrap();
+            let dir=tempfile::tempdir().unwrap();let path=dir.path().join("drag.sqlite");demo.state.save_as(path.to_str().unwrap()).unwrap();
+            demo.do_rebuild();
+            let table=demo.ids.browse_table;
+            let bounds=demo.scene.iter_paint_order().into_iter().find(|n|demo.ui.widget_from_node(n.id)==Some(table)).unwrap().bounds;
+            let y=bounds.y+12.0;
+            let points:Vec<_>=(0..bounds.width as i32).filter_map(|x|demo.ui.table_header_column_at(&demo.scene,table,bounds.x+x as f32,y).map(|i|(bounds.x+x as f32,i))).collect();
+            let first=points.iter().find(|(_,i)|*i==0).unwrap().0+12.0;
+            let end=points.iter().rev().find(|(_,i)|*i==1).unwrap().0-12.0;
+            assert!(demo.ui.pointer_pressed(&mut demo.scene,first,y));demo.snapshot_inputs();demo.poll_header_sort(false);
+            assert_eq!(demo.advance_browse_filter(std::time::Instant::now()+std::time::Duration::from_secs(1)),None);
+            assert!(demo.ui.is_dragging());assert!(demo.state.browse_work.is_none());
+            assert!(demo.state.browse().ordering().is_empty());
+            assert!(demo.ui.pointer_moved(end,y));demo.ui.sync(&mut demo.scene);
+            capture(&mut demo,&format!("desktop-column-drag-{name}"));
+            demo.ui.pointer_released();demo.snapshot_inputs();demo.poll_browse_column_order();demo.poll_header_sort(false);demo.do_rebuild();
+            assert_eq!(demo.state.browse().visible_columns(),[1,0]);assert!(demo.state.browse().ordering().is_empty());
+            demo.state.begin_browse_cell_edit(0,0).unwrap();demo.state.edit_value="dragged name".into();demo.state.apply_cell_draft().unwrap();demo.state.write_changes().unwrap();
+            let reader=db::open_readonly(path.to_str().unwrap()).unwrap();
+            assert_eq!(reader.query_row("SELECT name,amount FROM names WHERE rowid=1",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?))).unwrap(),("dragged name".into(),1));
+            demo.do_rebuild();capture(&mut demo,&format!("desktop-column-dropped-{name}"));
+            for extension in ["json","sqbpro"] {
+                let project=dir.path().join(format!("drag.{extension}"));demo.state.save_project(&project).unwrap();
+                let mut reopened=AppState::empty();reopened.open_project(&project).unwrap();assert_eq!(reopened.browse().visible_columns(),[1,0]);
+            }
+        }
+    }
 
     #[test]
     fn hidden_rowid_layout_follows_its_alias_when_a_real_rowid_column_is_added() {

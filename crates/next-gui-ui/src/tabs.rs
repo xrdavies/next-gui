@@ -1,11 +1,28 @@
 use super::*;
 
+/// Document-tab requests. The owner can prompt before closing or renaming a document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabAction {
+    /// The close button was pressed for this page.
+    Close(usize),
+    /// A tab label was double-clicked.
+    Rename(usize),
+    /// Move a page to a display position, shifting intervening pages.
+    Move {
+        /// Original page index.
+        from: usize,
+        /// Destination page index after removing the original page.
+        to: usize,
+    },
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct TabStripState {
     offset: f32,
     pub(super) selected: Option<usize>,
     width: f32,
     size: f32,
+    last_click: Option<(usize, std::time::Instant)>,
 }
 
 /// Opaque tab-strip viewport for rebuilding the same titles and selected page.
@@ -25,6 +42,63 @@ struct StripGeometry {
 }
 
 impl Ui {
+    /// Drain the last close, rename or drag request; page ownership stays with the caller.
+    pub fn take_tab_action(&mut self) -> Option<(WidgetId, TabAction)> { self.pending_tab_action.take() }
+
+    /// Change a label without rebuilding its page or losing the strip viewport.
+    pub fn set_tab_title(&mut self, id: WidgetId, index: usize, title: impl Into<String>) -> bool {
+        let Some(Widget { kind:Kind::Tabs { titles, .. }, .. }) = self.widgets.get_mut(&id) else { return false; };
+        let Some(label) = titles.get_mut(index) else { return false; };
+        *label = title.into(); true
+    }
+
+    /// Header hit test for application context menus, excluding arrows and clipped tabs.
+    pub fn tab_at(&self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> Option<usize> {
+        let bounds = scene.get(self.widgets.get(&id)?.node?)?.bounds;
+        let geometry = self.tab_strip_geometry(id,bounds)?;
+        if !geometry.viewport.contains(x,y) { return None; }
+        geometry.tabs.iter().position(|tab|tab.contains(x,y))
+    }
+
+    pub(super) fn move_tab(&mut self, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() { return false; }
+        let Some(DragState::Tab { tabs, from, bounds, origin, moved, .. }) = self.drag else { return false; };
+        if !moved && (x-origin.0).abs().max((y-origin.1).abs()) < 5.0 { return false; }
+        let Some(g) = self.tab_strip_geometry(tabs,bounds) else { return false; };
+        let mut to = from; let mut marker = None; let mut scrolling=false;
+        if y >= g.viewport.y-24.0 && y <= g.viewport.y+g.viewport.height+24.0 {
+            let pos = g.tabs.iter().position(|tab|x < tab.x+tab.width*0.5).unwrap_or(g.tabs.len());
+            to = pos - usize::from(from < pos);
+            marker = Some(g.tabs.get(pos).map_or_else(||g.tabs.last().unwrap().x+g.tabs.last().unwrap().width,|t|t.x));
+            if let Some(Widget { kind:Kind::Tabs { strip, .. }, .. }) = self.widgets.get_mut(&tabs) {
+                let previous=strip.offset;
+                if x > g.viewport.x+g.viewport.width-12.0 { strip.offset = (strip.offset+20.0).min(g.max_offset); }
+                else if x < g.viewport.x+12.0 { strip.offset = (strip.offset-20.0).max(0.0); }
+                scrolling=strip.offset!=previous;
+            }
+        }
+        if let Some(DragState::Tab { to: target, moved, marker: mark, next_repeat, .. }) = &mut self.drag {
+            *target=to; *moved=true; *mark=marker;
+            *next_repeat=scrolling.then(||std::time::Instant::now()+std::time::Duration::from_millis(33));
+        }
+        true
+    }
+
+    pub(super) fn release_tab(&mut self, tabs: WidgetId, from: usize, to: usize, moved: bool) {
+        if moved {
+            if from != to { self.pending_tab_action = Some((tabs,TabAction::Move {from,to})); }
+            if let Some(Widget { kind:Kind::Tabs { strip, .. }, .. }) = self.widgets.get_mut(&tabs) { strip.last_click=None; }
+            return;
+        }
+        self.set_tabs_selected(tabs,from);
+        if let Some(Widget { kind:Kind::Tabs { strip, .. }, .. }) = self.widgets.get_mut(&tabs) {
+            let now = std::time::Instant::now();
+            if strip.last_click.is_some_and(|(i,time)|i==from && now.duration_since(time).as_millis()<500) {
+                self.pending_tab_action = Some((tabs,TabAction::Rename(from))); strip.last_click=None;
+            } else { strip.last_click=Some((from,now)); }
+        }
+    }
+
     /// Capture the current tab strip without changing its selected page.
     pub fn tabs_state(&self, id: WidgetId) -> Option<TabsState> {
         let Kind::Tabs {
@@ -88,7 +162,7 @@ impl Ui {
             .iter()
             .map(|title| {
                 if style.scrollable {
-                    (self.font.measure_line(title, style.size).0 + 20.0).max(40.0)
+                    (self.font.measure_line(title, style.size).0 + 20.0 + if style.closable {24.0} else {0.0}).max(40.0)
                 } else {
                     (bounds.width / titles.len() as f32).max(40.0)
                 }
@@ -153,7 +227,7 @@ impl Ui {
 
     pub(super) fn pointer_tabs(&mut self, scene: &Scene, id: WidgetId, x: f32, y: f32) -> bool {
         let Some(Widget {
-            kind: Kind::Tabs { strip, .. },
+            kind: Kind::Tabs { strip, style, .. },
             node,
             ..
         }) = self.widgets.get(&id)
@@ -167,6 +241,7 @@ impl Ui {
             return false;
         }
         let offset = strip.offset;
+        let style = *style;
         let Some(geometry) = self.tab_strip_geometry(id, bounds) else {
             return false;
         };
@@ -201,11 +276,14 @@ impl Ui {
         if !geometry.viewport.contains(x, y) {
             return false;
         }
-        geometry
-            .tabs
-            .iter()
-            .position(|tab| tab.contains(x, y))
-            .is_some_and(|index| self.set_tabs_selected(id, index))
+        let Some(index) = geometry.tabs.iter().position(|tab| tab.contains(x,y)) else { return false; };
+        let tab = geometry.tabs[index];
+        if style.closable && x >= tab.x+tab.width-24.0 {
+            self.pending_tab_action = Some((id,TabAction::Close(index))); return true;
+        }
+        if style.movable {
+            self.drag = Some(DragState::Tab { tabs:id,from:index,to:index,bounds,origin:(x,y),moved:false,marker:None,next_repeat:None }); true
+        } else { self.set_tabs_selected(id,index) }
     }
 
     pub(super) fn paint_tabs_strip(&mut self, scene: &mut Scene, id: WidgetId) {
@@ -257,10 +335,12 @@ impl Ui {
                 selected: Some(selected),
                 width: bounds.width,
                 size: style.size,
+                last_click: previous.last_click,
             };
         }
         geometry = self.tab_strip_geometry(id, bounds).unwrap();
-        let needed = titles.len() * 2 + if geometry.arrows.is_some() { 4 } else { 0 };
+        let base = titles.len() * 2 + if geometry.arrows.is_some() { 4 } else { 0 };
+        let needed = base + if style.closable { titles.len() } else { 0 } + usize::from(style.movable);
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets[&id].aux.clone();
         for &node in aux.iter().skip(needed) {
@@ -302,6 +382,19 @@ impl Ui {
             );
             scene.set_clip(lab, clip);
             scene.set_visible(lab, true);
+            if style.closable {
+                let close = aux[base+i];
+                let mask = icon::rasterize_icon(IconName::Close,12.0);
+                scene.set_bounds(close,Rect::new(tab.x+tab.width-18.0,tab.y+(tab.height-12.0)*0.5,12.0,12.0));
+                scene.set_fill(close,if active {style.active_fg} else {style.fg});
+                scene.set_mask(close,Some(mask)); scene.set_clip(close,Some(geometry.viewport.intersect(&tab))); scene.set_visible(close,true);
+            }
+        }
+        if style.movable {
+            let marker = match self.drag { Some(DragState::Tab { tabs, marker, .. }) if tabs==id => marker, _ =>None };
+            let mark = aux[needed-1];
+            scene.set_bounds(mark,Rect::new(marker.unwrap_or(bounds.x)-1.0,geometry.viewport.y,2.0,geometry.viewport.height));
+            scene.set_fill(mark,style.active_fg); scene.set_mask(mark,None); scene.set_clip(mark,Some(geometry.viewport)); scene.set_visible(mark,marker.is_some());
         }
         if let Some(arrows) = geometry.arrows {
             for (i, rect) in arrows.iter().enumerate() {
@@ -353,6 +446,67 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_strip_retains_double_click_across_rebuild() {
+        let font=Ui::new().font().clone();
+        let build=|| {
+            let mut ui=Ui::with_font(font.clone());let mut scene=Scene::new();let mut tabs=WidgetId(0);
+            ui.column(ColumnStyle {width:260.0,height:100.0,padding:0.0,..Default::default()},|p| {
+                tabs=p.tabs(TabsStyle {width:500.0,height:80.0,scrollable:true,movable:true,closable:true,..Default::default()},|t| {t.page("Query",|_|{});});
+            });ui.sync(&mut scene);(ui,scene,tabs)
+        };
+        let (mut ui,mut scene,tabs)=build();let b=scene.get(ui.widgets[&tabs].node.unwrap()).unwrap().bounds;
+        ui.pointer_pressed(&mut scene,b.x+12.0,b.y+12.0);ui.pointer_released();let view=ui.tabs_state(tabs).unwrap();
+        let (mut next,mut scene,tabs)=build();assert!(next.restore_tabs_state(tabs,&view));
+        next.pointer_pressed(&mut scene,b.x+12.0,b.y+12.0);next.pointer_released();
+        assert_eq!(next.take_tab_action(),Some((tabs,TabAction::Rename(0))));
+    }
+
+    #[test]
+    fn held_document_drag_scrolls_overflow_and_cancel_keeps_pages() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut tabs=WidgetId(0);
+        ui.column(ColumnStyle {width:260.0,height:120.0,padding:0.0,..Default::default()},|p| {
+            tabs=p.tabs(TabsStyle {width:260.0,height:100.0,scrollable:true,movable:true,closable:true,..Default::default()},|t| {
+                for i in 0..12 {t.page(format!("Document {i}"),|_|{});}
+            });
+        });ui.sync(&mut scene);
+        let b=scene.get(ui.widgets[&tabs].node.unwrap()).unwrap().bounds;let g=ui.tab_strip_geometry(tabs,b).unwrap();
+        ui.pointer_pressed(&mut scene,b.x+12.0,b.y+12.0);ui.pointer_moved(g.viewport.x+g.viewport.width-3.0,b.y+12.0);
+        let before=ui.tabs_state(tabs).unwrap().strip.offset;assert!(ui.pointer_repeat_delay().is_some());
+        std::thread::sleep(std::time::Duration::from_millis(40));assert!(ui.repeat_pointer());assert!(ui.tabs_state(tabs).unwrap().strip.offset>before);
+        ui.cancel_pointer_capture();ui.pointer_released();assert_eq!(ui.take_tab_action(),None);assert!(ui.pointer_repeat_delay().is_none());assert_eq!(ui.tabs_selected(tabs),Some(0));
+    }
+
+    #[test]
+    fn document_tabs_emit_source_bound_close_move_and_double_click_requests() {
+        let mut ui=Ui::new();let mut scene=Scene::new();
+        let mut tabs=WidgetId(0);
+        ui.column(ColumnStyle {width:500.0,height:100.0,padding:0.0,..Default::default()},|p| {
+            tabs=p.tabs(TabsStyle {width:500.0,height:80.0,scrollable:true,closable:true,movable:true,..Default::default()},|t| {
+                for name in ["First SQL","Second SQL","中文 SQL"] {t.page(name,|_|{});}
+            });
+        });
+        ui.sync(&mut scene);
+        let bounds=scene.get(ui.widgets[&tabs].node.unwrap()).unwrap().bounds;
+        let geometry=ui.tab_strip_geometry(tabs,bounds).unwrap();
+        let (x,y)=(geometry.tabs[1].x+10.0,geometry.tabs[1].y+12.0);
+        assert_eq!(ui.tab_at(&scene,tabs,x,y),Some(1));
+        ui.pointer_pressed(&mut scene,x,y);assert_eq!(ui.tabs_selected(tabs),Some(0));
+        ui.pointer_released();assert_eq!(ui.tabs_selected(tabs),Some(1));assert_eq!(ui.take_tab_action(),None);
+        let view=ui.tabs_state(tabs).unwrap();assert!(ui.restore_tabs_state(tabs,&view));
+        ui.pointer_pressed(&mut scene,x,y);ui.pointer_released();
+        assert_eq!(ui.take_tab_action(),Some((tabs,TabAction::Rename(1))));
+        let first=geometry.tabs[0];let last=geometry.tabs[2];
+        ui.pointer_pressed(&mut scene,first.x+10.0,y);ui.pointer_moved(last.x+last.width-5.0,y);ui.sync(&mut scene);
+        assert!(scene.get(*ui.widgets[&tabs].aux.last().unwrap()).unwrap().visible);
+        ui.cancel_pointer_capture();ui.pointer_released();assert_eq!(ui.take_tab_action(),None);
+        ui.pointer_pressed(&mut scene,first.x+10.0,y);ui.pointer_moved(last.x+last.width-5.0,y);ui.pointer_released();
+        assert_eq!(ui.take_tab_action(),Some((tabs,TabAction::Move {from:0,to:2})));
+        ui.pointer_pressed(&mut scene,last.x+last.width-12.0,y);ui.pointer_released();
+        assert_eq!(ui.take_tab_action(),Some((tabs,TabAction::Close(2))));
+        assert_eq!(ui.tabs_selected(tabs),Some(1));
+    }
 
     #[test]
     fn bottom_strips_place_pages_above_labels_and_route_only_strip_pointer_input() {

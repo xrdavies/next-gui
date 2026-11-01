@@ -320,8 +320,10 @@ pub fn decode(text: &str) -> Result<ProjectFile, String> {
     if let Some(sql) = root.child("tab_sql") {
         project.sql_tabs.clear();
         project.sql_files.clear();
+        project.sql_tab_titles.clear();
         for tab in sql.children().filter(|e| e.name == "sql") {
             project.sql_tabs.push(tab.text());
+            project.sql_tab_titles.push(tab.attr("name").map(str::to_owned));
             project
                 .sql_files
                 .push(tab.attr("filename").map(|s| crate::state::SqlFile {
@@ -460,9 +462,10 @@ pub fn encode(project: &ProjectFile, path: &Path) -> Result<String, String> {
             .get(index)
             .cloned()
             .unwrap_or_else(|| Element::new("sql"));
-        if tab.attr("name").is_none() {
-            tab.set("name", format!("SQL {}", index + 1));
-        }
+        let title = project.sql_tab_titles.get(index).and_then(Clone::clone).unwrap_or_else(||
+            project.sql_files.get(index).and_then(|f|f.as_ref()).and_then(|f|f.path.file_name())
+                .map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||format!("SQL {}",index+1)));
+        tab.set("name",title);
         tab.attrs.retain(|(key, _)| key != "filename");
         tab.content.clear();
         if let Some(Some(file)) = project.sql_files.get(index) {

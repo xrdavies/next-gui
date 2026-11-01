@@ -21,6 +21,47 @@ mod tests {
     }
 
     #[test]
+    fn desktop_sql_side_by_side_retains_complete_results_history_and_independent_ratios() {
+        for (name,theme,width,height) in [("dark",Theme::dark(),1600,900),("light",Theme::light(),1920,927)] {
+            let mut demo=fixture(width,height,theme);demo.state.write_changes().unwrap();
+            crate::desktop_workflow::prepare(&mut demo.state,"desktop-sql").unwrap();
+            let finish=|demo:&mut crate::Demo| {let end=Instant::now()+Duration::from_secs(20);while demo.state.sql_busy {assert!(Instant::now()<end);demo.state.poll_sql_job();std::thread::sleep(Duration::from_millis(1));}};
+            finish(&mut demo);demo.state.sql_tabs[0]="SELECT id,note FROM orders ORDER BY id".into();demo.state.start_sql_job().unwrap();finish(&mut demo);demo.do_rebuild();
+            let values=demo.state.sql_result.as_ref().unwrap().all_values.clone().unwrap();assert_eq!(values.len(),100000);
+            demo.ui.set_table_selected_cells(demo.ids.sql_table,Some((99998,99999)),Some((0,1)));demo.ui.reveal_table_selection(demo.ids.sql_table);
+            demo.ui.set_focus(Some(demo.ids.sql_area));demo.ui.select_text_area_range(demo.ids.sql_area,0..0);demo.ui.replace_text_area_selection(demo.ids.sql_area,"-- retained draft\n");
+            demo.ui.set_splitter_ratio(demo.ids.sql_splitter,0.4);demo.snapshot_inputs();let stacked=demo.state.sql_ratio;
+            demo.handle_button(demo.ids.btn_sql_layout);demo.do_rebuild();assert!(demo.state.sql_side_by_side);
+            let grid=bounds(&demo,demo.ids.sql_table);
+            for id in [demo.ids.btn_sql_layout,demo.ids.btn_sql_csv,demo.ids.btn_sql_json,demo.ids.sql_view_name,demo.ids.btn_sql_view,demo.ids.sql_messages.error,demo.ids.sql_messages.toggle] {
+                let b=bounds(&demo,id);assert!(b.x>=grid.x && b.x+b.width<=grid.x+grid.width,"result action is clipped: {b:?} in {grid:?}");
+                assert_eq!(demo.ui.hit_widget(&demo.scene,b.x+b.width*0.5,b.y+b.height*0.5),Some(id));
+            }
+            for ratio in [0.35,0.65] {
+                let editor=bounds(&demo,demo.ids.sql_area);let x=editor.x+editor.width+3.0;let y=editor.y+editor.height*0.5;
+                assert_eq!(demo.ui.hit_widget(&demo.scene,x,y),Some(demo.ids.sql_splitter));
+                let total=bounds(&demo,demo.ids.sql_splitter);
+                demo.ui.pointer_pressed(&mut demo.scene,x,y);demo.ui.pointer_moved(total.x+total.width*ratio,y);demo.ui.pointer_released();demo.ui.sync(&mut demo.scene);demo.snapshot_inputs();demo.do_rebuild();
+                let editor=bounds(&demo,demo.ids.sql_area);let grid=bounds(&demo,demo.ids.sql_table);let message=bounds(&demo,demo.ids.sql_messages.area);
+                assert!(grid.x>editor.x+editor.width);assert!((grid.y-editor.y-36.0).abs()<3.0,"{grid:?} {editor:?}");
+                assert!(grid.height>=96.0 && grid.width>=270.0);assert!((message.x-grid.x).abs()<1.0 && (message.width-grid.width).abs()<1.0);
+                assert_eq!(demo.ui.table_selected_row(demo.ids.sql_table),Some(99999));
+                assert!(Arc::ptr_eq(&values,demo.state.sql_result.as_ref().unwrap().all_values.as_ref().unwrap()));
+            }
+            let side=demo.state.sql_side_ratio;capture(&mut demo,&format!("desktop-sql-side-{name}"));
+            demo.handle_button(demo.ids.btn_sql_layout);demo.do_rebuild();assert!(!demo.state.sql_side_by_side);assert!((demo.state.sql_ratio-stacked).abs()<0.001);
+            assert!(bounds(&demo,demo.ids.sql_table).y>bounds(&demo,demo.ids.sql_area).y);
+            demo.handle_button(demo.ids.btn_sql_layout);demo.do_rebuild();assert!((demo.state.sql_side_ratio-side).abs()<0.001);
+            demo.ui.set_focus(Some(demo.ids.sql_area));assert!(demo.ui.key_input(UiKey::Undo));assert_eq!(demo.ui.text_area_value(demo.ids.sql_area),Some("SELECT id,note FROM orders ORDER BY id"));demo.snapshot_inputs();
+            let project=crate::project::ProjectFile::from_state(&demo.state);let dir=tempfile::tempdir().unwrap();
+            for extension in ["json","sqbpro"] {
+                let file=dir.path().join(format!("layout.{extension}"));project.save(&file).unwrap();let loaded=crate::project::ProjectFile::load(&file).unwrap();
+                let mut state=crate::state::AppState::empty();loaded.apply_to(&mut state);assert!(state.sql_side_by_side);assert!((state.sql_side_ratio-side).abs()<0.001);
+            }
+        }
+    }
+
+    #[test]
     fn desktop_sql_split_drag_retains_editor_history_and_complete_results() {
         for (name, theme, width, height) in [
             ("dark", Theme::dark(), 1600, 900),

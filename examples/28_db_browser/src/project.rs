@@ -16,6 +16,8 @@ pub struct ProjectFile {
     #[serde(rename = "structure_rows_ratio")]
     pub structure_ratio: f32,
     pub sql_ratio: f32,
+    pub sql_side_by_side: bool,
+    pub sql_side_ratio: f32,
     pub sql_messages_ratio: f32,
     pub sql_messages_visible: bool,
     pub structure_widths: Vec<f32>,
@@ -37,6 +39,7 @@ pub struct ProjectFile {
     pub browse_tabs: Vec<BrowseTabState>,
     pub browse_tab_idx: usize,
     pub sql_tabs: Vec<String>,
+    pub sql_tab_titles: Vec<Option<String>>,
     pub sql_files: Vec<Option<crate::state::SqlFile>>,
     pub sql_tab_idx: usize,
     pub dock_edit: bool,
@@ -66,6 +69,8 @@ impl ProjectFile {
             body_ratio: state.body_ratio,
             structure_ratio: state.structure_ratio,
             sql_ratio: state.sql_ratio,
+            sql_side_by_side: state.sql_side_by_side,
+            sql_side_ratio: state.sql_side_ratio,
             sql_messages_ratio: state.sql_messages_ratio,
             sql_messages_visible: state.sql_messages_visible,
             structure_widths: state.structure_widths.clone(),
@@ -87,6 +92,7 @@ impl ProjectFile {
             browse_tabs,
             browse_tab_idx: state.browse_tab_idx,
             sql_tabs: state.sql_tabs.clone(),
+            sql_tab_titles: state.sql_tab_titles.clone(),
             sql_files: state.sql_files.clone(),
             sql_tab_idx: state.sql_tab_idx,
             dock_edit: state.dock_edit,
@@ -148,6 +154,8 @@ impl ProjectFile {
         state.sql_messages_ratio = if self.sql_messages_ratio.is_finite() { self.sql_messages_ratio.clamp(0.05,0.95) } else { 0.65 };
         state.sql_messages_visible = self.sql_messages_visible;
         state.sql_ratio = if self.sql_ratio.is_finite() { self.sql_ratio.clamp(0.05,0.95) } else { 0.5 };
+        state.sql_side_by_side = self.sql_side_by_side;
+        state.sql_side_ratio = if self.sql_side_ratio.is_finite() { self.sql_side_ratio.clamp(0.05,0.95) } else { 0.5 };
         state.structure_widths = self.structure_widths.iter().take(2).copied().map(|width|if width.is_finite() {width.max(24.0)} else {110.0}).collect();
         state.dock_ratio = if self.dock_ratio.is_finite() {self.dock_ratio.clamp(0.05,0.95)}else{0.38};
         state.plot_ratio = if self.plot_ratio.is_finite() { self.plot_ratio.clamp(0.05,0.95) } else { 0.45 };
@@ -165,6 +173,8 @@ impl ProjectFile {
         state.selected = self.selected_object.clone();
         state.schema_group = None;
         state.sql_files = self.sql_files.clone();
+        state.sql_tab_titles = self.sql_tab_titles.iter().take(self.sql_tabs.len()).cloned().collect();
+        state.sql_rename = None;
         state.sql_outputs.clear();
         state.sql_message = "Ready — Execute SQL to see results.".into();
         state.sql_messages_view = None;
@@ -208,6 +218,8 @@ impl Default for ProjectFile {
             body_ratio: 0.72,
             structure_ratio: 0.68,
             sql_ratio: 0.5,
+            sql_side_by_side: false,
+            sql_side_ratio: 0.5,
             sql_messages_ratio: 0.65,
             sql_messages_visible: true,
             structure_widths: Vec::new(),
@@ -229,6 +241,7 @@ impl Default for ProjectFile {
             browse_tabs: Vec::new(),
             browse_tab_idx: 0,
             sql_tabs: Vec::new(),
+            sql_tab_titles: Vec::new(),
             sql_files: Vec::new(),
             sql_tab_idx: 0,
             dock_edit: true,

@@ -62,7 +62,7 @@ mod text_input;
 mod menu_popup;
 pub use text_input::TextInputState;
 use text_input::InputEdit;
-pub use tabs::TabsState;
+pub use tabs::{TabAction, TabsState};
 use tabs::TabStripState;
 mod scrollbars;
 pub use text_area::TextAreaState;
@@ -789,6 +789,8 @@ pub struct TableStyle {
     pub selected_bg: Color,
     /// Drag across body cells to select a rectangle instead of panning.
     pub drag_select: bool,
+    /// Drag header labels to reorder visible columns; clicks are emitted on release.
+    pub reorder_columns: bool,
     /// Grid / separator hint.
     pub grid: Color,
     /// Focus border hint.
@@ -813,6 +815,7 @@ impl Default for TableStyle {
             header_bg: Color::rgb(0x32, 0x32, 0x3a),
             selected_bg: Color::rgb(0x2f, 0x5b, 0xa8),
             drag_select: false,
+            reorder_columns: false,
             grid: Color::rgb(0x3a, 0x3a, 0x44),
             focus_border: Color::rgb(0x3b, 0x82, 0xf6),
         }
@@ -970,6 +973,10 @@ impl Default for ContextMenuStyle {
 /// Style for Tabs (strip + content pane).
 #[derive(Debug, Clone, Copy)]
 pub struct TabsStyle {
+    /// Show a close button on each tab; closing is a request for the owner to handle.
+    pub closable: bool,
+    /// Allow header dragging; the owner handles the emitted move request.
+    pub movable: bool,
     /// Outer width.
     pub width: f32,
     /// Outer height (strip + content).
@@ -1003,6 +1010,8 @@ pub struct TabsStyle {
 impl Default for TabsStyle {
     fn default() -> Self {
         Self {
+            closable: false,
+            movable: false,
             width: 400.0,
             height: 240.0,
             strip_height: 32.0,
@@ -2261,6 +2270,18 @@ impl Widget {
 
 #[derive(Debug, Clone)]
 enum DragState {
+    Tab { tabs: WidgetId, from: usize, to: usize, bounds: Rect, origin: (f32,f32), moved: bool, marker: Option<f32>, next_repeat: Option<std::time::Instant> },
+    TableHeader {
+        table: WidgetId,
+        column: usize,
+        bounds: Rect,
+        origin: (f32, f32),
+        order: Vec<usize>,
+        target: Vec<usize>,
+        marker: Option<f32>,
+        moved: bool,
+        next_repeat: Option<std::time::Instant>,
+    },
     Plot {
         chart: WidgetId,
         tile: usize,
@@ -2467,6 +2488,8 @@ pub struct Ui {
     pending_pagination_change: Option<(WidgetId, usize)>,
     /// Last Table header column click; drained by [`Ui::take_table_header_click`].
     pending_table_header_click: Option<(WidgetId, usize)>,
+    pending_table_column_order: Option<(WidgetId, Vec<usize>)>,
+    pending_tab_action: Option<(WidgetId, TabAction)>,
     pending_table_data_error: std::cell::RefCell<Option<(WidgetId, String)>>,
     pending_select_data_error: std::cell::RefCell<Option<(WidgetId, String)>>,
     pending_table_check_change: Option<(WidgetId, usize, usize, bool)>,
@@ -2636,6 +2659,8 @@ impl Ui {
             pending_breadcrumb_click: None,
             pending_pagination_change: None,
             pending_table_header_click: None,
+            pending_table_column_order: None,
+            pending_tab_action: None,
             pending_table_data_error: std::cell::RefCell::new(None),
             pending_select_data_error: std::cell::RefCell::new(None),
             pending_table_check_change: None,
@@ -3683,6 +3708,8 @@ impl Ui {
             return self.widgets.values().any(|w| matches!(w.kind, Kind::Tooltip { .. }));
         };
         match drag {
+            DragState::Tab { .. } => self.move_tab(x,y),
+            DragState::TableHeader { .. } => self.move_table_header(x, y),
             DragState::Plot {..} => self.move_plot(x, y),
             DragState::IntegerInput { .. } => self.move_integer_repeat(x, y),
             DragState::TableSelection { table, bounds, origin, .. } => {
@@ -3762,6 +3789,13 @@ impl Ui {
     /// End an active drag.
     pub fn pointer_released(&mut self) {
         match self.drag.take() {
+            Some(DragState::Tab { tabs, from, to, moved, .. }) => self.release_tab(tabs,from,to,moved),
+            Some(DragState::TableHeader { table, column, order, target, moved, .. }) => {
+                if !moved { self.pending_table_header_click = Some((table, column)); }
+                else if target != order && self.set_table_visible_columns(table, &target) {
+                    self.pending_table_column_order = Some((table, target));
+                }
+            }
             Some(DragState::Plot {chart,tile,moved:false,row:Some(row),extend,..}) => {
                 if let Some(data) = self.chart_plot_mut(chart,tile) {data.select_row(row,extend);}
             }
@@ -6262,7 +6296,11 @@ impl Ui {
                 }
             }
             if let Some(ci) = column_hit {
-                self.pending_table_header_click = Some((id, ci));
+                if style.reorder_columns {
+                    let order = visible_table_columns(columns);
+                    self.drag = Some(DragState::TableHeader { table:id, column:ci, bounds,
+                        origin:(x,y), target:order.clone(), order, marker:None, moved:false, next_repeat:None });
+                } else { self.pending_table_header_click = Some((id, ci)); }
             }
             return true;
         }
@@ -12532,7 +12570,7 @@ impl Ui {
         };
         // Check cells reuse text nodes for boxes; optional final nodes paint ticks above them.
         let stride = 1 + 2 * ncols + if checks.is_empty() && dropdown_columns.is_empty() { 0 } else { ncols };
-        let needed = ncols + count * stride;
+        let needed = ncols + count * stride + usize::from(style.reorder_columns);
         self.ensure_aux_nodes(scene, host, id, needed);
         let aux = self.widgets.get(&id).map(|w| w.aux.clone()).unwrap_or_default();
 
@@ -12549,6 +12587,18 @@ impl Ui {
 
         let label_height = self.table_header_label_height(id).unwrap_or(style.header_height);
         let cells = table_column_rects(bounds, &columns, style.padding, scroll_x, frozen_cols);
+        let marker = match &self.drag {
+            Some(DragState::TableHeader { table, marker, .. }) if *table == id => *marker,
+            _ => None,
+        };
+        if style.reorder_columns {
+            let mark = aux[needed-1];
+            scene.set_bounds(mark, Rect::new(marker.unwrap_or(bounds.x)-1.0, bounds.y, 2.0, label_height));
+            scene.set_fill(mark, style.focus_border);
+            scene.set_mask(mark, None);
+            scene.set_clip(mark, Some(bounds));
+            scene.set_visible(mark, marker.is_some());
+        }
         let selected_columns = selected_table_columns(&columns, selected_col_range.or_else(|| selected_col.map(|i| (i, i))));
         for (ci, col) in columns.iter().enumerate() {
             let (ox, clip) = cells[ci];
@@ -12754,7 +12804,7 @@ impl Ui {
         }
 
         // Hide leftover slots beyond current window
-        let used = ncols + count * stride;
+        let used = needed;
         for i in used..aux.len() {
             if let Some(&n) = aux.get(i) {
                 scene.set_visible(n, false);

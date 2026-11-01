@@ -46,6 +46,11 @@ pub fn prepare(state: &mut AppState, page: &str) -> Result<(), String> {
     state.sql_tabs[0] = if page.starts_with("desktop-sql-messages") { DELIVERY_UPDATE }
         else if page.starts_with("desktop-sql-error") { "-- Inspect a missing order column\nSELECT id, delivery_reference FROM orders;" }
         else { REPORT }.into();
+    if page.contains("sql-documents") {
+        state.sql_tabs.extend(["SELECT id,note FROM orders ORDER BY id;".into(),"-- Inspect pending deliveries\nSELECT * FROM orders WHERE status='pending';".into()]);
+        state.sql_tab_titles=vec![Some("Revenue by status".into()),Some("Order notes".into()),Some("Pending deliveries".into())];
+        state.sql_side_by_side=page.contains("side");
+    }
     state.mark_sql_saved();
     if state.tab == MainTab::ExecuteSql { state.start_sql_job()?; }
     state.checkpoint_project();

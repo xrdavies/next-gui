@@ -332,6 +332,22 @@ pub struct BrowseTabState {
 }
 
 impl BrowseTabState {
+    pub fn reorder_visible_columns(&mut self, order: &[usize]) -> Result<(), String> {
+        let mut actual = self.visible_columns();
+        let mut supplied = order.to_vec(); actual.sort_unstable(); supplied.sort_unstable();
+        if supplied != actual { return Err("Column layout changed; try again".into()); }
+        let names = &self.result.as_ref().ok_or("No browse data")?.columns;
+        let mut all = self.column_order.clone();
+        for name in names { if !all.contains(name) { all.push(name.clone()); } }
+        let mut visible = order.iter();
+        for name in &mut all {
+            if !self.hidden_columns.contains(name) { *name = names[*visible.next().ok_or("Column layout changed; try again")?].clone(); }
+        }
+        self.column_order = all;
+        self.sel_col_start = self.sel_col; self.sel_col_end = self.sel_col;
+        Ok(())
+    }
+
     pub fn visible_columns(&self) -> Vec<usize> {
         let columns = self.result.as_ref().map(|r| r.columns.as_slice()).unwrap_or(&self.column_names);
         browse_column_order(columns, &self.column_order, &self.hidden_columns)
@@ -561,6 +577,8 @@ pub struct AppState {
     pub body_ratio: f32,
     pub structure_ratio: f32,
     pub sql_ratio: f32,
+    pub sql_side_by_side: bool,
+    pub sql_side_ratio: f32,
     pub dock_ratio: f32,
     pub plot_ratio: f32,
     pub shell_scroll: (f32, f32),
@@ -664,6 +682,8 @@ pub struct AppState {
 
     // Execute SQL
     pub sql_tabs: Vec<String>,
+    pub sql_tab_titles: Vec<Option<String>>,
+    pub sql_rename: Option<(usize, String)>,
     pub sql_files: Vec<Option<SqlFile>>,
     sql_saved: Vec<String>,
     pub sql_edit_states: Vec<Option<next_gui_ui::TextAreaState>>,
@@ -959,6 +979,8 @@ impl AppState {
             body_ratio: 0.72,
             structure_ratio: 0.68,
             sql_ratio: 0.5,
+            sql_side_by_side: false,
+            sql_side_ratio: 0.5,
             dock_ratio: 0.38,
             plot_ratio: 0.45,
             shell_scroll: (0.0,0.0),
@@ -1066,6 +1088,8 @@ impl AppState {
             sql_files: Vec::new(),
             sql_saved: Vec::new(),
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
+            sql_tab_titles: Vec::new(),
+            sql_rename: None,
             sql_tab_idx: 0,
             sql_result: None,
             sql_outputs: Vec::new(),
@@ -1283,9 +1307,26 @@ impl AppState {
     }
 
     pub fn sql_tab_label(&self, index: usize) -> String {
-        let title = self.sql_files.get(index).and_then(|f| f.as_ref()).and_then(|f| f.path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| format!("SQL {}", index + 1));
+        let title = self.sql_tab_title(index).replace(['\r','\n','\t']," ");
         let modified = if self.sql_tab_dirty(index) { " ●" } else { "" };
-        if index == self.sql_tab_idx { format!("[{title}]{modified}") } else { format!("{title}{modified}") }
+        format!("{title}{modified}")
+    }
+
+    pub fn sql_tab_title(&self, index: usize) -> String {
+        self.sql_tab_titles.get(index).and_then(Clone::clone).unwrap_or_else(||
+            self.sql_files.get(index).and_then(|f| f.as_ref()).and_then(|f| f.path.file_name())
+                .map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||format!("SQL {}",index+1)))
+    }
+
+    pub fn duplicate_sql_tab(&mut self, index: usize) {
+        if self.sql_busy || index >= self.sql_tabs.len() { return; }
+        let title = self.sql_tab_title(index).replace('&', "");
+        let base = title.rsplit_once(" (").filter(|(_,suffix)| suffix.strip_suffix(')').is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))).map_or(title.as_str(),|(base,_)|base);
+        let title = (1..).map(|n|format!("{base} ({n})")).find(|title| !(0..self.sql_tabs.len()).any(|i|self.sql_tab_title(i).replace('&', "")==*title)).unwrap();
+        self.sql_tab_titles.resize(self.sql_tabs.len(),None);
+        self.sql_tabs.push(self.sql_tabs[index].clone());
+        self.sql_tab_titles.push(Some(title));
+        self.switch_sql_tab(self.sql_tabs.len()-1);
     }
 
     pub fn sql_tab_dirty(&self, index: usize) -> bool {
@@ -1341,23 +1382,31 @@ impl AppState {
 
     pub fn move_sql_tab(&mut self, from: usize, to: usize) {
         if self.sql_busy || from >= self.sql_tabs.len() || to >= self.sql_tabs.len() { return; }
+        self.sql_tab_titles.resize(self.sql_tabs.len(),None);
         self.sql_files.resize_with(self.sql_tabs.len(), || None);
         self.sql_saved.resize(self.sql_tabs.len(), String::new());
         self.sql_edit_states.resize(self.sql_tabs.len(), None);
         self.sql_outputs.resize_with(self.sql_tabs.len(), SqlOutput::default);
-        self.sql_tabs.swap(from, to);
-        self.sql_files.swap(from, to);
-        self.sql_saved.swap(from, to);
-        self.sql_edit_states.swap(from, to);
-        self.sql_outputs.swap(from, to);
-        self.plot.settings.swap_queries(from, to);
+        let mut cursor = from;
+        while cursor != to {
+            let next = if cursor < to {cursor+1} else {cursor-1};
+            self.sql_tabs.swap(cursor,next);
+            self.sql_tab_titles.swap(cursor,next);
+            self.sql_files.swap(cursor,next);
+            self.sql_saved.swap(cursor,next);
+            self.sql_edit_states.swap(cursor,next);
+            self.sql_outputs.swap(cursor,next);
+            self.plot.settings.swap_queries(cursor,next);
+            if self.sql_tab_idx == cursor {self.sql_tab_idx=next;}
+            else if self.sql_tab_idx == next {self.sql_tab_idx=cursor;}
+            cursor=next;
+        }
         self.plot.clear();
-        if self.sql_tab_idx == from { self.sql_tab_idx = to; }
-        else if self.sql_tab_idx == to { self.sql_tab_idx = from; }
     }
 
     pub fn close_sql_tab(&mut self, index: usize) {
         if self.sql_busy || index >= self.sql_tabs.len() { return; }
+        self.sql_tab_titles.resize(self.sql_tabs.len(),None);
         self.sql_files.resize_with(self.sql_tabs.len(), || None);
         self.sql_saved.resize(self.sql_tabs.len(), String::new());
         self.sql_edit_states.resize(self.sql_tabs.len(), None);
@@ -1366,6 +1415,7 @@ impl AppState {
             self.switch_sql_tab(if index == 0 { 1 } else { index - 1 });
         }
         self.sql_tabs.remove(index);
+        self.sql_tab_titles.remove(index);
         self.sql_files.remove(index);
         self.sql_saved.remove(index);
         self.sql_edit_states.remove(index);
@@ -1377,6 +1427,8 @@ impl AppState {
             self.sql_saved.push(String::new());
             self.sql_result = None;
             self.sql_message.clear();
+            self.sql_error = None;
+            self.sql_selection = Default::default();
             self.sql_messages_view = None;
             self.sql_column_widths.clear();
             self.sql_scroll = (0.0, 0.0);

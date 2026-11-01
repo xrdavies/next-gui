@@ -53,6 +53,10 @@ pub enum IconName {
     Code,
     /// Long line returning onto the next row.
     Wrap,
+    /// Two panes arranged beside each other.
+    Columns,
+    /// Two panes arranged above each other.
+    Rows,
 }
 
 impl IconName {
@@ -83,6 +87,8 @@ impl IconName {
             "step" => Self::Step,
             "code" | "comment" => Self::Code,
             "wrap" => Self::Wrap,
+            "columns" => Self::Columns,
+            "rows" => Self::Rows,
             _ => Self::Blank,
         }
     }
@@ -114,6 +120,8 @@ impl IconName {
             Self::Step => "step",
             Self::Code => "code",
             Self::Wrap => "wrap",
+            Self::Columns => "columns",
+            Self::Rows => "rows",
         }
     }
 }
@@ -211,6 +219,11 @@ pub fn rasterize_icon(name: IconName, size: f32) -> AlphaMask {
 
     match name {
         IconName::Blank => {}
+        IconName::Columns | IconName::Rows => {
+            p.stroke_rect(inset,inset,m-inset,m-inset,a);
+            if name==IconName::Columns {p.line(m/2,inset,m/2,m-inset,a);}
+            else {p.line(inset,m/2,m-inset,m/2,a);}
+        }
         IconName::Database => {
             let (cx, rx, ry) = (m / 2, ((m - inset * 2) / 2).max(1), (s as i32 / 8).max(1));
             let top = inset + ry; let bottom = m - inset - ry;
@@ -466,7 +479,7 @@ mod tests {
 
     #[test]
     fn database_action_icons_roundtrip_and_remain_distinct_at_supported_sizes() {
-        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code, IconName::Wrap, IconName::Copy];
+        let icons = [IconName::Database, IconName::Undo, IconName::Step, IconName::Code, IconName::Wrap, IconName::Copy,IconName::Columns,IconName::Rows];
         for size in [8.0, 18.0, 32.0, 64.0] {
             let mut masks = Vec::new();
             for icon in icons {

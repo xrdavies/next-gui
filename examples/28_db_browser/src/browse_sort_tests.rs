@@ -33,6 +33,7 @@ fn click_header(demo: &mut Demo, column: usize, append: bool) {
     let widths = demo.ui.table_column_widths(demo.ids.browse_table).unwrap();
     let x = bounds.x + widths[..column].iter().sum::<f32>() + 20.0;
     assert!(demo.ui.pointer_pressed(&mut demo.scene, x, bounds.y + 10.0));
+    demo.ui.pointer_released();
     demo.snapshot_inputs();
     demo.poll_header_sort(append);
     assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);

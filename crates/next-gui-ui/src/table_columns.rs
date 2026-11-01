@@ -15,6 +15,42 @@ pub(super) fn selected_table_columns(columns: &[TableColumn], range: Option<(usi
 }
 
 impl Ui {
+    /// A completed header drag, with source-column indices in the new visible order.
+    pub fn take_table_column_order(&mut self) -> Option<(WidgetId, Vec<usize>)> {
+        self.pending_table_column_order.take()
+    }
+
+    pub(super) fn move_table_header(&mut self, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() { return false; }
+        let Some(DragState::TableHeader { table, column, bounds, origin, order, moved, .. }) = self.drag.clone() else { return false; };
+        if !moved && (x-origin.0).abs().max((y-origin.1).abs()) < 5.0 { return false; }
+        let Some(Kind::Table { columns, style, scroll_x, frozen_cols, .. }) = self.widgets.get(&table).map(|w| &w.kind) else { return false; };
+        let mut target = order.clone();
+        let mut marker = None;
+        let mut scroll = None;
+        let label_height = self.table_header_label_height(table).unwrap_or(style.header_height);
+        if y >= bounds.y-24.0 && y <= bounds.y+label_height+24.0 {
+            let cells = table_column_rects(bounds, columns, style.padding, *scroll_x, *frozen_cols);
+            let px = x.clamp(bounds.x+style.padding, bounds.x+bounds.width-style.padding);
+            let position = order.iter().position(|&i| px < cells[i].0+columns[i].width*0.5).unwrap_or(order.len());
+            marker = if let Some(&i) = order.get(position) { Some(cells[i].0) }
+                else { order.last().map(|&i| cells[i].0+columns[i].width) };
+            let old = order.iter().position(|&i| i == column).unwrap();
+            target.remove(old);
+            target.insert(position- usize::from(old < position), column);
+            let frozen_width: f32 = order.iter().take(*frozen_cols).map(|&i| columns[i].width).sum();
+            let left = bounds.x+style.padding+frozen_width;
+            if x > bounds.x+bounds.width-12.0 { scroll = Some(*scroll_x+20.0); }
+            else if x < left+12.0 && column != *order.first().unwrap() { scroll = Some((*scroll_x-20.0).max(0.0)); }
+        }
+        let scrolling = scroll.is_some_and(|sx| {let sy=self.table_scroll_offset(table).unwrap().1;self.set_any_scroll(table,sx,sy)});
+        if let Some(DragState::TableHeader { target: next, marker: mark, moved, next_repeat, .. }) = &mut self.drag {
+            *next = target; *mark = marker; *moved = true;
+            *next_repeat=scrolling.then(||std::time::Instant::now()+std::time::Duration::from_millis(33));
+        }
+        true
+    }
+
     /// Visible columns in display order. Indices always identify the original data columns.
     pub fn table_visible_columns(&self, table: WidgetId) -> Option<Vec<usize>> {
         let Kind::Table { columns, .. } = &self.widgets.get(&table)?.kind else { return None; };
@@ -55,6 +91,52 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_header_drag_scrolls_wide_tables_and_release_stops_repetition() {
+        let mut ui=Ui::new();let mut scene=Scene::new();let mut table=WidgetId(0);
+        ui.column(ColumnStyle {width:300.0,height:200.0,padding:0.0,..Default::default()},|p| {
+            table=p.table((0..12).map(|i|TableColumn::new(i.to_string(),100.0)).collect(),Vec::new(),
+                TableStyle {width:300.0,height:180.0,padding:0.0,reorder_columns:true,..Default::default()});
+        });
+        ui.sync(&mut scene);let b=scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        ui.pointer_pressed(&mut scene,b.x+20.0,b.y+12.0);ui.pointer_moved(b.x+298.0,b.y+12.0);
+        let before=ui.table_scroll_offset(table).unwrap().0;assert!(ui.pointer_repeat_delay().is_some());
+        std::thread::sleep(std::time::Duration::from_millis(40));assert!(ui.repeat_pointer());
+        assert!(ui.table_scroll_offset(table).unwrap().0>before);
+        ui.pointer_released();assert!(ui.pointer_repeat_delay().is_none());assert!(!ui.repeat_pointer());
+    }
+
+    #[test]
+    fn header_drag_preserves_source_columns_defers_sort_and_cancels_without_reordering() {
+        let mut ui = Ui::new(); let mut scene = Scene::new(); let mut table = WidgetId(0);
+        ui.column(ColumnStyle { width:400.0,height:220.0,padding:0.0,..Default::default() }, |p| {
+            table = p.table((0..5).map(|i| TableColumn::new(format!("C{i}"),100.0)).collect(),
+                vec![vec!["a".into(),"hidden".into(),"c".into(),"d".into(),"e".into()]],
+                TableStyle { width:400.0,height:200.0,padding:0.0,reorder_columns:true,..Default::default() });
+        });
+        ui.set_table_visible_columns(table,&[3,0,2,4]); ui.set_table_frozen_cols(table,1); ui.sync(&mut scene);
+        let b = scene.get(ui.widgets[&table].node.unwrap()).unwrap().bounds;
+        let (x,y) = (b.x+25.0,b.y+12.0);
+        ui.pointer_pressed(&mut scene,x,y); assert_eq!(ui.take_table_header_click(),None);
+        ui.pointer_moved(x+2.0,y); ui.pointer_released();
+        assert_eq!(ui.take_table_header_click(),Some((table,3))); assert_eq!(ui.take_table_column_order(),None);
+        ui.pointer_pressed(&mut scene,x,y); ui.pointer_moved(b.x+280.0,y); ui.sync(&mut scene);
+        assert_eq!(ui.table_visible_columns(table).unwrap(),[3,0,2,4]);
+        assert!(scene.get(*ui.widgets[&table].aux.last().unwrap()).unwrap().visible);
+        ui.cancel_pointer_capture(); ui.pointer_released(); assert_eq!(ui.take_table_column_order(),None);
+        ui.pointer_pressed(&mut scene,x,y); ui.pointer_moved(b.x+280.0,y); ui.pointer_released(); ui.sync(&mut scene);
+        assert_eq!(ui.take_table_column_order(),Some((table,vec![0,2,3,4])));
+        assert_eq!(ui.take_table_header_click(),None);
+        assert_eq!(ui.table_cell_at(&scene,table,b.x+25.0,b.y+40.0),Some((0,0)));
+        assert!(!scene.get(*ui.widgets[&table].aux.last().unwrap()).unwrap().visible);
+        // Resize grips retain priority over the header drag gesture.
+        ui.pointer_pressed(&mut scene,b.x+100.0,y); ui.pointer_moved(b.x+130.0,y); ui.pointer_released();
+        assert_eq!(ui.table_column_widths(table).unwrap()[0],130.0);
+        assert_eq!(ui.take_table_column_order(),None); assert_eq!(ui.take_table_header_click(),None);
+        ui.pointer_pressed(&mut scene,b.x+25.0,y); ui.pointer_moved(b.x+250.0,b.y+150.0); ui.pointer_released();
+        assert_eq!(ui.take_table_column_order(),None); assert_eq!(ui.take_table_header_click(),None);
+    }
 
     #[test]
     fn column_layout_keeps_source_identity_filters_keyboard_ranges_and_resize() {

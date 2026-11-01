@@ -233,9 +233,22 @@ impl Ui {
             && matches!(self.widgets.get(&id).map(|w| &w.kind), Some(Kind::TextInput {enabled:true,preedit,integer_range:Some(_),..}) if preedit.is_empty())
     }
 
-    /// Delay until a held integer arrow or table selection scroll repeats. Schedule a host redraw.
+    fn header_repeat_allowed(&self,id:WidgetId)->bool {
+        self.focus==Some(id) && self.open_popup.is_none()
+            && self.dialog_focus_scope().is_none_or(|dialog|self.widget_contains(dialog,id))
+            && match self.widgets.get(&id).map(|w|&w.kind) {
+                Some(Kind::Table {style,..})=>style.reorder_columns,
+                Some(Kind::Tabs {style,..})=>style.movable,
+                _=>false,
+            }
+    }
+
+    /// Delay until a held arrow, selection, header or tab drag scroll repeats. Schedule a host redraw.
     /// None means the pointer is released/paused or its editor is no longer active.
     pub fn pointer_repeat_delay(&self) -> Option<Duration> {
+        if let Some(DragState::TableHeader { table:id,next_repeat:Some(next),.. }|DragState::Tab {tabs:id,next_repeat:Some(next),..})=&self.drag {
+            return self.header_repeat_allowed(*id).then(||next.saturating_duration_since(Instant::now()));
+        }
         if let Some(DragState::TableSelection { table, next_repeat:Some(next), .. }) = &self.drag {
             return self.table_selection_repeat_allowed(*table).then(||next.saturating_duration_since(Instant::now()));
         }
@@ -251,7 +264,7 @@ impl Ui {
             .then(|| next.saturating_duration_since(Instant::now()))
     }
 
-    /// Advance a held integer arrow or table selection scroll; true means its appearance changed.
+    /// Advance a held arrow or drag scroll; true means its appearance changed.
     /// Call sync/repaint after true, including when stepping stops at a bound.
     /// Late redraws produce one step rather than a burst. Release via pointer_released.
     pub fn repeat_pointer(&mut self) -> bool {
@@ -259,6 +272,14 @@ impl Ui {
     }
 
     fn repeat_pointer_at(&mut self, now: Instant) -> bool {
+        if let Some(DragState::TableHeader {table:id,next_repeat:Some(next),..}|DragState::Tab {tabs:id,next_repeat:Some(next),..})=self.drag {
+            if !self.header_repeat_allowed(id) {self.cancel_pointer_capture();return true;}
+            if now<next {return false;}
+            return self.last_pointer.is_some_and(|(x,y)|match self.drag {
+                Some(DragState::TableHeader {..})=>self.move_table_header(x,y),
+                _=>self.move_tab(x,y),
+            });
+        }
         if let Some(DragState::TableSelection { table, bounds, next_repeat:Some(next), .. }) = self.drag.clone() {
             if !self.table_selection_repeat_allowed(table) { self.cancel_pointer_capture(); return true; }
             if now < next { return false; }
