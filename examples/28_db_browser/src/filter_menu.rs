@@ -11,6 +11,9 @@ const PASTE: u64 = 205;
 const DELETE: u64 = 206;
 const SELECT_ALL: u64 = 207;
 const HELP: u64 = 208;
+const EDIT_FORMATS: u64 = 224;
+const USE_FORMAT: u64 = 225;
+const CLEAR_FORMATS: u64 = 226;
 const FIRST_CONDITION: u64 = 210;
 const CONDITIONS: [(&str, &str, Option<usize>); 13] = [
     ("Is NULL", "=NULL", None),
@@ -28,13 +31,54 @@ const CONDITIONS: [(&str, &str, Option<usize>); 13] = [
     ("Regular expression…", "/?/", Some(1)),
 ];
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct FormatTarget {
+    database: String,
+    tab: usize,
+    schema: String,
+    table: String,
+    column: String,
+    filter: String,
+}
+
 impl Demo {
-    fn is_filter_input(&self, id: WidgetId) -> bool {
-        id.0 != 0 && if self.state.overlay == Some(crate::state::OverlayKind::CondFormat) {
-            self.state.cond_op_idx == 5 && id == self.ids.ov_cond_val
-        } else {
-            id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)
+    fn format_target_for_filter(&self, input: WidgetId) -> Option<FormatTarget> {
+        if self.state.overlay.is_some() {
+            return None;
         }
+        let column = self
+            .ids
+            .browse_col_filters
+            .iter()
+            .position(|id| *id == input)?;
+        let tab = self.state.browse();
+        Some(FormatTarget {
+            database: self.state.path.clone(),
+            tab: self.state.browse_tab_idx,
+            schema: tab.schema.clone(),
+            table: tab.table.clone()?,
+            column: tab.result.as_ref()?.columns.get(column)?.clone(),
+            filter: self.ui.text_input_value(input)?.into(),
+        })
+    }
+
+    fn filter_formats_available(&self) -> bool {
+        self.filter_menu_available()
+            && self.state.overlay.is_none()
+            && self.state.guard_background_idle().is_ok()
+            && self.state.conn.is_some()
+            && !self.state.has_cell_draft()
+            && self.state.external_cell.is_none()
+            && !self.ui.ime_is_composing()
+    }
+
+    fn is_filter_input(&self, id: WidgetId) -> bool {
+        id.0 != 0
+            && if self.state.overlay == Some(crate::state::OverlayKind::CondFormat) {
+                self.state.cond_op_idx == 5 && id == self.ids.ov_cond_val
+            } else {
+                id == self.ids.browse_global_filter || self.ids.browse_col_filters.contains(&id)
+            }
     }
 
     fn filter_menu_available(&self) -> bool {
@@ -46,7 +90,11 @@ impl Demo {
             && !self.state.sql_busy
             && (self.ui.active_dialog().is_none()
                 || self.ui.active_dialog() == Some(self.ids.cond_formats.parent))
-            && !self.state.cond_formats.as_ref().is_some_and(|draft| draft.reset_pending)
+            && !self
+                .state
+                .cond_formats
+                .as_ref()
+                .is_some_and(|draft| draft.reset_pending)
     }
 
     fn filter_menu_items(&self, input: WidgetId) -> Vec<MenuItem> {
@@ -65,7 +113,7 @@ impl Demo {
             }
             expressions.push(MenuItem::new(FIRST_CONDITION + index as u64, *label));
         }
-        vec![
+        let mut items = vec![
             action(UNDO, "Undo", self.ui.text_input_can_undo(input)),
             action(REDO, "Redo", self.ui.text_input_can_redo(input)),
             MenuItem::separator(),
@@ -83,7 +131,26 @@ impl Demo {
             ),
             MenuItem::separator(),
             MenuItem::submenu(EXPRESSIONS, "Set Filter Expression", expressions),
-        ]
+        ];
+        if let Some(target) = self.format_target_for_filter(input) {
+            let idle = self.filter_formats_available();
+            items.push(MenuItem::separator());
+            items.push(if target.filter.is_empty() {
+                action(
+                    CLEAR_FORMATS,
+                    "Clear All Conditional Formats",
+                    idle && self.state.cond_rules.iter().any(|rule| {
+                        rule.schema == target.schema
+                            && rule.table.as_ref() == Some(&target.table)
+                            && rule.column == target.column
+                    }),
+                )
+            } else {
+                action(USE_FORMAT, "Use for Conditional Format", idle)
+            });
+            items.push(action(EDIT_FORMATS, "Edit Conditional Formats…", idle));
+        }
+        items
     }
 
     pub(crate) fn open_filter_context_menu(&mut self, x: f32, y: f32) -> bool {
@@ -101,11 +168,17 @@ impl Demo {
         self.snapshot_inputs();
         self.browse_header_column = None;
         self.filter_context = Some(input);
+        self.filter_format_target = self.format_target_for_filter(input);
         self.ui.set_focus(Some(input));
         self.ui
             .set_accessible_name(self.ids.context_menu, "Filter editing and expressions");
-        self.ui
-            .open_context_menu_for(self.ids.context_menu, input, self.filter_menu_items(input), x, y)
+        self.ui.open_context_menu_for(
+            self.ids.context_menu,
+            input,
+            self.filter_menu_items(input),
+            x,
+            y,
+        )
     }
 
     pub(crate) fn handle_filter_context_key(&mut self, key: KeyCode, modifiers: Modifiers) -> bool {
@@ -183,6 +256,9 @@ impl Demo {
     }
 
     pub(crate) fn handle_filter_menu_action(&mut self, item: u64, ctx: &mut WindowCtx<'_>) -> bool {
+        if self.handle_filter_format_action(item) {
+            return true;
+        }
         if !(UNDO..=HELP).contains(&item)
             && !(FIRST_CONDITION..FIRST_CONDITION + CONDITIONS.len() as u64).contains(&item)
         {
@@ -223,6 +299,84 @@ impl Demo {
         self.edit_filter_menu_action(item, pasted.as_deref());
         true
     }
+
+    fn handle_filter_format_action(&mut self, item: u64) -> bool {
+        if !matches!(item, EDIT_FORMATS | USE_FORMAT | CLEAR_FORMATS) {
+            return false;
+        }
+        let target = self.filter_format_target.take();
+        let input = self.filter_context;
+        let valid = self.filter_formats_available()
+            && target.is_some()
+            && input.and_then(|id| self.format_target_for_filter(id)) == target;
+        self.ui.close_popup();
+        if !valid {
+            self.set_error("The filtered source changed or is busy; reopen its context menu");
+        } else {
+            let target = target.unwrap();
+            let result = if item == EDIT_FORMATS {
+                let session =
+                    crate::browse_filter::InputSession::capture(&self.state, &self.ui, &self.ids);
+                self.state
+                    .begin_cond_formats_for_column(&target.column)
+                    .map(|()| {
+                        self.filter_format_return = session;
+                    })
+            } else if item == CLEAR_FORMATS && target.filter.is_empty() {
+                self.state.cond_rules.retain(|rule| {
+                    !(rule.schema == target.schema
+                        && rule.table.as_ref() == Some(&target.table)
+                        && rule.column == target.column)
+                });
+                self.state.cond_match.get_mut().take();
+                self.state.status_msg =
+                    format!("Cleared conditional formats for {}", target.column);
+                Ok(())
+            } else if item == USE_FORMAT && !target.filter.is_empty() {
+                crate::cond_match::validate(
+                    self.state.conn.as_ref().unwrap(),
+                    &target.filter,
+                    &self.state.prefs.filter_escape,
+                )
+                .map(|()| {
+                    let insertion = self
+                        .state
+                        .cond_rules
+                        .iter()
+                        .position(|rule| {
+                            rule.schema == target.schema
+                                && rule.table.as_ref() == Some(&target.table)
+                                && rule.column == target.column
+                        })
+                        .unwrap_or(self.state.cond_rules.len());
+                    self.state.cond_rules.insert(
+                        insertion,
+                        crate::state::CondFormatRule {
+                            schema: target.schema,
+                            table: Some(target.table),
+                            column: target.column.clone(),
+                            op: 5,
+                            value: target.filter,
+                            color_rgb: 0xE67E22,
+                            style: Default::default(),
+                            native_format: None,
+                        },
+                    );
+                    self.state.cond_match.get_mut().take();
+                    self.state.status_msg =
+                        format!("Added conditional format for {}", target.column);
+                })
+            } else {
+                Err("The filter changed; reopen its context menu".into())
+            };
+            match result {
+                Ok(()) => self.clear_error(),
+                Err(error) => self.set_error(error),
+            }
+        }
+        self.rebuild = true;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -232,6 +386,163 @@ mod tests {
     use crate::state::OverlayKind;
     use next_gui_ui::Theme;
     use std::time::{Duration, Instant};
+
+    fn choose_format(demo: &mut Demo, action: u64) {
+        let items = demo.filter_menu_items(demo.filter_context.unwrap());
+        assert!(items.iter().any(|item| item.id == action && item.enabled));
+        demo.ui.key_input(UiKey::Home);
+        for _ in items
+            .iter()
+            .take_while(|item| item.id != action)
+            .filter(|item| item.enabled && item.id != 0)
+        {
+            demo.ui.key_input(UiKey::Down);
+        }
+        demo.ui.key_input(UiKey::Enter);
+        assert_eq!(
+            demo.ui.take_menu_action(),
+            Some((demo.ids.context_menu, action))
+        );
+        assert!(demo.handle_filter_format_action(action));
+        demo.do_rebuild();
+    }
+
+    #[test]
+    fn filter_format_shortcuts_preserve_other_rules_filters_data_and_modal_input_history() {
+        for (name, theme) in [("dark", Theme::dark()), ("light", Theme::light())] {
+            for (width, height) in [(1400, 860), (800, 600)] {
+                let mut demo = fixture(width, height, theme);
+                demo.state.write_changes().unwrap();
+                let other = crate::state::CondFormatRule {
+                    schema: "main".into(),
+                    table: Some("names".into()),
+                    column: "name".into(),
+                    op: 2,
+                    value: "alpha".into(),
+                    color_rgb: 0x123456,
+                    style: Default::default(),
+                    native_format: None,
+                };
+                demo.state.cond_rules.push(other.clone());
+                let input = demo.ids.browse_col_filters[1];
+                demo.ui.set_text_input(input, "previous");
+                demo.ui.set_focus(Some(input));
+                demo.ui.key_input(UiKey::SelectAll);
+                demo.ui.paste_into_focused_text("2~4");
+                demo.ui.select_text_input_range(input, 0..1);
+                open(&mut demo, input);
+                demo.state.checkpoint_project();
+                capture(&mut demo, &format!("format-shortcuts-menu-{name}-{width}"));
+                choose_format(&mut demo, USE_FORMAT);
+                assert!(!demo.state.dirty);
+                assert!(demo.state.has_project_drafts());
+                assert_eq!(demo.state.cond_rules.len(), 2);
+                let rule = &demo.state.cond_rules[1];
+                assert_eq!(
+                    (
+                        &*rule.schema,
+                        rule.table.as_deref(),
+                        &*rule.column,
+                        rule.op,
+                        &*rule.value
+                    ),
+                    ("main", Some("names"), "amount", 5, "2~4")
+                );
+                assert_eq!(demo.state.cond_rules[0], other);
+                assert_eq!(
+                    demo.state
+                        .cell_format_colors()
+                        .iter()
+                        .map(|row| row[1].is_some())
+                        .collect::<Vec<_>>(),
+                    [false, true, true, true, false]
+                );
+                assert_eq!(demo.state.browse().col_filters[1], "2~4");
+                let input = demo.ids.browse_col_filters[1];
+                open(&mut demo, input);
+                choose_format(&mut demo, EDIT_FORMATS);
+                let draft = demo.state.cond_formats.as_ref().unwrap();
+                assert_eq!(draft.column_scope.as_deref(), Some("amount"));
+                assert_eq!(draft.rules.len(), 1);
+                capture(
+                    &mut demo,
+                    &format!("format-shortcuts-manager-{name}-{width}"),
+                );
+                demo.handle_button(demo.ids.ov_btn_cancel);
+                demo.do_rebuild();
+                let input = demo.ids.browse_col_filters[1];
+                assert_eq!(demo.ui.focused(), Some(input));
+                assert_eq!(demo.ui.text_input_selection(input), Some(0..1));
+                demo.ui.key_input(UiKey::Undo);
+                assert_eq!(demo.ui.text_input_value(input), Some("previous"));
+                demo.ui.key_input(UiKey::Redo);
+                assert_eq!(demo.ui.text_input_value(input), Some("2~4"));
+                demo.ui.set_text_input(input, "");
+                open(&mut demo, input);
+                choose_format(&mut demo, CLEAR_FORMATS);
+                assert_eq!(demo.state.cond_rules, [other]);
+                assert_eq!(
+                    demo.state
+                        .conn
+                        .as_ref()
+                        .unwrap()
+                        .query_row("SELECT sum(amount) FROM main.names", [], |row| row
+                            .get::<_, i64>(0))
+                        .unwrap(),
+                    15
+                );
+                capture(
+                    &mut demo,
+                    &format!("format-shortcuts-cleared-{name}-{width}"),
+                );
+                let global = demo.ids.browse_global_filter;
+                assert!(demo
+                    .filter_menu_items(global)
+                    .iter()
+                    .all(|item| !matches!(item.id, EDIT_FORMATS | USE_FORMAT | CLEAR_FORMATS)));
+            }
+        }
+    }
+
+    #[test]
+    fn filter_format_shortcuts_reject_invalid_changed_or_busy_sources_and_work_readonly() {
+        let mut demo = fixture(1400, 860, Theme::dark());
+        demo.state.read_only = true;
+        for value in ["=NULL", "=''", "<>NULL", ">=3"] {
+            let input = demo.ids.browse_col_filters[1];
+            demo.ui.set_text_input(input, value);
+            open(&mut demo, input);
+            choose_format(&mut demo, USE_FORMAT);
+            assert!(demo.state.error_msg.is_none());
+            assert_eq!(demo.state.cond_rules[0].value, value);
+        }
+        let original = demo.state.cond_rules.clone();
+        for mode in ["invalid", "changed", "busy", "source", "rebuild"] {
+            let input = demo.ids.browse_col_filters[1];
+            demo.ui
+                .set_text_input(input, if mode == "invalid" { "/[/" } else { ">=3" });
+            open(&mut demo, input);
+            match mode {
+                "changed" => {
+                    demo.ui.set_text_input(input, "<2");
+                }
+                "busy" => {
+                    demo.state.sql_busy = true;
+                }
+                "source" => {
+                    demo.state.browse_mut().schema = "temp".into();
+                }
+                "rebuild" => demo.do_rebuild(),
+                _ => {}
+            }
+            assert!(demo.handle_filter_format_action(USE_FORMAT));
+            assert!(demo.state.error_msg.is_some(), "{mode}");
+            assert_eq!(demo.state.cond_rules, original);
+            demo.state.sql_busy = false;
+            demo.state.browse_mut().schema = "main".into();
+            demo.do_rebuild();
+        }
+    }
 
     #[test]
     fn conditional_expression_helpers_edit_only_the_draft_and_save_validated_ranges() {
@@ -285,10 +596,22 @@ mod tests {
                 assert_eq!(demo.ui.text_input_value(demo.ids.ov_cond_val), Some("/[/"));
                 assert!(demo.state.error_msg.is_some());
                 demo.ui.sync(&mut demo.scene);
-                let bounds = |id| demo.scene.iter_paint_order().into_iter().find(|node| demo.ui.widget_from_node(node.id) == Some(id) && !node.bounds.is_empty()).unwrap().bounds;
+                let bounds = |id| {
+                    demo.scene
+                        .iter_paint_order()
+                        .into_iter()
+                        .find(|node| {
+                            demo.ui.widget_from_node(node.id) == Some(id) && !node.bounds.is_empty()
+                        })
+                        .unwrap()
+                        .bounds
+                };
                 let body = bounds(demo.ids.ov_scroll);
                 let error = bounds(demo.ids.cond_formats.error);
-                assert!(error.y >= body.y && error.y + error.height <= body.y + body.height, "error {error:?} outside body {body:?}");
+                assert!(
+                    error.y >= body.y && error.y + error.height <= body.y + body.height,
+                    "error {error:?} outside body {body:?}"
+                );
                 capture(&mut demo, &format!("format-error-{name}-{width}"));
                 demo.clear_error();
                 demo.ui.set_text_input(demo.ids.ov_cond_val, "2~4");
@@ -326,6 +649,16 @@ mod tests {
 
     fn choose(demo: &mut Demo, index: usize) {
         demo.ui.key_input(UiKey::End);
+        let after = demo
+            .filter_menu_items(demo.filter_context.unwrap())
+            .into_iter()
+            .rev()
+            .take_while(|item| item.id != EXPRESSIONS)
+            .filter(|item| item.enabled && !item.label.is_empty())
+            .count();
+        for _ in 0..after {
+            demo.ui.key_input(UiKey::Up);
+        }
         demo.ui.key_input(UiKey::Right);
         for _ in 0..=index {
             demo.ui.key_input(UiKey::Down);

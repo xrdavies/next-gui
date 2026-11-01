@@ -276,6 +276,8 @@ struct Demo {
     detach_menu_target: Option<detach::Target>,
     detach_return_to_schema: bool,
     filter_context: Option<WidgetId>,
+    filter_format_target: Option<filter_menu::FormatTarget>,
+    filter_format_return: Option<browse_filter::InputSession>,
     filter_session: browse_filter::Session,
 }
 
@@ -1881,6 +1883,8 @@ impl Demo {
             detach_menu_target: None,
             detach_return_to_schema: false,
             filter_context: None,
+            filter_format_target: None,
+            filter_format_return: None,
         }
     }
 
@@ -3236,6 +3240,7 @@ impl Demo {
         self.browse_header_column = None;
         self.detach_menu_target = None;
         self.filter_context = None;
+        self.filter_format_target = None;
         self.ids = BuiltUiIds::from(&built);
         self.ui = built.ui;
         self.scene = built.scene;
@@ -3456,6 +3461,9 @@ impl Demo {
             if let Some((index,session))=prefs_input {let id=[self.ids.ov_prefs_filter_delay,self.ids.ov_prefs_filter_escape,self.ids.ov_prefs_browse_completion][index];self.ui.set_focus(Some(id));self.ui.restore_text_input_state(id,&session);self.ui.sync(&mut self.scene);}
         }
         if let Some(session) = filter_input { session.restore(&self.state, &mut self.ui, &self.ids); self.ui.sync(&mut self.scene); }
+        if self.state.overlay != Some(OverlayKind::CondFormat) {
+            if let Some(session) = self.filter_format_return.take() { session.restore(&self.state, &mut self.ui, &self.ids); self.ui.sync(&mut self.scene); }
+        }
         self.filter_session.reconcile(&self.state, &self.ui, &self.ids);
     }
 
@@ -5679,7 +5687,7 @@ impl Demo {
                 self.handle_menu(item);
             }
         }
-        if !self.ui.has_open_popup() { self.browse_header_column = None; self.filter_context = None; self.detach_menu_target = None; }
+        if !self.ui.has_open_popup() { self.browse_header_column = None; self.filter_context = None; self.filter_format_target = None; self.detach_menu_target = None; }
         self.handle_modal();
         if !self.rebuild {
             self.snapshot_inputs();
