@@ -12,7 +12,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 
 
-Latest scoped review: [Desktop Browse remaining space](R-20261101-1d61f8d9079b.md) — grid/form fill the real viewport;resize scroll clamping fixed.908 tests,ten render pairs,two native save/reopen workflows and14 fresh Office windows passed. Integrated header filters and broader primary/full parity remain in_progress.
+Latest scoped review: [Main Browse header filters](R-20261101-71fbfd280868.md) — filters now sit below column labels inside a fixed header;909 tests,ten render pairs,three accepted native Browse edit/save/reopen workflows and14 fresh Office windows passed. Original column/SQL/dock/native-foreground parity remains in_progress.
 
 ## Findings
 
