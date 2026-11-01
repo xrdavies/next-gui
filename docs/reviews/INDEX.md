@@ -12,7 +12,7 @@ the first entries. Keep the status in this index and its report synchronized.
 
 
 
-Latest scoped review: [Browse cell actions and selection repair](R-20261101-1541cab48606.md) — 882 tests, 33 Soft/Metal pairs and twelve owned native workflows (100 frames) pass; interior-cell finding verified. Actual 800px native cases replace rejected narrow labels. Full parity F02 remains in_progress.
+Latest scoped review: [Indexed Select and typed foreign keys](R-20261101-989e83fa4ebb.md) —891 tests,16 Soft/Metal pairs,four owned native workflows and14 Office windows pass. Main acceptance now prioritizes normal/maximized desktop workflows with realistic databases;small-window cases are supplementary. Full original parity F02 remains in_progress.
 
 ## Findings
 

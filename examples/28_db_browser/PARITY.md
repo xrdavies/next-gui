@@ -8,7 +8,7 @@ Status legend: `done` = implemented local subset, not upstream parity or native 
 
 **Inventory snapshot (2026-10-31):** The tables contain 104 overlapping workflow entries: 47 `done` local subsets and 57 `partial` entries. These are not weighted requirements and do not establish a completion percentage. Full original feature/UI parity remains in progress.
 
-**Latest scoped verification:** [Browse cell actions and selection repair](../../docs/reviews/R-20261101-1541cab48606.md): 882 tests,33 Soft/Metal pairs and12 owned native workflows (100 frames) pass. Typed cell clipboard/NULL, Exact and9 filter forms, scoped formats and serial palettes are verified. Interior right-click now updates the active cell while full rectangle actions survive. Full parity and ordinary foreground input remain pending.
+**Latest scoped verification:** [Indexed Select and typed foreign keys](../../docs/reviews/R-20261101-989e83fa4ebb.md):891 tests,16 Soft/Metal pairs,four owned native workflows and14 Office windows pass. Complete parent choices preserve raw SQLite types through Save All and constraint refusal. Primary acceptance is now normal/maximized desktop use with realistic databases;small windows are supplementary. Full parity remains in progress.
 
 **Earlier regression/evidence correction:** [2026-10-27 report](../../docs/reviews/R-20261027-5e23229548d4.md) records that tested scope and corrects unsupported earlier claims.
 
@@ -981,3 +981,8 @@ Status remains **in_progress**. [Review](../../docs/reviews/R-20261030-d06fea875
 ## 2026-11-01 Browse context and serial palettes
 
 [Review](../../docs/reviews/R-20261101-1541cab48606.md): 882 tests,33 Soft/Metal pairs and12 final owned native workflows (100 frames) pass. Cell menu typed clipboard/NULL, Exact and nine filter forms, scoped formats and original per-tab light/dark palettes are verified. A reproduced interior-click defect is fixed: active cell and oriented rectangle endpoints remain independent through polling, rebuild and full-range Copy/Cut/Paste/NULL. Later-row refusal rolls back the rectangle; stale endpoint changes reject old actions. Native cell narrow cases initially mislabeled at1400px were rejected and rerun with asserted800px dimensions. All artifacts remain in /tmp. FK selection, remaining cell entries/inline format details and broader parity remain; F02 stays **in_progress**.
+
+
+## 2026-11-01 Typed foreign-key editing
+
+[Review](../../docs/reviews/R-20261101-989e83fa4ebb.md):on-demand indexed shared Select and complete cancellable parent-value loading preserve typed values,pending writes,namespace identity,failed drafts and Save All.891 workspace tests pass. FK typeahead and broader original parity remain;F02 stays **in_progress**. Desktop/main-workflow improvements are being implemented separately.
