@@ -10,15 +10,15 @@ Process and ownership: [agent workflow](../agent-workflow.md). Report format:
 [REPORT_TEMPLATE.md](REPORT_TEMPLATE.md). Remove the empty-state sentences when adding
 the first entries. Keep the status in this index and its report synchronized.
 
-Latest scoped review: [Schema insertion, filter formats and attachment checkpoints](R-20261101-0916d358b03a.md) — 874 tests, twenty Soft/Metal pairs and sixteen final owned native keyboard workflows (112 frames) pass; empty-attachment project prompt finding verified. Full original F02 remains in_progress.
 
-Latest scoped review: [Browse cell actions and serial palettes](R-20261101-e65790a0c3a7.md) — 881 tests and 25 Soft/Metal pairs pass; interior-cell selection finding open. Native cell cases labelled narrow were actually 1400px; rerun pending.
+
+Latest scoped review: [Browse cell actions and selection repair](R-20261101-1541cab48606.md) — 882 tests, 33 Soft/Metal pairs and twelve owned native workflows (100 frames) pass; interior-cell finding verified. Actual 800px native cases replace rejected narrow labels. Full parity F02 remains in_progress.
 
 ## Findings
 
 | ID | Status | Severity | Owner | Platform | Introduced | Location | Summary | Report | Fixed | Verified |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R-20261101-e65790a0c3a7-F01 | open | P1 | codex | e28 / all | f48b404 + existing selection | Browse context / clipboard | Interior right-click uses old cell; active indices are conflated with rectangle endpoints | [F01](R-20261101-e65790a0c3a7.md#r-20261101-e65790a0c3a7-f01) | — | — |
+| R-20261101-e65790a0c3a7-F01 | verified | P1 | codex | e28 / all | f48b404 + existing selection | Browse context / clipboard | Clicked active cell and both rectangle endpoints retained through polling/rebuild/typed actions | [F01](R-20261101-e65790a0c3a7.md#r-20261101-e65790a0c3a7-f01) | 1541cab48606 | 1541cab48606 |
 | R-20261101-0916d358b03a-F01 | verified | P2 | codex | e28 / all | existing attachment checkpoint | project_snapshot / refresh_schema | Empty Attach and same-alias file changes trigger project Save; cached identity survives worker ownership | [F01](R-20261101-0916d358b03a.md#r-20261101-0916d358b03a-f01) | 781ffa32049a | 0916d358b03a |
 | R-20261101-1cf20265f6d3-F02 | verified | P1 | codex | e28 / all | 1cf20265f6d3 | Detach project persistence | Removed-source native metadata pruned before Detach; XML/JSON reopen and Save prompts verified | [F02](R-20261101-1cf20265f6d3.md#r-20261101-1cf20265f6d3-f02) | 14d00db973c9 | 14d00db973c9 |
 | R-20261101-1cf20265f6d3-F01 | verified | P2 | codex | e28 / all; macOS observed | 1cf20265f6d3 | Detach confirmation / retained focus | Originating fresh tree focus restored after Cancel/Escape/success/refusal; repeated native keys verified | [F01](R-20261101-1cf20265f6d3.md#r-20261101-1cf20265f6d3-f01) | 3c367365d290 | 3c367365d290 |
