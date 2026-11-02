@@ -200,6 +200,7 @@ pub struct Work {
     job: Option<Job<BrowseTabState>>,
     cancel: Arc<AtomicBool>,
     source: Source,
+    candidate: BrowseTabState,
     pub(crate) select_column: Option<usize>,
     tab_change: Option<TabChange>,
 }
@@ -243,6 +244,7 @@ impl AppState {
         let conn = self.conn.take().ok_or("No idle database available")?;
         let cancel = Arc::new(AtomicBool::new(false));
         let interrupted = cancel.clone();
+        let work_candidate = candidate.clone();
         let job = Job::start_task(conn, move |conn| {
             let progress = interrupted.clone();
             conn.progress_handler(500, Some(move || progress.load(Ordering::Relaxed)));
@@ -263,6 +265,7 @@ impl AppState {
             job: Some(job),
             cancel,
             source,
+            candidate: work_candidate,
             select_column: None,
             tab_change,
         });
@@ -292,7 +295,20 @@ impl AppState {
         }
         self.recover_ended_transaction()?;
         if !work.cancel.load(Ordering::Relaxed) && work.source.matches(self) {
-            let mut candidate = result?;
+            let mut candidate = match result {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    if let Some(TabChange::Switch(index)) = work.tab_change {
+                        if let Some(tab) = self.browse_tabs.get_mut(index) {
+                            *tab = work.candidate.clone();
+                            self.browse_tab_idx = index;
+                            self.clear_browse_editor();
+                            self.status_msg = "Browse load failed; edit the filter and retry".into();
+                        }
+                    }
+                    return Err(error);
+                }
+            };
             let current = self.browse();
             if work.tab_change.is_none() && candidate.schema == current.schema && candidate.table == current.table {
                 candidate.column_widths = current.column_widths.clone();

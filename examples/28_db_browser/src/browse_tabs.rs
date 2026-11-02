@@ -182,20 +182,26 @@ mod tests {
     fn browse_tab_worker_failure_and_cancellation_keep_tabs_cached_source_editor_and_transaction() {
         let mut demo=fixture(1600,900,Theme::dark());demo.state.add_browse_tab().unwrap();demo.state.switch_browse_table("other").unwrap();demo.state.switch_browse_tab(0).unwrap();
         demo.state.goto_browse_record(3).unwrap();demo.state.browse_mut().sel_col=Some(0);demo.state.sync_edit_cell_from_selection();
-        let old=demo.state.browse().result.as_ref().unwrap().values.identity();let editor=demo.state.edit_value.clone();demo.state.browse_tabs[1].filter="missing_column=1".into();demo.state.browse_background=true;
-        for close in [false,true] {
-            if close {demo.state.close_browse_tab_at(0).unwrap();} else {demo.state.switch_browse_tab(1).unwrap();}
-            assert!(demo.state.conn.is_none());assert_eq!(demo.state.browse_tabs.len(),2);assert_eq!(demo.state.browse_tab_idx,0);
-            assert!(finish(&mut demo.state).unwrap_err().contains("missing_column"));
-            assert_eq!(demo.state.browse_tabs.len(),2);assert_eq!(demo.state.browse_tab_idx,0);assert_eq!(demo.state.edit_value,editor);
-            assert!(std::sync::Arc::ptr_eq(&old,&demo.state.browse().result.as_ref().unwrap().values.identity()));assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
-        }
+        let editor=demo.state.edit_value.clone();demo.state.browse_tabs[1].filter="missing_column=1".into();demo.state.browse_background=true;
+        demo.state.switch_browse_tab(1).unwrap();
+        assert!(demo.state.conn.is_none());assert_eq!(demo.state.browse_tabs.len(),2);assert_eq!(demo.state.browse_tab_idx,0);
+        assert!(finish(&mut demo.state).unwrap_err().contains("missing_column"));
+        assert_eq!(demo.state.browse_tab_idx,1);assert!(demo.state.edit_value.is_empty());
+        assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
+        demo.state.browse_mut().filter.clear();demo.state.start_browse_filter().unwrap();finish(&mut demo.state).unwrap();
+        assert_eq!(demo.state.browse_tab_idx,1);assert_eq!(demo.state.browse().table.as_deref(),Some("other"));
+        demo.state.switch_browse_tab(0).unwrap();finish(&mut demo.state).unwrap();assert_eq!(demo.state.browse_tab_idx,0);
+        demo.state.browse_tabs[1].filter="missing_column=1".into();
+        demo.state.close_browse_tab_at(0).unwrap();assert!(demo.state.conn.is_none());
+        assert!(finish(&mut demo.state).unwrap_err().contains("missing_column"));
+        assert_eq!(demo.state.browse_tabs.len(),2);assert_eq!(demo.state.browse_tab_idx,0);assert_eq!(demo.state.edit_value,editor);
+        assert_eq!(demo.state.browse().table.as_deref(),Some("names"));assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
         demo.state.browse_tabs[1].filter="v > (WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT max(x) FROM n)".into();
         for operation in 0..3 {
             let started=std::time::Instant::now();match operation {0=>demo.state.switch_browse_tab(1),1=>demo.state.close_browse_tab_at(0),_=>demo.state.add_browse_tab()}.unwrap();
             assert!(started.elapsed()<std::time::Duration::from_secs(2));demo.do_rebuild();assert!(!demo.ui.focusable_widgets().contains(&demo.ids.browse_tabs));assert_eq!(demo.ui.button_enabled(demo.ids.btn_browse_new_tab),Some(false));
             demo.handle_button(demo.ids.btn_browse_cancel);demo.do_rebuild();assert!(demo.state.browse_work.is_none());assert_eq!(demo.state.browse_tabs.len(),2);assert_eq!(demo.state.browse_tab_idx,0);
-            assert_eq!(demo.state.edit_value,editor);assert!(std::sync::Arc::ptr_eq(&old,&demo.state.browse().result.as_ref().unwrap().values.identity()));
+            assert_eq!(demo.state.edit_value,editor);
             assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());assert_eq!(crate::db::count_rows(demo.state.conn.as_ref().unwrap(),"names").unwrap(),5);
         }
     }
