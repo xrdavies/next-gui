@@ -17,11 +17,12 @@ impl Default for Controls {
 }
 
 pub fn build(ui: &mut Ui, state: &AppState, theme: &Theme) -> Controls {
-    let Some((_,name)) = &state.sql_rename else { return Controls::default(); };
+    let Some((title, name)) = state.sql_rename.as_ref().map(|(_, name)| ("Rename SQL Tab", name.as_str()))
+        .or_else(|| state.browse_rename.as_ref().map(|(_, name)| ("Rename Browse Tab", name.as_str()))) else { return Controls::default(); };
     let mut controls = Controls::default();
     let mut style = ModalStyle::from_theme(theme); style.width=480.0; style.height=180.0;
     let mut input = TextInputStyle::from_theme(theme); input.width=440.0;
-    controls.dialog = ui.dialog("Rename SQL Tab",style,|body| {
+    controls.dialog = ui.dialog(title,style,|body| {
         body.text("Tab name"); controls.name=body.text_input_styled(name,"Tab name",input);
     },|footer| {
         controls.apply=footer.tool_button_styled("Rename",theme.colors.accent,theme.colors.on_accent);
@@ -34,12 +35,15 @@ pub fn build(ui: &mut Ui, state: &AppState, theme: &Theme) -> Controls {
 
 impl Demo {
     pub(crate) fn handle_sql_rename_key(&mut self,key:crate::KeyCode) -> bool {
-        if self.state.sql_rename.is_none() || key!=crate::KeyCode::Enter || self.ui.ime_is_composing() {return false;}
+        if !self.state.tab_rename_open() || key!=crate::KeyCode::Enter || self.ui.ime_is_composing() {return false;}
         let controls=self.ids.sql_documents;
         self.handle_sql_rename_button(if self.ui.focused()==Some(controls.cancel) {controls.cancel} else {controls.apply});true
     }
     pub(crate) fn snapshot_sql_rename(&mut self) {
         if let Some((_,name))=&mut self.state.sql_rename {
+            if let Some(value)=self.ui.text_input_value(self.ids.sql_documents.name) { *name=value.into(); }
+        }
+        if let Some((_,name))=&mut self.state.browse_rename {
             if let Some(value)=self.ui.text_input_value(self.ids.sql_documents.name) { *name=value.into(); }
         }
     }
@@ -73,7 +77,7 @@ impl Demo {
     }
 
     pub(crate) fn poll_sql_documents(&mut self) -> bool {
-        if self.state.tab!=MainTab::ExecuteSql || self.state.sql_rename.is_some() {return false;}
+        if self.state.tab!=MainTab::ExecuteSql || self.state.tab_rename_open() {return false;}
         if let Some((tabs,action))=self.ui.take_tab_action() {
             if tabs==self.ids.sql_tabs && !self.state.sql_busy {
                 self.snapshot_inputs();
@@ -102,6 +106,12 @@ impl Demo {
                     self.state.sql_tab_titles[index]=Some(name);
                 }
             }
+            if let Some((index,name))=self.state.browse_rename.take() {
+                if let Some(tab)=self.state.browse_tabs.get_mut(index) {
+                    let name=name.trim().replace(['\r','\n','\t'], " ");
+                    if !name.is_empty() { tab.title=name; }
+                }
+            }
         } else if id==self.ids.sql_documents.cancel {self.state.sql_rename=None;}
         else {return;}
         self.close_sql_rename();
@@ -112,7 +122,9 @@ impl Demo {
     }
 
     fn close_sql_rename(&mut self) {
-        self.state.sql_rename=None;self.do_rebuild();self.ui.set_focus(Some(self.ids.sql_tabs));self.ui.sync(&mut self.scene);
+        let browse = self.state.browse_rename.is_some();
+        self.state.sql_rename=None;self.state.browse_rename=None;self.do_rebuild();
+        self.ui.set_focus(Some(if browse {self.ids.browse_tabs} else {self.ids.sql_tabs}));self.ui.sync(&mut self.scene);
     }
 }
 

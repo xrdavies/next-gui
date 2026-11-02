@@ -1931,7 +1931,7 @@ impl Demo {
     }
 
     fn snapshot_inputs(&mut self) {
-        if self.state.sql_rename.is_some() {self.snapshot_sql_rename();return;}
+        if self.state.tab_rename_open() {self.snapshot_sql_rename();return;}
         self.snapshot_browse_cell_editor();
         self.snapshot_schema_dock();
         if self.state.export_dialog.is_some() {self.snapshot_data_export();return;}
@@ -3445,7 +3445,7 @@ impl Demo {
         }
         if let Some(view)=sql_tabs_view {self.ui.restore_tabs_state(self.ids.sql_tabs,&view);self.ui.sync(&mut self.scene);}
         if let Some(view)=browse_tabs_view {self.ui.restore_tabs_state(self.ids.browse_tabs,&view);self.ui.sync(&mut self.scene);}
-        if self.state.sql_rename.is_some() {
+        if self.state.tab_rename_open() {
             if let Some(view)=rename_session {self.ui.restore_text_input_state(self.ids.sql_documents.name,&view);}
             if let Some(index)=rename_focus {self.ui.set_focus(Some([self.ids.sql_documents.name,self.ids.sql_documents.apply,self.ids.sql_documents.cancel][index]));}
             self.ui.sync(&mut self.scene);
@@ -4790,7 +4790,7 @@ impl Demo {
     }
 
     fn handle_button(&mut self, id: WidgetId) {
-        if self.state.sql_rename.is_some() {self.handle_sql_rename_button(id);return;}
+        if self.state.tab_rename_open() {self.handle_sql_rename_button(id);return;}
         if id.0 != 0 && id == self.ids.btn_browse_cancel { self.cancel_browse_refresh(); return; }
         if self.handle_schema_dock_button(id) {return;}
         if self.handle_cond_format_button(id) {return;}
@@ -5731,7 +5731,7 @@ impl Demo {
     }
 
     fn after_ui(&mut self, ctx: &mut WindowCtx<'_>) {
-        if self.state.sql_rename.is_some() {self.handle_sql_rename_dismiss();} else if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.fk_work.is_some() {self.handle_fk_values_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
+        if self.state.tab_rename_open() {self.handle_sql_rename_dismiss();} else if self.state.view_key_dialog.is_some() {self.handle_view_key_dismiss();} else if self.state.fk_work.is_some() {self.handle_fk_values_dismiss();} else if self.state.plot_work.is_some() {self.handle_plot_load_dismiss();} else if self.state.export_dialog.is_some() {self.handle_data_export_dismiss();} else if self.state.overlay==Some(OverlayKind::ExportSql) {self.handle_sql_export_dismiss();} else if matches!(self.state.overlay, Some(OverlayKind::ImportCsv | OverlayKind::PasteCsv)) {self.handle_csv_confirmation();} else if self.state.overlay == Some(OverlayKind::CondFormat) {self.handle_cond_format_dismiss();} else {self.handle_column_picker_dismiss();}
         self.handle_column_list_activate();
         self.handle_field_check_change();
         if let Some((id, color)) = self.ui.take_color_change() {
@@ -5753,7 +5753,7 @@ impl Demo {
         }
         while let Some((_owner, item)) = self.ui.take_menu_action() {
             self.snapshot_inputs();
-            if self.handle_sql_document_menu(item) || self.handle_schema_dock_menu(item) {
+            if self.handle_sql_document_menu(item) || self.handle_browse_tab_menu(item) || self.handle_schema_dock_menu(item) {
             } else if item==mid::PLOT_COPY {
                 self.copy_plot(ctx);
             } else if item == mid::BROWSE_COPY_COLUMN {
@@ -5921,7 +5921,7 @@ impl AppCallbacks for Demo {
                 x, y, ..
             } => {
                 if !self.finish_browse_cell_pointer(x as f32, y as f32) { self.after_ui(ctx); return; }
-                if self.open_sql_document_menu(x as f32,y as f32) || self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) || self.open_browse_cell_menu(x as f32, y as f32) {
+                if self.open_sql_document_menu(x as f32,y as f32) || self.open_browse_tab_menu(x as f32,y as f32) || self.open_schema_context_menu(x as f32,y as f32) || self.open_filter_context_menu(x as f32,y as f32) || self.open_plot_context_menu(x as f32,y as f32) || self.open_browse_header_menu(x as f32, y as f32) || self.open_browse_cell_menu(x as f32, y as f32) {
                     self.after_ui(ctx);
                 }
             }

@@ -175,6 +175,7 @@ impl ProjectFile {
         state.sql_files = self.sql_files.clone();
         state.sql_tab_titles = self.sql_tab_titles.iter().take(self.sql_tabs.len()).cloned().collect();
         state.sql_rename = None;
+        state.browse_rename = None;
         state.sql_outputs.clear();
         state.sql_message = "Ready — Execute SQL to see results.".into();
         state.sql_messages_view = None;

@@ -1,17 +1,50 @@
 //! Browse tab chrome keeps each cached source, selection and layout together.
 use crate::{Demo,state::MainTab};
-use next_gui_ui::TabAction;
+use next_gui_ui::{MenuItem, TabAction};
+
+const MENU: u64 = 210_000;
 
 impl Demo {
+    pub(crate) fn open_browse_tab_menu(&mut self, x: f32, y: f32) -> bool {
+        if self.state.tab != MainTab::Browse || self.state.overlay.is_some() || self.state.confirm_open
+            || self.state.tab_rename_open() || self.ui.active_dialog().is_some() { return false; }
+        let Some(index) = self.ui.tab_at(&self.scene, self.ids.browse_tabs, x, y) else { return false; };
+        let enabled = !self.state.sql_busy && self.state.guard_background_idle().is_ok() && !self.state.has_cell_draft();
+        let mut rename = MenuItem::new(MENU + index as u64 * 2, "Rename Tab"); rename.enabled = enabled;
+        let mut close = MenuItem::new(MENU + index as u64 * 2 + 1, "Close Tab"); close.enabled = enabled;
+        self.ui.set_accessible_name(self.ids.context_menu, "Browse tab actions");
+        self.ui.open_context_menu(self.ids.context_menu, vec![rename, close], x, y)
+    }
+
+    pub(crate) fn handle_browse_tab_menu(&mut self, item: u64) -> bool {
+        if item < MENU || item >= MENU + self.state.browse_tabs.len() as u64 * 2 { return false; }
+        if self.state.sql_busy || self.state.guard_background_idle().is_err() || self.state.has_cell_draft() { return true; }
+        let index = ((item - MENU) / 2) as usize;
+        self.snapshot_inputs();
+        if (item - MENU) % 2 == 0 {
+            if let Some(tab) = self.state.browse_tabs.get(index) {
+                self.state.browse_rename = Some((index, tab.title.clone()));
+                self.rebuild = true;
+            }
+        } else {
+            match self.state.close_browse_tab_at(index) {
+                Ok(()) => self.clear_error(),
+                Err(error) => self.set_error(error),
+            }
+            self.rebuild = true;
+        }
+        true
+    }
+
     pub(crate) fn poll_browse_tabs(&mut self) -> bool {
-        if self.state.tab!=MainTab::Browse || self.state.overlay.is_some() || self.state.confirm_open {return false;}
+        if self.state.tab!=MainTab::Browse || self.state.overlay.is_some() || self.state.confirm_open || self.state.tab_rename_open() {return false;}
         if let Some((tabs,action))=self.ui.take_tab_action() {
             if tabs==self.ids.browse_tabs {
                 self.snapshot_inputs();
                 let result=match action {
                     TabAction::Move {from,to}=>Some(self.state.move_browse_tab(from,to)),
                     TabAction::Close(index)=>Some(self.state.close_browse_tab_at(index)),
-                    TabAction::Rename(_)=>None,
+                    TabAction::Rename(index)=>{ if let Some(tab)=self.state.browse_tabs.get(index) { self.state.browse_rename=Some((index,tab.title.clone())); self.rebuild=true; } None },
                 };
                 if let Some(result)=result {
                     match result {Ok(())=>self.clear_error(),Err(error)=>self.set_error(error)}
@@ -77,6 +110,34 @@ mod tests {
             demo.state.discard_cell_draft();demo.clear_error();demo.do_rebuild();close(&mut demo,0);assert_eq!(demo.state.browse_tabs.len(),1);
             capture(&mut demo,&format!("desktop-browse-tabs-final-{name}"));
             close(&mut demo,0);assert_eq!(demo.state.browse_tabs.len(),1);assert!(demo.state.browse().table.is_none());assert!(demo.state.edit_value.is_empty());
+        }
+    }
+
+    #[test]
+    fn browse_tab_rename_menu_and_projects_keep_custom_title() {
+        let mut demo = fixture(1600, 900, Theme::dark());
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("browse-title.sqlite");
+        demo.state.save_as(db.to_str().unwrap()).unwrap();
+        demo.do_rebuild();
+        let (start, _, y) = header(&demo, 0);
+        assert!(demo.open_browse_tab_menu(start + 10.0, y));
+        assert_eq!(demo.ui.popup_owner(), Some(demo.ids.context_menu));
+        assert!(demo.handle_browse_tab_menu(MENU));
+        demo.do_rebuild();
+        assert!(demo.state.browse_rename.is_some());
+        demo.ui.set_focus(Some(demo.ids.sql_documents.name));
+        demo.ui.key_input(crate::UiKey::SelectAll);
+        demo.ui.paste_into_focused_text("Customer report <三>");
+        demo.handle_button(demo.ids.sql_documents.apply);
+        demo.do_rebuild();
+        assert_eq!(demo.state.browse().title, "Customer report <三>");
+        for extension in ["json", "sqbpro"] {
+            let file = dir.path().join(format!("browse-title.{extension}"));
+            demo.state.save_project(&file).unwrap();
+            let mut reopened = AppState::empty();
+            reopened.open_project(&file).unwrap();
+            assert_eq!(reopened.browse_tabs[0].title, "Customer report <三>");
         }
     }
 

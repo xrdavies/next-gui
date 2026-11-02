@@ -684,6 +684,7 @@ pub struct AppState {
     pub sql_tabs: Vec<String>,
     pub sql_tab_titles: Vec<Option<String>>,
     pub sql_rename: Option<(usize, String)>,
+    pub browse_rename: Option<(usize, String)>,
     pub sql_files: Vec<Option<SqlFile>>,
     sql_saved: Vec<String>,
     pub sql_edit_states: Vec<Option<next_gui_ui::TextAreaState>>,
@@ -1090,6 +1091,7 @@ impl AppState {
             sql_tabs: vec!["SELECT name, type FROM sqlite_master ORDER BY type, name;\n".into()],
             sql_tab_titles: Vec::new(),
             sql_rename: None,
+            browse_rename: None,
             sql_tab_idx: 0,
             sql_result: None,
             sql_outputs: Vec::new(),
@@ -1317,6 +1319,8 @@ impl AppState {
             self.sql_files.get(index).and_then(|f| f.as_ref()).and_then(|f| f.path.file_name())
                 .map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||format!("SQL {}",index+1)))
     }
+
+    pub fn tab_rename_open(&self) -> bool { self.sql_rename.is_some() || self.browse_rename.is_some() }
 
     pub fn duplicate_sql_tab(&mut self, index: usize) {
         if self.sql_busy || index >= self.sql_tabs.len() { return; }

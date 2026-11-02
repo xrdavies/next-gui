@@ -68,6 +68,8 @@ pub(crate) fn fetch(
 ) -> Result<BrowseTabState, String> {
     let schema = candidate.schema.clone();
     let table = candidate.table.clone().ok_or("Select a table first")?;
+    let default_title = if schema == "main" { table.clone() } else { db::qualified_name(&schema, &table) };
+    let custom_title = candidate.title != default_title;
     let mut options = candidate.options();
     let columns = options.remap_source(conn, &schema, &table, options.show_row_id)?;
     let rowid_column = db::implicit_rowid_column_in(conn, &schema, &table)?;
@@ -103,11 +105,7 @@ pub(crate) fn fetch(
         .col_filters
         .resize(result.columns.len(), String::new());
     candidate.offset = offset;
-    candidate.title = if schema == "main" {
-        table.clone()
-    } else {
-        db::qualified_name(&schema, &table)
-    };
+    if !custom_title { candidate.title = default_title; }
     candidate.row_keys = row_keys;
     candidate.rowid_column = rowid_column;
     candidate.total_rows = Some(total_rows);
