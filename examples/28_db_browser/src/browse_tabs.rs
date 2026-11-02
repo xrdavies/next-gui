@@ -141,6 +141,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn failed_browse_close_keeps_target_repairable_without_replacing_active_tab() {
+        let mut demo = fixture(1600, 900, Theme::dark());
+        demo.state.add_browse_tab().unwrap();
+        demo.state.switch_browse_table("other").unwrap();
+        demo.state.switch_browse_tab(0).unwrap();
+        demo.state.browse_background = true;
+        demo.state.browse_tabs[1].filter = "missing_column = 1".into();
+        demo.state.close_browse_tab_at(0).unwrap();
+        assert_eq!(demo.state.browse_tab_idx, 0);
+        assert!(demo.state.conn.is_none());
+        assert!(finish(&mut demo.state).unwrap_err().contains("missing_column"));
+        assert_eq!(demo.state.browse_tabs.len(), 2);
+        assert_eq!(demo.state.browse_tab_idx, 0);
+        assert!(demo.state.browse_tabs[1].load_error.is_some());
+        demo.state.switch_browse_tab(1).unwrap();
+        assert_eq!(demo.state.browse_tab_idx, 1);
+        assert!(demo.state.browse_work.is_none());
+        demo.state.browse_mut().filter.clear();
+        demo.state.start_browse_filter().unwrap();
+        finish(&mut demo.state).unwrap();
+        assert_eq!(demo.state.browse().table.as_deref(), Some("other"));
+        assert!(demo.state.browse().load_error.is_none());
+        assert_eq!(demo.state.browse().result.as_ref().unwrap().rows[0][0], "42");
+    }
+
     fn finish(state:&mut AppState)->Result<(),String> {
         let deadline=std::time::Instant::now()+std::time::Duration::from_secs(20);
         while state.browse_work.is_some() {
@@ -197,6 +223,7 @@ mod tests {
         assert_eq!(demo.state.browse_tabs.len(),2);assert_eq!(demo.state.browse_tab_idx,0);assert_eq!(demo.state.edit_value,editor);
         assert_eq!(demo.state.browse().table.as_deref(),Some("names"));assert!(!demo.state.conn.as_ref().unwrap().is_autocommit());
         demo.state.browse_tabs[1].filter="v > (WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT max(x) FROM n)".into();
+        demo.state.browse_tabs[1].load_error=None;
         for operation in 0..3 {
             let started=std::time::Instant::now();match operation {0=>demo.state.switch_browse_tab(1),1=>demo.state.close_browse_tab_at(0),_=>demo.state.add_browse_tab()}.unwrap();
             assert!(started.elapsed()<std::time::Duration::from_secs(2));demo.do_rebuild();assert!(!demo.ui.focusable_widgets().contains(&demo.ids.browse_tabs));assert_eq!(demo.ui.button_enabled(demo.ids.btn_browse_new_tab),Some(false));

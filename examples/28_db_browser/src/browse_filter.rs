@@ -233,6 +233,7 @@ impl AppState {
         if self.has_cell_draft() {
             return Err("Apply or discard the cell draft first".into());
         }
+        candidate.load_error = None;
         let source = Source::current(self);
         if tab_change.is_none() { candidate.offset = 0; }
         let is_view = self.schema.iter().any(|o| {
@@ -298,13 +299,24 @@ impl AppState {
             let mut candidate = match result {
                 Ok(candidate) => candidate,
                 Err(error) => {
-                    if let Some(TabChange::Switch(index)) = work.tab_change {
-                        if let Some(tab) = self.browse_tabs.get_mut(index) {
-                            *tab = work.candidate.clone();
-                            self.browse_tab_idx = index;
-                            self.clear_browse_editor();
-                            self.status_msg = "Browse load failed; edit the filter and retry".into();
+                    match work.tab_change {
+                        Some(TabChange::Switch(index)) => {
+                            if let Some(tab) = self.browse_tabs.get_mut(index) {
+                                *tab = work.candidate.clone();
+                                tab.load_error = Some(error.clone());
+                                self.browse_tab_idx = index;
+                                self.clear_browse_editor();
+                                self.status_msg = "Browse load failed; edit the filter and retry".into();
+                            }
                         }
+                        Some(TabChange::Close { target, .. }) => {
+                            if let Some(tab) = self.browse_tabs.get_mut(target) {
+                                *tab = work.candidate.clone();
+                                tab.load_error = Some(error.clone());
+                                self.status_msg = "Browse close failed; select the target tab to repair it".into();
+                            }
+                        }
+                        _ => {}
                     }
                     return Err(error);
                 }

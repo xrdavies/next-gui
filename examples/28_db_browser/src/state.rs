@@ -266,6 +266,9 @@ fn rename_column(name: &mut String, renames: &[(String, String)]) {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrowseTabState {
     pub title: String,
+    /// A failed background tab transition leaves the cached source available for repair.
+    #[serde(skip)]
+    pub(crate) load_error: Option<String>,
     #[serde(skip)]
     pub format_palette_index: usize,
     #[serde(default = "main_schema")]
@@ -471,6 +474,7 @@ impl BrowseTabState {
         let title = table.as_ref().map(|name| if schema == "main" { name.clone() } else { db::qualified_name(schema, name) }).unwrap_or_else(|| "Browse".into());
         Self {
             title,
+            load_error: None,
             format_palette_index: 0,
             schema: schema.into(),
             table,
@@ -3075,6 +3079,13 @@ impl AppState {
         if self.sql_busy { return Err("Wait for SQL to finish before changing browse tabs".into()); }
         if self.has_cell_draft() { return Err("Apply or discard the cell draft first".into()); }
         if index >= self.browse_tabs.len() { return Err("Browse tab no longer exists".into()); }
+        if self.browse_tabs[index].load_error.is_some() {
+            self.browse_tab_idx = index;
+            self.clear_browse_editor();
+            self.sync_edit_cell_from_selection();
+            self.status_msg = "Browse tab selected; repair its filter and retry".into();
+            return Ok(());
+        }
         if self.browse_background && self.tab==MainTab::Browse && self.browse_tabs[index].table.is_some() {
             return self.start_browse_tab(self.browse_tabs[index].clone(),crate::browse_filter::TabChange::Switch(index));
         }
