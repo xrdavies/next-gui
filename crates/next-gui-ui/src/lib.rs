@@ -6604,6 +6604,24 @@ impl Ui {
             rows, selected_row, selected_col, ..
         }) = self.widgets.get(&id).map(|w| &w.kind) else { return false; };
         if rows.is_empty() { return false; }
+        if key == UiKey::SelectAll {
+            let last_row = rows.len() - 1;
+            let columns = match self.widgets.get(&id).map(|w| &w.kind) {
+                Some(Kind::Table { columns, .. }) => columns,
+                _ => return false,
+            };
+            let order = visible_table_columns(columns);
+            let Some(&first_col) = order.first() else { return false; };
+            let last_col = *order.last().unwrap();
+            if let Some(Widget { kind: Kind::Table { selected_row, selected_col, selected_range, selected_col_range, .. }, .. }) = self.widgets.get_mut(&id) {
+                *selected_row = Some(last_row);
+                *selected_col = Some(last_col);
+                *selected_range = Some((0, last_row));
+                *selected_col_range = Some((first_col, last_col));
+            }
+            self.reveal_table_selection(id);
+            return true;
+        }
         let selected_cell=selected_row.zip(*selected_col);
         if matches!(key,UiKey::Enter|UiKey::Edit|UiKey::Char(_)|UiKey::Backspace|UiKey::Delete|UiKey::Space) {
             if let Some((row,column))=selected_cell {

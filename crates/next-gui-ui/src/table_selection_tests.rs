@@ -51,6 +51,21 @@ fn shift_selection_keeps_its_anchor_when_extending_and_reversing() {
 }
 
 #[test]
+fn select_all_marks_every_loaded_row_and_visible_column() {
+    let (mut ui, id) = grid();
+    if let Kind::Table { columns, .. } = &mut ui.widgets.get_mut(&id).unwrap().kind {
+        columns[1].visible = false;
+        columns[1].display_order = usize::MAX;
+    }
+    ui.set_focus(Some(id));
+    assert!(ui.key_input(UiKey::SelectAll));
+    assert_eq!(ui.table_selected_rows(id), Some((0, 5)));
+    assert_eq!(ui.table_selected_column_indices(id).unwrap(), [0, 2, 3, 4, 5]);
+    assert_eq!(ui.table_selection_anchor(id), Some((0, Some(0))));
+    assert_eq!(ui.table_selected_text(id).unwrap().lines().count(), 6);
+}
+
+#[test]
 fn replacing_rows_clamps_both_endpoints_and_clears_empty_selection() {
     let (mut ui, id) = grid();
     ui.set_table_selected_cells(id, Some((5, 1)), Some((5, 1)));

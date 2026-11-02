@@ -286,3 +286,21 @@ fn browse_delete_removes_the_entire_selected_row_range_atomically() {
     assert_eq!(db::count_rows(demo.state.conn.as_ref().unwrap(), "warehouse_ledger").unwrap(), 15);
     assert!(demo.state.status_msg.contains("3 records deleted"));
 }
+
+#[test]
+fn browse_select_all_can_delete_the_complete_result() {
+    let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+    demo.state = ledger();
+    demo.do_rebuild();
+    demo.ui.set_focus(Some(demo.ids.browse_table));
+    assert!(demo.ui.key_input(UiKey::SelectAll));
+    demo.poll_selection_changes();
+    assert_eq!(demo.state.browse().sel_row_start, Some(0));
+    assert_eq!(demo.state.browse().sel_row_end, Some(17));
+    demo.state.confirm_kind = ConfirmKind::DeleteRow;
+    demo.state.confirm_open = true;
+    demo.apply_confirmed_action(ConfirmKind::DeleteRow);
+    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+    assert_eq!(db::count_rows(demo.state.conn.as_ref().unwrap(), "warehouse_ledger").unwrap(), 0);
+    assert!(demo.state.status_msg.contains("18 records deleted"));
+}
