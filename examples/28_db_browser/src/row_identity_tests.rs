@@ -270,3 +270,19 @@ fn typed_key_ui_apply_delete_and_readonly_geometry() {
         }
     }
 }
+
+#[test]
+fn browse_delete_removes_the_entire_selected_row_range_atomically() {
+    let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+    demo.state = ledger();
+    demo.do_rebuild();
+    demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((2, 0)), Some((0, 3)));
+    demo.poll_selection_changes();
+    demo.do_rebuild();
+    demo.state.confirm_kind = ConfirmKind::DeleteRow;
+    demo.state.confirm_open = true;
+    demo.apply_confirmed_action(ConfirmKind::DeleteRow);
+    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+    assert_eq!(db::count_rows(demo.state.conn.as_ref().unwrap(), "warehouse_ledger").unwrap(), 15);
+    assert!(demo.state.status_msg.contains("3 records deleted"));
+}

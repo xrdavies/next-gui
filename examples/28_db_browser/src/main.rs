@@ -5610,31 +5610,39 @@ impl Demo {
                 if let Err(e) = self.state.guard_writable().and_then(|()| self.state.guard_browse_editable()) {
                     self.set_error(e);
                 } else {
-                    let table = self.state.browse().table.clone();
-                    let row = self
-                        .state
-                        .browse()
-                        .sel_row
-                        .or_else(|| self.ui.table_selected_row(self.ids.browse_table));
-                    if let (Some(table), Some(row)) = (table, row) {
-                        if let Some(rowid) = self.state.browse().row_keys.get(row) {
-                            if let Some(conn) = self.state.conn.as_ref() {
-                                match dbmod::delete_row_in(conn, &self.state.browse().schema, &table, rowid) {
-                                    Ok(_) => {
-                                        self.state.log_sql(format!(
-                                            "DELETE FROM {} -- selected record", dbmod::qualified_name(&self.state.browse().schema, &table)
-                                        ));
-                                        self.state.mark_dirty();
-                                        let _ = self.state.refresh_browse();
-                                        self.state.status_msg = "Row deleted (unwritten)".into();
-                                        self.clear_error();
-                                    }
-                                    Err(e) => self.set_error(e),
-                                }
-                            }
+                    let (schema, table, anchor, end, row_keys) = {
+                        let browse = self.state.browse();
+                        let row = browse.sel_row.or_else(|| self.ui.table_selected_row(self.ids.browse_table));
+                        let Some(row) = row else { self.set_error("Select browse records first"); self.rebuild = true; return; };
+                        let ui_range = self.ui.table_selected_rows(self.ids.browse_table);
+                        let anchor = if browse.sel_row == Some(row) {
+                            browse.sel_row_start.unwrap_or(row)
                         } else {
-                            self.set_error("No usable record key");
+                            ui_range.map_or(row, |(start, _)| start)
+                        };
+                        let end = if browse.sel_row == Some(row) {
+                            browse.sel_row_end.unwrap_or(row)
+                        } else {
+                            ui_range.map_or(row, |(_, end)| end)
+                        };
+                        (browse.schema.clone(), browse.table.clone(), anchor, end, browse.row_keys.clone())
+                    };
+                    let Some(table) = table else { self.set_error("No browse table"); self.rebuild = true; return; };
+                    let (first, last) = (anchor.min(end), anchor.max(end));
+                    let Some(keys) = row_keys.get(first..=last) else { self.set_error("Selection no longer fits Browse; refresh and retry"); self.rebuild = true; return; };
+                    let Some(conn) = self.state.conn.as_ref() else { self.set_error("No database open"); self.rebuild = true; return; };
+                    match dbmod::delete_rows_in(conn, &schema, &table, keys) {
+                        Ok(deleted) => {
+                            self.state.log_sql(format!(
+                                "DELETE FROM {} -- {} selected record{}", dbmod::qualified_name(&schema, &table), deleted,
+                                if deleted == 1 { "" } else { "s" }
+                            ));
+                            self.state.mark_dirty();
+                            let _ = self.state.refresh_browse();
+                            self.state.status_msg = format!("{deleted} record{} deleted (unwritten)", if deleted == 1 { "" } else { "s" });
+                            self.clear_error();
                         }
+                        Err(e) => self.set_error(e),
                     }
                 }
             }

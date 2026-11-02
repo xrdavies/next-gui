@@ -2655,11 +2655,19 @@ pub fn build_ui(
             format!("Remove field '{}'?\nThe field and its data will be removed when you save.", state.wizard_cols.get(row).map_or("", |column| column.name.as_str())),
             "Cancel",
         ),
-        ConfirmKind::DeleteRow => (
-            "Delete Record",
-            "Delete the selected browse record?".into(),
-            "Delete",
-        ),
+        ConfirmKind::DeleteRow => {
+            let count = state
+                .browse()
+                .sel_row_start
+                .zip(state.browse().sel_row_end)
+                .map_or(1, |(start, end)| end.abs_diff(start) + 1);
+            let noun = if count == 1 { "record" } else { "records" };
+            (
+                if count == 1 { "Delete Record" } else { "Delete Records" },
+                format!("Delete {count} selected browse {noun}?"),
+                "Delete",
+            )
+        }
         ConfirmKind::Documents => (
             if matches!(state.pending_document, Some(crate::state::DocumentAction::SelectSchemaNode(_))) { "Keep edited DDL?" } else { "Save changes before continuing?" },
             if let Some(crate::state::DocumentAction::CloseSqlTab(index)) = state.pending_document {

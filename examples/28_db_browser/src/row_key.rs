@@ -357,28 +357,44 @@ pub fn delete_row_in(
     table: &str,
     key: &RowKey,
 ) -> Result<u64, String> {
+    delete_rows_in(conn, schema, table, std::slice::from_ref(key))
+}
+
+/// Delete several records atomically, checking every identity before releasing the savepoint.
+/// A stale, ambiguous, ignored, or trigger-rejected record rolls back the complete batch.
+pub fn delete_rows_in(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+    keys: &[RowKey],
+) -> Result<u64, String> {
+    if keys.is_empty() {
+        return Err("No records selected".into());
+    }
     with_savepoint(conn, || {
-        key.require_unique(conn, schema, table)?;
         let view = source_is_view_in(conn, schema, table)?;
-        let sql = format!(
-            "DELETE FROM {}{} WHERE {}",
-            qualified_name(schema, table),
-            if view { "" } else { " AS cell" },
-            key.predicate_for((!view).then_some("cell"))?
-        );
-        let before = conn.total_changes();
-        let changed = conn
-            .execute(&sql, params_from_iter(&key.values))
-            .map_err(|e| e.to_string())?;
-        // INSTEAD OF triggers write underlying tables but report zero direct changes.
-        if if view {
-            conn.total_changes() == before
-        } else {
-            changed != 1
-        } {
-            return Err("The row deletion was ignored; no rows changed".into());
+        for key in keys {
+            key.require_unique(conn, schema, table)?;
+            let sql = format!(
+                "DELETE FROM {}{} WHERE {}",
+                qualified_name(schema, table),
+                if view { "" } else { " AS cell" },
+                key.predicate_for((!view).then_some("cell"))?
+            );
+            let before = conn.total_changes();
+            let changed = conn
+                .execute(&sql, params_from_iter(&key.values))
+                .map_err(|e| e.to_string())?;
+            // INSTEAD OF triggers write underlying tables but report zero direct changes.
+            if if view {
+                conn.total_changes() == before
+            } else {
+                changed != 1
+            } {
+                return Err("The row deletion was ignored; no rows changed".into());
+            }
         }
-        Ok(1)
+        Ok(keys.len() as u64)
     })
 }
 
@@ -751,5 +767,24 @@ mod tests {
         assert_eq!(count_rows(&conn, "keeper").unwrap(), 2);
         conn.execute_batch("ROLLBACK").unwrap();
         assert_eq!(count_rows(&conn, "keeper").unwrap(), 1);
+    }
+
+    #[test]
+    fn bulk_delete_is_atomic_across_stale_keys_and_ignored_triggers() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE records(id INTEGER PRIMARY KEY, note TEXT); INSERT INTO records VALUES(1,'one'),(2,'two'),(3,'three');").unwrap();
+        let (_, keys) = browse_with_keys_in(&conn, "main", "records", &[], None, 500, 0).unwrap();
+        assert_eq!(delete_rows_in(&conn, "main", "records", &keys[..2]).unwrap(), 2);
+        assert_eq!(count_rows(&conn, "records").unwrap(), 1);
+
+        let (_, remaining) = browse_with_keys_in(&conn, "main", "records", &[], None, 500, 0).unwrap();
+        let mut stale = remaining[0].clone();
+        stale.values[0] = CellValue::Integer(99);
+        assert!(delete_rows_in(&conn, "main", "records", &[remaining[0].clone(), stale]).is_err());
+        assert_eq!(count_rows(&conn, "records").unwrap(), 1);
+
+        conn.execute_batch("CREATE TRIGGER deny_delete BEFORE DELETE ON records BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+        assert!(delete_rows_in(&conn, "main", "records", &remaining).unwrap_err().contains("ignored"));
+        assert_eq!(count_rows(&conn, "records").unwrap(), 1);
     }
 }
