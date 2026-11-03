@@ -288,6 +288,36 @@ fn browse_delete_removes_the_entire_selected_row_range_atomically() {
 }
 
 #[test]
+fn browse_delete_preserves_records_and_unapplied_cell_drafts() {
+    let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
+    demo.state = ledger();
+    demo.do_rebuild();
+    demo.ui.set_table_selected_cells(demo.ids.browse_table, Some((2, 0)), Some((0, 3)));
+    demo.poll_selection_changes();
+    demo.do_rebuild();
+    demo.ui.set_text_area_value(demo.ids.edit_value, "unapplied shipment note");
+    demo.snapshot_inputs();
+    assert!(demo.state.has_cell_draft());
+    let original = demo.state.browse().result.as_ref().unwrap().values.identity();
+    let keys = demo.state.browse().row_keys.clone();
+    let selection = (demo.state.browse().sel_row_start, demo.state.browse().sel_row_end);
+    demo.apply_confirmed_action(ConfirmKind::DeleteRow);
+    assert!(demo.state.error_msg.as_deref().is_some_and(|error| error.contains("cell draft")));
+    assert_eq!(db::count_rows(demo.state.conn.as_ref().unwrap(), "warehouse_ledger").unwrap(), 18);
+    assert!(!demo.state.dirty);
+    assert_eq!(demo.state.browse().row_keys, keys);
+    assert!(std::sync::Arc::ptr_eq(&demo.state.browse().result.as_ref().unwrap().values.identity(), &original));
+    assert_eq!((demo.state.browse().sel_row_start, demo.state.browse().sel_row_end), selection);
+    assert_eq!(demo.state.edit_value, "unapplied shipment note");
+    assert!(demo.state.has_cell_draft());
+    demo.state.discard_cell_draft();
+    demo.apply_confirmed_action(ConfirmKind::DeleteRow);
+    assert!(demo.state.error_msg.is_none(), "{:?}", demo.state.error_msg);
+    assert_eq!(db::count_rows(demo.state.conn.as_ref().unwrap(), "warehouse_ledger").unwrap(), 15);
+    assert!(demo.state.dirty);
+}
+
+#[test]
 fn browse_select_all_can_delete_the_complete_result() {
     let mut demo = Demo::new(1400, 860, PresentBackend::Softbuffer);
     demo.state = ledger();

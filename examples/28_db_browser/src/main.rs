@@ -5607,10 +5607,15 @@ impl Demo {
                 }
             }
             ConfirmKind::DeleteRow => {
+                if self.state.has_cell_draft() {
+                    self.set_error("Apply or discard the cell draft first");
+                    self.rebuild = true;
+                    return;
+                }
                 if let Err(e) = self.state.guard_writable().and_then(|()| self.state.guard_browse_editable()) {
                     self.set_error(e);
                 } else {
-                    let (schema, table, anchor, end, row_keys) = {
+                    let (schema, table, anchor, end) = {
                         let browse = self.state.browse();
                         let row = browse.sel_row.or_else(|| self.ui.table_selected_row(self.ids.browse_table));
                         let Some(row) = row else { self.set_error("Select browse records first"); self.rebuild = true; return; };
@@ -5625,11 +5630,11 @@ impl Demo {
                         } else {
                             ui_range.map_or(row, |(_, end)| end)
                         };
-                        (browse.schema.clone(), browse.table.clone(), anchor, end, browse.row_keys.clone())
+                        (browse.schema.clone(), browse.table.clone(), anchor, end)
                     };
                     let Some(table) = table else { self.set_error("No browse table"); self.rebuild = true; return; };
                     let (first, last) = (anchor.min(end), anchor.max(end));
-                    let Some(keys) = row_keys.get(first..=last) else { self.set_error("Selection no longer fits Browse; refresh and retry"); self.rebuild = true; return; };
+                    let Some(keys) = self.state.browse().row_keys.get(first..=last) else { self.set_error("Selection no longer fits Browse; refresh and retry"); self.rebuild = true; return; };
                     let Some(conn) = self.state.conn.as_ref() else { self.set_error("No database open"); self.rebuild = true; return; };
                     match dbmod::delete_rows_in(conn, &schema, &table, keys) {
                         Ok(deleted) => {
