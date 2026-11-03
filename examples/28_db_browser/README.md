@@ -1,8 +1,8 @@
 # e28_db_browser — DB Browser for SQLite (next-gui)
 
-A local SQLite browser example inspired by [DB Browser for SQLite](https://sqlitebrowser.org/) (DB4S), using next-gui themes, SQLCipher and native file dialogs. Full upstream compatibility remains a goal, not a completion claim.
+A local SQLite browser example inspired by [DB Browser for SQLite](https://sqlitebrowser.org/) (DB4S), using next-gui themes, SQLCipher and native file dialogs. Upstream feature/UI compatibility within the agreed scope remains a goal, not a completion claim. Native printing, the Remote cloud protocol, and SQLCipher encryption/decryption and compatibility controls are excluded from acceptance; existing implementations are retained.
 
-See **[PARITY.md](./PARITY.md)** for the implementation checklist (`done` / `partial` / `todo`). Remaining compatibility gaps are marked explicitly.
+See **[PARITY.md](./PARITY.md)** for the implementation checklist (`done` / `partial` / `todo` / `excluded`). Remaining compatibility gaps and scope exclusions are marked explicitly.
 
 ## Run
 

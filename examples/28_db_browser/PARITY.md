@@ -1,12 +1,14 @@
 # DB Browser for SQLite (DB4S) ↔ e28 parity checklist
 
-**Goal:** 100% feature + UI parity with [DB Browser for SQLite](https://sqlitebrowser.org/) (sqlitebrowser / DB4S), with next-gui Theme so the UI can meet or exceed DB4S visually. Items marked `partial` or `todo` are remaining compatibility work. This is an example, not a certified DB4S replacement.
+**Goal:** Feature + UI parity within the agreed scope with [DB Browser for SQLite](https://sqlitebrowser.org/) (sqlitebrowser / DB4S), with next-gui Theme so the UI can meet or exceed DB4S visually. Items marked `partial` or `todo` are remaining compatibility work. This is an example, not a certified DB4S replacement.
+
+**Agreed scope (2026-11-03):** Native printing (including print dialogs/previews), the Remote cloud protocol (including authentication/synchronization), and SQLCipher encryption/decryption and compatibility controls are excluded at the user's request. Existing implementations remain available. These exclusions do not block acceptance and must not be counted as completed features. The remaining desktop workflows and interface fidelity remain in scope, with primary acceptance at normal/maximized desktop sizes.
 
 Reference: upstream **v3.13.1** `src/MainWindow.ui`, EditTableDialog, EditIndexDialog, ImportCsvDialog, ExportSqlDialog, CipherDialog, PreferencesDialog, FindReplaceDialog, PlotDock, EditDialog, TableBrowser.
 
-Status legend: `done` = implemented local subset, not upstream parity or native acceptance; `partial` = known missing or defective behavior; `todo` = absent.
+Status legend: `done` = implemented local subset, not upstream parity or native acceptance; `partial` = known missing or defective behavior; `todo` = absent; `excluded` = outside the agreed scope, regardless of existing implementation. Mixed entries retain their in-scope status; printing/cloud/encryption references in historical evidence are not current blockers.
 
-**Inventory snapshot (2026-10-31):** The tables contain 104 overlapping workflow entries: 47 `done` local subsets and 57 `partial` entries. These are not weighted requirements and do not establish a completion percentage. Full original feature/UI parity remains in progress.
+**Inventory snapshot (2026-11-03):** The tables contain 104 overlapping workflow entries: 46 `done` local subsets, 51 `partial` entries and 7 `excluded` entries. These are not weighted requirements and do not establish a completion percentage. Feature/UI parity within the agreed scope remains in progress.
 
 **Latest scoped verification:** [Primary desktop tabs and layouts](../../docs/reviews/R-20261102-05e504977379.md): source-preserving header drag; SQL tab drag/rename/duplicate/guarded close; independent stacked/side layouts; Browse per-tab close/drag, custom-title rename, cancellable Add/Switch/active-Close and repairable failed Switch/Close loads. Shared disabled-tab input and padded cell clipping fixed.922 initial workspace tests, final605 Browser tests/unchanged248 shared UI tests,30 render pairs and ordinary normal/maximized gestures/wheel/100k save/reopen verified;14 Office windows retain identical final binaries. Discontiguous/broader bulk actions,dock/native menus and full original/platform/IME parity remain in progress.
 
@@ -60,7 +62,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Save Project / Save Project As… | partial | DB4S XML output with an optional next_gui extension; unknown XML survives. Native standard RGB conditional maps round-trip and actual exported-project opening in DB4S v3.13.1 are verified; row-id/display formats, full font fidelity and broader advanced settings remain. |
 | Close Project | done | Unified Save/Discard/Cancel; closes the project database as upstream does. |
 | Save All | done | Choose destinations before saving; apply cell/PRAGMA drafts, commit DB, save linked SQL files and the project. Failures keep documents open; writes across files are not one atomic transaction. |
-| Print Schema… | partial | Exports schema text to a file; no print dialog or print preview. |
+| Print Schema… | excluded | Native printing/preview excluded by agreed scope; existing schema text export retained. |
 
 ## Edit menu
 
@@ -80,14 +82,14 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Toggle DB Schema dock | done | |
 | Toggle SQL Log dock | done | |
 | Toggle Plot dock | done | |
-| Toggle Remote dock | partial | Local path list only; no DB4S remote service |
+| Toggle Remote dock | excluded | Remote cloud workflow excluded by agreed scope; existing local path list retained. |
 | Toggle DB / Extra / Project / SQL toolbars | done | four independent View toggles |
 
 ## Tools menu
 
 | Action | Status | Notes |
 |--------|--------|-------|
-| Set Encryption… (SQLCipher) | done | Open encrypted DB after key prompt; separate encrypted-copy export with validated page/KDF settings; key input masked |
+| Set Encryption… (SQLCipher) | excluded | Encryption/decryption excluded by agreed scope; existing unlock and encrypted-copy export retained. |
 | Load Extension… | done | overlay path + optional entry → `load_extension` |
 | Integrity Check | done | → Execute SQL results |
 | Quick Check | done | |
@@ -110,7 +112,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | Schema tree Tables/Views/Indexes/Triggers | partial | Main/temp/attached namespaces and empty databases, quoted object identity, selection/project definition context and qualified deletion are verified. Expansion, scroll, group selection and keyboard focus persist for the database session; active selection reveals ancestors. Main Structure now includes Name/Type/SQL and table/view/index field children,qualified expansion/selection and resizable JSON/XML-persisted widths. Object context actions and complete view persistence remain. |
 | Object SQL preview | partial | Schema identity retained in projects; attached/temp stored definitions are read-only, since SQLite removes their database/TEMP qualifiers. Structured qualified editing remains. |
 | Run DDL | partial | Edited DDL is protected on object selection with Keep in SQL tab / Discard / Cancel; other drafts and pending DB edits survive. Execution remains synchronous; long DDL can block interaction. |
-| Print schema | partial | Text export only; no OS print dialog or preview. |
+| Print schema | excluded | Native printing/preview excluded by agreed scope; existing schema text export retained. |
 
 ## Browse Data tab
 
@@ -161,7 +163,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | DB Schema | partial | Cached main/temp/attached object and field tree with case-insensitive filtering, retained expansion/scroll/focus, resizable read-only SQL preview and source-checked Insert/Insert SQL/Browse actions. Enter inserts, Shift+Enter inserts the definition, Cmd/Ctrl+Enter browses; persisted SELECT/qualification/quoting options cover field SELECT and database-root insertion with one Undo edit; generated FROM protects against same-name source shadowing. Original multi-selection and name/SQL drag-and-drop, full two-column tree and ordinary foreground input acceptance remain. Guarded Detach context actions and project cleanup are locally verified. |
 | SQL Log | partial | SQLite statement/trigger tracing with expanded ordinary values; User/Application/Error/All, full read-only text, copy, scoped clear/export and visible eviction counts (200/category). Global SQLite diagnostics and native acceptance remain. |
 | Plot | partial | Current typed Browse/SQL sources, named X/Y1/Y2 matrix, independent series styles/colors, legend, selection, retained navigation and canonical native project settings. Cancellable Load All uses the live Browse connection or immutable SQL snapshot without replay/commit; cached full curves survive matching page changes and out-of-page Browse point reveal. Shared Cartesian rendering supports date/time/category/dual-Y, fifteen markers and bounded raster output. Save… writes current viewport/selection/legend to PNG/JPEG/BMP/lossless raster PDF with staged replacement and database protection. Copy/Cmd+C renders the current view to the native image clipboard. Constrained controls wrap and Plot dock minimum sizing retains preferred split ratios. Current-view context Copy/Save/Fit/legend/fixed numeric formatting and signed grouped/stacked bars with row hit tests and category ticks verified. Cached named X/Y1/Y2 pointer tooltips, caption help and passive bounds/routing are verified. Table-to-Plot highlighting, Print/vector PDF, exact conversion/control/rotation/custom-style details, dense native throughput and original interface/native/platform acceptance remain. |
-| Remote | partial | Local path list; cloud protocol/auth/sync not implemented |
+| Remote | excluded | Cloud protocol/auth/sync excluded by agreed scope; existing local path list retained. |
 
 ## Dialogs
 
@@ -171,7 +173,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 | EditIndexDialog | partial | Qualified expression keys/unique/partial WHERE, live definition retention and atomic replacement; available/ordered lists, add/remove/move/expression/edit controls and read-only SQL preview. Multiline SQL, focus/selection/undo and list viewports survive rebuilding; ASC/DESC changes preserve operands/comments/collation and share Undo; declaration types include generated columns. Exact original transfer filtering/interface and native acceptance remain. |
 | ImportCsvDialog (delimiter, quote, encoding, …) | partial | Encoding picker supports UTF-8/16/32, Latin-1/ASCII and listed legacy codecs, with Unicode BOM detection and strict streaming validation. Preview, delimiter/quote/header, multiline parsing, import policies, multi-file targets and cancellable progress are implemented. Remaining Qt-only codecs, localized numeric symbols/parser edges and complete original/native acceptance remain. |
 | ExportSqlDialog (options) | partial | Table/view selection, content/schema mode, IF NOT EXISTS/drop-existing behavior, column names, multi-row INSERT, original CREATE and foreign-key options use persisted drafts and cancellable staged output. Remaining virtual-module/byte-format edges and complete original/native acceptance remain. |
-| CipherDialog | partial | Unlock/export copy with password/page/KDF only; no rekey/remove encryption, raw key, HMAC/KDF algorithms or SQLCipher 3 preset. |
+| CipherDialog | excluded | Encryption/decryption and compatibility controls excluded by agreed scope; existing password/page/KDF unlock/export retained. |
 | PreferencesDialog | partial | Font/theme/drop confirmation/CSV delimiter/frozen count/SQL auto completion/keyword case; Cancel preserves live settings (F11 addressed); full upstream preferences absent. |
 | FindReplaceDialog | partial | Six search options, Find All and disjoint highlights, Unicode captures/escapes, F3/Shift+F3 and atomic undoable replacement; PCRE2 is not certified Scintilla regex compatibility. One-second scan budget; large backward searches still need a cancellable worker. |
 | EditDialog (blob/image/hex) | partial | Multiline text/JSON, typed/NULL values, Hex and RGBA preview; Fit/1:1/zoom/pan/original image export supported (F12 addressed). Address/Hex/ASCII byte editing, insert/overwrite, byte selections/history and readable copy/export implemented; configured binary font/context and print workflows remain. |
@@ -184,7 +186,7 @@ The earlier “done 101 / partial 0” claim was not supported by acceptance tes
 |---------|--------|-------|
 | rusqlite bundled SQLite | done | + `hooks` + `load_extension` + `bundled-sqlcipher-vendored-openssl` |
 | Deferred Write Changes / Revert (txn) | done | BEGIN on open; dirty flag |
-| SQLCipher | partial | Core unlock/encrypted export tested; upstream compatibility controls/rekey/decrypt absent. |
+| SQLCipher | excluded | Encryption/decryption and compatibility controls excluded by agreed scope; existing core unlock/encrypted export retained. |
 | Extensions | done | Load Extension… |
 | In-memory DB | done | Isolated connection, shared with worker by ownership transfer |
 | ATTACH DATABASE | partial | Live connection, namespace tree/definition/deletion and Browse data workflows preserve explicit database identity; file-backed attachments and their browse settings restore through projects. Qualified table/index/constraint editing and safe rebuilding/movement preserve dependencies and pending edits. Complete original schema interface/native acceptance and locked-engine TEMP cases remain. |
